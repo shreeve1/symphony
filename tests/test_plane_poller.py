@@ -244,6 +244,8 @@ async def test_httpx_transport_writes_with_plane_api_key():
     assert patched == {"ok": True}
     assert posted == {"ok": True}
     assert [request.method for request in requests] == ["PATCH", "POST"]
+    assert str(requests[0].url).endswith("/issues/issue-1/")
+    assert str(requests[1].url).endswith("/issues/issue-1/comments/")
     assert all(request.headers["X-API-Key"] == "token" for request in requests)
 
 

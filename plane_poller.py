@@ -186,6 +186,8 @@ class HttpxPlaneTransport:
         return await self._request("GET", path)
 
     async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method in {"POST", "PATCH"} and "?" not in path and not path.endswith("/"):
+            path = f"{path}/"
         response = await self._client.request(method, path, json=body)
         if response.status_code in {401, 403}:
             LOGGER.error("Plane authentication failed with status %s", response.status_code)
