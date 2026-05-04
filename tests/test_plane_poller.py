@@ -218,6 +218,35 @@ async def test_httpx_transport_follows_plane_trailing_slash_redirect():
         await transport.aclose()
 
 
+@pytest.mark.asyncio
+async def test_httpx_transport_writes_with_plane_api_key():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    transport = HttpxPlaneTransport("http://plane.local", "token")
+    await transport._client.aclose()
+    transport._client = httpx.AsyncClient(
+        base_url="http://plane.local/api/v1",
+        headers={"X-API-Key": "token", "Content-Type": "application/json"},
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    )
+
+    try:
+        patched = await transport.patch("/issues/issue-1", {"state": "Running"})
+        posted = await transport.post("/issues/issue-1/comments", {"comment_html": "ok"})
+    finally:
+        await transport.aclose()
+
+    assert patched == {"ok": True}
+    assert posted == {"ok": True}
+    assert [request.method for request in requests] == ["PATCH", "POST"]
+    assert all(request.headers["X-API-Key"] == "token" for request in requests)
+
+
 def test_build_adapter_uses_configured_project_uuid():
     adapter = build_adapter(
         InMemoryTransport(),

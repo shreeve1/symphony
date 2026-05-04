@@ -30,3 +30,53 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
     assert captured["issue"].name == "Check proxy"
     assert captured["issue"].description == "Verify proxy container"
     assert captured["issue"].labels == "media, maintenance"
+
+
+def test_async_main_passes_configured_agent_runner(monkeypatch):
+    calls = {}
+
+    class FakeConfig:
+        plane_api_url = "http://plane.local"
+        plane_api_key = "token"
+        plane_workspace_slug = "homelab"
+        plane_project_id = "project-uuid"
+
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+    class FakeTransport:
+        def __init__(self, api_url, api_key):
+            calls["transport"] = (api_url, api_key)
+
+        async def aclose(self):
+            calls["closed"] = True
+
+    def fake_build_adapter(transport, *, workspace_slug, project_id):
+        calls["adapter"] = (transport, workspace_slug, project_id)
+        return "adapter"
+
+    def fake_run_agent(config, issue, rendered_prompt):
+        calls["run_agent"] = (config, issue, rendered_prompt)
+        return "agent-result"
+
+    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt):
+        calls["run_loop"] = (config, adapter, render_prompt)
+        calls["agent_result"] = agent_runner("issue", "prompt")
+
+    monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)
+    monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
+    monkeypatch.setattr(main, "build_adapter", fake_build_adapter)
+    monkeypatch.setattr(main, "run_agent", fake_run_agent)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    import asyncio
+
+    asyncio.run(main.async_main())
+
+    config = calls["run_loop"][0]
+    assert calls["transport"] == ("http://plane.local", "token")
+    assert calls["adapter"][1:] == ("homelab", "project-uuid")
+    assert calls["run_agent"] == (config, "issue", "prompt")
+    assert calls["agent_result"] == "agent-result"
+    assert calls["closed"] is True

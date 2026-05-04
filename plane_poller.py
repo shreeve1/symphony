@@ -183,9 +183,10 @@ class HttpxPlaneTransport:
         )
 
     async def get(self, path: str) -> dict[str, Any]:
-        import httpx
+        return await self._request("GET", path)
 
-        response = await self._client.get(path)
+    async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = await self._client.request(method, path, json=body)
         if response.status_code in {401, 403}:
             LOGGER.error("Plane authentication failed with status %s", response.status_code)
             raise PlanePollingAuthError(f"Plane authentication failed: {response.status_code}")
@@ -196,10 +197,10 @@ class HttpxPlaneTransport:
         return data
 
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("Symphony poller only reads Plane issues")
+        return await self._request("POST", path, body)
 
     async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        raise NotImplementedError("Symphony poller only reads Plane issues")
+        return await self._request("PATCH", path, body)
 
     async def aclose(self) -> None:
         await self._client.aclose()

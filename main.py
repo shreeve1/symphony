@@ -34,6 +34,9 @@ async def async_main() -> None:
     )
     config = SymphonyConfig.from_env()
     transport = HttpxPlaneTransport(config.plane_api_url, config.plane_api_key)
+    def configured_agent_runner(issue, rendered_prompt):
+        return run_agent(config, issue, rendered_prompt)
+
     try:
         await run_loop(
             config,
@@ -42,7 +45,7 @@ async def async_main() -> None:
                 workspace_slug=config.plane_workspace_slug,
                 project_id=config.plane_project_id,
             ),
-            agent_runner=run_agent,
+            agent_runner=configured_agent_runner,
             render_prompt=_render_candidate_prompt,
         )
     finally:
