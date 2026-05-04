@@ -1,0 +1,177 @@
+"""Poll Plane for Symphony candidate issues."""
+
+from __future__ import annotations
+
+import logging
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+try:
+    from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
+    from homelab_router.plane_contract import PlaneLabel, PlaneState
+except ModuleNotFoundError:
+    _src = Path("/home/james/homelab/automation/homelab-stack/src")
+    if str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+    from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
+    from homelab_router.plane_contract import PlaneLabel, PlaneState
+
+
+LOGGER = logging.getLogger(__name__)
+PAGE_SIZE = 50
+
+
+class PlanePollingAuthError(RuntimeError):
+    """Raised when Plane rejects configured credentials."""
+
+
+class PlanePollingSchemaError(RuntimeError):
+    """Raised when Plane returns an unexpected issue shape."""
+
+
+@dataclass(frozen=True)
+class CandidateIssue:
+    id: str
+    identifier: str
+    name: str
+    description: str
+    labels: tuple[str, ...]
+    created_at: str
+
+
+def _extract_labels(issue: dict[str, Any]) -> tuple[str, ...]:
+    labels = issue.get("labels") or []
+    extracted: list[str] = []
+    for label in labels:
+        if isinstance(label, str):
+            extracted.append(label)
+        elif isinstance(label, dict):
+            name = label.get("name") or label.get("value")
+            if isinstance(name, str):
+                extracted.append(name)
+    return tuple(extracted)
+
+
+def _is_todo(issue: dict[str, Any], adapter: PlaneAdapter) -> bool:
+    state = issue.get("state")
+    todo_values = {PlaneState.TODO.value, adapter._resolve_state(PlaneState.TODO)}
+    if isinstance(state, str):
+        return state in todo_values
+    if isinstance(state, dict):
+        return state.get("name") == PlaneState.TODO.value or state.get("id") in todo_values
+    return False
+
+
+def _candidate_from_issue(issue: dict[str, Any]) -> CandidateIssue:
+    try:
+        return CandidateIssue(
+            id=str(issue["id"]),
+            identifier=str(issue.get("identifier") or issue.get("sequence_id") or ""),
+            name=str(issue["name"]),
+            description=str(issue.get("description") or issue.get("description_html") or ""),
+            labels=_extract_labels(issue),
+            created_at=str(issue.get("created_at") or ""),
+        )
+    except KeyError as exc:
+        raise PlanePollingSchemaError(f"Plane issue missing field: {exc.args[0]}") from exc
+
+
+def _page_items(response: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if isinstance(response, list):
+        return response
+    results = response.get("results")
+    if isinstance(results, list):
+        return results
+    raise PlanePollingSchemaError("Plane response missing results list")
+
+
+def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    cursor = response.get("next_cursor") or response.get("cursor")
+    if cursor:
+        return str(cursor)
+    next_url = response.get("next")
+    if isinstance(next_url, str) and "cursor=" in next_url:
+        return next_url.split("cursor=", 1)[1].split("&", 1)[0]
+    return None
+
+
+async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
+    """Fetch Todo issues that do not require approval."""
+
+    if adapter.transport is None:
+        raise RuntimeError("Transport not configured")
+
+    candidates: list[CandidateIssue] = []
+    cursor: str | None = None
+
+    try:
+        while True:
+            path = f"{adapter._issue_path()}?per_page={PAGE_SIZE}"
+            if cursor:
+                path = f"{path}&cursor={cursor}"
+            response = await adapter.transport.get(path)
+            items = _page_items(response)
+            for issue in items:
+                labels = _extract_labels(issue)
+                if PlaneLabel.APPROVAL_REQUIRED.value in labels:
+                    continue
+                if not _is_todo(issue, adapter):
+                    continue
+                candidates.append(_candidate_from_issue(issue))
+            cursor = _next_cursor(response)
+            if not cursor:
+                return candidates
+    except PlanePollingAuthError:
+        LOGGER.error("Plane authentication failed", exc_info=True)
+        raise
+    except (ConnectionError, TimeoutError, OSError) as exc:
+        LOGGER.warning("Transient Plane polling failure: %s", exc)
+        return []
+    except PlanePollingSchemaError:
+        LOGGER.error("Plane polling schema error", exc_info=True)
+        raise
+
+
+class HttpxPlaneTransport:
+    """Minimal async HTTP transport compatible with PlaneAdapter."""
+
+    def __init__(self, api_url: str, api_key: str) -> None:
+        import httpx
+
+        self._client = httpx.AsyncClient(
+            base_url=f"{api_url.rstrip('/')}/api/v1",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            timeout=30,
+        )
+
+    async def get(self, path: str) -> dict[str, Any]:
+        import httpx
+
+        response = await self._client.get(path)
+        if response.status_code in {401, 403}:
+            LOGGER.error("Plane authentication failed with status %s", response.status_code)
+            raise PlanePollingAuthError(f"Plane authentication failed: {response.status_code}")
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise PlanePollingSchemaError("Plane response was not an object")
+        return data
+
+    async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError("Symphony poller only reads Plane issues")
+
+    async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError("Symphony poller only reads Plane issues")
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+def build_adapter(transport: PlaneTransport) -> PlaneAdapter:
+    """Build a PlaneAdapter around the provided transport."""
+
+    return PlaneAdapter(transport=transport)
