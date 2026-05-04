@@ -42,15 +42,21 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.opencode_bin == "/usr/local/bin/opencode"
     assert config.poll_interval_ms == 30_000
     assert config.run_timeout_ms == 900_000
+    assert config.lock_path == Path("/tmp/symphony.lock")
 
 
 def test_from_env_loads_optional_values():
     config = SymphonyConfig.from_env(
-        _env(SYMPHONY_POLL_INTERVAL_MS="1000", SYMPHONY_RUN_TIMEOUT_MS="2000")
+        _env(
+            SYMPHONY_POLL_INTERVAL_MS="1000",
+            SYMPHONY_RUN_TIMEOUT_MS="2000",
+            SYMPHONY_LOCK_PATH="/run/symphony.lock",
+        )
     )
 
     assert config.poll_interval_ms == 1_000
     assert config.run_timeout_ms == 2_000
+    assert config.lock_path == Path("/run/symphony.lock")
 
 
 def test_repr_and_str_redact_plane_api_key():

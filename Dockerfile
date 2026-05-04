@@ -7,6 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 1001 symphony \
     && useradd --uid 1001 --gid symphony --home-dir /app --shell /usr/sbin/nologin symphony
 

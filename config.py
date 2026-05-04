@@ -29,6 +29,7 @@ class SymphonyConfig:
     opencode_bin: str
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 900_000
+    lock_path: Path = Path("/tmp/symphony.lock")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
@@ -48,6 +49,7 @@ class SymphonyConfig:
             opencode_bin=source["OPENCODE_BIN"],
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "900000")),
+            lock_path=Path(source.get("SYMPHONY_LOCK_PATH", "/tmp/symphony.lock")),
         )
 
     def __repr__(self) -> str:
@@ -60,7 +62,8 @@ class SymphonyConfig:
             f"homelab_repo_path={self.homelab_repo_path!r}, "
             f"opencode_bin={self.opencode_bin!r}, "
             f"poll_interval_ms={self.poll_interval_ms!r}, "
-            f"run_timeout_ms={self.run_timeout_ms!r})"
+            f"run_timeout_ms={self.run_timeout_ms!r}, "
+            f"lock_path={self.lock_path!r})"
         )
 
     __str__ = __repr__

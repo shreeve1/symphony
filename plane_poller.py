@@ -26,6 +26,7 @@ except ModuleNotFoundError:
 
 LOGGER = logging.getLogger(__name__)
 PAGE_SIZE = 50
+MAX_PAGES_PER_TICK = 3
 
 
 class PlanePollingAuthError(RuntimeError):
@@ -129,13 +130,15 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
 
     candidates: list[CandidateIssue] = []
     cursor: str | None = None
+    pages_fetched = 0
 
     try:
-        while True:
+        while pages_fetched < MAX_PAGES_PER_TICK:
             path = f"{adapter._issue_path()}?per_page={PAGE_SIZE}"
             if cursor:
                 path = f"{path}&cursor={cursor}"
             response = await adapter.transport.get(path)
+            pages_fetched += 1
             items = _page_items(response)
             for issue in items:
                 labels = _extract_labels(issue)
@@ -147,6 +150,12 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
             cursor = _next_cursor(response)
             if not cursor:
                 return candidates
+        LOGGER.info(
+            "plane_poll_page_limit_reached pages=%s candidates=%s",
+            pages_fetched,
+            len(candidates),
+        )
+        return candidates
     except PlanePollingAuthError:
         LOGGER.error("Plane authentication failed", exc_info=True)
         raise
@@ -170,6 +179,7 @@ class HttpxPlaneTransport:
             base_url=f"{api_url.rstrip('/')}/api/v1",
             headers={"X-API-Key": api_key, "Content-Type": "application/json"},
             timeout=30,
+            follow_redirects=True,
         )
 
     async def get(self, path: str) -> dict[str, Any]:

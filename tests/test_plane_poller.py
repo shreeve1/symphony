@@ -6,6 +6,8 @@ import pytest
 from homelab_router.plane_adapter import InMemoryTransport, PlaneAdapter
 from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
 from plane_poller import (
+    HttpxPlaneTransport,
+    MAX_PAGES_PER_TICK,
     PAGE_SIZE,
     PlanePollingAuthError,
     PlanePollingSchemaError,
@@ -69,6 +71,34 @@ async def test_paginates_at_page_size_50():
     assert [candidate.id for candidate in candidates] == ["first", "second"]
     assert all(f"per_page={PAGE_SIZE}" in path for path in transport.paths)
     assert any("cursor=page-2" in path for path in transport.paths)
+
+
+class EndlessPaginationTransport:
+    def __init__(self):
+        self.paths = []
+
+    async def get(self, path):
+        self.paths.append(path)
+        return {"results": [_issue(str(len(self.paths)))], "next_cursor": "next-page"}
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
+@pytest.mark.asyncio
+async def test_limits_pages_per_tick_to_avoid_rate_limits(caplog):
+    transport = EndlessPaginationTransport()
+    adapter = PlaneAdapter(transport=transport)
+
+    with caplog.at_level(logging.INFO):
+        candidates = await fetch_todo_issues(adapter)
+
+    assert len(candidates) == MAX_PAGES_PER_TICK
+    assert len(transport.paths) == MAX_PAGES_PER_TICK
+    assert "plane_poll_page_limit_reached" in caplog.text
 
 
 class TransientFailureTransport:
@@ -175,3 +205,13 @@ async def test_schema_error_logs_error_and_raises(caplog):
         await fetch_todo_issues(adapter)
 
     assert "Plane polling schema error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_httpx_transport_follows_plane_trailing_slash_redirect():
+    transport = HttpxPlaneTransport("http://plane.local", "token")
+
+    try:
+        assert transport._client.follow_redirects is True
+    finally:
+        await transport.aclose()

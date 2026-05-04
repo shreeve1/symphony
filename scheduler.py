@@ -76,7 +76,7 @@ async def run_tick(
 
     repo_dirty = _repo_dirty if repo_dirty is None else repo_dirty
     diff_stat = _diff_stat if diff_stat is None else diff_stat
-    lock_file = lock_path or config.homelab_repo_path / ".symphony.lock"
+    lock_file = lock_path or config.lock_path
     try:
         with scheduler_lock(lock_file):
             await reconcile_stale_running(adapter, config.run_timeout_ms, now=now)
