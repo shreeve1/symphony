@@ -13,7 +13,10 @@ try:
     from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
     from homelab_router.plane_contract import PlaneLabel, PlaneState
 except ModuleNotFoundError:
-    _homelab_repo = Path(os.environ.get("HOMELAB_REPO_PATH", "/home/james/homelab"))
+    _repo_env = os.environ.get("HOMELAB_REPO_PATH")
+    if not _repo_env:
+        raise
+    _homelab_repo = Path(_repo_env)
     _src = _homelab_repo / "automation" / "homelab-stack" / "src"
     if str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
