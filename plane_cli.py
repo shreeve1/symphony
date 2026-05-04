@@ -61,11 +61,11 @@ class PlaneCliConfig:
     def issue_path(self) -> str:
         return (
             f"/api/v1/workspaces/{self.workspace_slug}"
-            f"/projects/{self.project_id}/issues/{self.issue_id}"
+            f"/projects/{self.project_id}/issues/{self.issue_id}/"
         )
 
     def comment_path(self) -> str:
-        return f"{self.issue_path()}/comments"
+        return f"{self.issue_path()}comments/"
 
 
 class UrllibTransport:
@@ -85,7 +85,7 @@ class UrllibTransport:
             data=data,
             method=method,
             headers={
-                "Authorization": f"Bearer {self._config.api_key}",
+                "X-API-Key": self._config.api_key,
                 "Content-Type": "application/json",
             },
         )

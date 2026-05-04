@@ -51,7 +51,7 @@ def test_state_subcommands_transition_expected_state(command, state_id):
     assert transport.calls == [
         (
             "PATCH",
-            "/api/v1/workspaces/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123",
+            "/api/v1/workspaces/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123/",
             {"state": state_id},
         )
     ]
@@ -68,7 +68,7 @@ def test_comment_subcommand_posts_comment_text_to_env_issue():
     assert transport.calls == [
         (
             "POST",
-            "/api/v1/workspaces/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123/comments",
+            "/api/v1/workspaces/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123/comments/",
             {"comment_html": "ready for review"},
         )
     ]
@@ -137,7 +137,7 @@ def test_runtime_script_has_no_symphony_imports():
     assert "from symphony" not in source
 
 
-def test_urllib_transport_sets_authorization_header(monkeypatch):
+def test_urllib_transport_sets_plane_api_key_header(monkeypatch):
     captured = {}
 
     class FakeResponse:
@@ -152,7 +152,8 @@ def test_urllib_transport_sets_authorization_header(monkeypatch):
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
         captured["method"] = request.get_method()
-        captured["authorization"] = request.headers["Authorization"]
+        captured["api_key"] = request.headers["X-api-key"]
+        captured["authorization"] = request.headers.get("Authorization")
         captured["content_type"] = request.headers["Content-type"]
         captured["body"] = request.data
         captured["timeout"] = timeout
@@ -164,9 +165,10 @@ def test_urllib_transport_sets_authorization_header(monkeypatch):
 
     transport.patch(config.issue_path(), {"state": STATE_IDS["review"]})
 
-    assert captured["url"].endswith("/issues/issue-123")
+    assert captured["url"].endswith("/issues/issue-123/")
     assert captured["method"] == "PATCH"
-    assert captured["authorization"] == "Bearer fake-plane-key-for-tests"
+    assert captured["api_key"] == "fake-plane-key-for-tests"
+    assert captured["authorization"] is None
     assert captured["content_type"] == "application/json"
     assert captured["timeout"] == 30
 

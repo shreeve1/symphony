@@ -109,10 +109,11 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-managed"
+    assert result.reason == "done"
     assert seen == ["older"]
-    assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.RUNNING.value]
+    assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
     assert "Symphony claimed at 2026-05-04T02:00:00+00:00" in transport.comments["older"][0]["comment_html"]
+    assert "completed without repository changes" in transport.comments["older"][1]["comment_html"]
 
 
 @pytest.mark.asyncio

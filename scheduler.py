@@ -148,7 +148,13 @@ async def run_tick(
                 LOGGER.info("state_transitioned issue_id=%s state=in-review", candidate.id)
                 return TickResult(True, "review", candidate.id)
 
-            return TickResult(True, "agent-managed", candidate.id)
+            await adapter.add_comment(
+                candidate.id,
+                CommentPayload(body="Symphony completed without repository changes."),
+            )
+            await adapter.transition_state(candidate.id, PlaneState.DONE)
+            LOGGER.info("state_transitioned issue_id=%s state=done", candidate.id)
+            return TickResult(True, "done", candidate.id)
     except LockHeld:
         return TickResult(False, "lock-held")
 
