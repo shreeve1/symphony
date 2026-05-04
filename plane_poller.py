@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,8 @@ try:
     from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
     from homelab_router.plane_contract import PlaneLabel, PlaneState
 except ModuleNotFoundError:
-    _src = Path("/home/james/homelab/automation/homelab-stack/src")
+    _homelab_repo = Path(os.environ.get("HOMELAB_REPO_PATH", "/home/james/homelab"))
+    _src = _homelab_repo / "automation" / "homelab-stack" / "src"
     if str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
     from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
@@ -90,13 +92,30 @@ def _page_items(response: dict[str, Any] | list[dict[str, Any]]) -> list[dict[st
 def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
     if not isinstance(response, dict):
         return None
-    cursor = response.get("next_cursor") or response.get("cursor")
+    cursor = response.get("next_cursor")
     if cursor:
         return str(cursor)
     next_url = response.get("next")
     if isinstance(next_url, str) and "cursor=" in next_url:
         return next_url.split("cursor=", 1)[1].split("&", 1)[0]
     return None
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+    return exc.__class__.__module__.startswith("httpx") and exc.__class__.__name__ in {
+        "ConnectError",
+        "ConnectTimeout",
+        "NetworkError",
+        "PoolTimeout",
+        "ReadError",
+        "ReadTimeout",
+        "TimeoutException",
+        "TransportError",
+        "WriteError",
+        "WriteTimeout",
+    }
 
 
 async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
@@ -128,11 +147,13 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
     except PlanePollingAuthError:
         LOGGER.error("Plane authentication failed", exc_info=True)
         raise
-    except (ConnectionError, TimeoutError, OSError) as exc:
-        LOGGER.warning("Transient Plane polling failure: %s", exc)
-        return []
     except PlanePollingSchemaError:
         LOGGER.error("Plane polling schema error", exc_info=True)
+        raise
+    except Exception as exc:
+        if _is_transient_error(exc):
+            LOGGER.warning("Transient Plane polling failure: %s", exc)
+            return []
         raise
 
 

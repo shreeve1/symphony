@@ -1,5 +1,6 @@
 import logging
 
+import httpx
 import pytest
 
 from homelab_router.plane_adapter import InMemoryTransport, PlaneAdapter
@@ -81,6 +82,17 @@ class TransientFailureTransport:
         raise AssertionError("poller must not write")
 
 
+class HttpxTransientFailureTransport:
+    async def get(self, path):
+        raise httpx.ConnectTimeout("fake httpx timeout")
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
 @pytest.mark.asyncio
 async def test_transient_network_error_returns_empty_list_with_warning(caplog):
     adapter = PlaneAdapter(transport=TransientFailureTransport())
@@ -90,6 +102,37 @@ async def test_transient_network_error_returns_empty_list_with_warning(caplog):
 
     assert candidates == []
     assert "Transient Plane polling failure" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_httpx_transient_error_returns_empty_list_with_warning(caplog):
+    adapter = PlaneAdapter(transport=HttpxTransientFailureTransport())
+
+    with caplog.at_level(logging.WARNING):
+        candidates = await fetch_todo_issues(adapter)
+
+    assert candidates == []
+    assert "Transient Plane polling failure" in caplog.text
+
+
+class CurrentCursorTransport:
+    async def get(self, path):
+        return {"results": [_issue("first")], "cursor": "current-page"}
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
+@pytest.mark.asyncio
+async def test_current_cursor_without_next_cursor_does_not_paginate_forever():
+    adapter = PlaneAdapter(transport=CurrentCursorTransport())
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert [candidate.id for candidate in candidates] == ["first"]
 
 
 class AuthFailureTransport:
