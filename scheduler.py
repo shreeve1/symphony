@@ -185,7 +185,18 @@ async def run_loop(
     """Run the scheduler forever, sleeping between ticks."""
 
     while True:
-        await run_tick(config, adapter, agent_runner=agent_runner, render_prompt=render_prompt)
+        result = await run_tick(
+            config,
+            adapter,
+            agent_runner=agent_runner,
+            render_prompt=render_prompt,
+        )
+        LOGGER.info(
+            "tick_completed dispatched=%s reason=%s issue_id=%s",
+            str(result.dispatched).lower(),
+            result.reason,
+            result.issue_id or "",
+        )
         await asyncio.sleep(config.poll_interval_ms / 1000)
 
 
