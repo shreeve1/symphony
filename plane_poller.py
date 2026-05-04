@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 try:
     from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
-    from homelab_router.plane_contract import PlaneLabel, PlaneState
+    from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 except ModuleNotFoundError:
     _repo_env = os.environ.get("HOMELAB_REPO_PATH")
     if not _repo_env:
@@ -21,7 +21,7 @@ except ModuleNotFoundError:
     if str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
     from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
-    from homelab_router.plane_contract import PlaneLabel, PlaneState
+    from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 
 
 LOGGER = logging.getLogger(__name__)
@@ -205,7 +205,17 @@ class HttpxPlaneTransport:
         await self._client.aclose()
 
 
-def build_adapter(transport: PlaneTransport) -> PlaneAdapter:
+def build_adapter(
+    transport: PlaneTransport,
+    *,
+    workspace_slug: str = DEFAULT_CONTRACT.workspace_slug,
+    project_id: str = DEFAULT_CONTRACT.project_id,
+) -> PlaneAdapter:
     """Build a PlaneAdapter around the provided transport."""
 
-    return PlaneAdapter(transport=transport)
+    contract = replace(
+        DEFAULT_CONTRACT,
+        workspace_slug=workspace_slug,
+        project_id=project_id,
+    )
+    return PlaneAdapter(contract=contract, transport=transport)

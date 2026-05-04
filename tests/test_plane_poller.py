@@ -11,6 +11,7 @@ from plane_poller import (
     PAGE_SIZE,
     PlanePollingAuthError,
     PlanePollingSchemaError,
+    build_adapter,
     fetch_todo_issues,
 )
 
@@ -215,3 +216,13 @@ async def test_httpx_transport_follows_plane_trailing_slash_redirect():
         assert transport._client.follow_redirects is True
     finally:
         await transport.aclose()
+
+
+def test_build_adapter_uses_configured_project_uuid():
+    adapter = build_adapter(
+        InMemoryTransport(),
+        workspace_slug="homelab",
+        project_id="project-uuid",
+    )
+
+    assert adapter._issue_path() == "/workspaces/homelab/projects/project-uuid/issues"

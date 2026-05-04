@@ -24,6 +24,6 @@ RUN chown -R symphony:symphony /app
 USER symphony
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD python -c "import os, shutil, urllib.request; url=os.environ['PLANE_API_URL'].rstrip('/') + '/api/v1/'; key=os.environ.get('PLANE_API_KEY', ''); req=urllib.request.Request(url, headers={'X-API-Key': key} if key else {}); urllib.request.urlopen(req, timeout=5).close(); assert shutil.which(os.environ.get('OPENCODE_BIN', '/usr/local/bin/opencode'))"
+  CMD python -c "import os, shutil, urllib.request; base=os.environ['PLANE_API_URL'].rstrip('/'); workspace=os.environ['PLANE_WORKSPACE_SLUG']; project=os.environ['PLANE_PROJECT_ID']; url=f'{base}/api/v1/workspaces/{workspace}/projects/{project}/issues/'; key=os.environ.get('PLANE_API_KEY', ''); req=urllib.request.Request(url, headers={'X-API-Key': key} if key else {}); urllib.request.urlopen(req, timeout=5).close(); assert shutil.which(os.environ.get('OPENCODE_BIN', '/usr/local/bin/opencode'))"
 
 ENTRYPOINT ["python", "-m", "symphony.main"]

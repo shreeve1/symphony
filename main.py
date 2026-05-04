@@ -37,7 +37,11 @@ async def async_main() -> None:
     try:
         await run_loop(
             config,
-            build_adapter(transport),
+            build_adapter(
+                transport,
+                workspace_slug=config.plane_workspace_slug,
+                project_id=config.plane_project_id,
+            ),
             agent_runner=run_agent,
             render_prompt=_render_candidate_prompt,
         )
