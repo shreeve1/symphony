@@ -28,6 +28,7 @@ class SymphonyConfig:
     homelab_repo_path: Path
     opencode_bin: str
     opencode_agent: str = "build"
+    opencode_model: str | None = None
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 900_000
     lock_path: Path = Path("/tmp/symphony.lock")
@@ -51,6 +52,7 @@ class SymphonyConfig:
             homelab_repo_path=Path(source["HOMELAB_REPO_PATH"]),
             opencode_bin=source["OPENCODE_BIN"],
             opencode_agent=source.get("SYMPHONY_OPENCODE_AGENT", "build"),
+            opencode_model=source.get("SYMPHONY_OPENCODE_MODEL"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "900000")),
             lock_path=Path(source.get("SYMPHONY_LOCK_PATH", str(Path(source["HOMELAB_REPO_PATH"]) / ".symphony.lock"))),
@@ -68,6 +70,7 @@ class SymphonyConfig:
             f"homelab_repo_path={self.homelab_repo_path!r}, "
             f"opencode_bin={self.opencode_bin!r}, "
             f"opencode_agent={self.opencode_agent!r}, "
+            f"opencode_model={self.opencode_model!r}, "
             f"poll_interval_ms={self.poll_interval_ms!r}, "
             f"run_timeout_ms={self.run_timeout_ms!r}, "
             f"lock_path={self.lock_path!r}, "

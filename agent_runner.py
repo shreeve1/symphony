@@ -94,6 +94,7 @@ def run_agent(
             "PATH", "HOME", "USER", "LANG", "TERM", "XDG_RUNTIME_DIR",
             "PYTHONUNBUFFERED", "TMPDIR",
             "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_HOME_CHANNEL",
+            "CLIPROXY_API_KEY",
         }
         env = {k: v for k, v in source_env.items() if k in allowed_keys}
         env.update(
@@ -117,8 +118,10 @@ def run_agent(
             str(config.homelab_repo_path),
             "--title",
             f"symphony-{issue.id}",
-            rendered_prompt,
         ]
+        if config.opencode_model:
+            command.extend(["--model", config.opencode_model])
+        command.append(rendered_prompt)
         LOGGER.info("agent_started issue_id=%s title=symphony-%s", issue.id, issue.id)
         process = popen_factory(
             command,

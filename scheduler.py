@@ -20,6 +20,7 @@ from plane_poller import CandidateIssue, fetch_todo_issues
 
 from homelab_router.plane_adapter import CommentPayload, PlaneAdapter
 from homelab_router.plane_contract import PlaneLabel, PlaneState
+from homelab_router.prompt_renderer import render_previous_comments_block
 
 
 LOGGER = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def _sanitize_report(text: str, secrets: Sequence[str]) -> str:
 
 _SECRET_ENV_KEYS = (
     "PLANE_API_KEY",
+    "SYMPHONY_PLANE_API_KEY",
     "CLIPROXY_API_KEY",
     "TELEGRAM_BOT_TOKEN",
 )
@@ -150,9 +152,9 @@ async def run_tick(
 
             mode = _resolve_mode(candidate.labels)
 
-            if mode != "plan" and repo_dirty(config.homelab_repo_path):
-                LOGGER.warning("worktree_dirty repo=%s", config.homelab_repo_path)
-                return TickResult(False, "dirty-worktree")
+            pre_dirty = repo_dirty(config.homelab_repo_path)
+            if pre_dirty:
+                LOGGER.warning("repo_pre_dirty repo=%s", config.homelab_repo_path)
 
             fresh = await _fetch_issue(adapter, candidate.id)
             if not _is_state(fresh, adapter, PlaneState.TODO):
@@ -174,7 +176,7 @@ async def run_tick(
             comments_text = await _fetch_issue_comments(adapter, candidate.id)
             prompt = render_prompt(candidate)
             if comments_text:
-                prompt = f"{prompt}\n\n## Previous Issue Comments\n\n{comments_text}"
+                prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
 
             try:
                 result = agent_runner(candidate, prompt)
@@ -252,7 +254,8 @@ async def run_tick(
 
             if repo_dirty(config.homelab_repo_path):
                 stat = diff_stat(config.homelab_repo_path)
-                body = f"Symphony produced changes:\n```\n{stat}\n```"
+                preamble = "**WARNING: Repository was already dirty before dispatch.** Changes may include prior work.\n\n" if pre_dirty else ""
+                body = f"{preamble}Symphony produced changes:\n```\n{stat}\n```"
                 if stdout:
                     body += f"\n\n**Agent Report:**\n```\n{stdout}\n```"
                 if stderr:

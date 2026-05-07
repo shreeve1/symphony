@@ -41,6 +41,7 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.homelab_repo_path == Path("/home/james/homelab")
     assert config.opencode_bin == "/usr/local/bin/opencode"
     assert config.opencode_agent == "build"
+    assert config.opencode_model is None
     assert config.poll_interval_ms == 30_000
     assert config.run_timeout_ms == 900_000
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
@@ -64,6 +65,14 @@ def test_from_env_loads_opencode_agent_override():
     config = SymphonyConfig.from_env(_env(SYMPHONY_OPENCODE_AGENT="plan"))
 
     assert config.opencode_agent == "plan"
+
+
+def test_from_env_loads_opencode_model_override():
+    config = SymphonyConfig.from_env(
+        _env(SYMPHONY_OPENCODE_MODEL="zai-coding-plan/glm-5.1")
+    )
+
+    assert config.opencode_model == "zai-coding-plan/glm-5.1"
 
 
 def test_repr_and_str_redact_plane_api_key():

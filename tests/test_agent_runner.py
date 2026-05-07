@@ -46,6 +46,20 @@ def _config(tmp_path: Path) -> SymphonyConfig:
     )
 
 
+def _config_with_model(tmp_path: Path) -> SymphonyConfig:
+    return SymphonyConfig(
+        plane_api_url="https://plane.example.test",
+        plane_api_key="fake-plane-key-for-tests",
+        plane_workspace_slug="homelab",
+        plane_project_id="fake-project-id",
+        homelab_repo_path=tmp_path,
+        opencode_bin="opencode",
+        opencode_agent="build",
+        opencode_model="zai-coding-plan/glm-5.1",
+        run_timeout_ms=1000,
+    )
+
+
 def _issue() -> CandidateIssue:
     return CandidateIssue(
         id="issue-123",
@@ -112,6 +126,43 @@ def test_run_agent_sets_env_path_helper_and_process_group(tmp_path: Path) -> Non
     assert env.get("HOME") == "/home/james"
     assert env.get("TELEGRAM_BOT_TOKEN") == "tok-123"
     assert env.get("TELEGRAM_CHAT_ID") == "chat-456"
+
+
+def test_run_agent_adds_model_flag_when_configured(tmp_path: Path) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return FakeProcess()
+
+    run_agent(
+        _config_with_model(tmp_path),
+        _issue(),
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        run_func=lambda *a, **k: Completed(),
+        mkdtemp=lambda **k: str(temp_dir),
+        environ={"PATH": "/usr/bin"},
+    )
+
+    assert captured["command"] == [
+        "opencode",
+        "run",
+        "--agent",
+        "build",
+        "--dir",
+        str(tmp_path),
+        "--title",
+        "symphony-issue-123",
+        "--model",
+        "zai-coding-plan/glm-5.1",
+        "rendered prompt",
+    ]
 
 
 def test_run_agent_timeout_terminates_then_kills_process_group(tmp_path: Path) -> None:
