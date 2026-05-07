@@ -65,13 +65,42 @@ class PaginatedTransport:
 @pytest.mark.asyncio
 async def test_paginates_at_page_size_50():
     transport = PaginatedTransport()
-    adapter = PlaneAdapter(transport=transport)
+    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+    todo_state_id = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
 
     candidates = await fetch_todo_issues(adapter)
 
     assert [candidate.id for candidate in candidates] == ["first", "second"]
     assert all(f"per_page={PAGE_SIZE}" in path for path in transport.paths)
+    assert all(f"state={todo_state_id}" in path for path in transport.paths)
     assert any("cursor=page-2" in path for path in transport.paths)
+
+
+class StateFilterTransport:
+    def __init__(self):
+        self.paths = []
+
+    async def get(self, path):
+        self.paths.append(path)
+        return {"results": [], "next_cursor": None}
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
+@pytest.mark.asyncio
+async def test_fetch_todo_issues_passes_server_side_state_filter():
+    transport = StateFilterTransport()
+    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+    todo_state_id = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+
+    await fetch_todo_issues(adapter)
+
+    assert len(transport.paths) == 1
+    assert f"state={todo_state_id}" in transport.paths[0]
 
 
 class EndlessPaginationTransport:

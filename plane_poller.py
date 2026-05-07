@@ -140,10 +140,11 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
     candidates: list[CandidateIssue] = []
     cursor: str | None = None
     pages_fetched = 0
+    todo_state_id = adapter._resolve_state(PlaneState.TODO)
 
     try:
         while pages_fetched < MAX_PAGES_PER_TICK:
-            path = f"{adapter._issue_path()}?per_page={PAGE_SIZE}"
+            path = f"{adapter._issue_path()}?per_page={PAGE_SIZE}&state={todo_state_id}"
             if cursor:
                 path = f"{path}&cursor={cursor}"
             response = await adapter.transport.get(path)
