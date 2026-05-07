@@ -256,4 +256,4 @@ def test_build_adapter_uses_configured_project_uuid():
         project_id="project-uuid",
     )
 
-    assert adapter._issue_path() == "/workspaces/homelab/projects/project-uuid/issues"
+    assert adapter._issue_path() == "/workspaces/homelab/projects/project-uuid/issues/"

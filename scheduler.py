@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator, Callable, Iterator, Protocol, Sequence
 
 from agent_runner import AgentResult
 from config import SymphonyConfig
+from notifier import TelegramNotifier, format_blocked_message, format_review_message
 from plane_poller import CandidateIssue, fetch_todo_issues
 
 from homelab_router.plane_adapter import CommentPayload, PlaneAdapter
@@ -23,10 +24,54 @@ from homelab_router.plane_contract import PlaneLabel, PlaneState
 
 LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
+REPORT_MAX_BYTES = 8192
+_REDACTED = "***REDACTED***"
 
 
 class SchedulerError(RuntimeError):
     """Raised for scheduler setup failures."""
+
+
+def _sanitize_report(text: str, secrets: Sequence[str]) -> str:
+    report = text.strip()
+    for secret in secrets:
+        if secret:
+            report = report.replace(secret, _REDACTED)
+    encoded = report.encode("utf-8", errors="replace")
+    if len(encoded) > REPORT_MAX_BYTES:
+        report = encoded[:REPORT_MAX_BYTES].decode("utf-8", errors="replace")
+        report += "\n\n... [output truncated]"
+    return report
+
+
+_SECRET_ENV_KEYS = (
+    "PLANE_API_KEY",
+    "CLIPROXY_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+)
+
+
+def _collect_secrets(config: SymphonyConfig) -> list[str]:
+    import os as _os
+
+    secrets: list[str] = []
+    if config.plane_api_key:
+        secrets.append(config.plane_api_key)
+    if config.telegram_bot_token:
+        secrets.append(config.telegram_bot_token)
+    for key in _SECRET_ENV_KEYS:
+        val = _os.environ.get(key, "")
+        if val and val not in secrets:
+            secrets.append(val)
+    return secrets
+
+
+def _format_report(
+    result: AgentResult, secrets: Sequence[str]
+) -> tuple[str, str]:
+    stdout = _sanitize_report(result.stdout, secrets)
+    stderr = _sanitize_report(result.stderr, secrets)
+    return stdout, stderr
 
 
 class LockHeld(RuntimeError):
@@ -42,6 +87,16 @@ class TickResult:
     dispatched: bool
     reason: str
     issue_id: str | None = None
+    mode: str = "execute"
+
+
+def _resolve_mode(labels: tuple[str, ...]) -> str:
+    label_set = set(labels)
+    if PlaneLabel.PLAN.value in label_set:
+        return "plan"
+    if PlaneLabel.BUILD.value in label_set:
+        return "build"
+    return "execute"
 
 
 @contextmanager
@@ -71,6 +126,7 @@ async def run_tick(
     repo_dirty: Callable[[Path], bool] | None = None,
     diff_stat: Callable[[Path], str] | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    notifier: TelegramNotifier | None = None,
 ) -> TickResult:
     """Run one scheduler tick without sleeping forever."""
 
@@ -79,16 +135,12 @@ async def run_tick(
     lock_file = lock_path or config.lock_path
     try:
         with scheduler_lock(lock_file):
-            await reconcile_stale_running(adapter, config.run_timeout_ms, now=now)
+            await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier)
             try:
                 candidates = await _maybe_await(poller(adapter))
             except Exception as exc:
                 LOGGER.warning("plane_poll_failed error=%s", exc)
                 return TickResult(False, "plane-unreachable")
-
-            if repo_dirty(config.homelab_repo_path):
-                LOGGER.warning("worktree_dirty repo=%s", config.homelab_repo_path)
-                return TickResult(False, "dirty-worktree")
 
             candidate = _oldest_candidate(candidates)
             if candidate is None:
@@ -96,10 +148,17 @@ async def run_tick(
             if PlaneLabel.APPROVAL_REQUIRED.value in candidate.labels:
                 return TickResult(False, "approval-required", candidate.id)
 
+            mode = _resolve_mode(candidate.labels)
+
+            if mode != "plan" and repo_dirty(config.homelab_repo_path):
+                LOGGER.warning("worktree_dirty repo=%s", config.homelab_repo_path)
+                return TickResult(False, "dirty-worktree")
+
             fresh = await _fetch_issue(adapter, candidate.id)
             if not _is_state(fresh, adapter, PlaneState.TODO):
                 return TickResult(False, "state-changed", candidate.id)
-            if PlaneLabel.APPROVAL_REQUIRED.value in _extract_labels(fresh):
+            label_ids = adapter.contract.label_ids if adapter.contract else None
+            if PlaneLabel.APPROVAL_REQUIRED.value in _extract_labels(fresh, label_ids=label_ids):
                 return TickResult(False, "approval-required", candidate.id)
 
             await adapter.transition_state(candidate.id, PlaneState.RUNNING)
@@ -110,11 +169,22 @@ async def run_tick(
             )
             LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
 
+            secrets = _collect_secrets(config)
+
+            comments_text = await _fetch_issue_comments(adapter, candidate.id)
+            prompt = render_prompt(candidate)
+            if comments_text:
+                prompt = f"{prompt}\n\n## Previous Issue Comments\n\n{comments_text}"
+
             try:
-                result = agent_runner(candidate, render_prompt(candidate))
+                result = agent_runner(candidate, prompt)
             except Exception as exc:
-                await _block_issue(adapter, candidate.id, f"Agent crashed: {exc}")
-                return TickResult(True, "agent-crashed", candidate.id)
+                await _block_issue(
+                    adapter, candidate.id, f"Agent crashed: {exc}",
+                    issue_name=candidate.name, issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                )
+                return TickResult(True, "agent-crashed", candidate.id, mode=mode)
 
             LOGGER.info(
                 "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=%s",
@@ -124,37 +194,107 @@ async def run_tick(
                 str(result.timed_out).lower(),
             )
             if result.timed_out:
+                msg = f"Agent timed out after {result.duration_ms} ms"
+                stdout, stderr = _format_report(result, secrets)
+                if stdout:
+                    msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+                if stderr:
+                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await _block_issue(
-                    adapter,
-                    candidate.id,
-                    f"Agent timed out after {result.duration_ms} ms",
+                    adapter, candidate.id, msg,
+                    issue_name=candidate.name, issue_identifier=candidate.identifier,
+                    notifier=notifier,
                 )
-                return TickResult(True, "timeout", candidate.id)
+                return TickResult(True, "timeout", candidate.id, mode=mode)
             if result.exit_code != 0:
+                msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
+                stdout, stderr = _format_report(result, secrets)
+                if stdout:
+                    msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+                if stderr:
+                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await _block_issue(
-                    adapter,
-                    candidate.id,
-                    f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms",
+                    adapter, candidate.id, msg,
+                    issue_name=candidate.name, issue_identifier=candidate.identifier,
+                    notifier=notifier,
                 )
-                return TickResult(True, "nonzero", candidate.id)
+                return TickResult(True, "nonzero", candidate.id, mode=mode)
+
+            stdout, stderr = _format_report(result, secrets)
+
+            if mode == "plan":
+                body = "Symphony completed plan."
+                if stdout:
+                    body += f"\n\n**Agent Report:**\n```\n{stdout}\n```"
+                if stderr:
+                    body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                if repo_dirty(config.homelab_repo_path):
+                    stat = diff_stat(config.homelab_repo_path)
+                    body += f"\n\n**WARNING: Plan mode produced repository changes:**\n```\n{stat}\n```"
+                    LOGGER.warning(
+                        "plan_dirty issue_id=%s repo=%s",
+                        candidate.id, config.homelab_repo_path,
+                    )
+                await adapter.add_comment(
+                    candidate.id,
+                    CommentPayload(body=body),
+                )
+                await adapter.add_labels(
+                    candidate.id, [PlaneLabel.APPROVAL_REQUIRED]
+                )
+                await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
+                LOGGER.info("state_transitioned issue_id=%s state=in-review mode=plan", candidate.id)
+                await _notify_review(
+                    notifier, candidate.name, candidate.identifier,
+                    reason="Plan mode completed, awaiting approval",
+                )
+                return TickResult(True, "plan", candidate.id, mode=mode)
 
             if repo_dirty(config.homelab_repo_path):
                 stat = diff_stat(config.homelab_repo_path)
+                body = f"Symphony produced changes:\n```\n{stat}\n```"
+                if stdout:
+                    body += f"\n\n**Agent Report:**\n```\n{stdout}\n```"
+                if stderr:
+                    body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await adapter.add_comment(
                     candidate.id,
-                    CommentPayload(body=f"Symphony produced changes:\n```\n{stat}\n```"),
+                    CommentPayload(body=body),
                 )
                 await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
                 LOGGER.info("state_transitioned issue_id=%s state=in-review", candidate.id)
-                return TickResult(True, "review", candidate.id)
+                await _notify_review(
+                    notifier, candidate.name, candidate.identifier,
+                    reason="Agent produced repository changes",
+                )
+                return TickResult(True, "review", candidate.id, mode=mode)
 
-            await adapter.add_comment(
-                candidate.id,
-                CommentPayload(body="Symphony completed without repository changes."),
+            after_agent = await _fetch_issue(adapter, candidate.id)
+            if _is_state(after_agent, adapter, PlaneState.DONE):
+                return TickResult(True, "agent-done", candidate.id, mode=mode)
+            if _is_state(after_agent, adapter, PlaneState.IN_REVIEW):
+                return TickResult(True, "agent-review", candidate.id, mode=mode)
+            if _is_state(after_agent, adapter, PlaneState.BLOCKED):
+                return TickResult(True, "agent-blocked", candidate.id, mode=mode)
+
+            msg = (
+                "Agent exited successfully, but did not modify the repository "
+                "and did not transition the Plane issue. Agents must call "
+                "`plane done`, `plane review`, or `plane blocked` before exiting."
             )
-            await adapter.transition_state(candidate.id, PlaneState.DONE)
-            LOGGER.info("state_transitioned issue_id=%s state=done", candidate.id)
-            return TickResult(True, "done", candidate.id)
+            if stdout:
+                msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+            if stderr:
+                msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+            await _block_issue(
+                adapter,
+                candidate.id,
+                msg,
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+            )
+            return TickResult(True, "no-terminal-state", candidate.id, mode=mode)
     except LockHeld:
         return TickResult(False, "lock-held")
 
@@ -164,6 +304,7 @@ async def reconcile_stale_running(
     run_timeout_ms: int,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    notifier: TelegramNotifier | None = None,
 ) -> None:
     """Block Running issues whose durable claim comment is stale."""
 
@@ -178,7 +319,13 @@ async def reconcile_stale_running(
         if claim_time is None:
             continue
         if now() - claim_time > timedelta(milliseconds=run_timeout_ms):
-            await _block_issue(adapter, issue_id, "Symphony claim timed out after scheduler restart")
+            issue_name = str(issue.get("name", ""))
+            issue_identifier = str(issue.get("sequence_id", ""))
+            await _block_issue(
+                adapter, issue_id, "Symphony claim timed out after scheduler restart",
+                issue_name=issue_name, issue_identifier=issue_identifier,
+                notifier=notifier,
+            )
 
 
 async def run_loop(
@@ -187,6 +334,7 @@ async def run_loop(
     *,
     agent_runner: AgentCallable,
     render_prompt: Callable[[CandidateIssue], str],
+    notifier: TelegramNotifier | None = None,
 ) -> None:
     """Run the scheduler forever, sleeping between ticks."""
 
@@ -196,6 +344,7 @@ async def run_loop(
             adapter,
             agent_runner=agent_runner,
             render_prompt=render_prompt,
+            notifier=notifier,
         )
         LOGGER.info(
             "tick_completed dispatched=%s reason=%s issue_id=%s",
@@ -229,6 +378,25 @@ async def _fetch_issue(adapter: PlaneAdapter, issue_id: str) -> dict[str, Any]:
     return await adapter.transport.get(adapter._issue_path(issue_id))
 
 
+async def _fetch_issue_comments(adapter: PlaneAdapter, issue_id: str) -> str:
+    if adapter.transport is None:
+        return ""
+    response = await adapter.transport.get(adapter._comment_path(issue_id))
+    comments = response.get("results", [])
+    comments.sort(key=lambda c: c.get("created_at", ""))
+    parts: list[str] = []
+    for comment in comments:
+        body = str(comment.get("body") or comment.get("comment_html") or "")
+        if CLAIM_PREFIX in body:
+            continue
+        body = body.strip()
+        if not body:
+            continue
+        created = comment.get("created_at", "")
+        parts.append(f"**Comment ({created}):**\n{body}")
+    return "\n\n---\n\n".join(parts)
+
+
 async def _claimed_at(adapter: PlaneAdapter, issue_id: str) -> datetime | None:
     if adapter.transport is None:
         raise SchedulerError("Plane transport not configured")
@@ -248,10 +416,39 @@ async def _claimed_at(adapter: PlaneAdapter, issue_id: str) -> datetime | None:
     return max(claim_times)
 
 
-async def _block_issue(adapter: PlaneAdapter, issue_id: str, message: str) -> None:
+async def _notify_review(
+    notifier: TelegramNotifier | None,
+    issue_name: str,
+    issue_identifier: str,
+    reason: str = "",
+) -> None:
+    if notifier is None:
+        return
+    try:
+        await notifier.send(format_review_message(issue_name, issue_identifier, reason))
+    except Exception as exc:
+        LOGGER.warning("notification_error error=%s", exc)
+
+
+async def _block_issue(
+    adapter: PlaneAdapter,
+    issue_id: str,
+    message: str,
+    *,
+    issue_name: str = "",
+    issue_identifier: str = "",
+    notifier: TelegramNotifier | None = None,
+) -> None:
     await adapter.add_comment(issue_id, CommentPayload(body=message))
     await adapter.transition_state(issue_id, PlaneState.BLOCKED)
     LOGGER.info("state_transitioned issue_id=%s state=blocked", issue_id)
+    if notifier:
+        try:
+            await notifier.send(
+                format_blocked_message(issue_name, issue_identifier, message)
+            )
+        except Exception as exc:
+            LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)
 
 
 def _is_state(issue: dict[str, Any], adapter: PlaneAdapter, state: PlaneState) -> bool:
@@ -264,12 +461,18 @@ def _is_state(issue: dict[str, Any], adapter: PlaneAdapter, state: PlaneState) -
     return False
 
 
-def _extract_labels(issue: dict[str, Any]) -> tuple[str, ...]:
+def _extract_labels(
+    issue: dict[str, Any],
+    label_ids: dict[str, str] | None = None,
+) -> tuple[str, ...]:
     labels = issue.get("labels") or []
+    uuid_to_name: dict[str, str] = {}
+    if label_ids:
+        uuid_to_name = {v: k for k, v in label_ids.items()}
     names: list[str] = []
     for label in labels:
         if isinstance(label, str):
-            names.append(label)
+            names.append(uuid_to_name.get(label, label))
         elif isinstance(label, dict):
             name = label.get("name") or label.get("value")
             if isinstance(name, str):
@@ -278,13 +481,23 @@ def _extract_labels(issue: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _repo_dirty(repo_path: Path) -> bool:
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        LOGGER.warning("git_status_error repo=%s error=%s", repo_path, exc)
+        return True
+    if result.returncode != 0:
+        LOGGER.warning(
+            "git_status_failed repo=%s returncode=%s stderr=%s",
+            repo_path, result.returncode, result.stderr.strip(),
+        )
+        return True
     return bool(result.stdout.strip())
 
 

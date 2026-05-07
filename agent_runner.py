@@ -89,10 +89,17 @@ def run_agent(
         copy_file(helper_source, helper_target)
         helper_target.chmod(0o700)
 
-        env = dict(os.environ if environ is None else environ)
+        source_env = os.environ if environ is None else environ
+        allowed_keys = {
+            "PATH", "HOME", "USER", "LANG", "TERM", "XDG_RUNTIME_DIR",
+            "PYTHONUNBUFFERED", "TMPDIR",
+            "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_HOME_CHANNEL",
+        }
+        env = {k: v for k, v in source_env.items() if k in allowed_keys}
         env.update(
             {
-                "PATH": f"{temp_dir}{os.pathsep}{env.get('PATH', '')}",
+                "PATH": f"{temp_dir}{os.pathsep}{source_env.get('PATH', '')}",
+                "HOME": source_env.get("HOME", f"/home/{os.getenv('USER', 'james')}"),
                 "SYMPHONY_ISSUE_ID": issue.id,
                 "SYMPHONY_PLANE_API_URL": config.plane_api_url,
                 "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
@@ -105,7 +112,7 @@ def run_agent(
             config.opencode_bin,
             "run",
             "--agent",
-            "executor-ssh",
+            config.opencode_agent,
             "--dir",
             str(config.homelab_repo_path),
             "--title",

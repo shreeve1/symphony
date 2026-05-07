@@ -7,8 +7,9 @@ import logging
 
 from agent_runner import run_agent
 from config import SymphonyConfig
+from notifier import TelegramNotifier
 from plane_poller import HttpxPlaneTransport, build_adapter
-from scheduler import run_loop
+from scheduler import _resolve_mode, run_loop
 
 from homelab_router.prompt_renderer import IssueData, render_prompt
 
@@ -21,6 +22,7 @@ def _render_candidate_prompt(issue) -> str:
             name=issue.name,
             description=issue.description,
             labels=", ".join(issue.labels),
+            mode=_resolve_mode(issue.labels),
         )
     )
 
@@ -37,6 +39,12 @@ async def async_main() -> None:
     def configured_agent_runner(issue, rendered_prompt):
         return run_agent(config, issue, rendered_prompt)
 
+    notifier = TelegramNotifier.from_env()
+    if notifier:
+        logging.getLogger(__name__).info("telegram_notifications_enabled chat_id=%s", notifier.chat_id)
+    else:
+        logging.getLogger(__name__).info("telegram_notifications_disabled")
+
     try:
         await run_loop(
             config,
@@ -47,6 +55,7 @@ async def async_main() -> None:
             ),
             agent_runner=configured_agent_runner,
             render_prompt=_render_candidate_prompt,
+            notifier=notifier,
         )
     finally:
         await transport.aclose()

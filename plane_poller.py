@@ -47,12 +47,18 @@ class CandidateIssue:
     created_at: str
 
 
-def _extract_labels(issue: dict[str, Any]) -> tuple[str, ...]:
+def _extract_labels(
+    issue: dict[str, Any],
+    label_ids: dict[str, str] | None = None,
+) -> tuple[str, ...]:
     labels = issue.get("labels") or []
+    uuid_to_name: dict[str, str] = {}
+    if label_ids:
+        uuid_to_name = {v: k for k, v in label_ids.items()}
     extracted: list[str] = []
     for label in labels:
         if isinstance(label, str):
-            extracted.append(label)
+            extracted.append(uuid_to_name.get(label, label))
         elif isinstance(label, dict):
             name = label.get("name") or label.get("value")
             if isinstance(name, str):
@@ -70,14 +76,17 @@ def _is_todo(issue: dict[str, Any], adapter: PlaneAdapter) -> bool:
     return False
 
 
-def _candidate_from_issue(issue: dict[str, Any]) -> CandidateIssue:
+def _candidate_from_issue(
+    issue: dict[str, Any],
+    label_ids: dict[str, str] | None = None,
+) -> CandidateIssue:
     try:
         return CandidateIssue(
             id=str(issue["id"]),
             identifier=str(issue.get("identifier") or issue.get("sequence_id") or ""),
             name=str(issue["name"]),
             description=str(issue.get("description") or issue.get("description_html") or ""),
-            labels=_extract_labels(issue),
+            labels=_extract_labels(issue, label_ids=label_ids),
             created_at=str(issue.get("created_at") or ""),
         )
     except KeyError as exc:
@@ -140,13 +149,14 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
             response = await adapter.transport.get(path)
             pages_fetched += 1
             items = _page_items(response)
+            label_ids = adapter.contract.label_ids if adapter.contract else None
             for issue in items:
-                labels = _extract_labels(issue)
+                labels = _extract_labels(issue, label_ids=label_ids)
                 if PlaneLabel.APPROVAL_REQUIRED.value in labels:
                     continue
                 if not _is_todo(issue, adapter):
                     continue
-                candidates.append(_candidate_from_issue(issue))
+                candidates.append(_candidate_from_issue(issue, label_ids=label_ids))
             cursor = _next_cursor(response)
             if not cursor:
                 return candidates

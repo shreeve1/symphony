@@ -10,7 +10,9 @@ import pytest
 from agent_runner import AgentResult
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
-from scheduler import reconcile_stale_running, run_tick
+from scheduler import reconcile_stale_running, run_tick, _resolve_mode, _extract_labels
+
+from notifier import TelegramNotifier
 
 from homelab_router.plane_adapter import PlaneAdapter
 from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
@@ -22,21 +24,27 @@ class FakeTransport:
         self.comments: dict[str, list[dict[str, Any]]] = {}
 
     async def get(self, path: str) -> dict[str, Any]:
-        if path.endswith("/comments"):
-            issue_id = path.split("/issues/")[1].split("/comments")[0]
+        if "/comments" in path:
+            issue_id = path.split("/issues/")[1].split("/comments")[0].strip("/")
             return {"results": self.comments.get(issue_id, [])}
         if "/issues/" in path:
-            issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0]
+            issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
+            if not issue_id:
+                return {"results": list(self.issues.values())}
             return self.issues[issue_id]
         return {"results": list(self.issues.values())}
 
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        issue_id = path.split("/issues/")[1].split("/comments")[0]
-        self.comments.setdefault(issue_id, []).append(body)
-        return {"id": f"comment-{len(self.comments[issue_id])}", **body}
+        if "/comments" in path:
+            issue_id = path.split("/issues/")[1].split("/comments")[0].strip("/")
+            self.comments.setdefault(issue_id, []).append(body)
+            return {"id": f"comment-{len(self.comments[issue_id])}", **body}
+        issue_id = f"issue-{len(self.issues) + 1}"
+        self.issues[issue_id] = {"id": issue_id, **body}
+        return self.issues[issue_id]
 
     async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0]
+        issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
         self.issues[issue_id].update(body)
         return self.issues[issue_id]
 
@@ -109,11 +117,83 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "done"
+    assert result.reason == "no-terminal-state"
     assert seen == ["older"]
-    assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
-    assert "Symphony claimed at 2026-05-04T02:00:00+00:00" in transport.comments["older"][0]["comment_html"]
-    assert "completed without repository changes" in transport.comments["older"][1]["comment_html"]
+    assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    blocked_comment = transport.comments["older"][1]["comment_html"]
+    assert "did not transition the Plane issue" in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_includes_agent_stdout_in_no_terminal_comment(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = "## Health Check Results\n\n- Jellyfin: OK\n- Sonarr: OK\n- Radarr: Degraded"
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "Agent Output:" in blocked_comment
+    assert "Jellyfin: OK" in blocked_comment
+    assert "did not transition the Plane issue" in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_sanitizes_secrets_from_stdout(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = "Debug: API key is fake-plane-key-for-tests\nAll good"
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "fake-plane-key-for-tests" not in blocked_comment
+    assert "***REDACTED***" in blocked_comment
+    assert "All good" in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_includes_agent_stdout_in_review_comment(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = "## Changes Made\n\nUpdated config.yaml with new values."
+    dirty_checks = iter([False, True])
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: next(dirty_checks),
+        diff_stat=lambda path: "docs/file.md | 2 ++",
+    )
+
+    assert result.reason == "review"
+    review_comment = [c for c in transport.comments["issue-1"] if "Agent Report:" in c["comment_html"]][0]
+    assert "Updated config.yaml" in review_comment["comment_html"]
+    assert "docs/file.md | 2 ++" in review_comment["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -139,6 +219,41 @@ async def test_run_tick_dirty_after_clean_exit_moves_to_review(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "reason"),
+    [
+        (PlaneState.DONE, "agent-done"),
+        (PlaneState.IN_REVIEW, "agent-review"),
+        (PlaneState.BLOCKED, "agent-blocked"),
+    ],
+)
+async def test_run_tick_accepts_explicit_agent_terminal_state(
+    tmp_path: Path,
+    state: PlaneState,
+    reason: str,
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    def agent_runner(issue: CandidateIssue, prompt: str) -> AgentResult:
+        transport.issues[issue.id]["state"] = DEFAULT_CONTRACT.state_ids[state.value]
+        return AgentResult(0, 10, False, stdout="terminal state set")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-terminal",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == reason
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[state.value]
+
+
+@pytest.mark.asyncio
 async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> None:
     for result, reason in [(AgentResult(2, 10, False), "nonzero"), (AgentResult(-1, 20, True), "timeout")]:
         transport = FakeTransport()
@@ -156,6 +271,29 @@ async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> N
         assert tick.reason == reason
         assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
         assert len(transport.comments["issue-1"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_tick_includes_stdout_in_blocked_comments(tmp_path: Path) -> None:
+    for agent_result, reason in [
+        (AgentResult(2, 10, False, stdout="Error: connection refused"), "nonzero"),
+        (AgentResult(-1, 20, True, stdout="Partial output before timeout"), "timeout"),
+    ]:
+        transport = FakeTransport()
+        transport.issues["issue-1"] = _issue("issue-1")
+        await run_tick(
+            _config(tmp_path),
+            _adapter(transport),
+            agent_runner=lambda issue, prompt, result=agent_result: result,
+            render_prompt=lambda issue: "prompt",
+            lock_path=tmp_path / f"lock-{reason}-stdout",
+            poller=lambda adapter: [_candidate("issue-1")],
+            repo_dirty=lambda path: False,
+        )
+
+        blocked_comment = [c for c in transport.comments["issue-1"] if "Agent Output:" in c["comment_html"]]
+        assert len(blocked_comment) == 1, f"no Agent Output in blocked comment for {reason}"
+        assert agent_result.stdout in blocked_comment[0]["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -223,6 +361,58 @@ async def test_reconcile_uses_newest_claim_comment(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_stale_running_sends_notification(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    transport = FakeTransport()
+    stale = _issue("issue-1", state=PlaneState.RUNNING.value)
+    stale["name"] = "Stale Bug"
+    transport.issues["issue-1"] = stale
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        await reconcile_stale_running(
+            _adapter(transport),
+            1000,
+            now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+            notifier=notifier,
+        )
+
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    mock_send.assert_called_once()
+    assert "Stale Bug" in mock_send.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_run_tick_passes_notifier_to_reconcile(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    transport = FakeTransport()
+    old = _issue("issue-1", state=PlaneState.RUNNING.value)
+    old["name"] = "Old Task"
+    transport.issues["issue-1"] = old
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        await run_tick(
+            _config(tmp_path),
+            _adapter(transport),
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+            notifier=notifier,
+            poller=lambda adapter: [],
+            now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+        )
+
+    mock_send.assert_called_once()
+    assert "Old Task" in mock_send.call_args[0][0]
+
+
+@pytest.mark.asyncio
 async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_path: Path) -> None:
     changed = FakeTransport()
     changed.issues["issue-1"] = _issue("issue-1", state=PlaneState.BLOCKED.value)
@@ -266,3 +456,441 @@ async def test_run_tick_continues_when_plane_polling_fails(tmp_path: Path) -> No
 
     assert result.dispatched is False
     assert result.reason == "plane-unreachable"
+
+
+# --- Mode resolution tests ---
+
+
+def test_resolve_mode_plan_label():
+    assert _resolve_mode((PlaneLabel.PLAN.value,)) == "plan"
+    assert _resolve_mode((PlaneLabel.PLAN.value, PlaneLabel.MEDIA.value)) == "plan"
+
+
+def test_resolve_mode_build_label():
+    assert _resolve_mode((PlaneLabel.BUILD.value,)) == "build"
+
+
+def test_resolve_mode_execute_default():
+    assert _resolve_mode(()) == "execute"
+    assert _resolve_mode((PlaneLabel.MEDIA.value,)) == "execute"
+
+
+def test_resolve_mode_plan_takes_priority_over_build():
+    assert _resolve_mode((PlaneLabel.PLAN.value, PlaneLabel.BUILD.value)) == "plan"
+
+
+# --- Plan mode integration tests ---
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="Plan created"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "plan"
+    assert result.mode == "plan"
+    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value] in transport.issues["plan-1"]["labels"]
+    completion_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
+    assert "Plan created" in completion_comment["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_skips_pre_tick_dirty_check(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
+        repo_dirty=lambda path: True,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "plan"
+    assert result.mode == "plan"
+
+
+@pytest.mark.asyncio
+async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["build-1"] = _issue("build-1", labels=[PlaneLabel.BUILD.value])
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    assert result.mode == "build"
+    assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+
+
+# --- Label UUID extraction tests ---
+
+
+def test_extract_labels_maps_uuids_to_names():
+    label_ids = DEFAULT_CONTRACT.label_ids
+    issue = {"labels": [label_ids["plan"], label_ids["approval-required"]]}
+    result = _extract_labels(issue, label_ids=label_ids)
+    assert "plan" in result
+    assert "approval-required" in result
+
+
+def test_extract_labels_passthrough_unknown_uuids():
+    label_ids = DEFAULT_CONTRACT.label_ids
+    issue = {"labels": ["unknown-uuid-12345"]}
+    result = _extract_labels(issue, label_ids=label_ids)
+    assert "unknown-uuid-12345" in result
+
+
+def test_extract_labels_no_label_ids_passthrough():
+    issue = {"labels": ["some-uuid", "another-uuid"]}
+    result = _extract_labels(issue)
+    assert result == ("some-uuid", "another-uuid")
+
+
+@pytest.mark.asyncio
+async def test_approval_required_filter_works_with_uuid_labels(tmp_path: Path) -> None:
+    ar_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value]
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", labels=[ar_uuid])
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "no-candidates"
+
+
+# --- Stderr tests ---
+
+
+@pytest.mark.asyncio
+async def test_run_tick_stderr_appears_in_no_terminal_comment(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="done output", stderr="warning: minor issue"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "Agent Output:" in blocked_comment
+    assert "done output" in blocked_comment
+    assert "Stderr:" in blocked_comment
+    assert "warning: minor issue" in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_stderr_appears_in_blocked_timeout_comment(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(-1, 20, True, stdout="partial", stderr="timeout error detail"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    blocked_comment = [c for c in transport.comments["issue-1"] if "Agent Output:" in c["comment_html"]]
+    assert len(blocked_comment) == 1
+    assert "Stderr:" in blocked_comment[0]["comment_html"]
+    assert "timeout error detail" in blocked_comment[0]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="done output"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "Agent Output:" in blocked_comment
+    assert "Stderr:" not in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stderr="Debug: key=fake-plane-key-for-tests\nall done"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "fake-plane-key-for-tests" not in blocked_comment
+    assert "***REDACTED***" in blocked_comment
+    assert "Stderr:" in blocked_comment
+
+
+# --- Config lock_path tests ---
+
+
+def test_lock_path_defaults_to_homelab_repo():
+    env = {
+        "PLANE_API_URL": "https://plane.test",
+        "PLANE_API_KEY": "key",
+        "PLANE_WORKSPACE_SLUG": "ws",
+        "PLANE_PROJECT_ID": "proj",
+        "HOMELAB_REPO_PATH": "/tmp/test-repo",
+        "OPENCODE_BIN": "opencode",
+    }
+    config = SymphonyConfig.from_env(env)
+    assert config.lock_path == Path("/tmp/test-repo/.symphony.lock")
+
+
+def test_lock_path_env_override():
+    env = {
+        "PLANE_API_URL": "https://plane.test",
+        "PLANE_API_KEY": "key",
+        "PLANE_WORKSPACE_SLUG": "ws",
+        "PLANE_PROJECT_ID": "proj",
+        "HOMELAB_REPO_PATH": "/tmp/test-repo",
+        "OPENCODE_BIN": "opencode",
+        "SYMPHONY_LOCK_PATH": "/custom/lock.path",
+    }
+    config = SymphonyConfig.from_env(env)
+    assert config.lock_path == Path("/custom/lock.path")
+
+
+# --- Auto-read comments tests ---
+
+
+@pytest.mark.asyncio
+async def test_comments_appended_to_agent_prompt(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    transport.comments["issue-1"] = [
+        {"body": "Please focus on the database migration", "created_at": "2026-05-04T01:00:00+00:00"},
+        {"body": "Also check the API endpoints", "created_at": "2026-05-04T01:05:00+00:00"},
+    ]
+    seen_prompts: list[str] = []
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        render_prompt=lambda issue: "base prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert len(seen_prompts) == 1
+    assert "## Previous Issue Comments" in seen_prompts[0]
+    assert "database migration" in seen_prompts[0]
+    assert "API endpoints" in seen_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_claim_comments_excluded_from_prompt(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    transport.comments["issue-1"] = [
+        {"body": "Symphony claimed at 2026-05-04T00:00:00+00:00", "created_at": "2026-05-04T00:00:00+00:00"},
+        {"body": "Focus on the networking module", "created_at": "2026-05-04T01:00:00+00:00"},
+    ]
+    seen_prompts: list[str] = []
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        render_prompt=lambda issue: "base prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert len(seen_prompts) == 1
+    assert "Symphony claimed at" not in seen_prompts[0]
+    assert "networking module" in seen_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_no_comments_no_extra_section(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    seen_prompts: list[str] = []
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        render_prompt=lambda issue: "base prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert len(seen_prompts) == 1
+    assert "## Previous Issue Comments" not in seen_prompts[0]
+    assert seen_prompts[0] == "base prompt"
+
+
+@pytest.mark.asyncio
+async def test_comments_sorted_oldest_first(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    transport.comments["issue-1"] = [
+        {"body": "Second comment", "created_at": "2026-05-04T02:00:00+00:00"},
+        {"body": "First comment", "created_at": "2026-05-04T01:00:00+00:00"},
+    ]
+    seen_prompts: list[str] = []
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        render_prompt=lambda issue: "base prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
+    )
+
+    assert len(seen_prompts) == 1
+    prompt = seen_prompts[0]
+    first_pos = prompt.index("First comment")
+    second_pos = prompt.index("Second comment")
+    assert first_pos < second_pos
+
+
+# --- Fix 2: Broader secret redaction ---
+
+
+@pytest.mark.asyncio
+async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    env = {
+        "PLANE_API_URL": "https://plane.example.test",
+        "PLANE_API_KEY": "fake-plane-key-for-tests",
+        "PLANE_WORKSPACE_SLUG": "homelab",
+        "PLANE_PROJECT_ID": "fake-project-id",
+        "HOMELAB_REPO_PATH": str(tmp_path),
+        "OPENCODE_BIN": "opencode",
+        "TELEGRAM_BOT_TOKEN": "secret-telegram-token-12345",
+    }
+    config = SymphonyConfig.from_env(env)
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout="Debug: token=secret-telegram-token-12345\nAll good"
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-terminal-state"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "secret-telegram-token-12345" not in blocked_comment
+    assert "***REDACTED***" in blocked_comment
+
+
+# --- Fix 3: Plan-mode post-agent dirty check ---
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_warns_when_worktree_becomes_dirty(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
+    dirty_checks = iter([True, True])
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="Plan output"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
+        repo_dirty=lambda path: next(dirty_checks),
+        diff_stat=lambda path: "src/plan.md | 5 ++++",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "plan"
+    assert result.mode == "plan"
+    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    plan_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
+    assert "WARNING: Plan mode produced repository changes" in plan_comment["comment_html"]
+    assert "src/plan.md | 5 ++++" in plan_comment["comment_html"]
+
+
+# --- Fix 4: _repo_dirty git-error fail-closed ---
+
+
+def test_repo_dirty_returns_true_on_git_failure(tmp_path: Path) -> None:
+    from scheduler import _repo_dirty
+
+    nonexistent = tmp_path / "does-not-exist"
+    result = _repo_dirty(nonexistent)
+    assert result is True

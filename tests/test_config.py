@@ -40,9 +40,10 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.plane_project_id == "fake-project-uuid"
     assert config.homelab_repo_path == Path("/home/james/homelab")
     assert config.opencode_bin == "/usr/local/bin/opencode"
+    assert config.opencode_agent == "build"
     assert config.poll_interval_ms == 30_000
     assert config.run_timeout_ms == 900_000
-    assert config.lock_path == Path("/tmp/symphony.lock")
+    assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
 
 
 def test_from_env_loads_optional_values():
@@ -57,6 +58,12 @@ def test_from_env_loads_optional_values():
     assert config.poll_interval_ms == 1_000
     assert config.run_timeout_ms == 2_000
     assert config.lock_path == Path("/run/symphony.lock")
+
+
+def test_from_env_loads_opencode_agent_override():
+    config = SymphonyConfig.from_env(_env(SYMPHONY_OPENCODE_AGENT="plan"))
+
+    assert config.opencode_agent == "plan"
 
 
 def test_repr_and_str_redact_plane_api_key():

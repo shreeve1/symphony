@@ -23,6 +23,18 @@ class MockTransport:
     def __init__(self, fail=False):
         self.fail = fail
         self.calls = []
+        self._issues: dict[str, dict] = {}
+        self._comments: list[dict] = []
+
+    def get(self, path, body=None):
+        if self.fail:
+            raise PlaneCliError("Plane API error: HTTP 500")
+        if "comments" in path:
+            return {"results": self._comments}
+        for issue_id, issue in self._issues.items():
+            if issue_id in path:
+                return issue
+        return {"labels": []}
 
     def patch(self, path, body):
         if self.fail:
@@ -143,6 +155,9 @@ def test_urllib_transport_sets_plane_api_key_header(monkeypatch):
     class FakeResponse:
         status = 200
 
+        def read(self):
+            return b"{}"
+
         def __enter__(self):
             return self
 
@@ -203,3 +218,66 @@ def test_state_identifiers_match_issue_025_plane_contract_resolution():
         "review": "ea1ccd3d-82d3-4dd4-8226-192941e8e4c0",
         "blocked": "4b226b00-1e1c-46aa-bbd3-b1e04ad6fc1f",
     }
+
+
+def test_label_command_patches_labels_correctly():
+    transport = MockTransport()
+    transport._issues["issue-123"] = {"labels": ["existing-uuid"]}
+
+    assert run(["plane", "label", "plan"], env=_env(), transport=transport) == 0
+
+    assert len(transport.calls) == 1
+    method, path, body = transport.calls[0]
+    assert method == "PATCH"
+    label_uuid = plane_cli.LABEL_IDS["plan"]
+    assert label_uuid in body["labels"]
+    assert "existing-uuid" in body["labels"]
+
+
+def test_unlabel_command_removes_label_correctly():
+    transport = MockTransport()
+    plan_uuid = plane_cli.LABEL_IDS["plan"]
+    transport._issues["issue-123"] = {"labels": [plan_uuid, "other-uuid"]}
+
+    assert run(["plane", "unlabel", "plan"], env=_env(), transport=transport) == 0
+
+    assert len(transport.calls) == 1
+    method, path, body = transport.calls[0]
+    assert method == "PATCH"
+    assert plan_uuid not in body["labels"]
+    assert "other-uuid" in body["labels"]
+
+
+def test_label_command_rejects_unknown_label():
+    transport = MockTransport()
+    with pytest.raises(PlaneCliError, match="Unknown label"):
+        run(["plane", "label", "nonexistent"], env=_env(), transport=transport)
+
+
+def test_unlabel_command_rejects_unknown_label():
+    transport = MockTransport()
+    with pytest.raises(PlaneCliError, match="Unknown label"):
+        run(["plane", "unlabel", "nonexistent"], env=_env(), transport=transport)
+
+
+def test_comments_command_displays_comments_oldest_first(capsys):
+    transport = MockTransport()
+    transport._comments = [
+        {"comment_html": "second comment", "created_at": "2026-05-04T02:00:00Z"},
+        {"comment_html": "first comment", "created_at": "2026-05-04T01:00:00Z"},
+    ]
+
+    assert run(["plane", "comments"], env=_env(), transport=transport) == 0
+
+    output = capsys.readouterr().out
+    assert output.index("first comment") < output.index("second comment")
+    assert "---" in output
+
+
+def test_comments_command_with_no_comments_shows_empty(capsys):
+    transport = MockTransport()
+
+    assert run(["plane", "comments"], env=_env(), transport=transport) == 0
+
+    output = capsys.readouterr().out
+    assert output == ""

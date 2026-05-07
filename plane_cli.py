@@ -19,10 +19,22 @@ REQUIRED_ENV = (
     "SYMPHONY_PLANE_WORKSPACE_SLUG",
 )
 
+NOTIFY_STATES = {"review", "blocked"}
+
 STATE_IDS = {
     "done": "ef9d22b5-c69c-4707-8ba3-e3db244f2a84",
     "review": "ea1ccd3d-82d3-4dd4-8226-192941e8e4c0",
     "blocked": "4b226b00-1e1c-46aa-bbd3-b1e04ad6fc1f",
+}
+
+LABEL_IDS = {
+    "approval-required": "e7480a55-5ab6-417b-a74a-f436ffcf1db7",
+    "runbook:mutating": "3be946ce-0190-48cd-96ad-e333716adfea",
+    "runbook:read-only": "a7898c31-a629-490c-a2b0-4f6f91098f5d",
+    "media": "a683fbd6-a83a-439f-9e01-123a7088c04d",
+    "plan": "5a022793-c712-4565-ab70-0183fe04c557",
+    "build": "4ffc7ef9-9159-455c-b3f9-b3a447157aef",
+    "approved": "67839626-ca7f-4c02-a5e0-12e56a35d909",
 }
 
 
@@ -31,6 +43,7 @@ class PlaneCliError(RuntimeError):
 
 
 class Transport(Protocol):
+    def get(self, path: str) -> dict: ...
     def patch(self, path: str, body: dict[str, str]) -> None: ...
     def post(self, path: str, body: dict[str, str]) -> None: ...
 
@@ -72,14 +85,19 @@ class UrllibTransport:
     def __init__(self, config: PlaneCliConfig) -> None:
         self._config = config
 
+    def get(self, path: str) -> dict:
+        return self._request("GET", path)
+
     def patch(self, path: str, body: dict[str, str]) -> None:
         self._request("PATCH", path, body)
 
     def post(self, path: str, body: dict[str, str]) -> None:
         self._request("POST", path, body)
 
-    def _request(self, method: str, path: str, body: dict[str, str]) -> None:
-        data = json.dumps(body).encode("utf-8")
+    def _request(
+        self, method: str, path: str, body: dict[str, str] | None = None
+    ) -> dict:
+        data = json.dumps(body).encode("utf-8") if body else None
         request = urllib.request.Request(
             f"{self._config.api_url}{path}",
             data=data,
@@ -91,8 +109,8 @@ class UrllibTransport:
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                if response.status >= 400:
-                    raise PlaneCliError(f"Plane API error: HTTP {response.status}")
+                raw = response.read().decode("utf-8")
+                return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
             raise PlaneCliError(f"Plane API error: HTTP {exc.code}") from exc
         except urllib.error.URLError as exc:
@@ -110,6 +128,40 @@ def _reject_target_override(args: Sequence[str]) -> None:
         )
 
 
+def _send_telegram(env: Mapping[str, str], state: str) -> None:
+    token = env.get("TELEGRAM_BOT_TOKEN")
+    chat_id = env.get("TELEGRAM_CHAT_ID") or env.get("TELEGRAM_HOME_CHANNEL")
+    if not token or not chat_id:
+        return
+    if state == "review":
+        emoji = "\U0001f4cb"
+        label = "Review"
+    elif state == "blocked":
+        emoji = "\U0001f6ab"
+        label = "Blocked"
+    else:
+        return
+    issue_id = env.get("SYMPHONY_ISSUE_ID", "")
+    message = f"{emoji} Issue {issue_id} \u2192 <b>{label}</b>"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response.read()
+    except Exception:
+        pass
+
+
 def run(
     argv: Sequence[str],
     env: Mapping[str, str] | None = None,
@@ -120,11 +172,11 @@ def run(
     _reject_target_override(args)
 
     if not args:
-        raise PlaneCliError("Usage: plane <done|review|blocked|comment <text>>")
+        raise PlaneCliError("Usage: plane <done|review|blocked|comment|comments|label|unlabel ...>")
     if args[0] == "plane":
         args = args[1:]
     if not args:
-        raise PlaneCliError("Usage: plane <done|review|blocked|comment <text>>")
+        raise PlaneCliError("Usage: plane <done|review|blocked|comment|comments|label|unlabel ...>")
 
     config = PlaneCliConfig.from_env(env)
     client = transport or UrllibTransport(config)
@@ -134,12 +186,54 @@ def run(
         if len(args) != 1:
             raise PlaneCliError(f"plane {command} does not accept an issue argument")
         client.patch(config.issue_path(), {"state": STATE_IDS[command]})
+        if command in NOTIFY_STATES:
+            _send_telegram(env, command)
         return 0
 
     if command == "comment":
         if len(args) < 2:
             raise PlaneCliError("plane comment requires comment text")
         client.post(config.comment_path(), {"comment_html": " ".join(args[1:])})
+        return 0
+
+    if command == "label":
+        if len(args) != 2:
+            raise PlaneCliError("Usage: plane label <label-name>")
+        label_name = args[1]
+        if label_name not in LABEL_IDS:
+            raise PlaneCliError(
+                f"Unknown label: {label_name}. Available: {', '.join(sorted(LABEL_IDS))}"
+            )
+        current = client.get(config.issue_path())
+        existing_uuids: list[str] = list(current.get("labels") or [])
+        new_uuid = LABEL_IDS[label_name]
+        merged = list(dict.fromkeys(existing_uuids + [new_uuid]))
+        client.patch(config.issue_path(), {"labels": merged})
+        return 0
+
+    if command == "unlabel":
+        if len(args) != 2:
+            raise PlaneCliError("Usage: plane unlabel <label-name>")
+        label_name = args[1]
+        if label_name not in LABEL_IDS:
+            raise PlaneCliError(
+                f"Unknown label: {label_name}. Available: {', '.join(sorted(LABEL_IDS))}"
+            )
+        current = client.get(config.issue_path())
+        existing_uuids: list[str] = list(current.get("labels") or [])
+        remove_uuid = LABEL_IDS[label_name]
+        remaining = [u for u in existing_uuids if u != remove_uuid]
+        client.patch(config.issue_path(), {"labels": remaining})
+        return 0
+
+    if command == "comments":
+        response = client.get(config.comment_path())
+        comments = response.get("results", [])
+        comments.sort(key=lambda c: c.get("created_at", ""))
+        for i, comment in enumerate(comments):
+            if i > 0:
+                print("---")
+            print(comment.get("comment_html", ""))
         return 0
 
     raise PlaneCliError(f"Unknown command: {command}")

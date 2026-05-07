@@ -41,6 +41,7 @@ def _config(tmp_path: Path) -> SymphonyConfig:
         plane_project_id="fake-project-id",
         homelab_repo_path=tmp_path,
         opencode_bin="opencode",
+        opencode_agent="build",
         run_timeout_ms=1000,
     )
 
@@ -83,7 +84,7 @@ def test_run_agent_sets_env_path_helper_and_process_group(tmp_path: Path) -> Non
         run_func=lambda *a, **k: Completed(),
         mkdtemp=lambda **k: str(temp_dir),
         clock=iter([10.0, 10.25]).__next__,
-        environ={"PATH": "/usr/bin"},
+        environ={"PATH": "/usr/bin", "HOME": "/home/james", "SECRET_LEAK": "should-not-appear", "PLANE_API_KEY": "leaked-key", "TELEGRAM_BOT_TOKEN": "tok-123", "TELEGRAM_CHAT_ID": "chat-456"},
     )
 
     assert result.exit_code == 0
@@ -94,7 +95,7 @@ def test_run_agent_sets_env_path_helper_and_process_group(tmp_path: Path) -> Non
         "opencode",
         "run",
         "--agent",
-        "executor-ssh",
+        "build",
         "--dir",
         str(tmp_path),
         "--title",
@@ -107,6 +108,10 @@ def test_run_agent_sets_env_path_helper_and_process_group(tmp_path: Path) -> Non
     assert env["PATH"].startswith(f"{temp_dir}:")
     assert env["SYMPHONY_ISSUE_ID"] == "issue-123"
     assert env["SYMPHONY_PLANE_API_KEY"] == "fake-plane-key-for-tests"
+    assert "SECRET_LEAK" not in env
+    assert env.get("HOME") == "/home/james"
+    assert env.get("TELEGRAM_BOT_TOKEN") == "tok-123"
+    assert env.get("TELEGRAM_CHAT_ID") == "chat-456"
 
 
 def test_run_agent_timeout_terminates_then_kills_process_group(tmp_path: Path) -> None:

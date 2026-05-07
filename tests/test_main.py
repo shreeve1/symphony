@@ -60,8 +60,9 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
         calls["run_agent"] = (config, issue, rendered_prompt)
         return "agent-result"
 
-    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt):
+    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
         calls["run_loop"] = (config, adapter, render_prompt)
+        calls["notifier"] = notifier
         calls["agent_result"] = agent_runner("issue", "prompt")
 
     monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)

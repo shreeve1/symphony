@@ -27,9 +27,12 @@ class SymphonyConfig:
     plane_project_id: str
     homelab_repo_path: Path
     opencode_bin: str
+    opencode_agent: str = "build"
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 900_000
     lock_path: Path = Path("/tmp/symphony.lock")
+    telegram_bot_token: str | None = field(default=None, repr=False)
+    telegram_chat_id: str | None = None
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
@@ -47,9 +50,12 @@ class SymphonyConfig:
             plane_project_id=source["PLANE_PROJECT_ID"],
             homelab_repo_path=Path(source["HOMELAB_REPO_PATH"]),
             opencode_bin=source["OPENCODE_BIN"],
+            opencode_agent=source.get("SYMPHONY_OPENCODE_AGENT", "build"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "900000")),
-            lock_path=Path(source.get("SYMPHONY_LOCK_PATH", "/tmp/symphony.lock")),
+            lock_path=Path(source.get("SYMPHONY_LOCK_PATH", str(Path(source["HOMELAB_REPO_PATH"]) / ".symphony.lock"))),
+            telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),
+            telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),
         )
 
     def __repr__(self) -> str:
@@ -61,9 +67,11 @@ class SymphonyConfig:
             f"plane_project_id={self.plane_project_id!r}, "
             f"homelab_repo_path={self.homelab_repo_path!r}, "
             f"opencode_bin={self.opencode_bin!r}, "
+            f"opencode_agent={self.opencode_agent!r}, "
             f"poll_interval_ms={self.poll_interval_ms!r}, "
             f"run_timeout_ms={self.run_timeout_ms!r}, "
-            f"lock_path={self.lock_path!r})"
+            f"lock_path={self.lock_path!r}, "
+            f"telegram_chat_id={self.telegram_chat_id!r})"
         )
 
     __str__ = __repr__
