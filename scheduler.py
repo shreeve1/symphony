@@ -6,6 +6,7 @@ import asyncio
 import fcntl
 import inspect
 import logging
+import re
 import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -27,6 +28,25 @@ LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 8192
 _REDACTED = "***REDACTED***"
+
+# SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
+# on its own line in stdout to declare an explicit verdict. Last occurrence wins,
+# case-insensitive. Unknown values fall through to the heuristic.
+_RESULT_MARKER_RE = re.compile(
+    r"^[ \t]*SYMPHONY_RESULT:[ \t]*(done|review|blocked)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _parse_result_marker(stdout: str) -> str | None:
+    """Return the last SYMPHONY_RESULT verdict in stdout, or None."""
+
+    if not stdout:
+        return None
+    matches = _RESULT_MARKER_RE.findall(stdout)
+    if not matches:
+        return None
+    return matches[-1].lower()
 
 
 class SchedulerError(RuntimeError):
@@ -127,6 +147,7 @@ async def run_tick(
     poller: Callable[[PlaneAdapter], Any] = fetch_todo_issues,
     repo_dirty: Callable[[Path], bool] | None = None,
     diff_stat: Callable[[Path], str] | None = None,
+    auto_commit: Callable[..., str] | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
 ) -> TickResult:
@@ -134,6 +155,7 @@ async def run_tick(
 
     repo_dirty = _repo_dirty if repo_dirty is None else repo_dirty
     diff_stat = _diff_stat if diff_stat is None else diff_stat
+    auto_commit = _auto_commit if auto_commit is None else auto_commit
     lock_file = lock_path or config.lock_path
     try:
         with scheduler_lock(lock_file):
@@ -252,25 +274,47 @@ async def run_tick(
                 )
                 return TickResult(True, "plan", candidate.id, mode=mode)
 
+            committed_sha: str | None = None
+            committed_stat: str | None = None
+            committed_pre_dirty = pre_dirty
             if repo_dirty(config.homelab_repo_path):
-                stat = diff_stat(config.homelab_repo_path)
-                preamble = "**WARNING: Repository was already dirty before dispatch.** Changes may include prior work.\n\n" if pre_dirty else ""
-                body = f"{preamble}Symphony produced changes:\n```\n{stat}\n```"
-                if stdout:
-                    body += f"\n\n**Agent Report:**\n```\n{stdout}\n```"
-                if stderr:
-                    body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(body=body),
+                committed_stat = diff_stat(config.homelab_repo_path)
+                try:
+                    committed_sha = auto_commit(
+                        config.homelab_repo_path,
+                        issue_identifier=candidate.identifier,
+                        issue_name=candidate.name,
+                        issue_id=candidate.id,
+                    )
+                except AutoCommitFailed as exc:
+                    LOGGER.warning(
+                        "auto_commit_failed issue_id=%s repo=%s error=%s",
+                        candidate.id, config.homelab_repo_path, exc,
+                    )
+                    msg = f"Symphony auto-commit failed: {exc}"
+                    if exc.stderr:
+                        sanitized = _sanitize_report(exc.stderr, secrets)
+                        msg += f"\n\n**git stderr:**\n```\n{sanitized}\n```"
+                    if committed_stat and committed_stat != "No diff stat available":
+                        msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
+                    if stdout:
+                        msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+                    if stderr:
+                        msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                    await _block_issue(
+                        adapter, candidate.id, msg,
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                    )
+                    return TickResult(
+                        True, "auto-commit-failed", candidate.id, mode=mode,
+                    )
+                LOGGER.info(
+                    "auto_commit_succeeded issue_id=%s sha=%s pre_dirty=%s",
+                    candidate.id, committed_sha,
+                    str(committed_pre_dirty).lower(),
                 )
-                await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
-                LOGGER.info("state_transitioned issue_id=%s state=in-review", candidate.id)
-                await _notify_review(
-                    notifier, candidate.name, candidate.identifier,
-                    reason="Agent produced repository changes",
-                )
-                return TickResult(True, "review", candidate.id, mode=mode)
 
             after_agent = await _fetch_issue(adapter, candidate.id)
             if _is_state(after_agent, adapter, PlaneState.DONE):
@@ -280,24 +324,83 @@ async def run_tick(
             if _is_state(after_agent, adapter, PlaneState.BLOCKED):
                 return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
-            msg = (
-                "Agent exited successfully, but did not modify the repository "
-                "and did not transition the Plane issue. Agents must call "
-                "`plane done`, `plane review`, or `plane blocked` before exiting."
-            )
-            if stdout:
-                msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
-            if stderr:
-                msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
-            await _block_issue(
-                adapter,
+            # No repo changes, no in-agent state transition. Resolve the
+            # agent's verdict from an explicit SYMPHONY_RESULT marker in
+            # stdout, or fall through to a clean-exit Done.
+            verdict = _parse_result_marker(stdout)
+
+            def _completion_body() -> str:
+                body = "**Symphony completed:**"
+                if stdout:
+                    body += f"\n\n```\n{stdout}\n```"
+                else:
+                    body = "Symphony completed (no output)."
+                if stderr:
+                    body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                if committed_sha is not None:
+                    commit_block = (
+                        f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
+                    )
+                    if committed_pre_dirty:
+                        commit_block += (
+                            "\n\n**WARNING: Repository was already dirty before "
+                            "dispatch.** Commit may include prior work."
+                        )
+                    if committed_stat and committed_stat != "No diff stat available":
+                        commit_block += f"\n\n```\n{committed_stat}\n```"
+                    body += commit_block
+                return body
+
+            if verdict == "blocked":
+                msg = "Agent reported SYMPHONY_RESULT: blocked."
+                if committed_sha is not None:
+                    msg += (
+                        f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
+                    )
+                    if committed_stat and committed_stat != "No diff stat available":
+                        msg += f"\n\n```\n{committed_stat}\n```"
+                if stdout:
+                    msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+                if stderr:
+                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    msg,
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                )
+                return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
+
+            if verdict == "review":
+                await adapter.add_comment(
+                    candidate.id,
+                    CommentPayload(body=_completion_body()),
+                )
+                await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
+                LOGGER.info(
+                    "state_transitioned issue_id=%s state=in-review reason=marker",
+                    candidate.id,
+                )
+                await _notify_review(
+                    notifier, candidate.name, candidate.identifier,
+                    reason="Agent reported SYMPHONY_RESULT: review",
+                )
+                return TickResult(True, "agent-marker-review", candidate.id, mode=mode)
+
+            # verdict == "done" or no marker: trust clean exit and mark Done.
+            reason_code = "agent-marker-done" if verdict == "done" else "agent-clean-done"
+            await adapter.add_comment(
                 candidate.id,
-                msg,
-                issue_name=candidate.name,
-                issue_identifier=candidate.identifier,
-                notifier=notifier,
+                CommentPayload(body=_completion_body()),
             )
-            return TickResult(True, "no-terminal-state", candidate.id, mode=mode)
+            await adapter.transition_state(candidate.id, PlaneState.DONE)
+            LOGGER.info(
+                "state_transitioned issue_id=%s state=done reason=%s",
+                candidate.id, reason_code,
+            )
+            return TickResult(True, reason_code, candidate.id, mode=mode)
     except LockHeld:
         return TickResult(False, "lock-held")
 
@@ -513,3 +616,76 @@ def _diff_stat(repo_path: Path) -> str:
         check=False,
     )
     return result.stdout.strip() or "No diff stat available"
+
+
+# Symphony bot identity used for auto-commits when an agent leaves the
+# homelab worktree dirty. See _auto_commit below.
+_SYMPHONY_GIT_NAME = "Symphony"
+_SYMPHONY_GIT_EMAIL = "symphony@testytech.net"
+
+
+class AutoCommitFailed(RuntimeError):
+    """Raised when the scheduler cannot auto-commit dirty changes."""
+
+    def __init__(self, message: str, *, stderr: str = "") -> None:
+        super().__init__(message)
+        self.stderr = stderr
+
+
+def _auto_commit(
+    repo_path: Path,
+    *,
+    issue_identifier: str,
+    issue_name: str,
+    issue_id: str,
+) -> str:
+    """Stage and commit all dirty changes under the Symphony bot identity.
+
+    Returns the resulting commit SHA. Raises AutoCommitFailed if any git
+    invocation fails. No push is performed.
+    """
+
+    git_env = ["-c", f"user.name={_SYMPHONY_GIT_NAME}",
+               "-c", f"user.email={_SYMPHONY_GIT_EMAIL}"]
+
+    add = subprocess.run(
+        ["git", *git_env, "add", "-A"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if add.returncode != 0:
+        raise AutoCommitFailed(
+            f"git add failed (exit {add.returncode})",
+            stderr=add.stderr.strip(),
+        )
+
+    title = f"Symphony: {issue_identifier} {issue_name}".strip()
+    trailer = f"Plane-Issue: {issue_id}"
+    commit = subprocess.run(
+        ["git", *git_env, "commit", "-m", title, "-m", trailer],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if commit.returncode != 0:
+        raise AutoCommitFailed(
+            f"git commit failed (exit {commit.returncode})",
+            stderr=commit.stderr.strip() or commit.stdout.strip(),
+        )
+
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if sha.returncode != 0:
+        raise AutoCommitFailed(
+            f"git rev-parse HEAD failed (exit {sha.returncode})",
+            stderr=sha.stderr.strip(),
+        )
+    return sha.stdout.strip()

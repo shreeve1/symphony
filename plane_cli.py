@@ -21,6 +21,11 @@ REQUIRED_ENV = (
 
 NOTIFY_STATES = {"review", "blocked"}
 
+# BEGIN GENERATED PLANE IDS
+# Source: homelab_router.plane_contract.DEFAULT_CONTRACT
+# Regenerate with: python3 scripts/sync_plane_ids.py
+# Drift is enforced by tests/test_plane_cli.py.
+
 STATE_IDS = {
     "done": "ef9d22b5-c69c-4707-8ba3-e3db244f2a84",
     "review": "ea1ccd3d-82d3-4dd4-8226-192941e8e4c0",
@@ -28,14 +33,13 @@ STATE_IDS = {
 }
 
 LABEL_IDS = {
-    "approval-required": "e7480a55-5ab6-417b-a74a-f436ffcf1db7",
-    "runbook:mutating": "3be946ce-0190-48cd-96ad-e333716adfea",
-    "runbook:read-only": "a7898c31-a629-490c-a2b0-4f6f91098f5d",
     "media": "a683fbd6-a83a-439f-9e01-123a7088c04d",
+    "approval-required": "e7480a55-5ab6-417b-a74a-f436ffcf1db7",
     "plan": "5a022793-c712-4565-ab70-0183fe04c557",
     "build": "4ffc7ef9-9159-455c-b3f9-b3a447157aef",
     "approved": "67839626-ca7f-4c02-a5e0-12e56a35d909",
 }
+# END GENERATED PLANE IDS
 
 
 class PlaneCliError(RuntimeError):

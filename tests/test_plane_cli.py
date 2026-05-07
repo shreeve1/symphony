@@ -212,12 +212,54 @@ def test_urllib_transport_maps_url_error(monkeypatch):
         transport.post(config.comment_path(), {"comment_html": "blocked"})
 
 
-def test_state_identifiers_match_issue_025_plane_contract_resolution():
-    assert STATE_IDS == {
-        "done": "ef9d22b5-c69c-4707-8ba3-e3db244f2a84",
-        "review": "ea1ccd3d-82d3-4dd4-8226-192941e8e4c0",
-        "blocked": "4b226b00-1e1c-46aa-bbd3-b1e04ad6fc1f",
+def _import_plane_contract():
+    """Import plane_contract using the same fallback pattern as plane_poller.
+
+    plane_cli is intentionally standalone (urllib only) so the contract
+    test loads plane_contract here, not in plane_cli itself.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    try:
+        from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
+    except ModuleNotFoundError:
+        repo_env = os.environ.get("HOMELAB_REPO_PATH", "/home/james/homelab")
+        src = Path(repo_env) / "automation" / "homelab-stack" / "src"
+        if str(src) not in sys.path:
+            sys.path.insert(0, str(src))
+        from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
+    return DEFAULT_CONTRACT, PlaneState
+
+
+def test_state_ids_match_plane_contract_default_contract():
+    """plane_cli.STATE_IDS must match DEFAULT_CONTRACT.state_ids.
+
+    plane_cli keys by command verb (done/review/blocked); plane_contract keys
+    by PlaneState enum. Drift here means the generator (scripts/sync_plane_ids.py)
+    was not run after a contract change.
+    """
+    DEFAULT_CONTRACT, PlaneState = _import_plane_contract()
+    state_key_map = {
+        "done": PlaneState.DONE,
+        "review": PlaneState.IN_REVIEW,
+        "blocked": PlaneState.BLOCKED,
     }
+    expected = {verb: DEFAULT_CONTRACT.state_ids[state] for verb, state in state_key_map.items()}
+    assert STATE_IDS == expected, (
+        "plane_cli.STATE_IDS drifted from plane_contract.DEFAULT_CONTRACT. "
+        "Re-run scripts/sync_plane_ids.py to regenerate."
+    )
+
+
+def test_label_ids_match_plane_contract_default_contract():
+    """plane_cli.LABEL_IDS must match DEFAULT_CONTRACT.label_ids exactly."""
+    DEFAULT_CONTRACT, _ = _import_plane_contract()
+    assert plane_cli.LABEL_IDS == DEFAULT_CONTRACT.label_ids, (
+        "plane_cli.LABEL_IDS drifted from plane_contract.DEFAULT_CONTRACT. "
+        "Re-run scripts/sync_plane_ids.py to regenerate."
+    )
 
 
 def test_label_command_patches_labels_correctly():
