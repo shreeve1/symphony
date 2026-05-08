@@ -28,6 +28,7 @@ LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 8192
 _REDACTED = "***REDACTED***"
+_PLAN_HANDOFF_MARKER = "Symphony completed plan."
 
 # SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
 # on its own line in stdout to declare an explicit verdict. Last occurrence wins,
@@ -114,11 +115,72 @@ class TickResult:
 
 def _resolve_mode(labels: tuple[str, ...]) -> str:
     label_set = set(labels)
-    if PlaneLabel.PLAN.value in label_set:
-        return "plan"
     if PlaneLabel.BUILD.value in label_set:
         return "build"
+    if PlaneLabel.PLAN.value in label_set:
+        return "plan"
     return "execute"
+
+
+def _issue_slug(issue: CandidateIssue) -> str:
+    raw = issue.identifier or issue.id
+    slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+    return slug or issue.id
+
+
+def _expected_plan_path(repo_path: Path, issue: CandidateIssue) -> Path:
+    return (repo_path / "plans" / f"{_issue_slug(issue)}.md").resolve()
+
+
+def _state_path_for_plan(plan_path: Path) -> Path:
+    return plan_path.with_name(f".{plan_path.stem}.state.yml")
+
+
+def _final_non_empty_line(body: str) -> str | None:
+    for line in reversed(body.splitlines()):
+        stripped = line.strip().strip("`")
+        if stripped:
+            return stripped
+    return None
+
+
+def _validate_issue_plan_path(repo_path: Path, issue: CandidateIssue, raw_path: str) -> Path:
+    expected = _expected_plan_path(repo_path, issue)
+    plans_dir = (repo_path / "plans").resolve()
+    candidate = Path(raw_path).expanduser().resolve()
+    if not raw_path.startswith("/"):
+        raise ValueError("plan path is not absolute")
+    if candidate != expected:
+        raise ValueError("plan path does not match the current issue slug")
+    if candidate.parent != plans_dir:
+        raise ValueError("plan path is outside the homelab plans directory")
+    if candidate.suffix != ".md":
+        raise ValueError("plan path is not a Markdown file")
+    if not candidate.is_file():
+        raise ValueError("plan path is not a readable regular file")
+    return candidate
+
+
+def _validated_fallback_plan_path(repo_path: Path, issue: CandidateIssue) -> Path | None:
+    expected = _expected_plan_path(repo_path, issue)
+    try:
+        return _validate_issue_plan_path(repo_path, issue, str(expected))
+    except ValueError:
+        return None
+
+
+def _plan_path_from_comments(repo_path: Path, issue: CandidateIssue, comments: list[str]) -> tuple[Path | None, str | None]:
+    for body in comments:
+        if _PLAN_HANDOFF_MARKER not in body:
+            continue
+        final_line = _final_non_empty_line(body)
+        if not final_line:
+            continue
+        try:
+            return _validate_issue_plan_path(repo_path, issue, final_line), None
+        except ValueError as exc:
+            return None, str(exc)
+    return None, None
 
 
 @contextmanager
@@ -185,6 +247,61 @@ async def run_tick(
             if PlaneLabel.APPROVAL_REQUIRED.value in _extract_labels(fresh, label_ids=label_ids):
                 return TickResult(False, "approval-required", candidate.id)
 
+            fresh_labels = _extract_labels(fresh, label_ids=label_ids)
+            plan_path: Path | None = None
+            if mode == "build":
+                if PlaneLabel.PLAN.value in fresh_labels:
+                    try:
+                        await adapter.remove_labels(candidate.id, [PlaneLabel.PLAN])
+                    except Exception as exc:
+                        await adapter.add_comment(
+                            candidate.id,
+                            CommentPayload(body=f"Build could not start: failed to remove stale `plan` label: {exc}"),
+                        )
+                        return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
+
+                comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
+                plan_path, plan_path_error = _plan_path_from_comments(
+                    config.homelab_repo_path, candidate, comment_bodies
+                )
+                if plan_path_error:
+                    await _block_issue(
+                        adapter,
+                        candidate.id,
+                        f"Build could not start: {plan_path_error}.",
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                    )
+                    return TickResult(False, "invalid-plan-path", candidate.id, mode=mode)
+                if plan_path is None:
+                    plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
+                if plan_path is None:
+                    try:
+                        await adapter.add_labels(candidate.id, [PlaneLabel.PLAN])
+                        await adapter.remove_labels(candidate.id, [PlaneLabel.BUILD])
+                        await adapter.add_comment(
+                            candidate.id,
+                            CommentPayload(
+                                body=(
+                                    "Build could not start because no readable plan file was found. "
+                                    "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
+                                )
+                            ),
+                        )
+                        await adapter.transition_state(candidate.id, PlaneState.TODO)
+                    except Exception as exc:
+                        await _block_issue(
+                            adapter,
+                            candidate.id,
+                            f"Build plan recovery failed after no readable plan was found: {exc}",
+                            issue_name=candidate.name,
+                            issue_identifier=candidate.identifier,
+                            notifier=notifier,
+                        )
+                        return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
+                    return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
+
             await adapter.transition_state(candidate.id, PlaneState.RUNNING)
             claim_time = now().isoformat()
             await adapter.add_comment(
@@ -247,7 +364,11 @@ async def run_tick(
             stdout, stderr = _format_report(result, secrets)
 
             if mode == "plan":
-                body = "Symphony completed plan."
+                plan_report_path = _final_non_empty_line(stdout) if stdout else None
+                if plan_report_path and not plan_report_path.startswith("/"):
+                    plan_report_path = None
+
+                body = _PLAN_HANDOFF_MARKER
                 if stdout:
                     body += f"\n\n**Agent Report:**\n```\n{stdout}\n```"
                 if stderr:
@@ -259,6 +380,8 @@ async def run_tick(
                         "plan_dirty issue_id=%s repo=%s",
                         candidate.id, config.homelab_repo_path,
                     )
+                if plan_report_path:
+                    body += f"\n\n{plan_report_path}"
                 await adapter.add_comment(
                     candidate.id,
                     CommentPayload(body=body),
@@ -285,6 +408,7 @@ async def run_tick(
                         issue_identifier=candidate.identifier,
                         issue_name=candidate.name,
                         issue_id=candidate.id,
+                        plan_path=str(plan_path) if plan_path else None,
                     )
                 except AutoCommitFailed as exc:
                     LOGGER.warning(
@@ -492,15 +616,35 @@ async def _fetch_issue_comments(adapter: PlaneAdapter, issue_id: str) -> str:
     comments.sort(key=lambda c: c.get("created_at", ""))
     parts: list[str] = []
     for comment in comments:
+        body = str(comment.get("body") or comment.get("comment_html") or "").strip()
+        if CLAIM_PREFIX in body or not body:
+            continue
+        created = comment.get("created_at", "")
+        parts.append(f"**Comment ({created}):**\n{body}")
+    return "\n\n---\n\n".join(parts)
+
+
+async def _fetch_issue_comment_bodies(
+    adapter: PlaneAdapter,
+    issue_id: str,
+    *,
+    newest_first: bool = True,
+) -> list[str]:
+    if adapter.transport is None:
+        return []
+    response = await adapter.transport.get(adapter._comment_path(issue_id))
+    comments = response.get("results", [])
+    comments.sort(key=lambda c: c.get("created_at", ""), reverse=newest_first)
+    bodies: list[str] = []
+    for comment in comments:
         body = str(comment.get("body") or comment.get("comment_html") or "")
         if CLAIM_PREFIX in body:
             continue
         body = body.strip()
         if not body:
             continue
-        created = comment.get("created_at", "")
-        parts.append(f"**Comment ({created}):**\n{body}")
-    return "\n\n---\n\n".join(parts)
+        bodies.append(body)
+    return bodies
 
 
 async def _claimed_at(adapter: PlaneAdapter, issue_id: str) -> datetime | None:
@@ -638,8 +782,9 @@ def _auto_commit(
     issue_identifier: str,
     issue_name: str,
     issue_id: str,
+    plan_path: str | None = None,
 ) -> str:
-    """Stage and commit all dirty changes under the Symphony bot identity.
+    """Stage and commit dirty changes under the Symphony bot identity.
 
     Returns the resulting commit SHA. Raises AutoCommitFailed if any git
     invocation fails. No push is performed.
@@ -648,8 +793,33 @@ def _auto_commit(
     git_env = ["-c", f"user.name={_SYMPHONY_GIT_NAME}",
                "-c", f"user.email={_SYMPHONY_GIT_EMAIL}"]
 
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        raise AutoCommitFailed(
+            f"git status failed (exit {status.returncode})",
+            stderr=status.stderr.strip(),
+        )
+
+    paths = _dirty_paths_from_porcelain_z(status.stdout)
+    if not paths:
+        raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
+
+    if plan_path:
+        allowed_plan_paths = _allowed_plan_artifact_paths(repo_path, Path(plan_path))
+        for path in paths:
+            if path.startswith("plans/") and path not in allowed_plan_paths:
+                raise AutoCommitFailed(
+                    f"refusing to auto-commit unrelated plan artifact: {path}"
+                )
+
     add = subprocess.run(
-        ["git", *git_env, "add", "-A"],
+        ["git", *git_env, "add", "--", *paths],
         cwd=repo_path,
         capture_output=True,
         text=True,
@@ -663,8 +833,11 @@ def _auto_commit(
 
     title = f"Symphony: {issue_identifier} {issue_name}".strip()
     trailer = f"Plane-Issue: {issue_id}"
+    message_args = ["-m", title, "-m", trailer]
+    if plan_path:
+        message_args.extend(["-m", f"Plan-Path: {plan_path}"])
     commit = subprocess.run(
-        ["git", *git_env, "commit", "-m", title, "-m", trailer],
+        ["git", *git_env, "commit", *message_args],
         cwd=repo_path,
         capture_output=True,
         text=True,
@@ -689,3 +862,35 @@ def _auto_commit(
             stderr=sha.stderr.strip(),
         )
     return sha.stdout.strip()
+
+
+def _dirty_paths_from_porcelain_z(output: str) -> list[str]:
+    entries = output.split("\0")
+    paths: list[str] = []
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if not entry:
+            continue
+        status = entry[:2]
+        path = entry[3:]
+        if status[0] in {"R", "C"} or status[1] in {"R", "C"}:
+            if index < len(entries) and entries[index]:
+                path = entries[index]
+                index += 1
+        if path:
+            paths.append(path)
+    return paths
+
+
+def _allowed_plan_artifact_paths(repo_path: Path, plan_path: Path) -> set[str]:
+    resolved_plan = plan_path.resolve()
+    resolved_state = _state_path_for_plan(resolved_plan).resolve()
+    allowed: set[str] = set()
+    for path in (resolved_plan, resolved_state):
+        try:
+            allowed.add(path.relative_to(repo_path.resolve()).as_posix())
+        except ValueError:
+            continue
+    return allowed

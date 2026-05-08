@@ -30,7 +30,7 @@ class SymphonyConfig:
     opencode_agent: str = "build"
     opencode_model: str | None = None
     poll_interval_ms: int = 30_000
-    run_timeout_ms: int = 900_000
+    run_timeout_ms: int = 1_800_000
     lock_path: Path = Path("/tmp/symphony.lock")
     telegram_bot_token: str | None = field(default=None, repr=False)
     telegram_chat_id: str | None = None
@@ -54,7 +54,7 @@ class SymphonyConfig:
             opencode_agent=source.get("SYMPHONY_OPENCODE_AGENT", "build"),
             opencode_model=source.get("SYMPHONY_OPENCODE_MODEL"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
-            run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "900000")),
+            run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "1800000")),
             lock_path=Path(source.get("SYMPHONY_LOCK_PATH", str(Path(source["HOMELAB_REPO_PATH"]) / ".symphony.lock"))),
             telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),
             telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),

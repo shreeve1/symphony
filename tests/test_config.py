@@ -43,7 +43,7 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.opencode_agent == "build"
     assert config.opencode_model is None
     assert config.poll_interval_ms == 30_000
-    assert config.run_timeout_ms == 900_000
+    assert config.run_timeout_ms == 1_800_000
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
 
 

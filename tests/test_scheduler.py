@@ -79,6 +79,15 @@ def _candidate(issue_id: str, *, labels=(), created_at="2026-05-04T00:00:00+00:0
     return CandidateIssue(issue_id, issue_id, f"Issue {issue_id}", "", tuple(labels), created_at)
 
 
+def _write_plan(repo: Path, issue_identifier: str) -> Path:
+    slug = issue_identifier.lower()
+    plan_dir = repo / "plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    path = plan_dir / f"{slug}.md"
+    path.write_text("# Plan\n", encoding="utf-8")
+    return path
+
+
 @pytest.mark.asyncio
 async def test_run_tick_skips_when_lock_is_held(tmp_path: Path) -> None:
     lock_path = tmp_path / ".symphony.lock"
@@ -189,7 +198,7 @@ async def test_run_tick_includes_agent_stdout_in_completion_comment(tmp_path: Pa
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: next(dirty_checks),
         diff_stat=lambda path: "docs/file.md | 2 ++",
-        auto_commit=lambda path, *, issue_identifier, issue_name, issue_id: "abc1234",
+        auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "abc1234",
     )
 
     assert result.reason == "agent-clean-done"
@@ -207,11 +216,12 @@ async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: P
     dirty_checks = iter([False, True])
     seen_commit_kwargs: dict[str, str] = {}
 
-    def fake_commit(path, *, issue_identifier, issue_name, issue_id):
+    def fake_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
         seen_commit_kwargs.update(
             issue_identifier=issue_identifier,
             issue_name=issue_name,
             issue_id=issue_id,
+            plan_path=plan_path,
         )
         return "deadbee"
 
@@ -500,8 +510,8 @@ def test_resolve_mode_execute_default():
     assert _resolve_mode((PlaneLabel.MEDIA.value,)) == "execute"
 
 
-def test_resolve_mode_plan_takes_priority_over_build():
-    assert _resolve_mode((PlaneLabel.PLAN.value, PlaneLabel.BUILD.value)) == "plan"
+def test_resolve_mode_build_takes_priority_over_plan():
+    assert _resolve_mode((PlaneLabel.PLAN.value, PlaneLabel.BUILD.value)) == "build"
 
 
 # --- Plan mode integration tests ---
@@ -511,11 +521,12 @@ def test_resolve_mode_plan_takes_priority_over_build():
 async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
+    plan_path = _write_plan(tmp_path, "plan-1")
 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="Plan created"),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
@@ -529,6 +540,7 @@ async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_pat
     assert DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value] in transport.issues["plan-1"]["labels"]
     completion_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
     assert "Plan created" in completion_comment["comment_html"]
+    assert completion_comment["comment_html"].rstrip().endswith(str(plan_path))
 
 
 @pytest.mark.asyncio
@@ -555,6 +567,7 @@ async def test_plan_mode_skips_pre_tick_dirty_check(tmp_path: Path) -> None:
 async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["build-1"] = _issue("build-1", labels=[PlaneLabel.BUILD.value])
+    _write_plan(tmp_path, "build-1")
 
     result = await run_tick(
         _config(tmp_path),
@@ -570,6 +583,93 @@ async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
     assert result.reason == "agent-clean-done"
     assert result.mode == "build"
     assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+
+
+@pytest.mark.asyncio
+async def test_build_mode_returns_to_plan_when_no_plan_exists(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
+    transport.issues["build-1"] = _issue("build-1", labels=[build_uuid])
+    called = False
+
+    def agent_runner(issue: CandidateIssue, prompt: str) -> AgentResult:
+        nonlocal called
+        called = True
+        return AgentResult(0, 10, False)
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
+        repo_dirty=lambda path: False,
+    )
+
+    labels = _extract_labels(transport.issues["build-1"], label_ids=DEFAULT_CONTRACT.label_ids)
+    assert result.dispatched is False
+    assert result.reason == "build-plan-missing-returned-to-plan"
+    assert called is False
+    assert PlaneLabel.PLAN.value in labels
+    assert PlaneLabel.BUILD.value not in labels
+    assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    assert any("Returning this issue to Plan mode" in c["comment_html"] for c in transport.comments["build-1"])
+
+
+@pytest.mark.asyncio
+async def test_build_mode_blocks_suspicious_plan_comment_path(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["build-1"] = _issue("build-1", labels=[PlaneLabel.BUILD.value])
+    transport.comments["build-1"] = [
+        {
+            "body": "Symphony completed plan.\n\n/tmp/not-the-current-plan.md",
+            "created_at": "2026-05-04T01:00:00+00:00",
+        }
+    ]
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.dispatched is False
+    assert result.reason == "invalid-plan-path"
+    assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    assert any(
+        "does not match the current issue slug" in (c.get("comment_html") or c.get("body") or "")
+        for c in transport.comments["build-1"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_mode_removes_stale_plan_label_before_running(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    plan_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.PLAN.value]
+    build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
+    transport.issues["build-1"] = _issue("build-1", labels=[plan_uuid, build_uuid])
+    _write_plan(tmp_path, "build-1")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.PLAN.value, PlaneLabel.BUILD.value])],
+        repo_dirty=lambda path: False,
+    )
+
+    labels = _extract_labels(transport.issues["build-1"], label_ids=DEFAULT_CONTRACT.label_ids)
+    assert result.reason == "agent-clean-done"
+    assert result.mode == "build"
+    assert PlaneLabel.PLAN.value not in labels
+    assert PlaneLabel.BUILD.value in labels
 
 
 # --- Label UUID extraction tests ---
@@ -1071,7 +1171,7 @@ async def test_marker_done_with_dirty_repo_auto_commits_and_done(tmp_path: Path)
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: next(dirty_checks),
         diff_stat=lambda path: "src/foo.py | 1 +",
-        auto_commit=lambda path, *, issue_identifier, issue_name, issue_id: "cafe123",
+        auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "cafe123",
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
@@ -1097,7 +1197,7 @@ async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: next(dirty_checks),
         diff_stat=lambda path: "src/foo.py | 1 +",
-        auto_commit=lambda path, *, issue_identifier, issue_name, issue_id: "feed999",
+        auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "feed999",
     )
 
     assert result.reason == "agent-marker-review"
@@ -1114,7 +1214,7 @@ async def test_auto_commit_failure_blocks_with_clear_message(tmp_path: Path) -> 
     transport.issues["issue-1"] = _issue("issue-1")
     dirty_checks = iter([False, True])
 
-    def failing_commit(path, *, issue_identifier, issue_name, issue_id):
+    def failing_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
         raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
 
     result = await run_tick(
@@ -1236,6 +1336,55 @@ def test_auto_commit_creates_commit_under_symphony_identity(tmp_path: Path) -> N
         cwd=repo, capture_output=True, text=True, check=True,
     )
     assert status.stdout.strip() == ""
+
+
+def test_auto_commit_adds_plan_path_trailer(tmp_path: Path) -> None:
+    import subprocess
+    from scheduler import _auto_commit
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    plan = repo / "plans" / "hom-42.md"
+    plan.parent.mkdir()
+    plan.write_text("# Plan\n")
+    (repo / "file.txt").write_text("hello\n")
+
+    _auto_commit(
+        repo,
+        issue_identifier="HOM-42",
+        issue_name="Patrol jellyfin",
+        issue_id="abc123",
+        plan_path=str(plan),
+    )
+
+    show = subprocess.run(
+        ["git", "log", "-1", "--format=%B"],
+        cwd=repo, capture_output=True, text=True, check=True,
+    )
+    assert "Plane-Issue: abc123" in show.stdout
+    assert f"Plan-Path: {plan}" in show.stdout
+
+
+def test_auto_commit_refuses_unrelated_plan_artifacts(tmp_path: Path) -> None:
+    from scheduler import AutoCommitFailed, _auto_commit
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    plan = repo / "plans" / "hom-42.md"
+    unrelated = repo / "plans" / "other.md"
+    plan.parent.mkdir()
+    plan.write_text("# Plan\n")
+    unrelated.write_text("# Other\n")
+
+    with pytest.raises(AutoCommitFailed) as excinfo:
+        _auto_commit(
+            repo,
+            issue_identifier="HOM-42",
+            issue_name="Patrol jellyfin",
+            issue_id="abc123",
+            plan_path=str(plan),
+        )
+    assert "unrelated plan artifact" in str(excinfo.value)
 
 
 def test_auto_commit_raises_when_no_changes(tmp_path: Path) -> None:
