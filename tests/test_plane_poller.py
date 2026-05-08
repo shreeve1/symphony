@@ -9,6 +9,7 @@ from plane_poller import (
     HttpxPlaneTransport,
     MAX_PAGES_PER_TICK,
     PAGE_SIZE,
+    PlaneContractError,
     PlanePollingAuthError,
     PlanePollingSchemaError,
     build_adapter,
@@ -286,3 +287,25 @@ def test_build_adapter_uses_configured_project_uuid():
     )
 
     assert adapter._issue_path() == "/workspaces/homelab/projects/project-uuid/issues/"
+
+
+def test_build_adapter_raises_when_project_id_empty():
+    with pytest.raises(PlaneContractError) as exc_info:
+        build_adapter(
+            InMemoryTransport(),
+            workspace_slug="homelab",
+            project_id="",
+        )
+
+    assert "project_id is required" in str(exc_info.value)
+
+
+def test_build_adapter_raises_when_workspace_slug_empty():
+    with pytest.raises(PlaneContractError) as exc_info:
+        build_adapter(
+            InMemoryTransport(),
+            workspace_slug="",
+            project_id="cff68c17-bff6-452f-89b3-9b570613cfaa",
+        )
+
+    assert "workspace_slug is required" in str(exc_info.value)

@@ -37,6 +37,10 @@ class PlanePollingSchemaError(RuntimeError):
     """Raised when Plane returns an unexpected issue shape."""
 
 
+class PlaneContractError(RuntimeError):
+    """Raised when the configured Plane contract fails validation."""
+
+
 @dataclass(frozen=True)
 class CandidateIssue:
     id: str
@@ -232,4 +236,9 @@ def build_adapter(
         workspace_slug=workspace_slug,
         project_id=project_id,
     )
+    errors = contract.validate_shape()
+    if errors:
+        raise PlaneContractError(
+            "Plane contract is invalid: " + "; ".join(errors)
+        )
     return PlaneAdapter(contract=contract, transport=transport)
