@@ -309,3 +309,46 @@ def test_build_adapter_raises_when_workspace_slug_empty():
         )
 
     assert "workspace_slug is required" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_httpx_transport_wraps_bare_list_as_results():
+    def handler(request):
+        return httpx.Response(200, json=[{"id": "issue-1"}, {"id": "issue-2"}])
+
+    transport = HttpxPlaneTransport("http://plane.local", "token")
+    await transport._client.aclose()
+    transport._client = httpx.AsyncClient(
+        base_url="http://plane.local/api/v1",
+        headers={"X-API-Key": "token", "Content-Type": "application/json"},
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    )
+
+    try:
+        result = await transport.get("/issues/?per_page=50")
+    finally:
+        await transport.aclose()
+
+    assert result == {"results": [{"id": "issue-1"}, {"id": "issue-2"}], "next_cursor": None}
+
+
+@pytest.mark.asyncio
+async def test_httpx_transport_raises_schema_error_on_non_dict_non_list():
+    def handler(request):
+        return httpx.Response(200, json="unexpected string")
+
+    transport = HttpxPlaneTransport("http://plane.local", "token")
+    await transport._client.aclose()
+    transport._client = httpx.AsyncClient(
+        base_url="http://plane.local/api/v1",
+        headers={"X-API-Key": "token", "Content-Type": "application/json"},
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    )
+
+    try:
+        with pytest.raises(PlanePollingSchemaError):
+            await transport.get("/issues/issue-1")
+    finally:
+        await transport.aclose()

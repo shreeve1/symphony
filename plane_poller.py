@@ -209,6 +209,8 @@ class HttpxPlaneTransport:
             raise PlanePollingAuthError(f"Plane authentication failed: {response.status_code}")
         response.raise_for_status()
         data = response.json()
+        if isinstance(data, list):
+            return {"results": data, "next_cursor": None}
         if not isinstance(data, dict):
             raise PlanePollingSchemaError("Plane response was not an object")
         return data
