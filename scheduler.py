@@ -9,15 +9,22 @@ import logging
 import re
 import subprocess
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Iterator, Protocol, Sequence
+from zoneinfo import ZoneInfo
 
 from agent_runner import AgentResult
 from config import SymphonyConfig
-from notifier import TelegramNotifier, format_blocked_message, format_review_message
+from notifier import (
+    TelegramNotifier,
+    format_blocked_message,
+    format_released_message,
+    format_review_message,
+)
 from plane_poller import CandidateIssue, fetch_todo_issues
+from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
 from homelab_router.plane_adapter import CommentPayload, PlaneAdapter
 from homelab_router.plane_contract import PlaneLabel, PlaneState
@@ -27,6 +34,13 @@ from homelab_router.prompt_renderer import render_previous_comments_block
 LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 8192
+SCHEDULED_RELEASE_PAGE_SIZE = 50
+SCHEDULED_RELEASE_MAX_PAGES_PER_TICK = 3
+SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
+SCHEDULED_LABEL_WINDOW_START_HOUR = 0
+SCHEDULED_LABEL_WINDOW_END_HOUR = 6
+SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
+SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
 _PLAN_HANDOFF_MARKER = "Symphony completed plan."
 
@@ -111,6 +125,14 @@ class TickResult:
     reason: str
     issue_id: str | None = None
     mode: str = "execute"
+
+
+@dataclass(frozen=True)
+class _ScheduledSelection:
+    candidate: CandidateIssue
+    reason: str
+    event: ScheduleEvent | None = None
+    error: str = ""
 
 
 def _resolve_mode(labels: tuple[str, ...]) -> str:
@@ -222,13 +244,59 @@ async def run_tick(
     try:
         with scheduler_lock(lock_file):
             await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier)
+            scheduled = await _select_scheduled_candidate(adapter, now=now)
+            if scheduled is not None:
+                if scheduled.reason == "scheduled-release":
+                    candidate = scheduled.candidate
+                    try:
+                        released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
+                    except Exception as exc:
+                        await _block_issue(
+                            adapter,
+                            candidate.id,
+                            f"Scheduled release failed after becoming due: {exc}",
+                            issue_name=candidate.name,
+                            issue_identifier=candidate.identifier,
+                            notifier=notifier,
+                        )
+                        return TickResult(False, "scheduled-release-failed", candidate.id)
+                    await _notify_released(notifier, candidate, released_event, now=now())
+                    candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
+                elif scheduled.reason == "scheduled-missing":
+                    await _block_issue(
+                        adapter,
+                        scheduled.candidate.id,
+                        "Scheduled ticket is missing a valid Symphony-Schedule comment.",
+                        issue_name=scheduled.candidate.name,
+                        issue_identifier=scheduled.candidate.identifier,
+                        notifier=notifier,
+                    )
+                    return TickResult(False, "scheduled-missing", scheduled.candidate.id)
+                elif scheduled.reason == "scheduled-malformed":
+                    await _block_issue(
+                        adapter,
+                        scheduled.candidate.id,
+                        f"Scheduled ticket has a malformed latest schedule comment: {scheduled.error}",
+                        issue_name=scheduled.candidate.name,
+                        issue_identifier=scheduled.candidate.identifier,
+                        notifier=notifier,
+                    )
+                    return TickResult(False, "scheduled-malformed", scheduled.candidate.id)
+                elif scheduled.reason == "scheduled-cancelled":
+                    await _repair_cancelled_schedule(adapter, scheduled.candidate.id, scheduled.event)
+                    return TickResult(False, "scheduled-cancelled", scheduled.candidate.id)
+                else:
+                    candidate = None
+            else:
+                candidate = None
+
             try:
-                candidates = await _maybe_await(poller(adapter))
+                candidates = [] if candidate is not None else await _maybe_await(poller(adapter))
             except Exception as exc:
                 LOGGER.warning("plane_poll_failed error=%s", exc)
                 return TickResult(False, "plane-unreachable")
 
-            candidate = _oldest_candidate(candidates)
+            candidate = candidate or _oldest_candidate(candidates)
             if candidate is None:
                 return TickResult(False, "no-candidates")
             if PlaneLabel.APPROVAL_REQUIRED.value in candidate.labels:
@@ -248,6 +316,9 @@ async def run_tick(
                 return TickResult(False, "approval-required", candidate.id)
 
             fresh_labels = _extract_labels(fresh, label_ids=label_ids)
+            if PlaneLabel.SCHEDULED.value in fresh_labels:
+                return TickResult(False, "scheduled-held", candidate.id)
+
             plan_path: Path | None = None
             if mode == "build":
                 if PlaneLabel.PLAN.value in fresh_labels:
@@ -308,6 +379,7 @@ async def run_tick(
                 candidate.id,
                 CommentPayload(body=f"{CLAIM_PREFIX}{claim_time}"),
             )
+            claim_dt = datetime.fromisoformat(claim_time)
             LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
 
             secrets = _collect_secrets(config)
@@ -362,6 +434,17 @@ async def run_tick(
                 return TickResult(True, "nonzero", candidate.id, mode=mode)
 
             stdout, stderr = _format_report(result, secrets)
+
+            scheduled_after_agent = await _detect_agent_schedule(
+                adapter,
+                candidate,
+                claim_dt=claim_dt,
+                stdout=stdout,
+                stderr=stderr,
+                notifier=notifier,
+            )
+            if scheduled_after_agent is not None:
+                return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
             if mode == "plan":
                 plan_report_path = _final_non_empty_line(stdout) if stdout else None
@@ -590,10 +673,273 @@ def _oldest_candidate(candidates: Sequence[CandidateIssue]) -> CandidateIssue | 
         issue
         for issue in candidates
         if PlaneLabel.APPROVAL_REQUIRED.value not in issue.labels
+        and PlaneLabel.SCHEDULED.value not in issue.labels
     ]
     if not eligible:
         return None
     return sorted(eligible, key=lambda issue: issue.created_at)[0]
+
+
+async def _select_scheduled_candidate(
+    adapter: PlaneAdapter,
+    *,
+    now: Callable[[], datetime],
+) -> _ScheduledSelection | None:
+    if adapter.transport is None:
+        raise SchedulerError("Plane transport not configured")
+    label_ids = adapter.contract.label_ids if adapter.contract else None
+    due: list[tuple[datetime, str, str, CandidateIssue, ScheduleEvent]] = []
+    now_dt = now()
+    cursor: str | None = None
+    pages_fetched = 0
+    todo_state_id = adapter._resolve_state(PlaneState.TODO)
+
+    while pages_fetched < SCHEDULED_RELEASE_MAX_PAGES_PER_TICK:
+        path = f"{adapter._issue_path()}?per_page={SCHEDULED_RELEASE_PAGE_SIZE}&state={todo_state_id}"
+        if cursor:
+            path = f"{path}&cursor={cursor}"
+        response = await adapter.transport.get(path)
+        pages_fetched += 1
+
+        for issue in _response_items(response):
+            if not _is_state(issue, adapter, PlaneState.TODO):
+                continue
+            labels = _extract_labels(issue, label_ids=label_ids)
+            if PlaneLabel.SCHEDULED.value not in labels:
+                continue
+            candidate = _candidate_from_issue(issue, labels=labels)
+            try:
+                event = await _latest_schedule_event(adapter, candidate.id)
+            except ScheduleParseError as exc:
+                return _ScheduledSelection(candidate, "scheduled-malformed", error=str(exc))
+            if event is None:
+                event = _default_scheduled_label_event(now_dt)
+            if event.is_cancellation:
+                return _ScheduledSelection(candidate, "scheduled-cancelled", event=event)
+            if event.not_before is None:
+                return _ScheduledSelection(candidate, "scheduled-malformed", error="not_before missing")
+            if event.not_before > now_dt:
+                continue
+            due.append((event.not_before, candidate.created_at, candidate.id, candidate, event))
+
+        cursor = _next_cursor(response)
+        if not cursor:
+            break
+
+    if pages_fetched >= SCHEDULED_RELEASE_MAX_PAGES_PER_TICK and cursor:
+        LOGGER.info(
+            "scheduled_release_page_limit_reached pages=%s due=%s",
+            pages_fetched,
+            len(due),
+        )
+    if not due:
+        return None
+    _, _, _, candidate, event = sorted(due, key=lambda item: item[:3])[0]
+    return _ScheduledSelection(candidate, "scheduled-release", event=event)
+
+
+def _with_schedule_context(
+    candidate: CandidateIssue,
+    event: ScheduleEvent | None,
+    *,
+    now: datetime,
+) -> CandidateIssue:
+    if event is None or event.not_before is None:
+        return candidate
+    late = bool(event.not_after and now.astimezone(UTC) > event.not_after)
+    source = (
+        SCHEDULED_LABEL_DEFAULT_SOURCE
+        if event.raw_comment == SCHEDULED_LABEL_DEFAULT_SOURCE
+        else "Symphony-Schedule comment"
+    )
+    return replace(
+        candidate,
+        schedule_not_before=event.not_before.isoformat(),
+        schedule_not_after=event.not_after.isoformat() if event.not_after else "",
+        schedule_reason=event.reason,
+        schedule_source=source,
+        schedule_late="true" if late else "false",
+    )
+
+
+def _default_scheduled_label_event(now_dt: datetime) -> ScheduleEvent:
+    local_now = now_dt.astimezone(SCHEDULED_LABEL_WINDOW_TZ)
+    if SCHEDULED_LABEL_WINDOW_START_HOUR <= local_now.hour < SCHEDULED_LABEL_WINDOW_END_HOUR:
+        window_start = local_now.replace(
+            hour=SCHEDULED_LABEL_WINDOW_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    else:
+        next_day = local_now + timedelta(days=1)
+        window_start = next_day.replace(
+            hour=SCHEDULED_LABEL_WINDOW_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    window_end = window_start.replace(hour=SCHEDULED_LABEL_WINDOW_END_HOUR)
+    return ScheduleEvent(
+        ScheduleEventType.SCHEDULE,
+        SCHEDULED_LABEL_DEFAULT_REASON,
+        not_before=window_start.astimezone(UTC),
+        not_after=window_end.astimezone(UTC),
+        raw_comment=SCHEDULED_LABEL_DEFAULT_SOURCE,
+    )
+
+
+def _response_items(response: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if isinstance(response, list):
+        return response
+    results = response.get("results")
+    if isinstance(results, list):
+        return results
+    return []
+
+
+def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    cursor = response.get("next_cursor")
+    if cursor:
+        return str(cursor)
+    next_url = response.get("next")
+    if isinstance(next_url, str) and "cursor=" in next_url:
+        return next_url.split("cursor=", 1)[1].split("&", 1)[0]
+    return None
+
+
+def _candidate_from_issue(issue: dict[str, Any], *, labels: tuple[str, ...]) -> CandidateIssue:
+    issue_id = str(issue.get("id", ""))
+    identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+    return CandidateIssue(
+        issue_id,
+        identifier,
+        str(issue.get("name") or ""),
+        str(issue.get("description_html") or issue.get("description") or ""),
+        labels,
+        str(issue.get("created_at") or ""),
+    )
+
+
+async def _latest_schedule_event(adapter: PlaneAdapter, issue_id: str) -> ScheduleEvent | None:
+    if adapter.transport is None:
+        return None
+    response = await adapter.transport.get(adapter._comment_path(issue_id))
+    comments: list[CandidateComment] = []
+    for idx, comment in enumerate(response.get("results", [])):
+        created = _parse_optional_datetime(comment.get("created_at"))
+        comments.append(
+            CandidateComment(
+                comment.get("body") or comment.get("comment_html") or "",
+                comment_id=str(comment.get("id") or ""),
+                created_at=created,
+                api_order=idx,
+            )
+        )
+    return latest_event(comments)
+
+
+def _parse_optional_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+async def _release_scheduled_candidate(
+    adapter: PlaneAdapter,
+    issue_id: str,
+    event: ScheduleEvent | None,
+) -> ScheduleEvent:
+    if event is None or event.not_before is None:
+        raise SchedulerError("scheduled release missing event")
+    latest = await _latest_schedule_event(adapter, issue_id)
+    if latest is None and event.raw_comment == SCHEDULED_LABEL_DEFAULT_SOURCE:
+        latest = event
+    if latest is None:
+        raise SchedulerError("latest schedule event disappeared before release")
+    if latest.is_cancellation:
+        raise SchedulerError("schedule was cancelled before release")
+    if (
+        latest.not_before != event.not_before
+        or latest.not_after != event.not_after
+        or latest.reason != event.reason
+    ):
+        raise SchedulerError("schedule changed before release")
+    await adapter.add_comment(
+        issue_id,
+        CommentPayload(
+            body=(
+                "Symphony scheduled release: not_before="
+                f"{latest.not_before.isoformat()} reason={latest.reason}"
+            )
+        ),
+    )
+    await adapter.remove_labels(issue_id, [PlaneLabel.SCHEDULED])
+    return latest
+
+
+async def _repair_cancelled_schedule(
+    adapter: PlaneAdapter,
+    issue_id: str,
+    event: ScheduleEvent | None,
+) -> None:
+    reason = event.reason if event is not None else "unknown"
+    await adapter.add_comment(
+        issue_id,
+        CommentPayload(body=f"Symphony schedule cancellation repaired stale scheduled label: {reason}"),
+    )
+    await adapter.remove_labels(issue_id, [PlaneLabel.SCHEDULED])
+
+
+async def _detect_agent_schedule(
+    adapter: PlaneAdapter,
+    candidate: CandidateIssue,
+    *,
+    claim_dt: datetime,
+    stdout: str,
+    stderr: str,
+    notifier: TelegramNotifier | None,
+) -> str | None:
+    after_agent = await _fetch_issue(adapter, candidate.id)
+    label_ids = adapter.contract.label_ids if adapter.contract else None
+    labels = _extract_labels(after_agent, label_ids=label_ids)
+    if not _is_state(after_agent, adapter, PlaneState.TODO):
+        return None
+    if PlaneLabel.SCHEDULED.value not in labels:
+        return None
+    try:
+        event = await _latest_schedule_event(adapter, candidate.id)
+    except ScheduleParseError as exc:
+        await _block_issue(
+            adapter,
+            candidate.id,
+            f"Agent created a malformed schedule comment: {exc}",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+        )
+        return "agent-scheduled-malformed"
+    if event is None or not event.is_schedule or event.comment_created_at is None:
+        return None
+    if event.comment_created_at <= claim_dt.astimezone(UTC):
+        return None
+    body = "Symphony scheduled follow-up:"
+    if stdout:
+        body += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+    if stderr:
+        body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+    if not stdout and not stderr:
+        body += " no output."
+    await adapter.add_comment(candidate.id, CommentPayload(body=body))
+    return "agent-scheduled"
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -678,6 +1024,31 @@ async def _notify_review(
         await notifier.send(format_review_message(issue_name, issue_identifier, reason))
     except Exception as exc:
         LOGGER.warning("notification_error error=%s", exc)
+
+
+async def _notify_released(
+    notifier: TelegramNotifier | None,
+    candidate: CandidateIssue,
+    event: ScheduleEvent | None,
+    *,
+    now: datetime,
+) -> None:
+    if notifier is None or event is None or event.not_before is None:
+        return
+    late = bool(event.not_after and now.astimezone(UTC) > event.not_after)
+    try:
+        await notifier.send(
+            format_released_message(
+                candidate.name,
+                candidate.identifier,
+                not_before=event.not_before.isoformat(),
+                not_after=event.not_after.isoformat() if event.not_after else "",
+                reason=event.reason,
+                late=late,
+            )
+        )
+    except Exception as exc:
+        LOGGER.warning("notification_error issue_id=%s error=%s", candidate.id, exc)
 
 
 async def _block_issue(

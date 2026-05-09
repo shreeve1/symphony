@@ -8,7 +8,16 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping, Protocol, Sequence
+
+# schedule.py is colocated with plane_cli.py in the symphony repo. Import
+# format_*_comment helpers so the CLI shares a single grammar with the
+# scheduler and parser. format_*_comment is also our local validator: it
+# rejects naive datetimes, inverted not_after<not_before windows, empty/
+# whitespace-only/line-breaking reasons.
+from schedule import format_cancellation_comment, format_schedule_comment
+from notifier import format_scheduled_message
 
 
 REQUIRED_ENV = (
@@ -30,6 +39,7 @@ STATE_IDS = {
     "done": "ef9d22b5-c69c-4707-8ba3-e3db244f2a84",
     "review": "ea1ccd3d-82d3-4dd4-8226-192941e8e4c0",
     "blocked": "4b226b00-1e1c-46aa-bbd3-b1e04ad6fc1f",
+    "todo": "ecdab56c-3d58-4da4-bed0-90f0c665deeb",
 }
 
 LABEL_IDS = {
@@ -38,6 +48,7 @@ LABEL_IDS = {
     "plan": "5a022793-c712-4565-ab70-0183fe04c557",
     "build": "4ffc7ef9-9159-455c-b3f9-b3a447157aef",
     "approved": "67839626-ca7f-4c02-a5e0-12e56a35d909",
+    "scheduled": "9ac7586e-8745-4c22-8a9d-aa83652bee3e",
 }
 # END GENERATED PLANE IDS
 
@@ -133,10 +144,6 @@ def _reject_target_override(args: Sequence[str]) -> None:
 
 
 def _send_telegram(env: Mapping[str, str], state: str) -> None:
-    token = env.get("TELEGRAM_BOT_TOKEN")
-    chat_id = env.get("TELEGRAM_CHAT_ID") or env.get("TELEGRAM_HOME_CHANNEL")
-    if not token or not chat_id:
-        return
     if state == "review":
         emoji = "\U0001f4cb"
         label = "Review"
@@ -146,7 +153,14 @@ def _send_telegram(env: Mapping[str, str], state: str) -> None:
     else:
         return
     issue_id = env.get("SYMPHONY_ISSUE_ID", "")
-    message = f"{emoji} Issue {issue_id} \u2192 <b>{label}</b>"
+    _send_telegram_message(env, f"{emoji} Issue {issue_id} \u2192 <b>{label}</b>")
+
+
+def _send_telegram_message(env: Mapping[str, str], message: str) -> None:
+    token = env.get("TELEGRAM_BOT_TOKEN")
+    chat_id = env.get("TELEGRAM_CHAT_ID") or env.get("TELEGRAM_HOME_CHANNEL")
+    if not token or not chat_id:
+        return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({
         "chat_id": chat_id,
@@ -176,11 +190,17 @@ def run(
     _reject_target_override(args)
 
     if not args:
-        raise PlaneCliError("Usage: plane <done|review|blocked|comment|comments|label|unlabel ...>")
+        raise PlaneCliError(
+            "Usage: plane <done|review|blocked|comment|comments|label|unlabel"
+            "|schedule|unschedule ...>"
+        )
     if args[0] == "plane":
         args = args[1:]
     if not args:
-        raise PlaneCliError("Usage: plane <done|review|blocked|comment|comments|label|unlabel ...>")
+        raise PlaneCliError(
+            "Usage: plane <done|review|blocked|comment|comments|label|unlabel"
+            "|schedule|unschedule ...>"
+        )
 
     config = PlaneCliConfig.from_env(env)
     client = transport or UrllibTransport(config)
@@ -208,11 +228,7 @@ def run(
             raise PlaneCliError(
                 f"Unknown label: {label_name}. Available: {', '.join(sorted(LABEL_IDS))}"
             )
-        current = client.get(config.issue_path())
-        existing_uuids: list[str] = list(current.get("labels") or [])
-        new_uuid = LABEL_IDS[label_name]
-        merged = list(dict.fromkeys(existing_uuids + [new_uuid]))
-        client.patch(config.issue_path(), {"labels": merged})
+        _add_label(client, config, label_name)
         return 0
 
     if command == "unlabel":
@@ -223,11 +239,7 @@ def run(
             raise PlaneCliError(
                 f"Unknown label: {label_name}. Available: {', '.join(sorted(LABEL_IDS))}"
             )
-        current = client.get(config.issue_path())
-        existing_uuids: list[str] = list(current.get("labels") or [])
-        remove_uuid = LABEL_IDS[label_name]
-        remaining = [u for u in existing_uuids if u != remove_uuid]
-        client.patch(config.issue_path(), {"labels": remaining})
+        _remove_label(client, config, label_name)
         return 0
 
     if command == "comments":
@@ -240,7 +252,174 @@ def run(
             print(comment.get("comment_html", ""))
         return 0
 
+    if command == "schedule":
+        not_before, reason, not_after = _parse_schedule_args(args[1:])
+        # Fail fast on missing generated IDs before any API calls so the
+        # operator sees the drift immediately rather than after a partial
+        # mutation. Plan tasks 4.7 + 2.5/2.6 require todo + scheduled to
+        # exist in the regenerated CLI.
+        if "scheduled" not in LABEL_IDS:
+            raise PlaneCliError(
+                "plane_cli is missing the 'scheduled' label id; "
+                "run scripts/sync_plane_ids.py to regenerate"
+            )
+        if "todo" not in STATE_IDS:
+            raise PlaneCliError(
+                "plane_cli is missing the 'todo' state id; "
+                "run scripts/sync_plane_ids.py to regenerate"
+            )
+        # format_schedule_comment is our local validator: it rejects naive
+        # datetimes, inverted windows, and empty/whitespace-only/line-
+        # breaking reasons. Validate BEFORE any mutation so partial failure
+        # can't leave the ticket scheduled-without-comment or vice versa.
+        body = format_schedule_comment(
+            not_before=not_before, reason=reason, not_after=not_after
+        )
+        # Order matters: comment first (audit trail), then label add, then
+        # state transition. The scheduler's release path mirrors this:
+        # audit comment first, then label removal. If the comment POST
+        # fails, no label is added, no state changes, and the operator
+        # sees the error.
+        client.post(config.comment_path(), {"comment_html": body})
+        _add_label(client, config, "scheduled")
+        client.patch(config.issue_path(), {"state": STATE_IDS["todo"]})
+        _send_telegram_message(
+            env,
+            format_scheduled_message(
+                "",
+                env.get("SYMPHONY_ISSUE_ID", ""),
+                not_before=not_before.isoformat(),
+                not_after=not_after.isoformat() if not_after else "",
+                reason=reason,
+            ),
+        )
+        return 0
+
+    if command == "unschedule":
+        reason = _parse_unschedule_args(args[1:])
+        if "scheduled" not in LABEL_IDS:
+            raise PlaneCliError(
+                "plane_cli is missing the 'scheduled' label id; "
+                "run scripts/sync_plane_ids.py to regenerate"
+            )
+        if "todo" not in STATE_IDS:
+            raise PlaneCliError(
+                "plane_cli is missing the 'todo' state id; "
+                "run scripts/sync_plane_ids.py to regenerate"
+            )
+        body = format_cancellation_comment(reason=reason)
+        # Plan task 4.5: comment + remove scheduled label; do NOT force a
+        # state transition. The ticket may have already been moved out of
+        # Todo (e.g. directly to Cancelled by a human operator) and the
+        # CLI must not undo that.
+        client.post(config.comment_path(), {"comment_html": body})
+        _remove_label(client, config, "scheduled")
+        return 0
+
     raise PlaneCliError(f"Unknown command: {command}")
+
+
+def _parse_schedule_args(rest: Sequence[str]) -> tuple[datetime, str, datetime | None]:
+    """Parse `--not-before <iso> --reason <text> [--not-after <iso>]`.
+
+    Returns (not_before, reason, not_after_or_None) parsed via
+    datetime.fromisoformat. format_schedule_comment performs the strict
+    semantic validation (offset/Z required, no inverted window, reason
+    non-empty and non-line-breaking).
+    """
+    options = _parse_named_args(
+        rest,
+        required={"--not-before", "--reason"},
+        allowed={"--not-before", "--not-after", "--reason"},
+        usage="Usage: plane schedule --not-before <iso> --reason <text> [--not-after <iso>]",
+    )
+    not_before = _parse_iso_arg(options["--not-before"], "--not-before")
+    not_after_raw = options.get("--not-after")
+    not_after = _parse_iso_arg(not_after_raw, "--not-after") if not_after_raw else None
+    return not_before, options["--reason"], not_after
+
+
+def _parse_unschedule_args(rest: Sequence[str]) -> str:
+    """Parse `--reason <text>` for `plane unschedule`."""
+    options = _parse_named_args(
+        rest,
+        required={"--reason"},
+        allowed={"--reason"},
+        usage="Usage: plane unschedule --reason <text>",
+    )
+    return options["--reason"]
+
+
+def _parse_named_args(
+    rest: Sequence[str],
+    *,
+    required: set[str],
+    allowed: set[str],
+    usage: str,
+) -> dict[str, str]:
+    """Tokenise `--key value` pairs and `--key=value` forms.
+
+    Rejects unknown flags, missing values, duplicates, and bare positional
+    arguments so the CLI grammar stays explicit. Target-override flags
+    (--issue, --target, ...) are already filtered out by the global
+    _reject_target_override; this helper enforces the per-command
+    allow-list.
+    """
+    options: dict[str, str] = {}
+    i = 0
+    while i < len(rest):
+        token = rest[i]
+        if not token.startswith("--"):
+            raise PlaneCliError(f"Unexpected positional argument: {token!r}. {usage}")
+        if "=" in token:
+            key, value = token.split("=", 1)
+        else:
+            key = token
+            if i + 1 >= len(rest):
+                raise PlaneCliError(f"Missing value for {key}. {usage}")
+            value = rest[i + 1]
+            i += 1
+        if key not in allowed:
+            raise PlaneCliError(f"Unknown option {key!r}. {usage}")
+        if key in options:
+            raise PlaneCliError(f"Duplicate option {key!r}. {usage}")
+        options[key] = value
+        i += 1
+    missing = required - options.keys()
+    if missing:
+        raise PlaneCliError(
+            f"Missing required option(s): {', '.join(sorted(missing))}. {usage}"
+        )
+    return options
+
+
+def _parse_iso_arg(value: str, flag: str) -> datetime:
+    """Parse ISO 8601 with explicit offset; defer strict validation to schedule.format_*."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise PlaneCliError(f"{flag} is not a valid ISO 8601 datetime: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise PlaneCliError(f"{flag} must include an explicit UTC offset: {value!r}")
+    return parsed
+
+
+def _add_label(client: Transport, config: PlaneCliConfig, label_name: str) -> None:
+    """GET-merge-PATCH preserving unrelated labels (plan task 4.6)."""
+    current = client.get(config.issue_path())
+    existing_uuids: list[str] = list(current.get("labels") or [])
+    new_uuid = LABEL_IDS[label_name]
+    merged = list(dict.fromkeys(existing_uuids + [new_uuid]))
+    client.patch(config.issue_path(), {"labels": merged})
+
+
+def _remove_label(client: Transport, config: PlaneCliConfig, label_name: str) -> None:
+    """GET-subtract-PATCH preserving unrelated labels (plan task 4.6)."""
+    current = client.get(config.issue_path())
+    existing_uuids: list[str] = list(current.get("labels") or [])
+    remove_uuid = LABEL_IDS[label_name]
+    remaining = [u for u in existing_uuids if u != remove_uuid]
+    client.patch(config.issue_path(), {"labels": remaining})
 
 
 def main(argv: Sequence[str] | None = None) -> int:

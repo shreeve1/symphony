@@ -23,6 +23,11 @@ def _render_candidate_prompt(issue) -> str:
             description=issue.description,
             labels=", ".join(issue.labels),
             mode=_resolve_mode(issue.labels),
+            schedule_not_before=getattr(issue, "schedule_not_before", ""),
+            schedule_not_after=getattr(issue, "schedule_not_after", ""),
+            schedule_reason=getattr(issue, "schedule_reason", ""),
+            schedule_source=getattr(issue, "schedule_source", ""),
+            schedule_late=getattr(issue, "schedule_late", ""),
         )
     )
 

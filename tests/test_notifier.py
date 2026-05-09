@@ -8,7 +8,9 @@ import pytest
 from notifier import (
     TelegramNotifier,
     format_blocked_message,
+    format_released_message,
     format_review_message,
+    format_scheduled_message,
 )
 
 
@@ -201,3 +203,36 @@ def test_format_blocked_message_escapes_html():
     assert "&lt;fail&gt;" in msg
     assert "&amp;" in msg
     assert "<fail>" not in msg
+
+
+def test_format_scheduled_message_includes_window_and_escapes_html():
+    msg = format_scheduled_message(
+        "Deploy <thing>",
+        "OPS-8",
+        not_before="2026-05-08T20:00:00+00:00",
+        not_after="2026-05-08T22:00:00+00:00",
+        reason="Wait for <window> & approval",
+    )
+
+    assert "Scheduled" in msg
+    assert "<b>OPS-8</b>" in msg
+    assert "not_before: 2026-05-08T20:00:00+00:00" in msg
+    assert "advisory_not_after: 2026-05-08T22:00:00+00:00" in msg
+    assert "&lt;window&gt;" in msg
+    assert "<window>" not in msg
+
+
+def test_format_released_message_includes_late_flag_and_escapes_html():
+    msg = format_released_message(
+        "Deploy <thing>",
+        "OPS-9",
+        not_before="2026-05-08T20:00:00+00:00",
+        not_after="2026-05-08T21:00:00+00:00",
+        reason="Run <now>",
+        late=True,
+    )
+
+    assert "Released" in msg
+    assert "late: true" in msg
+    assert "&lt;now&gt;" in msg
+    assert "<now>" not in msg

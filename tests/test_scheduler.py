@@ -11,6 +11,7 @@ from agent_runner import AgentResult
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
 from scheduler import reconcile_stale_running, run_tick, _resolve_mode, _extract_labels
+from schedule import format_cancellation_comment, format_schedule_comment
 
 from notifier import TelegramNotifier
 
@@ -77,6 +78,19 @@ def _issue(issue_id: str, *, state: str = PlaneState.TODO.value, labels=()) -> d
 
 def _candidate(issue_id: str, *, labels=(), created_at="2026-05-04T00:00:00+00:00") -> CandidateIssue:
     return CandidateIssue(issue_id, issue_id, f"Issue {issue_id}", "", tuple(labels), created_at)
+
+
+def _schedule_comment(
+    not_before: datetime,
+    *,
+    reason: str = "wait",
+    created_at: str = "2026-05-04T00:00:00+00:00",
+) -> dict[str, Any]:
+    return {
+        "id": f"schedule-{created_at}",
+        "created_at": created_at,
+        "comment_html": format_schedule_comment(not_before=not_before, reason=reason),
+    }
 
 
 def _write_plan(repo: Path, issue_identifier: str) -> Path:
@@ -1277,6 +1291,545 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "no output" in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_future_scheduled_ticket_is_held_while_ordinary_dispatches(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["scheduled"] = _issue("scheduled", labels=(PlaneLabel.SCHEDULED.value,))
+    transport.issues["ordinary"] = _issue("ordinary")
+    transport.comments["scheduled"] = [
+        _schedule_comment(datetime(2026, 5, 4, 3, 0, tzinfo=UTC))
+    ]
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("ordinary")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.issue_id == "ordinary"
+    assert seen == ["ordinary"]
+    assert PlaneLabel.SCHEDULED.value in transport.issues["scheduled"]["labels"]
+
+
+@pytest.mark.asyncio
+async def test_future_scheduled_ticket_returned_by_poller_is_not_dispatched(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["future"] = _issue("future", labels=(PlaneLabel.SCHEDULED.value,))
+    transport.comments["future"] = [
+        _schedule_comment(datetime(2026, 5, 4, 3, 0, tzinfo=UTC))
+    ]
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("future", labels=(PlaneLabel.SCHEDULED.value,))],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.dispatched is False
+    assert result.reason == "no-candidates"
+    assert seen == []
+    assert PlaneLabel.SCHEDULED.value in transport.issues["future"]["labels"]
+
+
+@pytest.mark.asyncio
+async def test_fresh_scheduled_label_blocks_stale_poller_candidate(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["future"] = _issue("future", labels=(PlaneLabel.SCHEDULED.value,))
+    transport.comments["future"] = [
+        _schedule_comment(datetime(2026, 5, 4, 3, 0, tzinfo=UTC))
+    ]
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("future")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.dispatched is False
+    assert result.reason == "scheduled-held"
+    assert seen == []
+    assert PlaneLabel.SCHEDULED.value in transport.issues["future"]["labels"]
+
+
+@pytest.mark.asyncio
+async def test_due_scheduled_ticket_releases_before_ordinary(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    transport.issues["ordinary"] = _issue("ordinary")
+    transport.comments["scheduled"] = [
+        _schedule_comment(datetime(2026, 5, 4, 1, 0, tzinfo=UTC), reason="window")
+    ]
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("ordinary")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.issue_id == "scheduled"
+    assert seen == ["scheduled"]
+    assert PlaneLabel.SCHEDULED.value not in transport.issues["scheduled"]["labels"]
+    assert any(
+        c["comment_html"].startswith("Symphony scheduled release:")
+        for c in transport.comments["scheduled"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_due_scheduled_ticket_sends_release_notification(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    transport.issues["scheduled"]["name"] = "Window <Deploy>"
+    transport.comments["scheduled"] = [
+        {
+            "id": "schedule-late",
+            "created_at": "2026-05-04T00:00:00+00:00",
+            "comment_html": format_schedule_comment(
+                not_before=datetime(2026, 5, 4, 1, 0, tzinfo=UTC),
+                not_after=datetime(2026, 5, 4, 1, 30, tzinfo=UTC),
+                reason="window",
+            ),
+        }
+    ]
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        result = await run_tick(
+            _config(tmp_path),
+            _adapter(transport),
+            agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+            render_prompt=lambda issue: "prompt",
+            lock_path=tmp_path / "lock",
+            poller=lambda adapter: [],
+            repo_dirty=lambda path: False,
+            now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+            notifier=notifier,
+        )
+
+    assert result.issue_id == "scheduled"
+    mock_send.assert_called_once()
+    message = mock_send.call_args[0][0]
+    assert "Released" in message
+    assert "late: true" in message
+    assert "Window &lt;Deploy&gt;" in message
+
+
+@pytest.mark.asyncio
+async def test_schedule_not_after_change_aborts_release_before_notification(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    class ChangingCommentTransport(FakeTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.comment_reads = 0
+
+        async def get(self, path: str) -> dict[str, Any]:
+            if "/comments" not in path:
+                return await super().get(path)
+            self.comment_reads += 1
+            not_after = datetime(2026, 5, 4, 1, 30 if self.comment_reads == 1 else 45, tzinfo=UTC)
+            return {
+                "results": [
+                    {
+                        "id": f"schedule-{self.comment_reads}",
+                        "created_at": "2026-05-04T00:00:00+00:00",
+                        "comment_html": format_schedule_comment(
+                            not_before=datetime(2026, 5, 4, 1, 0, tzinfo=UTC),
+                            not_after=not_after,
+                            reason="window",
+                        ),
+                    }
+                ]
+            }
+
+    transport = ChangingCommentTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        result = await run_tick(
+            _config(tmp_path),
+            _adapter(transport),
+            agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+            render_prompt=lambda issue: "prompt",
+            lock_path=tmp_path / "lock",
+            poller=lambda adapter: [],
+            repo_dirty=lambda path: False,
+            now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+            notifier=notifier,
+        )
+
+    assert result.dispatched is False
+    assert result.reason == "scheduled-release-failed"
+    assert transport.issues["scheduled"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    assert scheduled_uuid in transport.issues["scheduled"]["labels"]
+    assert any("schedule changed before release" in c["comment_html"] for c in transport.comments["scheduled"])
+    mock_send.assert_called_once()
+    message = mock_send.call_args[0][0]
+    assert "Blocked" in message
+    assert "Released" not in message
+
+
+@pytest.mark.asyncio
+async def test_due_scheduled_ticket_carries_schedule_context(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    transport.comments["scheduled"] = [
+        _schedule_comment(
+            datetime(2026, 5, 4, 1, 0, tzinfo=UTC),
+            reason="window",
+        )
+    ]
+    captured: dict[str, CandidateIssue] = {}
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: captured.setdefault("issue", issue) and "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.issue_id == "scheduled"
+    assert captured["issue"].schedule_not_before == "2026-05-04T01:00:00+00:00"
+    assert captured["issue"].schedule_reason == "window"
+    assert captured["issue"].schedule_source == "Symphony-Schedule comment"
+    assert captured["issue"].schedule_late == "false"
+
+
+@pytest.mark.asyncio
+async def test_due_scheduled_ticket_order_uses_not_before_then_created_at(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["later"] = _issue("later", labels=(scheduled_uuid,))
+    transport.issues["earlier"] = _issue("earlier", labels=(scheduled_uuid,))
+    transport.issues["earlier"]["created_at"] = "2026-05-03T00:00:00+00:00"
+    due_time = datetime(2026, 5, 4, 1, 0, tzinfo=UTC)
+    transport.comments["later"] = [_schedule_comment(due_time, reason="later")]
+    transport.comments["earlier"] = [_schedule_comment(due_time, reason="earlier")]
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.issue_id == "earlier"
+    assert seen == ["earlier"]
+    assert scheduled_uuid in transport.issues["later"]["labels"]
+
+
+@pytest.mark.asyncio
+async def test_due_scheduled_ticket_on_second_page_preempts_ordinary(tmp_path: Path) -> None:
+    class PaginatedTransport(FakeTransport):
+        async def get(self, path: str) -> dict[str, Any]:
+            if "/comments" in path or "/issues/" in path:
+                return await super().get(path)
+            if "cursor=page-2" in path:
+                return {"results": [self.issues["due"]], "next_cursor": None}
+            return {"results": [self.issues["future"]], "next_cursor": "page-2"}
+
+    transport = PaginatedTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["future"] = _issue("future", labels=(scheduled_uuid,))
+    transport.issues["due"] = _issue("due", labels=(scheduled_uuid,))
+    transport.issues["ordinary"] = _issue("ordinary")
+    transport.comments["future"] = [
+        _schedule_comment(datetime(2026, 5, 4, 3, 0, tzinfo=UTC), reason="future")
+    ]
+    transport.comments["due"] = [
+        _schedule_comment(datetime(2026, 5, 4, 1, 0, tzinfo=UTC), reason="due")
+    ]
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("ordinary")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.issue_id == "due"
+    assert seen == ["due"]
+    assert scheduled_uuid in transport.issues["future"]["labels"]
+    assert scheduled_uuid not in transport.issues["due"]["labels"]
+
+
+@pytest.mark.asyncio
+async def test_label_only_scheduled_ticket_waits_until_maintenance_window(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["scheduled"] = _issue("scheduled", labels=(PlaneLabel.SCHEDULED.value,))
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [],
+        now=lambda: datetime(2026, 5, 4, 6, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-candidates"
+    assert transport.issues["scheduled"]["state"] == PlaneState.TODO.value
+    assert PlaneLabel.SCHEDULED.value in transport.issues["scheduled"]["labels"]
+    assert transport.comments.get("scheduled", []) == []
+
+
+@pytest.mark.asyncio
+async def test_label_only_scheduled_ticket_releases_during_maintenance_window(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    transport.issues["ordinary"] = _issue("ordinary")
+    seen: list[str] = []
+    captured: dict[str, CandidateIssue] = {}
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: captured.setdefault("issue", issue) and "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("ordinary")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 9, 0, tzinfo=UTC),
+    )
+
+    assert result.issue_id == "scheduled"
+    assert seen == ["scheduled"]
+    assert scheduled_uuid not in transport.issues["scheduled"]["labels"]
+    assert captured["issue"].schedule_not_before == "2026-05-04T07:00:00+00:00"
+    assert captured["issue"].schedule_not_after == "2026-05-04T13:00:00+00:00"
+    assert captured["issue"].schedule_reason == "scheduled label maintenance window"
+    assert captured["issue"].schedule_source == "scheduled label maintenance window (12am-6am PT)"
+    assert captured["issue"].schedule_late == "false"
+    assert any(
+        c["comment_html"].startswith("Symphony scheduled release: not_before=2026-05-04T07:00:00+00:00")
+        for c in transport.comments["scheduled"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_label_only_scheduled_ticket_after_window_waits_for_next_window(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 14, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "no-candidates"
+    assert seen == []
+    assert scheduled_uuid in transport.issues["scheduled"]["labels"]
+    assert transport.comments.get("scheduled", []) == []
+
+
+@pytest.mark.asyncio
+async def test_scheduled_ticket_with_malformed_latest_event_blocks(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["scheduled"] = _issue("scheduled", labels=(PlaneLabel.SCHEDULED.value,))
+    transport.comments["scheduled"] = [
+        {"id": "bad", "created_at": "2026-05-04T00:00:00+00:00", "comment_html": "Symphony-Schedule: bad"}
+    ]
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "scheduled-malformed"
+    assert transport.issues["scheduled"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_schedule_repairs_stale_scheduled_label(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid, "other"))
+    transport.comments["scheduled"] = [
+        {
+            "id": "cancel",
+            "created_at": "2026-05-04T00:00:00+00:00",
+            "comment_html": format_cancellation_comment(reason="cancelled"),
+        }
+    ]
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "scheduled-cancelled"
+    assert scheduled_uuid not in transport.issues["scheduled"]["labels"]
+    assert "other" in transport.issues["scheduled"]["labels"]
+    assert "repaired stale scheduled label" in transport.comments["scheduled"][1]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_agent_created_schedule_returns_without_done_or_auto_commit(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["issue-1"] = _issue("issue-1")
+    auto_commit_calls: list[bool] = []
+
+    def agent(issue: CandidateIssue, prompt: str) -> AgentResult:
+        transport.issues[issue.id]["state"] = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+        transport.issues[issue.id]["labels"] = [scheduled_uuid]
+        transport.comments[issue.id].append(
+            _schedule_comment(
+                datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
+                created_at="2026-05-04T02:01:00+00:00",
+            )
+        )
+        return AgentResult(0, 10, False, stdout="scheduled it")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: True,
+        diff_stat=lambda path: "dirty",
+        auto_commit=lambda *args, **kwargs: auto_commit_calls.append(True) or "sha",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-scheduled"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    assert auto_commit_calls == []
+    assert any("Symphony scheduled follow-up" in c["comment_html"] for c in transport.comments["issue-1"])
+
+
+@pytest.mark.asyncio
+async def test_stale_preclaim_schedule_is_ignored_after_agent(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    def agent(issue: CandidateIssue, prompt: str) -> AgentResult:
+        transport.issues[issue.id]["state"] = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+        transport.issues[issue.id]["labels"] = [scheduled_uuid]
+        transport.comments[issue.id].append(
+            _schedule_comment(
+                datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
+                created_at="2026-05-04T01:00:00+00:00",
+            )
+        )
+        return AgentResult(0, 10, False)
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-clean-done"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+
+
+@pytest.mark.asyncio
+async def test_agent_created_malformed_schedule_blocks(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    def agent(issue: CandidateIssue, prompt: str) -> AgentResult:
+        transport.issues[issue.id]["state"] = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+        transport.issues[issue.id]["labels"] = [scheduled_uuid]
+        transport.comments[issue.id].append(
+            {
+                "id": "bad",
+                "created_at": "2026-05-04T02:01:00+00:00",
+                "comment_html": "Symphony-Schedule: bad",
+            }
+        )
+        return AgentResult(0, 10, False)
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-scheduled-malformed"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
 
 
 # --- Fix 4: _repo_dirty git-error fail-closed ---

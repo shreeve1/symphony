@@ -1,0 +1,70 @@
+plan_file: plans/symphony-ticket-scheduling.md
+prompt: "loop 1 with codex. let's build a plan from what we've outlined"
+max_rounds: 1
+current_round: 1
+status: hard_stopped
+exit_reason: "Reached MAX_ROUNDS=1 hard cap after applying critical/high plan fixes"
+codex_session_id: "019e09c0-8eb0-7432-85b3-78f071383c51"
+started: "2026-05-08T00:00:00Z"
+updated: "2026-05-08T22:47:09Z"
+notes:
+  - "Source decisions came from the Symphony ticket scheduling interview in this OpenCode session."
+  - "Plan output is in /home/james/plane/symphony because Symphony is the primary implementation repo; homelab integration files are cross-repo dependencies."
+rounds:
+  - round: 1
+    tool: codex exec
+    command: "codex exec --sandbox danger-full-access -c model_reasoning_effort='\"high\"' --skip-git-repo-check"
+    status: fail_findings_applied
+    output_file: /tmp/opencode/codex_symphony_ticket_scheduling_round1_out_fullaccess.txt
+    initial_read_only_attempt:
+      status: failed_before_file_read
+      output_file: /tmp/opencode/codex_symphony_ticket_scheduling_round1_out.txt
+      error: "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted"
+    finding_counts:
+      critical: 3
+      high: 5
+      medium: 4
+      low: 1
+    verdict: FAIL
+    findings_verbatim: |
+      CRITICAL
+      - Section 2 / tasks 2.1-2.5: `scheduled` is added to `labels` and `label_ids`, but not `provisioned_labels`. `PlaneContract.validate_shape()` rejects label IDs for non-provisioned labels, and existing tests assert `label_ids == provisioned_label_names()`.
+        Fix: add `PlaneLabel.SCHEDULED` to `provisioned_labels`, update contract tests, and run `scripts/sync_plane_ids.py`.
+      - Section 4 / tasks 4.4, 4.5: `plane schedule` / `unschedule` must transition to Todo, but `plane_cli.STATE_IDS` only contains `done`, `review`, and `blocked`; the generator also only emits those states.
+        Fix: extend the generated CLI IDs to include Todo, add tests for Todo PATCH bodies, and fail fast if the Todo UUID is missing.
+      - Section 6 / tasks 6.7-6.8: release removes `scheduled` before writing the audit comment. If label removal succeeds and audit comment fails, the ticket becomes ordinary Todo and can run next tick without the required release audit.
+        Fix: make release recovery explicit: either write audit before label removal, or re-add `scheduled` / block on any partial failure. Add a partial-failure test.
+
+      HIGH
+      - Section 8 / task 8.1: plan says existing refetch happens before finalization, but current scheduler refetches after `repo_dirty` / `auto_commit`. An agent that schedules while leaving a dirty repo can be auto-committed before `agent-scheduled` is recognized.
+        Fix: refetch and detect valid agent-created schedules before auto-commit/completion logic; add a dirty-repo + schedule test proving `auto_commit` is not called.
+      - Section 8 / task 8.2: “Todo + scheduled with valid schedule event” can falsely treat a stale pre-existing schedule as agent-created.
+        Fix: require the controlling schedule comment to be newer than the claim/agent start time, and preferably from the agent identity.
+      - Section 6 / tasks 6.1-6.5: scheduled-release pagination is underspecified. A backlog of future scheduled tickets can hide a due ticket behind page limits and comment-fetch cost.
+        Fix: define server-side `scheduled` label filtering, a separate page budget, deterministic ordering, and tests with due tickets beyond future tickets.
+      - Section 3 / tasks 3.2-3.8: parser assumes plain single-line text, but CLI posts `comment_html` and Plane may return HTML-wrapped/escaped content. Symphony’s own comments may become unparseable.
+        Fix: define canonical serialization that survives Plane rendering, HTML-decode/strip wrappers before parsing, and test quotes, `<`, `>`, entities, and malformed HTML cases.
+      - Section 6 / release flow: cancellation race is not covered. A cancellation posted after comment snapshot but before label removal can still be released.
+        Fix: re-fetch latest schedule/cancellation immediately before release mutation and abort/repair if cancellation now wins.
+
+      MEDIUM
+      - Section 5 / tasks 5.1-5.4: ordinary polling says future scheduled tickets must not starve Todo, but client-side filtering still consumes `MAX_PAGES_PER_TICK`.
+        Fix: use server-side exclusion if Plane supports it, or specify continued pagination behavior and add a test where ordinary Todo appears after scheduled-only pages.
+      - Section 3 / task 3.7: latest-event tie-breaker only uses `created_at`; rapid comments can share timestamps.
+        Fix: define secondary ordering by Plane comment ID or API order, and test identical `created_at`.
+      - Section 3 / task 3.6: `not_after` is advisory, but inconsistent `not_after < not_before` is not addressed.
+        Fix: either reject it as invalid schedule state or define the exact late/audit behavior; add parser tests.
+      - Section 8 / task 8.2: when returning `agent-scheduled`, the plan says no completion comment, but does not say whether sanitized stdout/stderr is preserved.
+        Fix: specify an append-only “agent scheduled” audit comment with sanitized output or explicitly discard it.
+
+      LOW
+      - Section 10 / tasks 10.1-10.4: notification surfaces are incomplete for malformed schedules, release partial failures, and claim failures after release.
+        Fix: state which schedule failure paths notify James and add no-spam tests.
+
+      Verdict: FAIL
+    revisions_applied:
+      - "Added provisioned_labels and generated CLI sync requirements."
+      - "Added Todo STATE_IDS generation and fail-fast tests."
+      - "Changed release ordering to audit before unlabel plus partial-failure recovery."
+      - "Moved agent-schedule detection before dirty/auto_commit and required post-claim freshness."
+      - "Added HTML/comment normalization, tie-breaks, not_after validation, pagination budgets, cancellation-race tests, and schedule failure notifications."

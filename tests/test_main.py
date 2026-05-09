@@ -20,6 +20,11 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
         description="Verify proxy container",
         labels=("media", "maintenance"),
         created_at="2026-05-04T00:00:00Z",
+        schedule_not_before="2026-05-08T20:00:00+00:00",
+        schedule_not_after="2026-05-08T22:00:00+00:00",
+        schedule_reason="maintenance window",
+        schedule_source="Symphony-Schedule comment",
+        schedule_late="false",
     )
 
     prompt = main._render_candidate_prompt(issue)
@@ -30,6 +35,11 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
     assert captured["issue"].name == "Check proxy"
     assert captured["issue"].description == "Verify proxy container"
     assert captured["issue"].labels == "media, maintenance"
+    assert captured["issue"].schedule_not_before == "2026-05-08T20:00:00+00:00"
+    assert captured["issue"].schedule_not_after == "2026-05-08T22:00:00+00:00"
+    assert captured["issue"].schedule_reason == "maintenance window"
+    assert captured["issue"].schedule_source == "Symphony-Schedule comment"
+    assert captured["issue"].schedule_late == "false"
 
 
 def test_async_main_passes_configured_agent_runner(monkeypatch):

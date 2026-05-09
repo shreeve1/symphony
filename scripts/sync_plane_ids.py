@@ -27,12 +27,14 @@ PLANE_CLI = SYMPHONY_DIR / "plane_cli.py"
 BEGIN_SENTINEL = "# BEGIN GENERATED PLANE IDS"
 END_SENTINEL = "# END GENERATED PLANE IDS"
 
-# plane_cli STATE_IDS is keyed by terminal-state command verbs.
-# plane_contract.state_ids is keyed by full PlaneState names.
+# plane_cli STATE_IDS is keyed by terminal-state command verbs plus the
+# `todo` key needed by the schedule/unschedule commands. plane_contract.state_ids
+# is keyed by full PlaneState names.
 STATE_KEY_MAP = {
     "done": "Done",
     "review": "In Review",
     "blocked": "Blocked",
+    "todo": "Todo",
 }
 
 

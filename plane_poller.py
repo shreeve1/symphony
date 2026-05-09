@@ -49,6 +49,11 @@ class CandidateIssue:
     description: str
     labels: tuple[str, ...]
     created_at: str
+    schedule_not_before: str = ""
+    schedule_not_after: str = ""
+    schedule_reason: str = ""
+    schedule_source: str = ""
+    schedule_late: str = ""
 
 
 def _extract_labels(
@@ -158,6 +163,8 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
             for issue in items:
                 labels = _extract_labels(issue, label_ids=label_ids)
                 if PlaneLabel.APPROVAL_REQUIRED.value in labels:
+                    continue
+                if PlaneLabel.SCHEDULED.value in labels:
                     continue
                 if not _is_todo(issue, adapter):
                     continue

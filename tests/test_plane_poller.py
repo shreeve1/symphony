@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from homelab_router.plane_adapter import InMemoryTransport, PlaneAdapter
-from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
+from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 from plane_poller import (
     HttpxPlaneTransport,
     MAX_PAGES_PER_TICK,
@@ -44,6 +44,57 @@ async def test_returns_only_todo_without_approval_required_label():
     candidates = await fetch_todo_issues(adapter)
 
     assert [candidate.id for candidate in candidates] == ["todo"]
+
+
+@pytest.mark.asyncio
+async def test_excludes_todo_with_scheduled_label():
+    transport = InMemoryTransport()
+    transport.issues = {
+        "ordinary": _issue("ordinary", state=PlaneState.TODO.value, labels=["media"]),
+        "scheduled": _issue(
+            "scheduled", state=PlaneState.TODO.value, labels=["scheduled"]
+        ),
+    }
+    adapter = PlaneAdapter(transport=transport)
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert [candidate.id for candidate in candidates] == ["ordinary"]
+
+
+@pytest.mark.asyncio
+async def test_excludes_todo_with_scheduled_label_uuid():
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport = InMemoryTransport()
+    transport.issues = {
+        "ordinary": _issue("ordinary", state=PlaneState.TODO.value, labels=["media"]),
+        "scheduled": _issue(
+            "scheduled", state=PlaneState.TODO.value, labels=[scheduled_uuid]
+        ),
+    }
+    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert [candidate.id for candidate in candidates] == ["ordinary"]
+
+
+@pytest.mark.asyncio
+async def test_excludes_todo_with_scheduled_label_dict():
+    transport = InMemoryTransport()
+    transport.issues = {
+        "ordinary": _issue("ordinary", state=PlaneState.TODO.value, labels=["media"]),
+        "scheduled": _issue(
+            "scheduled",
+            state=PlaneState.TODO.value,
+            labels=[{"name": "scheduled"}],
+        ),
+    }
+    adapter = PlaneAdapter(transport=transport)
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert [candidate.id for candidate in candidates] == ["ordinary"]
 
 
 class PaginatedTransport:
