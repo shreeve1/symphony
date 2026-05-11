@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from agent_runner import run_agent
+from agent_runner import run_agent, verify_pi_support
 from config import SymphonyConfig
 from notifier import TelegramNotifier
 from plane_poller import HttpxPlaneTransport, build_adapter
@@ -40,6 +40,12 @@ async def async_main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     config = SymphonyConfig.from_env()
+    verify_pi_support(
+        config.pi_bin,
+        config.pi_provider,
+        config.pi_model,
+        config.homelab_repo_path,
+    )
     transport = HttpxPlaneTransport(config.plane_api_url, config.plane_api_key)
     def configured_agent_runner(issue, rendered_prompt):
         return run_agent(config, issue, rendered_prompt)

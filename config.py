@@ -13,7 +13,7 @@ _REQUIRED_ENV = (
     "PLANE_WORKSPACE_SLUG",
     "PLANE_PROJECT_ID",
     "HOMELAB_REPO_PATH",
-    "OPENCODE_BIN",
+    "PI_BIN",
 )
 
 
@@ -26,9 +26,9 @@ class SymphonyConfig:
     plane_workspace_slug: str
     plane_project_id: str
     homelab_repo_path: Path
-    opencode_bin: str
-    opencode_agent: str = "build"
-    opencode_model: str | None = None
+    pi_bin: str
+    pi_provider: str = "zai"
+    pi_model: str = "glm-5.1:high"
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 1_800_000
     lock_path: Path = Path("/tmp/symphony.lock")
@@ -50,9 +50,9 @@ class SymphonyConfig:
             plane_workspace_slug=source["PLANE_WORKSPACE_SLUG"],
             plane_project_id=source["PLANE_PROJECT_ID"],
             homelab_repo_path=Path(source["HOMELAB_REPO_PATH"]),
-            opencode_bin=source["OPENCODE_BIN"],
-            opencode_agent=source.get("SYMPHONY_OPENCODE_AGENT", "build"),
-            opencode_model=source.get("SYMPHONY_OPENCODE_MODEL"),
+            pi_bin=source["PI_BIN"],
+            pi_provider=source.get("SYMPHONY_PI_PROVIDER", "zai"),
+            pi_model=source.get("SYMPHONY_PI_MODEL", "glm-5.1:high"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "1800000")),
             lock_path=Path(source.get("SYMPHONY_LOCK_PATH", str(Path(source["HOMELAB_REPO_PATH"]) / ".symphony.lock"))),
@@ -68,9 +68,9 @@ class SymphonyConfig:
             f"plane_workspace_slug={self.plane_workspace_slug!r}, "
             f"plane_project_id={self.plane_project_id!r}, "
             f"homelab_repo_path={self.homelab_repo_path!r}, "
-            f"opencode_bin={self.opencode_bin!r}, "
-            f"opencode_agent={self.opencode_agent!r}, "
-            f"opencode_model={self.opencode_model!r}, "
+            f"pi_bin={self.pi_bin!r}, "
+            f"pi_provider={self.pi_provider!r}, "
+            f"pi_model={self.pi_model!r}, "
             f"poll_interval_ms={self.poll_interval_ms!r}, "
             f"run_timeout_ms={self.run_timeout_ms!r}, "
             f"lock_path={self.lock_path!r}, "

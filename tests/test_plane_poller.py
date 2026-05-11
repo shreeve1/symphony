@@ -7,6 +7,7 @@ from homelab_router.plane_adapter import InMemoryTransport, PlaneAdapter
 from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 from plane_poller import (
     HttpxPlaneTransport,
+    MAX_MIXED_STATE_PAGES_PER_TICK,
     MAX_PAGES_PER_TICK,
     PAGE_SIZE,
     PlaneContractError,
@@ -181,6 +182,95 @@ async def test_limits_pages_per_tick_to_avoid_rate_limits(caplog):
     assert len(candidates) == MAX_PAGES_PER_TICK
     assert len(transport.paths) == MAX_PAGES_PER_TICK
     assert "plane_poll_page_limit_reached" in caplog.text
+
+
+class MixedStatePaginationTransport:
+    def __init__(self):
+        self.paths = []
+
+    async def get(self, path):
+        self.paths.append(path)
+        if len(self.paths) < MAX_PAGES_PER_TICK + 1:
+            return {
+                "results": [_issue(f"done-{len(self.paths)}", state=PlaneState.DONE.value)],
+                "next_cursor": f"page-{len(self.paths) + 1}",
+            }
+        return {"results": [_issue("late-todo", state=PlaneState.TODO.value)], "next_cursor": None}
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
+@pytest.mark.asyncio
+async def test_mixed_state_pages_extend_scan_for_late_todo():
+    transport = MixedStatePaginationTransport()
+    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert [candidate.id for candidate in candidates] == ["late-todo"]
+    assert len(transport.paths) == MAX_PAGES_PER_TICK + 1
+    assert len(transport.paths) < MAX_MIXED_STATE_PAGES_PER_TICK
+
+
+class EmptyMixedStatePaginationTransport:
+    def __init__(self):
+        self.paths = []
+
+    async def get(self, path):
+        self.paths.append(path)
+        if len(self.paths) == 1:
+            return {"results": [_issue("done", state=PlaneState.DONE.value)], "next_cursor": "empty"}
+        return {"results": [], "next_cursor": "still-empty"}
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
+@pytest.mark.asyncio
+async def test_mixed_state_pages_stop_on_empty_page():
+    transport = EmptyMixedStatePaginationTransport()
+    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert candidates == []
+    assert len(transport.paths) == 2
+
+
+class EndlessMixedStatePaginationTransport:
+    def __init__(self):
+        self.paths = []
+
+    async def get(self, path):
+        self.paths.append(path)
+        return {
+            "results": [_issue(f"done-{len(self.paths)}", state=PlaneState.DONE.value)],
+            "next_cursor": f"page-{len(self.paths) + 1}",
+        }
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
+@pytest.mark.asyncio
+async def test_mixed_state_pages_stop_at_hard_cap():
+    transport = EndlessMixedStatePaginationTransport()
+    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+
+    candidates = await fetch_todo_issues(adapter)
+
+    assert candidates == []
+    assert len(transport.paths) == MAX_MIXED_STATE_PAGES_PER_TICK
 
 
 class TransientFailureTransport:

@@ -2,7 +2,7 @@
 """Regenerate STATE_IDS and LABEL_IDS in plane_cli.py from plane_contract.
 
 plane_cli.py is intentionally a standalone urllib script because it runs
-inside the OpenCode agent's environment via PATH injection (see
+inside the Symphony-launched agent environment via PATH injection (see
 agent_runner.run_agent). It cannot import homelab_router at runtime, so
 its UUID dicts are kept in sync with homelab_router.plane_contract.DEFAULT_CONTRACT
 by this generator. Drift is enforced at test time by tests/test_plane_cli.py.

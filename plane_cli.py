@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Standalone Plane state helper for Symphony-launched agents."""
 
 from __future__ import annotations
@@ -43,7 +44,13 @@ STATE_IDS = {
 }
 
 LABEL_IDS = {
+    "patrol": "74f5ab2e-a567-4f8b-8dcf-0908c7ea9ceb",
+    "security": "618c2146-78d0-4955-a651-bd0c7ad5712e",
+    "infra": "95635e31-ed47-4a2e-96ab-555e43242fa1",
+    "network": "cb36e80d-9cea-4935-b9a6-29d3c4d7d90f",
     "media": "a683fbd6-a83a-439f-9e01-123a7088c04d",
+    "storage": "cf3e9144-3925-41f0-ac62-3cb7aa3ac480",
+    "docker": "c1d39f14-19e0-434a-a183-90bd28ae2875",
     "approval-required": "e7480a55-5ab6-417b-a74a-f436ffcf1db7",
     "plan": "5a022793-c712-4565-ab70-0183fe04c557",
     "build": "4ffc7ef9-9159-455c-b3f9-b3a447157aef",

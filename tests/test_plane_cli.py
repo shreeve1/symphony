@@ -1,3 +1,6 @@
+import os
+import subprocess
+from pathlib import Path
 import urllib.error
 
 import pytest
@@ -147,6 +150,36 @@ def test_runtime_script_has_no_symphony_imports():
 
     assert "import symphony" not in source
     assert "from symphony" not in source
+
+
+def test_file_has_python_shebang():
+    source = Path("/home/james/plane/symphony/plane_cli.py").read_text(encoding="utf-8")
+
+    assert source.startswith("#!/usr/bin/env python3\n")
+
+
+def test_plane_cli_copy_runs_as_path_executable_with_pythonpath(tmp_path: Path):
+    source = Path("/home/james/plane/symphony/plane_cli.py")
+    target = tmp_path / "plane"
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    target.chmod(0o700)
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(source.parent),
+    }
+
+    result = subprocess.run(
+        [str(target), "done"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "Missing required environment variables" in result.stderr
+    assert "Exec format error" not in result.stderr
+    assert "ImportError" not in result.stderr
 
 
 def test_urllib_transport_sets_plane_api_key_header(monkeypatch):

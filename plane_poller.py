@@ -27,6 +27,7 @@ except ModuleNotFoundError:
 LOGGER = logging.getLogger(__name__)
 PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
+MAX_MIXED_STATE_PAGES_PER_TICK = 10
 
 
 class PlanePollingAuthError(RuntimeError):
@@ -149,16 +150,19 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
     candidates: list[CandidateIssue] = []
     cursor: str | None = None
     pages_fetched = 0
+    mixed_state_seen = False
     todo_state_id = adapter._resolve_state(PlaneState.TODO)
 
     try:
-        while pages_fetched < MAX_PAGES_PER_TICK:
+        while pages_fetched < MAX_MIXED_STATE_PAGES_PER_TICK:
             path = f"{adapter._issue_path()}?per_page={PAGE_SIZE}&state={todo_state_id}"
             if cursor:
                 path = f"{path}&cursor={cursor}"
             response = await adapter.transport.get(path)
             pages_fetched += 1
             items = _page_items(response)
+            if not items:
+                return candidates
             label_ids = adapter.contract.label_ids if adapter.contract else None
             for issue in items:
                 labels = _extract_labels(issue, label_ids=label_ids)
@@ -167,11 +171,14 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
                 if PlaneLabel.SCHEDULED.value in labels:
                     continue
                 if not _is_todo(issue, adapter):
+                    mixed_state_seen = True
                     continue
                 candidates.append(_candidate_from_issue(issue, label_ids=label_ids))
             cursor = _next_cursor(response)
             if not cursor:
                 return candidates
+            if pages_fetched >= MAX_PAGES_PER_TICK and not mixed_state_seen:
+                break
         LOGGER.info(
             "plane_poll_page_limit_reached pages=%s candidates=%s",
             pages_fetched,

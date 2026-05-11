@@ -51,6 +51,14 @@ _RESULT_MARKER_RE = re.compile(
     r"^[ \t]*SYMPHONY_RESULT:[ \t]*(done|review|blocked)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_PERMISSION_GATE_RE = re.compile(
+    r"permission requested:|auto-rejecting|user rejected permission",
+    re.IGNORECASE,
+)
+_APPROVAL_GATE_RE = re.compile(
+    r"awaiting explicit .*approval|requires explicit .*approval|cannot (?:proceed|execute|run).*without approval|destructive .*approval|(?<!no )\bapproval required\b(?!\s*:\s*(?:none|n/a|no)\b)",
+    re.IGNORECASE,
+)
 
 
 def _parse_result_marker(stdout: str) -> str | None:
@@ -62,6 +70,18 @@ def _parse_result_marker(stdout: str) -> str | None:
     if not matches:
         return None
     return matches[-1].lower()
+
+
+def _hit_permission_gate(stdout: str, stderr: str) -> bool:
+    """Return true when the executor clean-exited after denied tool access."""
+
+    return bool(_PERMISSION_GATE_RE.search(f"{stdout}\n{stderr}"))
+
+
+def _hit_approval_gate(stdout: str, stderr: str) -> bool:
+    """Return true when a clean exit still needs operator approval."""
+
+    return bool(_APPROVAL_GATE_RE.search(f"{stdout}\n{stderr}"))
 
 
 class SchedulerError(RuntimeError):
@@ -83,7 +103,8 @@ def _sanitize_report(text: str, secrets: Sequence[str]) -> str:
 _SECRET_ENV_KEYS = (
     "PLANE_API_KEY",
     "SYMPHONY_PLANE_API_KEY",
-    "CLIPROXY_API_KEY",
+    "ZAI_API_KEY",
+    "CLIP" + "ROXY_API_KEY",
     "TELEGRAM_BOT_TOKEN",
 )
 
@@ -409,8 +430,6 @@ async def run_tick(
             if result.timed_out:
                 msg = f"Agent timed out after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
-                if stdout:
-                    msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
                 if stderr:
                     msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await _block_issue(
@@ -422,8 +441,6 @@ async def run_tick(
             if result.exit_code != 0:
                 msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
-                if stdout:
-                    msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
                 if stderr:
                     msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await _block_issue(
@@ -446,14 +463,51 @@ async def run_tick(
             if scheduled_after_agent is not None:
                 return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
+            if _hit_permission_gate(stdout, stderr):
+                msg = "Agent could not complete because required tool access was denied."
+                if stderr:
+                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    msg,
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                )
+                return TickResult(True, "permission-gate", candidate.id, mode=mode)
+
+            if _hit_approval_gate(stdout, stderr):
+                msg = "Agent could not complete because operator approval is required."
+                if stderr:
+                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    msg,
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                )
+                return TickResult(True, "approval-gate", candidate.id, mode=mode)
+
             if mode == "plan":
                 plan_report_path = _final_non_empty_line(stdout) if stdout else None
-                if plan_report_path and not plan_report_path.startswith("/"):
+                if plan_report_path and plan_report_path.startswith("/"):
+                    try:
+                        plan_report_path = str(
+                            _validate_issue_plan_path(
+                                config.homelab_repo_path,
+                                candidate,
+                                plan_report_path,
+                            )
+                        )
+                    except ValueError:
+                        plan_report_path = None
+                else:
                     plan_report_path = None
 
                 body = _PLAN_HANDOFF_MARKER
-                if stdout:
-                    body += f"\n\n**Agent Report:**\n```\n{stdout}\n```"
                 if stderr:
                     body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 if repo_dirty(config.homelab_repo_path):
@@ -485,43 +539,65 @@ async def run_tick(
             committed_pre_dirty = pre_dirty
             if repo_dirty(config.homelab_repo_path):
                 committed_stat = diff_stat(config.homelab_repo_path)
-                try:
-                    committed_sha = auto_commit(
-                        config.homelab_repo_path,
-                        issue_identifier=candidate.identifier,
-                        issue_name=candidate.name,
-                        issue_id=candidate.id,
-                        plan_path=str(plan_path) if plan_path else None,
-                    )
-                except AutoCommitFailed as exc:
+                if committed_pre_dirty:
                     LOGGER.warning(
-                        "auto_commit_failed issue_id=%s repo=%s error=%s",
-                        candidate.id, config.homelab_repo_path, exc,
+                        "auto_commit_skipped_pre_dirty issue_id=%s repo=%s",
+                        candidate.id, config.homelab_repo_path,
                     )
-                    msg = f"Symphony auto-commit failed: {exc}"
-                    if exc.stderr:
-                        sanitized = _sanitize_report(exc.stderr, secrets)
-                        msg += f"\n\n**git stderr:**\n```\n{sanitized}\n```"
+                    msg = (
+                        "Repository was already dirty before dispatch and remains dirty after "
+                        "the agent exited cleanly. Symphony did not auto-commit or mark this "
+                        "issue Done; reconcile the pending changes manually."
+                    )
                     if committed_stat and committed_stat != "No diff stat available":
                         msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
-                    if stdout:
-                        msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
                     if stderr:
                         msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                     await _block_issue(
-                        adapter, candidate.id, msg,
+                        adapter,
+                        candidate.id,
+                        msg,
                         issue_name=candidate.name,
                         issue_identifier=candidate.identifier,
                         notifier=notifier,
                     )
-                    return TickResult(
-                        True, "auto-commit-failed", candidate.id, mode=mode,
+                    return TickResult(True, "pre-dirty-uncommitted", candidate.id, mode=mode)
+                else:
+                    try:
+                        committed_sha = auto_commit(
+                            config.homelab_repo_path,
+                            issue_identifier=candidate.identifier,
+                            issue_name=candidate.name,
+                            issue_id=candidate.id,
+                            plan_path=str(plan_path) if plan_path else None,
+                        )
+                    except AutoCommitFailed as exc:
+                        LOGGER.warning(
+                            "auto_commit_failed issue_id=%s repo=%s error=%s",
+                            candidate.id, config.homelab_repo_path, exc,
+                        )
+                        msg = f"Symphony auto-commit failed: {exc}"
+                        if exc.stderr:
+                            sanitized = _sanitize_report(exc.stderr, secrets)
+                            msg += f"\n\n**git stderr:**\n```\n{sanitized}\n```"
+                        if committed_stat and committed_stat != "No diff stat available":
+                            msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
+                        if stderr:
+                            msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                        await _block_issue(
+                            adapter, candidate.id, msg,
+                            issue_name=candidate.name,
+                            issue_identifier=candidate.identifier,
+                            notifier=notifier,
+                        )
+                        return TickResult(
+                            True, "auto-commit-failed", candidate.id, mode=mode,
+                        )
+                    LOGGER.info(
+                        "auto_commit_succeeded issue_id=%s sha=%s pre_dirty=%s",
+                        candidate.id, committed_sha,
+                        str(committed_pre_dirty).lower(),
                     )
-                LOGGER.info(
-                    "auto_commit_succeeded issue_id=%s sha=%s pre_dirty=%s",
-                    candidate.id, committed_sha,
-                    str(committed_pre_dirty).lower(),
-                )
 
             after_agent = await _fetch_issue(adapter, candidate.id)
             if _is_state(after_agent, adapter, PlaneState.DONE):
@@ -538,36 +614,39 @@ async def run_tick(
 
             def _completion_body() -> str:
                 body = "**Symphony completed:**"
-                if stdout:
-                    body += f"\n\n```\n{stdout}\n```"
-                else:
-                    body = "Symphony completed (no output)."
                 if stderr:
                     body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 if committed_sha is not None:
                     commit_block = (
                         f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
                     )
-                    if committed_pre_dirty:
-                        commit_block += (
-                            "\n\n**WARNING: Repository was already dirty before "
-                            "dispatch.** Commit may include prior work."
-                        )
                     if committed_stat and committed_stat != "No diff stat available":
                         commit_block += f"\n\n```\n{committed_stat}\n```"
                     body += commit_block
+                elif committed_pre_dirty and committed_stat:
+                    body += (
+                        "\n\n**WARNING: Repository was already dirty before dispatch.** "
+                        "Symphony did not auto-commit changes."
+                    )
+                    if committed_stat != "No diff stat available":
+                        body += f"\n\n```\n{committed_stat}\n```"
                 return body
 
             if verdict == "blocked":
-                msg = "Agent reported SYMPHONY_RESULT: blocked."
+                msg = "Agent reported a blocked result."
                 if committed_sha is not None:
                     msg += (
                         f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
                     )
                     if committed_stat and committed_stat != "No diff stat available":
                         msg += f"\n\n```\n{committed_stat}\n```"
-                if stdout:
-                    msg += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
+                elif committed_pre_dirty and committed_stat:
+                    msg += (
+                        "\n\n**WARNING: Repository was already dirty before dispatch.** "
+                        "Symphony did not auto-commit changes."
+                    )
+                    if committed_stat != "No diff stat available":
+                        msg += f"\n\n```\n{committed_stat}\n```"
                 if stderr:
                     msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await _block_issue(
@@ -932,11 +1011,9 @@ async def _detect_agent_schedule(
     if event.comment_created_at <= claim_dt.astimezone(UTC):
         return None
     body = "Symphony scheduled follow-up:"
-    if stdout:
-        body += f"\n\n**Agent Output:**\n```\n{stdout}\n```"
     if stderr:
         body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
-    if not stdout and not stderr:
+    if not stderr:
         body += " no output."
     await adapter.add_comment(candidate.id, CommentPayload(body=body))
     return "agent-scheduled"

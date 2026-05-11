@@ -1,0 +1,98 @@
+plan_file: plans/symphony-pi-executor-swap.md
+prompt: "create a plan from /home/james/plane/symphony/artifacts/brainstorming/brainstorm-symphony-pi-swap-2026-05-11.md"
+max_rounds: 3
+current_round: 3
+status: converged
+exit_reason: "No critical findings; all round 2 warnings addressed; final note was cosmetic wording and was corrected"
+codex_session_id: "019e182e-77d7-76d0-b59b-c71c2e9547fe"
+started: "2026-05-11T18:00:00Z"
+updated: "2026-05-11T18:39:00Z"
+notes:
+  - "Source: artifacts/brainstorming/brainstorm-symphony-pi-swap-2026-05-11.md (feasibility-confirmed)"
+  - "Phase 2 source discovery: prompt is an explicit file path, used directly"
+  - "Phase 3 vague-prompt check skipped: source artifact is substantive"
+rounds:
+  - round: 1
+    codex_mode: challenge
+    started: "2026-05-11T18:00:30Z"
+    findings:
+      critical:
+        - |
+          [CRITICAL] `tests/test_scheduler.py` is missing from the plan, so the config swap will break pytest.
+            Detail: The plan's relevant/test files omit `tests/test_scheduler.py`, but that file constructs `SymphonyConfig(opencode_bin=...)` and env dicts with `OPENCODE_BIN`. After `config.py` removes `opencode_bin` and requires `PI_BIN`, those tests will fail before the plan's `uv run pytest -q` gate can pass.
+            Suggested fix: Add `tests/test_scheduler.py` to the plan and update its config helpers/env fixtures to use `pi_bin`/`PI_BIN`.
+        - |
+          [CRITICAL] `scheduler.py` still redacts `CLIPROXY_API_KEY` but not `ZAI_API_KEY`.
+            Detail: `scheduler.py` collects secrets from `_SECRET_ENV_KEYS`, which includes `CLIPROXY_API_KEY` and omits `ZAI_API_KEY`. The plan adds `ZAI_API_KEY` to the agent env and requires zero `CLIPROXY` hits, but does not include `scheduler.py`; validation will fail, and pi output could leak the ZAI key into Plane comments.
+            Suggested fix: Add `scheduler.py` to the plan, replace `CLIPROXY_API_KEY` with `ZAI_API_KEY` in secret collection, and add redaction tests for pi stdout/stderr.
+      warning:
+        - |
+          [WARNING] A mechanical rename leaves a duplicate live pi probe on every dispatch.
+            Detail: Existing `run_agent` calls `verify_opencode_support(...)` per run. The plan says to rename it and also add `verify_pi_support(...)` at startup. If the existing call remains, every issue does help + live model probe before the real run, adding latency, quota use, and provider-failure risk.
+            Suggested fix: Explicitly remove verifier calls from `run_agent`; keep `verify_pi_support` only in `main.async_main`.
+        - |
+          [WARNING] `--no-context-files` disables homelab AGENTS/CLAUDE loading despite WORKFLOW relying on AGENTS safety rules.
+            Detail: Installed pi help says `--no-context-files` disables AGENTS.md and CLAUDE.md discovery. The plan mandates that flag, while `/home/james/homelab/WORKFLOW.md` says to follow AGENTS.md safety rules and the homelab repo has multiple AGENTS files. This is a behavioral change from the current `opencode --dir` flow that the plan does not validate.
+            Suggested fix: Drop `--no-context-files`, or explicitly render/read required AGENTS safety content into the prompt and smoke-test that pi sees it.
+        - |
+          [WARNING] `verify_pi_support` misses missing or non-executable `PI_BIN`.
+            Detail: The current verifier pattern uses `subprocess.run(..., check=False)`, which does not convert `FileNotFoundError` or `PermissionError` into `AgentRunnerError`. The plan's failure contract only covers rc/help/stdout failures.
+            Suggested fix: Wrap help/probe calls in `try/except OSError` and raise `AgentRunnerError`; add tests for missing and non-executable binaries.
+        - |
+          [WARNING] The Plane shim fix is not tested as an executable PATH shim.
+            Detail: The plan tests only the shebang line and env injection separately. The actual latent bug is copied helper execution as `plane` plus local imports under filtered env; current tests mostly call `plane_cli.run(...)` in-process.
+            Suggested fix: Add a subprocess regression that copies `plane_cli.py` to temp `plane`, chmods it executable, runs it with filtered env plus `PYTHONPATH`, and verifies it reaches the expected CLI/env error rather than exec/import failure.
+      note:
+        - |
+          [NOTE] OpenCode user-facing text can survive the validation grep.
+            Detail: Current docstrings/messages use `OpenCode` CamelCase, while the plan's validation grep checks only `opencode|OPENCODE|CLIPROXY`; stale `OpenCode` strings can remain unnoticed.
+    counts: { critical: 2, warning: 5, note: 1 }
+    plan_diff_pct: 100.0
+    revision_summary: "Rewrote the plan to address round 1 findings: added scheduler.py and tests/test_scheduler.py scope, removed --no-context-files per James' decision, made verify_pi_support startup-only, added OSError handling, added executable shim regression, added ZAI redaction and executor-neutral permission text, and expanded stale reference validation to include OpenCode CamelCase."
+    recovery: null
+  - round: 3
+    codex_mode: consult
+    started: "2026-05-11T18:36:00Z"
+    findings:
+      critical: []
+      warning: []
+      note:
+        - |
+          [NOTE] New issue: one validation-command description still says only runtime/test references.
+            Detail: Plan line 229 describes the stale-reference grep as “no stale runtime/test references,” while the command and acceptance criteria cover runtime/test/script references. This is prose drift only; the command itself is correct.
+    counts: { critical: 0, warning: 0, note: 1 }
+    plan_diff_pct: 1.0
+    revision_summary: "Corrected final validation-command wording from runtime/test references to runtime/test/script references."
+    recovery: null
+cleanup:
+  removed_paths: []
+  skipped_paths:
+    - "artifacts/specs/adversarially-review-this-implementation-plan-fo (created by Codex hook; left untouched because removal is destructive)"
+    - "artifacts/specs/the-plan-at-plans-symphony-pi-executor-swap-md-h (created by Codex hook; left untouched because removal is destructive)"
+  - round: 2
+    codex_mode: consult
+    started: "2026-05-11T18:31:30Z"
+    findings:
+      critical: []
+      warning:
+        - |
+          [WARNING] Round 1 finding: stale OpenCode text removal is still incomplete.
+            Status: PARTIALLY_ADDRESSED — the grep now includes `OpenCode`, but the plan does not include every file that the grep will catch.
+            Detail: `scripts/sync_plane_ids.py:5` contains `OpenCode`, and validation scans scripts because it only excludes `plans/**` and `artifacts/**`. The plan also only explicitly calls out `agent_runner.py` docstrings, not stale raised error strings such as `agent_runner.py:59`.
+            Suggested fix: Add `scripts/sync_plane_ids.py` to Relevant Files/tasks and explicitly require all user-facing exception/log/docstring strings found by the final grep to be retargeted to pi.
+        - |
+          [WARNING] New issue: startup `verify_pi_support` does not use the same cwd/context behavior as real dispatch.
+            Detail: The revised plan drops `--no-context-files`, so pi context discovery depends on process cwd. `run_agent` gets `cwd=config.homelab_repo_path`, but `verify_pi_support` takes only `pi_bin/provider/model` and the probe specifies no `cwd`. The startup probe can load Symphony context while real runs load homelab context.
+            Suggested fix: Add a `cwd` parameter to `verify_pi_support` and call it with `config.homelab_repo_path`, or explicitly make the probe context-free with `--no-context-files` and document that it only validates binary/provider/model health.
+        - |
+          [WARNING] New issue: verifier insertion point can leak `HttpxPlaneTransport` on startup failure.
+            Detail: Current `main.py` constructs `HttpxPlaneTransport` immediately after config load, before the `try/finally` that closes it. Plan says to call the verifier before `run_loop`, but does not pin it before transport construction; tests only require abort before dispatch.
+            Suggested fix: Change step 5.2 to call `verify_pi_support` immediately after `SymphonyConfig.from_env()` and before `HttpxPlaneTransport(...)`; add a test that verifier failure does not construct transport.
+      note:
+        - |
+          [NOTE] New issue: live-host notes omit one allowed pi env var.
+            Detail: Plan allow-lists `PI_CODING_AGENT_DIR`, but live-host notes document only `ZAI_API_KEY`, `PI_OFFLINE`, and `PI_CODING_AGENT_SESSION_DIR`.
+    counts: { critical: 0, warning: 3, note: 1 }
+    plan_diff_pct: 18.0
+    revision_summary: "Added scripts/sync_plane_ids.py stale-reference cleanup, made verify_pi_support accept/probe with homelab cwd, pinned main startup verifier before HttpxPlaneTransport construction, required retargeting stale verifier exception strings, and documented PI_CODING_AGENT_DIR."
+    recovery: null
