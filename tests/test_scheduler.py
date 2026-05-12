@@ -858,7 +858,10 @@ async def test_approval_required_filter_works_with_uuid_labels(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_run_tick_stderr_appears_in_no_terminal_comment(tmp_path: Path) -> None:
+async def test_run_tick_stderr_omitted_from_success_completion_comment(tmp_path: Path) -> None:
+    # Success-path comments must NOT include agent stderr: `pi` emits its full
+    # tool trace and WORKFLOW.md echoes on stderr, which is noise on clean
+    # runs. Failure paths still surface stderr (see blocked/timeout test).
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
 
@@ -877,8 +880,8 @@ async def test_run_tick_stderr_appears_in_no_terminal_comment(tmp_path: Path) ->
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "done output" not in completion_comment
-    assert "Stderr:" in completion_comment
-    assert "warning: minor issue" in completion_comment
+    assert "Stderr:" not in completion_comment
+    assert "warning: minor issue" not in completion_comment
 
 
 @pytest.mark.asyncio
@@ -928,13 +931,16 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
+    # Stderr is only emitted on failure paths now; assert redaction there.
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stderr="Debug: key=fake-plane-key-for-tests\nall done"),
+        agent_runner=lambda issue, prompt: AgentResult(
+            1, 10, False, stderr="Debug: key=fake-plane-key-for-tests\nall done"
+        ),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
@@ -942,11 +948,11 @@ async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "fake-plane-key-for-tests" not in completion_comment
-    assert "***REDACTED***" in completion_comment
-    assert "Stderr:" in completion_comment
+    assert result.reason == "nonzero"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "fake-plane-key-for-tests" not in blocked_comment
+    assert "***REDACTED***" in blocked_comment
+    assert "Stderr:" in blocked_comment
 
 
 @pytest.mark.asyncio
@@ -959,7 +965,7 @@ async def test_run_tick_redacts_zai_api_key_from_stderr(monkeypatch, tmp_path: P
         _config(tmp_path),
         _adapter(transport),
         agent_runner=lambda issue, prompt: AgentResult(
-            0, 10, False, stderr="Debug: key=secret-zai-key-for-tests\nall done"
+            1, 10, False, stderr="Debug: key=secret-zai-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock-zai-redaction",
@@ -968,10 +974,10 @@ async def test_run_tick_redacts_zai_api_key_from_stderr(monkeypatch, tmp_path: P
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "secret-zai-key-for-tests" not in completion_comment
-    assert "***REDACTED***" in completion_comment
+    assert result.reason == "nonzero"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "secret-zai-key-for-tests" not in blocked_comment
+    assert "***REDACTED***" in blocked_comment
 
 
 @pytest.mark.asyncio
@@ -984,7 +990,7 @@ async def test_run_tick_redacts_legacy_cliproxy_api_key_from_stderr(monkeypatch,
         _config(tmp_path),
         _adapter(transport),
         agent_runner=lambda issue, prompt: AgentResult(
-            0, 10, False, stderr="Debug: key=secret-cliproxy-key-for-tests\nall done"
+            1, 10, False, stderr="Debug: key=secret-cliproxy-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock-cliproxy-redaction",
@@ -993,10 +999,234 @@ async def test_run_tick_redacts_legacy_cliproxy_api_key_from_stderr(monkeypatch,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
+    assert result.reason == "nonzero"
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "secret-cliproxy-key-for-tests" not in blocked_comment
+    assert "***REDACTED***" in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_strips_ansi_escapes_from_failure_stderr(tmp_path: Path) -> None:
+    # `pi` emits ANSI color codes in its stderr trace. They must be stripped
+    # so the fenced block on Plane is readable.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    raw_stderr = "\x1b[0m\x1b[90mtrace\x1b[0m\nfailed: \x1b[1;31merror line\x1b[0m"
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            1, 10, False, stderr=raw_stderr,
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-ansi",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "Stderr:" in blocked_comment
+    assert "\x1b" not in blocked_comment
+    assert "[0m" not in blocked_comment
+    assert "[90m" not in blocked_comment
+    assert "[1;31m" not in blocked_comment
+    assert "trace" in blocked_comment
+    assert "failed: error line" in blocked_comment
+
+
+# --- SYMPHONY_SUMMARY marker tests ---
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_appears_in_success_comment(tmp_path: Path) -> None:
+    # A SYMPHONY_SUMMARY: <line> in stdout becomes the operator-readable
+    # signal on a clean run.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False,
+            stdout="some chatter\nSYMPHONY_SUMMARY: Jellyfin CT106 healthy. HTTP 200, mounts OK.\nmore chatter",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
     assert result.reason == "agent-clean-done"
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "secret-cliproxy-key-for-tests" not in completion_comment
-    assert "***REDACTED***" in completion_comment
+    assert "Symphony completed" in completion_comment
+    assert "Jellyfin CT106 healthy. HTTP 200, mounts OK." in completion_comment
+    # No raw stdout dump.
+    assert "some chatter" not in completion_comment
+    assert "more chatter" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_last_occurrence_wins(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False,
+            stdout="SYMPHONY_SUMMARY: draft summary\nthen\nSYMPHONY_SUMMARY: final summary",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-summary-last",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "final summary" in completion_comment
+    assert "draft summary" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) -> None:
+    # A misbehaving agent cannot smuggle the world into a comment via the
+    # summary channel. The summary is single-line, ANSI-stripped, and capped.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    huge = "X" * 5000
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False,
+            stdout=f"SYMPHONY_SUMMARY: {huge}",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-summary-trunc",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    # Comment is "**Symphony completed:** <summary>". The body length should
+    # be bounded, not the full 5000.
+    assert len(completion_comment) < 1000
+    assert completion_comment.rstrip().endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_falls_back_to_stderr(tmp_path: Path) -> None:
+    # Agents that wrap the pi CLI may write the summary line on stderr by
+    # mistake. We accept it from either stream; stderr takes precedence over
+    # stdout because it runs later in the parse.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False,
+            stdout="",
+            stderr="some logging\nSYMPHONY_SUMMARY: From stderr stream.",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-summary-stderr",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "From stderr stream." in completion_comment
+    # Stderr block itself stays suppressed on success.
+    assert "Stderr:" not in completion_comment
+    assert "some logging" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_strips_ansi(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False,
+            stdout="SYMPHONY_SUMMARY: \x1b[32mgreen result\x1b[0m line",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-summary-ansi",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "green result line" in completion_comment
+    assert "\x1b" not in completion_comment
+    assert "[32m" not in completion_comment
+    assert "[0m" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="ok"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-summary-absent",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert completion_comment.startswith("**Symphony completed:**")
+    # Trailing space + summary is absent; the body should be exactly the
+    # marker line plus nothing else for a clean repo + no marker.
+    assert completion_comment.strip() == "**Symphony completed:**"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path) -> None:
+    # When the agent emits SYMPHONY_RESULT: blocked, any SYMPHONY_SUMMARY is
+    # hoisted into the blocked comment, before the Stderr block.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False,
+            stdout="SYMPHONY_SUMMARY: Backup target offline.\nSYMPHONY_RESULT: blocked",
+            stderr="ssh: connection refused",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-summary-blocked",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "Agent reported a blocked result: Backup target offline." in blocked_comment
+    # Stderr is still surfaced on failure paths.
+    assert "Stderr:" in blocked_comment
+    assert "ssh: connection refused" in blocked_comment
 
 
 # --- Config lock_path tests ---

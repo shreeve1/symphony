@@ -133,8 +133,12 @@ def run_agent(
         helper_target.chmod(0o700)
 
         source_env = os.environ if environ is None else environ
+        # TERM is deliberately NOT inherited. We override with TERM=dumb and
+        # NO_COLOR=1 below so the pi CLI (and any tool it spawns) cannot emit
+        # ANSI escapes or progress trace into our captured stderr. Plane
+        # renders fenced blocks as plain text; ANSI is pure noise there.
         allowed_keys = {
-            "PATH", "HOME", "USER", "LANG", "TERM", "XDG_RUNTIME_DIR",
+            "PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR",
             "PYTHONUNBUFFERED", "TMPDIR",
             "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_HOME_CHANNEL",
             "ZAI_API_KEY", "PI_OFFLINE", "PI_CODING_AGENT_DIR",
@@ -145,6 +149,8 @@ def run_agent(
             {
                 "PATH": f"{temp_dir}{os.pathsep}{source_env.get('PATH', '')}",
                 "HOME": source_env.get("HOME", f"/home/{os.getenv('USER', 'james')}"),
+                "TERM": "dumb",
+                "NO_COLOR": "1",
                 "SYMPHONY_ISSUE_ID": issue.id,
                 "SYMPHONY_PLANE_API_URL": config.plane_api_url,
                 "SYMPHONY_PLANE_API_KEY": config.plane_api_key,

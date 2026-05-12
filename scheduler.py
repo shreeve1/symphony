@@ -33,7 +33,11 @@ from homelab_router.prompt_renderer import render_previous_comments_block
 
 LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
-REPORT_MAX_BYTES = 8192
+REPORT_MAX_BYTES = 2048
+# Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
+# from agent stderr so failure comments are readable on Plane, which renders
+# fenced code as plain text.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 SCHEDULED_RELEASE_PAGE_SIZE = 50
 SCHEDULED_RELEASE_MAX_PAGES_PER_TICK = 3
 SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
@@ -51,6 +55,17 @@ _RESULT_MARKER_RE = re.compile(
     r"^[ \t]*SYMPHONY_RESULT:[ \t]*(done|review|blocked)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
+# SYMPHONY_SUMMARY marker: agents may emit `SYMPHONY_SUMMARY: <one short line>`
+# on its own line in stdout (or stderr — both are checked) to provide a
+# human-readable result line for the Plane completion comment. Last occurrence
+# wins, case-insensitive on the prefix. The captured text is trimmed to
+# SUMMARY_MAX_CHARS and stripped of newlines so a misbehaving agent cannot
+# dump the world into a Plane comment via this channel.
+_SUMMARY_MARKER_RE = re.compile(
+    r"^[ \t]*SYMPHONY_SUMMARY:[ \t]*(.+?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+SUMMARY_MAX_CHARS = 500
 _PERMISSION_GATE_RE = re.compile(
     r"permission requested:|auto-rejecting|user rejected permission",
     re.IGNORECASE,
@@ -72,6 +87,35 @@ def _parse_result_marker(stdout: str) -> str | None:
     return matches[-1].lower()
 
 
+def _parse_summary_marker(*streams: str) -> str | None:
+    """Return the last SYMPHONY_SUMMARY line across the given streams, or None.
+
+    Streams are searched in order; later streams override earlier ones, and
+    within a stream the last occurrence wins. The captured text is collapsed
+    to a single line, ANSI-stripped, and truncated to SUMMARY_MAX_CHARS so a
+    runaway agent cannot smuggle a long block into a completion comment.
+    """
+
+    summary: str | None = None
+    for stream in streams:
+        if not stream:
+            continue
+        matches = _SUMMARY_MARKER_RE.findall(stream)
+        if matches:
+            summary = matches[-1]
+    if summary is None:
+        return None
+    cleaned = _ANSI_ESCAPE_RE.sub("", summary).strip()
+    # Defensive: collapse whitespace/newlines a multiline regex shouldn't have
+    # matched anyway, in case future regex tweaks loosen this.
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned:
+        return None
+    if len(cleaned) > SUMMARY_MAX_CHARS:
+        cleaned = cleaned[: SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+    return cleaned
+
+
 def _hit_permission_gate(stdout: str, stderr: str) -> bool:
     """Return true when the executor clean-exited after denied tool access."""
 
@@ -89,14 +133,16 @@ class SchedulerError(RuntimeError):
 
 
 def _sanitize_report(text: str, secrets: Sequence[str]) -> str:
-    report = text.strip()
+    report = _ANSI_ESCAPE_RE.sub("", text).strip()
     for secret in secrets:
         if secret:
             report = report.replace(secret, _REDACTED)
     encoded = report.encode("utf-8", errors="replace")
     if len(encoded) > REPORT_MAX_BYTES:
-        report = encoded[:REPORT_MAX_BYTES].decode("utf-8", errors="replace")
-        report += "\n\n... [output truncated]"
+        # Keep the tail: failure context (final error, traceback footer) is
+        # almost always more useful than the head of a long pi trace.
+        tail = encoded[-REPORT_MAX_BYTES:].decode("utf-8", errors="replace")
+        report = "... [output truncated]\n\n" + tail
     return report
 
 
@@ -130,6 +176,27 @@ def _format_report(
     stdout = _sanitize_report(result.stdout, secrets)
     stderr = _sanitize_report(result.stderr, secrets)
     return stdout, stderr
+
+
+def _extract_summary(
+    result: AgentResult, secrets: Sequence[str]
+) -> str | None:
+    """Pull SYMPHONY_SUMMARY from the raw streams and apply secret redaction.
+
+    Summary extraction runs against the *unsanitized* stdout/stderr because
+    `_sanitize_report` keeps only the last 2 KB of stderr (for failure-comment
+    bounding); a summary line earlier in the stream would otherwise be lost.
+    The captured line is still passed through ANSI stripping, whitespace
+    collapse, and SUMMARY_MAX_CHARS truncation inside `_parse_summary_marker`.
+    """
+
+    summary = _parse_summary_marker(result.stdout, result.stderr)
+    if summary is None:
+        return None
+    for secret in secrets:
+        if secret:
+            summary = summary.replace(secret, _REDACTED)
+    return summary
 
 
 class LockHeld(RuntimeError):
@@ -507,9 +574,10 @@ async def run_tick(
                 else:
                     plan_report_path = None
 
+                plan_summary = _extract_summary(result, secrets)
                 body = _PLAN_HANDOFF_MARKER
-                if stderr:
-                    body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                if plan_summary:
+                    body += f" {plan_summary}"
                 if repo_dirty(config.homelab_repo_path):
                     stat = diff_stat(config.homelab_repo_path)
                     body += f"\n\n**WARNING: Plan mode produced repository changes:**\n```\n{stat}\n```"
@@ -611,11 +679,20 @@ async def run_tick(
             # agent's verdict from an explicit SYMPHONY_RESULT marker in
             # stdout, or fall through to a clean-exit Done.
             verdict = _parse_result_marker(stdout)
+            summary = _extract_summary(result, secrets)
 
             def _completion_body() -> str:
-                body = "**Symphony completed:**"
-                if stderr:
-                    body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                # Success-path comments intentionally omit agent stderr: the
+                # `pi` CLI emits its full tool trace and WORKFLOW.md echoes
+                # on stderr, which is noise on a clean run. Stderr is still
+                # surfaced on failure paths (timeout, nonzero, gated,
+                # pre-dirty, auto-commit-failed). A short SYMPHONY_SUMMARY line
+                # from the agent, if present, is the only per-run signal we
+                # carry through on success.
+                if summary:
+                    body = f"**Symphony completed:** {summary}"
+                else:
+                    body = "**Symphony completed:**"
                 if committed_sha is not None:
                     commit_block = (
                         f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
@@ -633,7 +710,10 @@ async def run_tick(
                 return body
 
             if verdict == "blocked":
-                msg = "Agent reported a blocked result."
+                if summary:
+                    msg = f"Agent reported a blocked result: {summary}"
+                else:
+                    msg = "Agent reported a blocked result."
                 if committed_sha is not None:
                     msg += (
                         f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
@@ -1010,11 +1090,10 @@ async def _detect_agent_schedule(
         return None
     if event.comment_created_at <= claim_dt.astimezone(UTC):
         return None
-    body = "Symphony scheduled follow-up:"
-    if stderr:
-        body += f"\n\n**Stderr:**\n```\n{stderr}\n```"
-    if not stderr:
-        body += " no output."
+    schedule_summary = _parse_summary_marker(stdout, stderr)
+    body = "Symphony scheduled follow-up."
+    if schedule_summary:
+        body += f" {schedule_summary}"
     await adapter.add_comment(candidate.id, CommentPayload(body=body))
     return "agent-scheduled"
 

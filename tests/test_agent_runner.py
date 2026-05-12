@@ -183,6 +183,7 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
         environ={
             "PATH": "/usr/bin",
             "HOME": "/home/james",
+            "TERM": "xterm-256color",
             "SECRET_LEAK": "should-not-appear",
             "PLANE_API_KEY": "leaked-key",
             "TELEGRAM_BOT_TOKEN": "tok-123",
@@ -226,6 +227,10 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     assert env.get("HOME") == "/home/james"
     assert env.get("TELEGRAM_BOT_TOKEN") == "tok-123"
     assert env.get("TELEGRAM_CHAT_ID") == "chat-456"
+    # Defense-in-depth against ANSI color trace in captured stderr: inbound
+    # TERM must be overridden, NO_COLOR forced.
+    assert env.get("TERM") == "dumb"
+    assert env.get("NO_COLOR") == "1"
 
 
 def test_run_agent_uses_configured_provider_model_and_logs(caplog, tmp_path: Path) -> None:
