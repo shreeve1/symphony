@@ -34,6 +34,10 @@ from homelab_router.prompt_renderer import render_previous_comments_block
 LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 2048
+STDERR_SUMMARY_MAX_LINES = 8
+STDERR_SUMMARY_MAX_CHARS = 900
+PREVIOUS_COMMENT_MAX_CHARS = 1500
+PREVIOUS_COMMENT_TAIL_CHARS = 500
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
 # from agent stderr so failure comments are readable on Plane, which renders
 # fenced code as plain text.
@@ -176,6 +180,40 @@ def _format_report(
     stdout = _sanitize_report(result.stdout, secrets)
     stderr = _sanitize_report(result.stderr, secrets)
     return stdout, stderr
+
+
+def _format_stderr_summary(stderr: str) -> str:
+    """Return a bounded, human-readable stderr summary for Plane comments."""
+
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    selected = lines[-STDERR_SUMMARY_MAX_LINES:]
+    body = "\n".join(f"- {line}" for line in selected)
+    if len(body) > STDERR_SUMMARY_MAX_CHARS:
+        body = body[: STDERR_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+    omitted = len(lines) - len(selected)
+    prefix = "**Stderr summary:**"
+    if omitted > 0:
+        prefix += f" last {len(selected)} non-empty lines shown; {omitted} earlier lines omitted."
+    return f"{prefix}\n{body}"
+
+
+def _format_previous_comment_body(body: str) -> str:
+    """Bound prior Plane comments before injecting them into the next prompt."""
+
+    stripped = body.strip()
+    if len(stripped) <= PREVIOUS_COMMENT_MAX_CHARS:
+        return stripped
+    first_line = next((line.strip() for line in stripped.splitlines() if line.strip()), "Previous comment")
+    if len(first_line) > 180:
+        first_line = first_line[:179].rstrip() + "…"
+    tail = stripped[-PREVIOUS_COMMENT_TAIL_CHARS:].strip()
+    return (
+        f"{first_line}\n\n"
+        f"[Previous comment truncated from {len(stripped)} characters for Symphony prompt readability.]\n\n"
+        f"{tail}"
+    )
 
 
 def _extract_summary(
@@ -494,7 +532,7 @@ async def run_tick(
                 msg = f"Agent timed out after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
                 if stderr:
-                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                    msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _block_issue(
                     adapter, candidate.id, msg,
                     issue_name=candidate.name, issue_identifier=candidate.identifier,
@@ -505,7 +543,7 @@ async def run_tick(
                 msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
                 if stderr:
-                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                    msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _block_issue(
                     adapter, candidate.id, msg,
                     issue_name=candidate.name, issue_identifier=candidate.identifier,
@@ -529,7 +567,7 @@ async def run_tick(
             if _hit_permission_gate(stdout, stderr):
                 msg = "Agent could not complete because required tool access was denied."
                 if stderr:
-                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                    msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _block_issue(
                     adapter,
                     candidate.id,
@@ -543,7 +581,7 @@ async def run_tick(
             if _hit_approval_gate(stdout, stderr):
                 msg = "Agent could not complete because operator approval is required."
                 if stderr:
-                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                    msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _block_issue(
                     adapter,
                     candidate.id,
@@ -701,7 +739,7 @@ async def run_tick(
                     if committed_stat and committed_stat != "No diff stat available":
                         msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
                 if stderr:
-                    msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
+                    msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _block_issue(
                     adapter,
                     candidate.id,
@@ -1095,7 +1133,7 @@ async def _fetch_issue_comments(adapter: PlaneAdapter, issue_id: str) -> str:
         if CLAIM_PREFIX in body or not body:
             continue
         created = comment.get("created_at", "")
-        parts.append(f"**Comment ({created}):**\n{body}")
+        parts.append(f"**Comment ({created}):**\n{_format_previous_comment_body(body)}")
     return "\n\n---\n\n".join(parts)
 
 

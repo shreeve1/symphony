@@ -337,6 +337,56 @@ async def test_run_tick_omits_stdout_in_blocked_comments(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_run_tick_summarizes_long_stderr_in_blocked_comments(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    stderr = "\n".join(f"trace line {idx}" for idx in range(1, 20))
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(2, 10, False, stderr=stderr),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-nonzero-stderr-summary",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "**Stderr summary:**" in blocked_comment
+    assert "earlier lines omitted" in blocked_comment
+    assert "- trace line 1\n" not in blocked_comment
+    assert "trace line 12" in blocked_comment
+    assert "trace line 19" in blocked_comment
+    assert "```" not in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_strips_ansi_from_stderr_summary(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            2,
+            10,
+            False,
+            stderr="\x1b[31mpermission denied\x1b[0m",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-nonzero-stderr-ansi",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "permission denied" in blocked_comment
+    assert "\x1b" not in blocked_comment
+
+
+@pytest.mark.asyncio
 async def test_run_tick_dirty_worktree_auto_commits_and_completes(tmp_path: Path) -> None:
     """Pre-existing dirt no longer blocks; scheduler auto-commits and marks Done."""
     transport = FakeTransport()
@@ -902,7 +952,7 @@ async def test_run_tick_stderr_appears_in_blocked_timeout_comment(tmp_path: Path
     blocked_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Agent Output:" not in blocked_comment
     assert "partial" not in blocked_comment
-    assert "Stderr:" in blocked_comment
+    assert "Stderr summary:" in blocked_comment
     assert "timeout error detail" in blocked_comment
 
 
@@ -952,7 +1002,7 @@ async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
     blocked_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "fake-plane-key-for-tests" not in blocked_comment
     assert "***REDACTED***" in blocked_comment
-    assert "Stderr:" in blocked_comment
+    assert "Stderr summary:" in blocked_comment
 
 
 @pytest.mark.asyncio
@@ -1008,7 +1058,7 @@ async def test_run_tick_redacts_legacy_cliproxy_api_key_from_stderr(monkeypatch,
 @pytest.mark.asyncio
 async def test_run_tick_strips_ansi_escapes_from_failure_stderr(tmp_path: Path) -> None:
     # `pi` emits ANSI color codes in its stderr trace. They must be stripped
-    # so the fenced block on Plane is readable.
+    # so the Plane comment remains readable.
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     raw_stderr = "\x1b[0m\x1b[90mtrace\x1b[0m\nfailed: \x1b[1;31merror line\x1b[0m"
@@ -1026,7 +1076,7 @@ async def test_run_tick_strips_ansi_escapes_from_failure_stderr(tmp_path: Path) 
     )
 
     blocked_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "Stderr:" in blocked_comment
+    assert "Stderr summary:" in blocked_comment
     assert "\x1b" not in blocked_comment
     assert "[0m" not in blocked_comment
     assert "[90m" not in blocked_comment
@@ -1203,7 +1253,7 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
 @pytest.mark.asyncio
 async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path) -> None:
     # When the agent emits SYMPHONY_RESULT: blocked, any SYMPHONY_SUMMARY is
-    # hoisted into the blocked comment, before the Stderr block.
+    # hoisted into the blocked comment, before the stderr summary.
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
 
@@ -1225,7 +1275,7 @@ async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path)
     blocked_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Agent reported a blocked result: Backup target offline." in blocked_comment
     # Stderr is still surfaced on failure paths.
-    assert "Stderr:" in blocked_comment
+    assert "Stderr summary:" in blocked_comment
     assert "ssh: connection refused" in blocked_comment
 
 
@@ -1365,6 +1415,34 @@ async def test_comments_sorted_oldest_first(tmp_path: Path) -> None:
     first_pos = prompt.index("First comment")
     second_pos = prompt.index("Second comment")
     assert first_pos < second_pos
+
+
+@pytest.mark.asyncio
+async def test_long_previous_comments_are_condensed_before_prompt(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    long_body = "**Symphony completed:**\n" + "verbose stderr trace\n" * 200
+    transport.comments["issue-1"] = [
+        {"body": long_body, "created_at": "2026-05-04T01:00:00+00:00"},
+        {"body": "Current operator instruction", "created_at": "2026-05-04T01:05:00+00:00"},
+    ]
+    seen_prompts: list[str] = []
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        render_prompt=lambda issue: "base prompt",
+        lock_path=tmp_path / "lock-condensed-comments",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
+    )
+
+    prompt = seen_prompts[0]
+    assert "Previous comment truncated from" in prompt
+    assert prompt.count("verbose stderr trace") < 40
+    assert "Current operator instruction" in prompt
 
 
 @pytest.mark.asyncio

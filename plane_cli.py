@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -30,6 +31,16 @@ REQUIRED_ENV = (
 )
 
 NOTIFY_STATES = {"review", "blocked"}
+COMMENT_MAX_CHARS = 1500
+COMMENT_TAIL_CHARS = 500
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_SECRET_ENV_KEYS = (
+    "SYMPHONY_PLANE_API_KEY",
+    "PLANE_API_KEY",
+    "ZAI_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+)
+_REDACTED = "***REDACTED***"
 
 # BEGIN GENERATED PLANE IDS
 # Source: homelab_router.plane_contract.DEFAULT_CONTRACT
@@ -139,6 +150,39 @@ class UrllibTransport:
             raise PlaneCliError(f"Plane API error: {exc.reason}") from exc
 
 
+def _format_agent_comment(text: str, env: Mapping[str, str]) -> str:
+    """Sanitize and bound free-form agent comments before posting to Plane."""
+
+    return _sanitize_comment_text(text, env, label="Agent comment")
+
+
+def _format_display_comment(text: str, env: Mapping[str, str]) -> str:
+    """Sanitize and bound Plane comments before printing them to agents."""
+
+    return _sanitize_comment_text(text, env, label="Plane comment")
+
+
+def _sanitize_comment_text(text: str, env: Mapping[str, str], *, label: str) -> str:
+    """Strip terminal noise, redact known secrets, and bound comment text."""
+
+    cleaned = _ANSI_ESCAPE_RE.sub("", text).strip()
+    for key in _SECRET_ENV_KEYS:
+        secret = env.get(key, "")
+        if secret:
+            cleaned = cleaned.replace(secret, _REDACTED)
+    if len(cleaned) <= COMMENT_MAX_CHARS:
+        return cleaned
+    first_line = next((line.strip() for line in cleaned.splitlines() if line.strip()), label)
+    if len(first_line) > 180:
+        first_line = first_line[:179].rstrip() + "…"
+    tail = cleaned[-COMMENT_TAIL_CHARS:].strip()
+    return (
+        f"{first_line}\n\n"
+        f"[{label} truncated from {len(cleaned)} characters for Plane readability.]\n\n"
+        f"{tail}"
+    )
+
+
 def _reject_target_override(args: Sequence[str]) -> None:
     forbidden = {"--issue", "--issue-id", "--target", "--target-issue"}
     if any(
@@ -224,7 +268,7 @@ def run(
     if command == "comment":
         if len(args) < 2:
             raise PlaneCliError("plane comment requires comment text")
-        client.post(config.comment_path(), {"comment_html": " ".join(args[1:])})
+        client.post(config.comment_path(), {"comment_html": _format_agent_comment(" ".join(args[1:]), env)})
         return 0
 
     if command == "label":
@@ -256,7 +300,7 @@ def run(
         for i, comment in enumerate(comments):
             if i > 0:
                 print("---")
-            print(comment.get("comment_html", ""))
+            print(_format_display_comment(str(comment.get("comment_html", "")), env))
         return 0
 
     if command == "schedule":

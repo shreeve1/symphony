@@ -89,6 +89,37 @@ def test_comment_subcommand_posts_comment_text_to_env_issue():
     ]
 
 
+def test_comment_subcommand_bounds_long_comment_text():
+    transport = MockTransport()
+    long_comment = "summary line " + ("verbose output " * 300)
+
+    assert run(["plane", "comment", long_comment], env=_env(), transport=transport) == 0
+
+    posted = transport.calls[0][2]["comment_html"]
+    assert "Agent comment truncated from" in posted
+    assert posted.startswith("summary line")
+    assert len(posted) < len(long_comment)
+    assert len(posted) < 1700
+
+
+def test_comment_subcommand_strips_ansi_and_redacts_known_secrets():
+    transport = MockTransport()
+
+    assert (
+        run(
+            ["plane", "comment", "\x1b[31mkey=fake-plane-key-for-tests\x1b[0m"],
+            env=_env(),
+            transport=transport,
+        )
+        == 0
+    )
+
+    posted = transport.calls[0][2]["comment_html"]
+    assert "\x1b" not in posted
+    assert "fake-plane-key-for-tests" not in posted
+    assert "***REDACTED***" in posted
+
+
 def test_missing_env_vars_are_reported_together():
     env = _env({"SYMPHONY_ISSUE_ID": "", "SYMPHONY_PLANE_API_KEY": ""})
 
@@ -348,6 +379,35 @@ def test_comments_command_displays_comments_oldest_first(capsys):
     output = capsys.readouterr().out
     assert output.index("first comment") < output.index("second comment")
     assert "---" in output
+
+
+def test_comments_command_bounds_long_historical_comments(capsys):
+    transport = MockTransport()
+    transport._comments = [
+        {
+            "comment_html": "historical summary\n" + "verbose historical output\n" * 300,
+            "created_at": "2026-05-04T01:00:00Z",
+        }
+    ]
+
+    assert run(["plane", "comments"], env=_env(), transport=transport) == 0
+
+    output = capsys.readouterr().out
+    assert "Plane comment truncated from" in output
+    assert output.count("verbose historical output") < 40
+
+
+def test_comments_command_redacts_known_secrets(capsys):
+    transport = MockTransport()
+    transport._comments = [
+        {"comment_html": "key=fake-plane-key-for-tests", "created_at": "2026-05-04T01:00:00Z"}
+    ]
+
+    assert run(["plane", "comments"], env=_env(), transport=transport) == 0
+
+    output = capsys.readouterr().out
+    assert "fake-plane-key-for-tests" not in output
+    assert "***REDACTED***" in output
 
 
 def test_comments_command_with_no_comments_shows_empty(capsys):
