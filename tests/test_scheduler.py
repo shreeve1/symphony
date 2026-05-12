@@ -203,7 +203,6 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(tmp_path: Path)
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = "## Changes Made\n\nUpdated config.yaml with new values."
-    dirty_checks = iter([False, True])
 
     result = await run_tick(
         _config(tmp_path),
@@ -212,7 +211,7 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(tmp_path: Path)
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: next(dirty_checks),
+        repo_dirty=lambda path: True,
         diff_stat=lambda path: "docs/file.md | 2 ++",
         auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "abc1234",
     )
@@ -229,7 +228,6 @@ async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: P
     """Dirty repo + clean exit + no marker: auto-commit and transition Done (not Review)."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
-    dirty_checks = iter([False, True])
     seen_commit_kwargs: dict[str, str] = {}
 
     def fake_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
@@ -248,7 +246,7 @@ async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: P
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: next(dirty_checks),
+        repo_dirty=lambda path: True,
         diff_stat=lambda path: "docs/file.md | 2 ++",
         auto_commit=fake_commit,
     )
@@ -339,7 +337,8 @@ async def test_run_tick_omits_stdout_in_blocked_comments(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_run_tick_blocks_pre_dirty_worktree_that_remains_dirty(tmp_path: Path) -> None:
+async def test_run_tick_dirty_worktree_auto_commits_and_completes(tmp_path: Path) -> None:
+    """Pre-existing dirt no longer blocks; scheduler auto-commits and marks Done."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     seen: list[str] = []
@@ -357,16 +356,17 @@ async def test_run_tick_blocks_pre_dirty_worktree_that_remains_dirty(tmp_path: P
         auto_commit=lambda *args, **kwargs: auto_commit_calls.append(True) or "sha",
     )
 
-    assert result.reason == "pre-dirty-uncommitted"
+    assert result.reason == "agent-clean-done"
     assert result.dispatched is True
     assert result.issue_id == "issue-1"
     assert seen == ["issue-1"]
-    assert auto_commit_calls == []
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "already dirty before dispatch" in blocked_comment
-    assert "reconcile the pending changes manually" in blocked_comment
-    assert "preexisting.md | 1 +" in blocked_comment
+    assert auto_commit_calls == [True]
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    completion_comment = [
+        c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
+    ][0]["comment_html"]
+    assert "sha" in completion_comment
+    assert "preexisting.md | 1 +" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -595,7 +595,7 @@ async def test_plan_mode_omits_invalid_stdout_plan_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_plan_mode_runs_when_repo_is_pre_dirty(tmp_path: Path) -> None:
+async def test_plan_mode_runs_when_repo_is_dirty(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
     seen: list[str] = []
@@ -618,7 +618,7 @@ async def test_plan_mode_runs_when_repo_is_pre_dirty(tmp_path: Path) -> None:
     assert seen == ["plan-1"]
     assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     plan_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert "WARNING: Plan mode produced repository changes" in plan_comment["comment_html"]
+    assert "WARNING: Plan mode produced repository changes" not in plan_comment["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -1430,14 +1430,14 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
     assert "***REDACTED***" not in completion_comment
 
 
-# --- Fix 3: Plan-mode post-agent dirty check ---
+# --- Plan-mode dirty behavior (warning intentionally removed) ---
 
 
 @pytest.mark.asyncio
-async def test_plan_mode_warns_when_worktree_becomes_dirty(tmp_path: Path) -> None:
+async def test_plan_mode_does_not_warn_when_worktree_becomes_dirty(tmp_path: Path) -> None:
+    """Plan-mode dirty warning was removed; In Review transition is unchanged."""
     transport = FakeTransport()
     transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-    dirty_checks = iter([False, True])
 
     result = await run_tick(
         _config(tmp_path),
@@ -1446,7 +1446,7 @@ async def test_plan_mode_warns_when_worktree_becomes_dirty(tmp_path: Path) -> No
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: next(dirty_checks),
+        repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/plan.md | 5 ++++",
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
@@ -1455,8 +1455,8 @@ async def test_plan_mode_warns_when_worktree_becomes_dirty(tmp_path: Path) -> No
     assert result.mode == "plan"
     assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     plan_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert "WARNING: Plan mode produced repository changes" in plan_comment["comment_html"]
-    assert "src/plan.md | 5 ++++" in plan_comment["comment_html"]
+    assert "WARNING: Plan mode produced repository changes" not in plan_comment["comment_html"]
+    assert "src/plan.md | 5 ++++" not in plan_comment["comment_html"]
 
 
 # --- SYMPHONY_RESULT marker tests ---
@@ -1581,7 +1581,6 @@ async def test_marker_done_with_dirty_repo_auto_commits_and_done(tmp_path: Path)
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = "Made a small change.\nSYMPHONY_RESULT: done\n"
-    dirty_checks = iter([False, True])
 
     result = await run_tick(
         _config(tmp_path),
@@ -1590,7 +1589,7 @@ async def test_marker_done_with_dirty_repo_auto_commits_and_done(tmp_path: Path)
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: next(dirty_checks),
+        repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/foo.py | 1 +",
         auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "cafe123",
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1607,7 +1606,6 @@ async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = "Worth a human look.\nSYMPHONY_RESULT: review\n"
-    dirty_checks = iter([False, True])
 
     result = await run_tick(
         _config(tmp_path),
@@ -1616,7 +1614,7 @@ async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: next(dirty_checks),
+        repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/foo.py | 1 +",
         auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "feed999",
     )
@@ -1627,13 +1625,12 @@ async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_auto_commit_failure_blocks_with_clear_message(tmp_path: Path) -> None:
-    """If auto-commit raises, the issue is blocked with the git error surfaced."""
+async def test_auto_commit_failure_completes_with_warning(tmp_path: Path) -> None:
+    """If auto-commit raises, the issue still goes Done with a warning comment."""
     from scheduler import AutoCommitFailed
 
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
-    dirty_checks = iter([False, True])
 
     def failing_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
         raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
@@ -1645,16 +1642,70 @@ async def test_auto_commit_failure_blocks_with_clear_message(tmp_path: Path) -> 
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: next(dirty_checks),
+        repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/foo.py | 1 +",
         auto_commit=failing_commit,
     )
 
-    assert result.reason == "auto-commit-failed"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    blocked = [c for c in transport.comments["issue-1"] if "auto-commit failed" in c["comment_html"]]
-    assert blocked
-    assert "nothing to commit" in blocked[0]["comment_html"]
+    assert result.reason == "agent-clean-done"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    completion = [c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]]
+    assert completion
+    body = completion[0]["comment_html"]
+    assert "Symphony auto-commit failed" in body
+    assert "git commit failed" in body
+    assert "src/foo.py | 1 +" in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "reason"),
+    [
+        (PlaneState.DONE, "agent-done"),
+        (PlaneState.IN_REVIEW, "agent-review"),
+        (PlaneState.BLOCKED, "agent-blocked"),
+    ],
+)
+async def test_auto_commit_failure_warning_posted_on_agent_self_transition(
+    tmp_path: Path,
+    state: PlaneState,
+    reason: str,
+) -> None:
+    """When the agent self-transitions, auto-commit failure must still be surfaced as a warning comment."""
+    from scheduler import AutoCommitFailed
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    def agent_runner(issue: CandidateIssue, prompt: str) -> AgentResult:
+        transport.issues[issue.id]["state"] = DEFAULT_CONTRACT.state_ids[state.value]
+        return AgentResult(0, 10, False, stdout="agent transitioned itself")
+
+    def failing_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
+        raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / f"lock-self-transition-{state.value}",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: True,
+        diff_stat=lambda path: "src/foo.py | 1 +",
+        auto_commit=failing_commit,
+    )
+
+    assert result.reason == reason
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[state.value]
+    warning_comments = [
+        c for c in transport.comments["issue-1"]
+        if "Symphony auto-commit failed" in c["comment_html"]
+    ]
+    assert warning_comments, "expected an auto-commit warning comment on agent self-transition"
+    body = warning_comments[0]["comment_html"]
+    assert "git commit failed" in body
+    assert "src/foo.py | 1 +" in body
 
 
 @pytest.mark.asyncio

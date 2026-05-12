@@ -392,10 +392,6 @@ async def run_tick(
 
             mode = _resolve_mode(candidate.labels)
 
-            pre_dirty = repo_dirty(config.homelab_repo_path)
-            if pre_dirty:
-                LOGGER.warning("repo_pre_dirty repo=%s", config.homelab_repo_path)
-
             fresh = await _fetch_issue(adapter, candidate.id)
             if not _is_state(fresh, adapter, PlaneState.TODO):
                 return TickResult(False, "state-changed", candidate.id)
@@ -578,13 +574,6 @@ async def run_tick(
                 body = _PLAN_HANDOFF_MARKER
                 if plan_summary:
                     body += f" {plan_summary}"
-                if repo_dirty(config.homelab_repo_path):
-                    stat = diff_stat(config.homelab_repo_path)
-                    body += f"\n\n**WARNING: Plan mode produced repository changes:**\n```\n{stat}\n```"
-                    LOGGER.warning(
-                        "plan_dirty issue_id=%s repo=%s",
-                        candidate.id, config.homelab_repo_path,
-                    )
                 if plan_report_path:
                     body += f"\n\n{plan_report_path}"
                 await adapter.add_comment(
@@ -604,75 +593,62 @@ async def run_tick(
 
             committed_sha: str | None = None
             committed_stat: str | None = None
-            committed_pre_dirty = pre_dirty
+            auto_commit_error: str | None = None
             if repo_dirty(config.homelab_repo_path):
                 committed_stat = diff_stat(config.homelab_repo_path)
-                if committed_pre_dirty:
-                    LOGGER.warning(
-                        "auto_commit_skipped_pre_dirty issue_id=%s repo=%s",
-                        candidate.id, config.homelab_repo_path,
-                    )
-                    msg = (
-                        "Repository was already dirty before dispatch and remains dirty after "
-                        "the agent exited cleanly. Symphony did not auto-commit or mark this "
-                        "issue Done; reconcile the pending changes manually."
-                    )
-                    if committed_stat and committed_stat != "No diff stat available":
-                        msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
-                    if stderr:
-                        msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
-                    await _block_issue(
-                        adapter,
-                        candidate.id,
-                        msg,
-                        issue_name=candidate.name,
+                try:
+                    committed_sha = auto_commit(
+                        config.homelab_repo_path,
                         issue_identifier=candidate.identifier,
-                        notifier=notifier,
+                        issue_name=candidate.name,
+                        issue_id=candidate.id,
+                        plan_path=str(plan_path) if plan_path else None,
                     )
-                    return TickResult(True, "pre-dirty-uncommitted", candidate.id, mode=mode)
+                except AutoCommitFailed as exc:
+                    LOGGER.warning(
+                        "auto_commit_failed issue_id=%s repo=%s error=%s",
+                        candidate.id, config.homelab_repo_path, exc,
+                    )
+                    auto_commit_error = str(exc)
+                    if exc.stderr:
+                        auto_commit_error += (
+                            f"\n\n**git stderr:**\n```\n{_sanitize_report(exc.stderr, secrets)}\n```"
+                        )
                 else:
-                    try:
-                        committed_sha = auto_commit(
-                            config.homelab_repo_path,
-                            issue_identifier=candidate.identifier,
-                            issue_name=candidate.name,
-                            issue_id=candidate.id,
-                            plan_path=str(plan_path) if plan_path else None,
-                        )
-                    except AutoCommitFailed as exc:
-                        LOGGER.warning(
-                            "auto_commit_failed issue_id=%s repo=%s error=%s",
-                            candidate.id, config.homelab_repo_path, exc,
-                        )
-                        msg = f"Symphony auto-commit failed: {exc}"
-                        if exc.stderr:
-                            sanitized = _sanitize_report(exc.stderr, secrets)
-                            msg += f"\n\n**git stderr:**\n```\n{sanitized}\n```"
-                        if committed_stat and committed_stat != "No diff stat available":
-                            msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
-                        if stderr:
-                            msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
-                        await _block_issue(
-                            adapter, candidate.id, msg,
-                            issue_name=candidate.name,
-                            issue_identifier=candidate.identifier,
-                            notifier=notifier,
-                        )
-                        return TickResult(
-                            True, "auto-commit-failed", candidate.id, mode=mode,
-                        )
                     LOGGER.info(
-                        "auto_commit_succeeded issue_id=%s sha=%s pre_dirty=%s",
+                        "auto_commit_succeeded issue_id=%s sha=%s",
                         candidate.id, committed_sha,
-                        str(committed_pre_dirty).lower(),
                     )
+
+            def _auto_commit_warning_body() -> str:
+                body = f"**WARNING: Symphony auto-commit failed:** {auto_commit_error}"
+                if committed_stat and committed_stat != "No diff stat available":
+                    body += (
+                        f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
+                    )
+                return body
 
             after_agent = await _fetch_issue(adapter, candidate.id)
             if _is_state(after_agent, adapter, PlaneState.DONE):
+                if auto_commit_error is not None:
+                    await adapter.add_comment(
+                        candidate.id,
+                        CommentPayload(body=_auto_commit_warning_body()),
+                    )
                 return TickResult(True, "agent-done", candidate.id, mode=mode)
             if _is_state(after_agent, adapter, PlaneState.IN_REVIEW):
+                if auto_commit_error is not None:
+                    await adapter.add_comment(
+                        candidate.id,
+                        CommentPayload(body=_auto_commit_warning_body()),
+                    )
                 return TickResult(True, "agent-review", candidate.id, mode=mode)
             if _is_state(after_agent, adapter, PlaneState.BLOCKED):
+                if auto_commit_error is not None:
+                    await adapter.add_comment(
+                        candidate.id,
+                        CommentPayload(body=_auto_commit_warning_body()),
+                    )
                 return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
             # No repo changes, no in-agent state transition. Resolve the
@@ -685,10 +661,9 @@ async def run_tick(
                 # Success-path comments intentionally omit agent stderr: the
                 # `pi` CLI emits its full tool trace and WORKFLOW.md echoes
                 # on stderr, which is noise on a clean run. Stderr is still
-                # surfaced on failure paths (timeout, nonzero, gated,
-                # pre-dirty, auto-commit-failed). A short SYMPHONY_SUMMARY line
-                # from the agent, if present, is the only per-run signal we
-                # carry through on success.
+                # surfaced on failure paths (timeout, nonzero, gated). A short
+                # SYMPHONY_SUMMARY line from the agent, if present, is the
+                # only per-run signal we carry through on success.
                 if summary:
                     body = f"**Symphony completed:** {summary}"
                 else:
@@ -700,13 +675,12 @@ async def run_tick(
                     if committed_stat and committed_stat != "No diff stat available":
                         commit_block += f"\n\n```\n{committed_stat}\n```"
                     body += commit_block
-                elif committed_pre_dirty and committed_stat:
+                elif auto_commit_error is not None:
                     body += (
-                        "\n\n**WARNING: Repository was already dirty before dispatch.** "
-                        "Symphony did not auto-commit changes."
+                        f"\n\n**WARNING: Symphony auto-commit failed:** {auto_commit_error}"
                     )
-                    if committed_stat != "No diff stat available":
-                        body += f"\n\n```\n{committed_stat}\n```"
+                    if committed_stat and committed_stat != "No diff stat available":
+                        body += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
                 return body
 
             if verdict == "blocked":
@@ -720,13 +694,12 @@ async def run_tick(
                     )
                     if committed_stat and committed_stat != "No diff stat available":
                         msg += f"\n\n```\n{committed_stat}\n```"
-                elif committed_pre_dirty and committed_stat:
+                elif auto_commit_error is not None:
                     msg += (
-                        "\n\n**WARNING: Repository was already dirty before dispatch.** "
-                        "Symphony did not auto-commit changes."
+                        f"\n\n**WARNING: Symphony auto-commit failed:** {auto_commit_error}"
                     )
-                    if committed_stat != "No diff stat available":
-                        msg += f"\n\n```\n{committed_stat}\n```"
+                    if committed_stat and committed_stat != "No diff stat available":
+                        msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
                 if stderr:
                     msg += f"\n\n**Stderr:**\n```\n{stderr}\n```"
                 await _block_issue(
