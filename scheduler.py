@@ -186,6 +186,42 @@ def _format_report(
     return stdout, stderr
 
 
+def _format_timeline(
+    claim_dt: datetime,
+    now: Callable[[], datetime],
+    *,
+    duration_ms: int | None = None,
+    verdict: str,
+) -> str:
+    """Render the terminal-state timeline appended to every closing comment.
+
+    Symphony tickets currently lack a single human-readable summary of when
+    the agent claimed the issue, when it released it, how long it ran, and
+    what verdict carried it across. AUTO-98 made this gap visible: a Blocked
+    ticket with no audit trail of which Symphony run reached the failure.
+
+    The block is intentionally compact — three lines — and uses ISO-8601 UTC
+    timestamps so log/diff tooling can correlate against
+    ``Symphony claimed at <ts> code_sha=<sha>`` claim comments without
+    parsing prose.
+    """
+    finished_dt = now()
+    delta_ms = int((finished_dt - claim_dt).total_seconds() * 1000)
+    if duration_ms is not None and duration_ms > 0:
+        agent_line = f"- agent_duration_ms: {duration_ms}"
+    else:
+        agent_line = "- agent_duration_ms: (not measured)"
+    return (
+        "**Timeline**\n"
+        f"- claimed_at: {claim_dt.isoformat()}\n"
+        f"- finished_at: {finished_dt.isoformat()}\n"
+        f"- claim_to_finish_ms: {delta_ms}\n"
+        f"{agent_line}\n"
+        f"- verdict: {verdict}\n"
+        f"- code_sha: {_CODE_SHA}"
+    )
+
+
 def _format_stderr_summary(stderr: str) -> str:
     """Return a bounded, human-readable stderr summary for Plane comments."""
 
@@ -552,6 +588,11 @@ async def run_tick(
                 stdout, stderr = _format_report(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                msg += "\n\n" + _format_timeline(
+                    claim_dt, now,
+                    duration_ms=result.duration_ms,
+                    verdict="timeout",
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter, candidate.id, msg,
@@ -564,6 +605,11 @@ async def run_tick(
                 stdout, stderr = _format_report(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                msg += "\n\n" + _format_timeline(
+                    claim_dt, now,
+                    duration_ms=result.duration_ms,
+                    verdict="nonzero",
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter, candidate.id, msg,
@@ -726,7 +772,7 @@ async def run_tick(
             verdict = _parse_result_marker(stdout)
             summary = _extract_summary(result, secrets)
 
-            def _completion_body() -> str:
+            def _completion_body(verdict_label: str) -> str:
                 # Success-path comments intentionally omit agent stderr: the
                 # `pi` CLI emits its full tool trace and WORKFLOW.md echoes
                 # on stderr, which is noise on a clean run. Stderr is still
@@ -750,6 +796,11 @@ async def run_tick(
                     )
                     if committed_stat and committed_stat != "No diff stat available":
                         body += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
+                body += "\n\n" + _format_timeline(
+                    claim_dt, now,
+                    duration_ms=result.duration_ms,
+                    verdict=verdict_label,
+                )
                 return body
 
             if verdict == "blocked":
@@ -771,6 +822,11 @@ async def run_tick(
                         msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                msg += "\n\n" + _format_timeline(
+                    claim_dt, now,
+                    duration_ms=result.duration_ms,
+                    verdict="agent-marker-blocked",
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
@@ -787,7 +843,7 @@ async def run_tick(
             if verdict == "review":
                 await adapter.add_comment(
                     candidate.id,
-                    CommentPayload(body=_completion_body()),
+                    CommentPayload(body=_completion_body("agent-marker-review")),
                 )
                 await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
                 LOGGER.info(
@@ -807,7 +863,7 @@ async def run_tick(
             reason_code = "agent-marker-done" if verdict == "done" else "agent-clean-done"
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=_completion_body()),
+                CommentPayload(body=_completion_body(reason_code)),
             )
             await adapter.transition_state(candidate.id, PlaneState.DONE)
             LOGGER.info(

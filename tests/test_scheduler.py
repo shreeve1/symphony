@@ -1225,10 +1225,13 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     )
 
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    # Comment is "**Symphony completed:** <summary>". The body length should
-    # be bounded, not the full 5000.
-    assert len(completion_comment) < 1000
-    assert completion_comment.rstrip().endswith("…")
+    # Comment is "**Symphony completed:** <summary>\n\n**Timeline**...".
+    # The summary portion (head) must be bounded; the timeline block is
+    # always appended (Phase 3 #6) but its length is small + fixed.
+    head, sep, _ = completion_comment.partition("\n\n**Timeline**")
+    assert sep == "\n\n**Timeline**"
+    assert len(head) < 1000
+    assert head.rstrip().endswith("…")
 
 
 @pytest.mark.asyncio
@@ -1305,9 +1308,15 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
 
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert completion_comment.startswith("**Symphony completed:**")
-    # Trailing space + summary is absent; the body should be exactly the
-    # marker line plus nothing else for a clean repo + no marker.
-    assert completion_comment.strip() == "**Symphony completed:**"
+    # Body is the legacy marker line followed by the terminal-state
+    # timeline block (Phase 3 #6). Strip the timeline before comparing the
+    # legacy prefix.
+    head, sep, tail = completion_comment.partition("\n\n**Timeline**")
+    assert sep == "\n\n**Timeline**"
+    assert head.strip() == "**Symphony completed:**"
+    assert "- verdict: agent-clean-done" in tail
+    assert "- code_sha:" in tail
+    assert "- claim_to_finish_ms:" in tail
 
 
 @pytest.mark.asyncio
@@ -2546,3 +2555,64 @@ def test_auto_commit_raises_when_no_changes(tmp_path: Path) -> None:
             issue_id="zzz",
         )
     assert "git commit failed" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_run_tick_appends_terminal_timeline_block(tmp_path: Path) -> None:
+    """Phase 3 #6: every terminal Symphony comment carries a Timeline block
+    that pins (claimed_at, finished_at, duration, verdict, code_sha) for the
+    operator. AUTO-98 made this audit gap visible.
+    """
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 1234, False, stdout="SYMPHONY_SUMMARY: ok"
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-timeline",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "**Timeline**" in completion_comment
+    assert "- claimed_at: 2026-05-04T02:00:00+00:00" in completion_comment
+    assert "- finished_at: 2026-05-04T02:00:00+00:00" in completion_comment
+    assert "- claim_to_finish_ms: 0" in completion_comment
+    assert "- agent_duration_ms: 1234" in completion_comment
+    assert "- verdict: agent-clean-done" in completion_comment
+    assert "- code_sha: " in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_timeline_on_blocked_marker(tmp_path: Path) -> None:
+    """The timeline is also appended on the blocked verdict path so an
+    operator looking at AUTO-98-style Blocked tickets sees which Symphony
+    run got there."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 500, False,
+            stdout="SYMPHONY_SUMMARY: nope\nSYMPHONY_RESULT: blocked",
+        ),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-timeline-blocked",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    assert "Agent reported a blocked result" in blocked_comment
+    assert "**Timeline**" in blocked_comment
+    assert "- verdict: agent-marker-blocked" in blocked_comment
+    assert "- agent_duration_ms: 500" in blocked_comment
