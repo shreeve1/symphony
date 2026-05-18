@@ -216,6 +216,8 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     assert isinstance(env, dict)
     assert env["PATH"].startswith(f"{temp_dir}:")
     assert env["SYMPHONY_ISSUE_ID"] == "issue-123"
+    assert env["SYMPHONY_PLANE_FRONTEND_URL"] == ""
+    assert env["PLANE_DASHBOARD_URL"] == ""
     assert env["SYMPHONY_PLANE_API_KEY"] == "fake-plane-key-for-tests"
     assert env["PYTHONPATH"] == str(Path(__file__).parents[1])
     assert env["ZAI_API_KEY"] == "zai-secret"

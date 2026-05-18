@@ -72,11 +72,15 @@ def format_review_message(
     issue_name: str,
     issue_identifier: str = "",
     reason: str = "",
+    *,
+    issue_url: str = "",
+    dashboard_url: str = "",
 ) -> str:
     label = _format_issue_label(issue_name, issue_identifier)
     parts = [f"\U0001f4cb {label} \u2192 <b>Review</b>"]
     if reason:
         parts.append(_html_escape(reason))
+    _append_urls(parts, issue_url=issue_url, dashboard_url=dashboard_url)
     return "\n".join(parts)
 
 
@@ -84,11 +88,15 @@ def format_blocked_message(
     issue_name: str,
     issue_identifier: str = "",
     reason: str = "",
+    *,
+    issue_url: str = "",
+    dashboard_url: str = "",
 ) -> str:
     label = _format_issue_label(issue_name, issue_identifier)
     parts = [f"\U0001f6ab {label} \u2192 <b>Blocked</b>"]
     if reason:
         parts.append(_html_escape(reason))
+    _append_urls(parts, issue_url=issue_url, dashboard_url=dashboard_url)
     return "\n".join(parts)
 
 
@@ -138,3 +146,11 @@ def _format_issue_label(issue_name: str, issue_identifier: str = "") -> str:
     if safe_id:
         return f"<b>{safe_id}</b>"
     return safe_name
+
+
+def _append_urls(parts: list[str], *, issue_url: str, dashboard_url: str) -> None:
+    """Append quick-access URL lines to a message parts list."""
+    if issue_url:
+        parts.append(f'\U0001f517 <a href="{_html_escape(issue_url)}">Open issue</a>')
+    if dashboard_url:
+        parts.append(f'\U0001f4ca <a href="{_html_escape(dashboard_url)}">Dashboard</a>')

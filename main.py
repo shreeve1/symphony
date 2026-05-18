@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from agent_runner import run_agent, verify_pi_support
+from code_version import resolve_code_sha
 from config import SymphonyConfig
 from notifier import TelegramNotifier
 from plane_poller import HttpxPlaneTransport, build_adapter
@@ -40,6 +41,10 @@ async def async_main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     config = SymphonyConfig.from_env()
+    code_sha = resolve_code_sha()
+    logging.getLogger(__name__).info(
+        "symphony_started service=symphony code_sha=%s", code_sha
+    )
     verify_pi_support(
         config.pi_bin,
         config.pi_provider,
@@ -52,7 +57,7 @@ async def async_main() -> None:
 
     notifier = TelegramNotifier.from_env()
     if notifier:
-        logging.getLogger(__name__).info("telegram_notifications_enabled chat_id=%s", notifier.chat_id)
+        logging.getLogger(__name__).info("telegram_notifications_enabled")
     else:
         logging.getLogger(__name__).info("telegram_notifications_disabled")
 

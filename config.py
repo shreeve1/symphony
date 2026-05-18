@@ -34,6 +34,8 @@ class SymphonyConfig:
     lock_path: Path = Path("/tmp/symphony.lock")
     telegram_bot_token: str | None = field(default=None, repr=False)
     telegram_chat_id: str | None = None
+    plane_frontend_url: str = ""
+    plane_dashboard_url: str = ""
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
@@ -58,9 +60,32 @@ class SymphonyConfig:
             lock_path=Path(source.get("SYMPHONY_LOCK_PATH", str(Path(source["HOMELAB_REPO_PATH"]) / ".symphony.lock"))),
             telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),
             telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),
+            plane_frontend_url=source.get("PLANE_FRONTEND_URL", "").rstrip("/"),
+            plane_dashboard_url=source.get("PLANE_DASHBOARD_URL", ""),
+        )
+
+    def issue_url(self, issue_id: str) -> str:
+        """Return the Plane frontend URL for a specific issue.
+
+        Derived from the base URL (scheme+host[:port] only) plus the standard
+        Plane frontend path pattern.  Returns an empty string if issue_id is
+        empty so callers can safely pass the result to format_*_message.
+        """
+        if not issue_id:
+            return ""
+        from urllib.parse import urlparse
+        if self.plane_frontend_url:
+            base = self.plane_frontend_url
+        else:
+            parsed = urlparse(self.plane_api_url)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+        return (
+            f"{base}/{self.plane_workspace_slug}/projects/"
+            f"{self.plane_project_id}/issues/{issue_id}/"
         )
 
     def __repr__(self) -> str:
+        telegram_chat_id = "<redacted>" if self.telegram_chat_id else None
         return (
             "SymphonyConfig("
             f"plane_api_url={self.plane_api_url!r}, "
@@ -74,7 +99,9 @@ class SymphonyConfig:
             f"poll_interval_ms={self.poll_interval_ms!r}, "
             f"run_timeout_ms={self.run_timeout_ms!r}, "
             f"lock_path={self.lock_path!r}, "
-            f"telegram_chat_id={self.telegram_chat_id!r})"
+            f"telegram_chat_id={telegram_chat_id!r}, "
+            f"plane_frontend_url={self.plane_frontend_url!r}, "
+            f"plane_dashboard_url={self.plane_dashboard_url!r})"
         )
 
     __str__ = __repr__

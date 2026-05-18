@@ -50,18 +50,20 @@ class FakeTransport:
         return self.issues[issue_id]
 
 
-def _config(tmp_path: Path) -> SymphonyConfig:
-    return SymphonyConfig(
-        plane_api_url="https://plane.example.test",
-        plane_api_key="fake-plane-key-for-tests",
-        plane_workspace_slug="homelab",
-        plane_project_id="fake-project-id",
-        homelab_repo_path=tmp_path,
-        pi_bin="pi",
-        pi_provider="zai",
-        pi_model="glm-5.1:high",
-        run_timeout_ms=1000,
-    )
+def _config(tmp_path: Path, **overrides: Any) -> SymphonyConfig:
+    values = {
+        "plane_api_url": "https://plane.example.test",
+        "plane_api_key": "fake-plane-key-for-tests",
+        "plane_workspace_slug": "homelab",
+        "plane_project_id": "fake-project-id",
+        "homelab_repo_path": tmp_path,
+        "pi_bin": "pi",
+        "pi_provider": "zai",
+        "pi_model": "glm-5.1:high",
+        "run_timeout_ms": 1000,
+    }
+    values.update(overrides)
+    return SymphonyConfig(**values)
 
 
 def _adapter(transport: FakeTransport) -> PlaneAdapter:
@@ -147,6 +149,34 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
     assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
     completion_comment = transport.comments["older"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_claim_comment_includes_code_sha(tmp_path: Path, monkeypatch) -> None:
+    """Claim comments must carry ``code_sha=<sha>`` so live drift is traceable."""
+    monkeypatch.setattr("scheduler._CODE_SHA", "abc1234")
+    transport = FakeTransport()
+    transport.issues["i1"] = _issue("i1")
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock",
+        poller=lambda adapter: [_candidate("i1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    claim_body = transport.comments["i1"][0]["comment_html"]
+    assert "Symphony claimed at" in claim_body
+    assert "code_sha=abc1234" in claim_body
+    # Backwards-compat: the parser at scheduler._claimed_at takes the first
+    # whitespace token after CLAIM_PREFIX. It must still be the ISO timestamp.
+    after_prefix = claim_body.split("Symphony claimed at", 1)[1].strip()
+    first_token = after_prefix.split()[0]
+    datetime.fromisoformat(first_token.replace("Z", "+00:00"))
 
 
 @pytest.mark.asyncio
@@ -474,6 +504,25 @@ async def test_reconcile_uses_newest_claim_comment(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_parses_claim_comment_with_code_sha_suffix(tmp_path: Path) -> None:
+    """Backwards-compat: parser must still parse claim comments that carry ``code_sha=``."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00 code_sha=abc1234"},
+    ]
+
+    await reconcile_stale_running(
+        _adapter(transport),
+        60_000,
+        now=lambda: datetime(2026, 5, 4, 1, 2, 30, tzinfo=UTC),
+    )
+
+    # 90s elapsed but timeout is 60s, so this MUST be reconciled to Blocked.
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+
+
+@pytest.mark.asyncio
 async def test_reconcile_stale_running_sends_notification(tmp_path: Path) -> None:
     from unittest.mock import AsyncMock, patch
 
@@ -485,17 +534,28 @@ async def test_reconcile_stale_running_sends_notification(tmp_path: Path) -> Non
         {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
     ]
     notifier = TelegramNotifier(bot_token="b", chat_id="c")
+    config = _config(
+        tmp_path,
+        plane_frontend_url="http://10.20.20.16:8000",
+        plane_dashboard_url="http://10.20.20.16:8000/homelab",
+    )
     with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
         await reconcile_stale_running(
             _adapter(transport),
             1000,
             now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
             notifier=notifier,
+            config=config,
         )
 
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     mock_send.assert_called_once()
-    assert "Stale Bug" in mock_send.call_args[0][0]
+    message = mock_send.call_args[0][0]
+    assert "Stale Bug" in message
+    assert "Open issue" in message
+    assert "http://10.20.20.16:8000/homelab/projects/fake-project-id/issues/issue-1/" in message
+    assert "Dashboard" in message
+    assert "http://10.20.20.16:8000/homelab" in message
 
 
 @pytest.mark.asyncio
@@ -1939,7 +1999,7 @@ async def test_due_scheduled_ticket_releases_before_ordinary(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_due_scheduled_ticket_sends_release_notification(tmp_path: Path) -> None:
+async def test_due_scheduled_ticket_does_not_send_release_notification(tmp_path: Path) -> None:
     from unittest.mock import AsyncMock, patch
 
     transport = FakeTransport()
@@ -1973,11 +2033,7 @@ async def test_due_scheduled_ticket_sends_release_notification(tmp_path: Path) -
         )
 
     assert result.issue_id == "scheduled"
-    mock_send.assert_called_once()
-    message = mock_send.call_args[0][0]
-    assert "Released" in message
-    assert "late: true" in message
-    assert "Window &lt;Deploy&gt;" in message
+    mock_send.assert_not_called()
 
 
 @pytest.mark.asyncio

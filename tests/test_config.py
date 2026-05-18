@@ -83,3 +83,44 @@ def test_repr_and_str_redact_plane_api_key_and_include_pi_fields():
     assert "pi_bin='/usr/local/bin/pi'" in repr(config)
     assert "pi_provider='zai'" in repr(config)
     assert "pi_model='glm-5.1:high'" in repr(config)
+
+
+def test_plane_dashboard_url_defaults_to_empty():
+    config = SymphonyConfig.from_env(_env())
+    assert config.plane_dashboard_url == ""
+
+
+def test_plane_dashboard_url_loaded_from_env():
+    config = SymphonyConfig.from_env(_env(PLANE_DASHBOARD_URL="http://plane.example.test/dash/"))
+    assert config.plane_dashboard_url == "http://plane.example.test/dash/"
+
+
+def test_plane_frontend_url_loaded_from_env_and_strips_trailing_slash():
+    config = SymphonyConfig.from_env(_env(PLANE_FRONTEND_URL="http://10.20.20.16:8000/"))
+    assert config.plane_frontend_url == "http://10.20.20.16:8000"
+
+
+def test_issue_url_returns_frontend_url():
+    config = SymphonyConfig.from_env(_env())
+    url = config.issue_url("abc-123")
+    assert url == "http://plane.example.test/homelab/projects/fake-project-uuid/issues/abc-123/"
+
+
+def test_issue_url_returns_empty_for_empty_issue_id():
+    config = SymphonyConfig.from_env(_env())
+    assert config.issue_url("") == ""
+
+
+def test_issue_url_strips_api_path_prefix():
+    config = SymphonyConfig.from_env(_env(PLANE_API_URL="http://plane.example.test/api/v1"))
+    url = config.issue_url("i-1")
+    assert url.startswith("http://plane.example.test/homelab/")
+    assert "i-1" in url
+
+
+def test_issue_url_prefers_frontend_url_over_local_api_url():
+    config = SymphonyConfig.from_env(_env(
+        PLANE_API_URL="http://127.0.0.1:8000",
+        PLANE_FRONTEND_URL="http://10.20.20.16:8000",
+    ))
+    assert config.issue_url("i-1") == "http://10.20.20.16:8000/homelab/projects/fake-project-uuid/issues/i-1/"

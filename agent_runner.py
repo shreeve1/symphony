@@ -153,6 +153,8 @@ def run_agent(
                 "NO_COLOR": "1",
                 "SYMPHONY_ISSUE_ID": issue.id,
                 "SYMPHONY_PLANE_API_URL": config.plane_api_url,
+                "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
+                "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
                 "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
                 "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
                 "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,

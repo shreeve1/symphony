@@ -470,25 +470,13 @@ def test_schedule_command_posts_comment_adds_label_and_transitions_todo():
     assert body == {"state": plane_cli.STATE_IDS["todo"]}
 
 
-def test_schedule_command_sends_telegram_when_configured(monkeypatch):
+def test_schedule_command_does_not_send_telegram(monkeypatch):
     transport = MockTransport()
-    captured = {}
-
-    class FakeResponse:
-        def read(self):
-            return b"{}"
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
+    captured = {"called": False}
 
     def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["payload"] = __import__("json").loads(request.data.decode())
-        captured["timeout"] = timeout
-        return FakeResponse()
+        captured["called"] = True
+        raise AssertionError("plane schedule must not send telegram")
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
@@ -506,11 +494,7 @@ def test_schedule_command_sends_telegram_when_configured(monkeypatch):
     )
 
     assert rc == 0
-    assert "bottok/sendMessage" in captured["url"]
-    assert captured["payload"]["chat_id"] == "chat"
-    assert captured["payload"]["parse_mode"] == "HTML"
-    assert "Scheduled" in captured["payload"]["text"]
-    assert "&lt;window&gt;" in captured["payload"]["text"]
+    assert captured["called"] is False
 
 
 def test_schedule_command_includes_optional_not_after():
@@ -824,3 +808,143 @@ def test_schedule_validates_before_any_mutation():
             transport=transport,
         )
     assert transport.calls == []
+
+
+# ── URL helpers ────────────────────────────────────────────────────────────────
+
+def test_build_issue_url_returns_frontend_url():
+    env = _env()
+    url = plane_cli._build_issue_url(env, "issue-123")
+    assert url == "https://plane.example.test/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123/"
+
+
+def test_build_issue_url_strips_api_path_from_base():
+    env = _env({"SYMPHONY_PLANE_API_URL": "https://plane.example.test/api/v1"})
+    url = plane_cli._build_issue_url(env, "issue-xyz")
+    assert url.startswith("https://plane.example.test/homelab/")
+    assert "issue-xyz" in url
+
+
+def test_build_issue_url_prefers_frontend_url():
+    env = _env({
+        "SYMPHONY_PLANE_API_URL": "http://127.0.0.1:8000",
+        "SYMPHONY_PLANE_FRONTEND_URL": "http://10.20.20.16:8000",
+    })
+    url = plane_cli._build_issue_url(env, "issue-xyz")
+    assert url == "http://10.20.20.16:8000/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-xyz/"
+
+
+def test_build_issue_url_returns_empty_when_issue_id_empty():
+    assert plane_cli._build_issue_url(_env(), "") == ""
+
+
+def test_build_issue_url_returns_empty_when_workspace_missing():
+    env = _env({"SYMPHONY_PLANE_WORKSPACE_SLUG": ""})
+    assert plane_cli._build_issue_url(env, "issue-1") == ""
+
+
+def test_build_issue_url_returns_empty_when_project_missing():
+    env = _env({"SYMPHONY_PLANE_PROJECT_ID": ""})
+    assert plane_cli._build_issue_url(env, "issue-1") == ""
+
+
+def test_send_telegram_for_review_includes_issue_url(monkeypatch):
+    import json as _json
+
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout):
+        captured["data"] = _json.loads(request.data.decode())
+
+        class FakeResp:
+            def read(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        return FakeResp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    plane_cli._send_telegram(env, "review")
+
+    text = captured["data"]["text"]
+    assert "Review" in text
+    assert "Open issue" in text
+    assert "plane.example.test" in text
+    assert "issue-123" in text
+
+
+def test_send_telegram_for_blocked_includes_issue_url(monkeypatch):
+    import json as _json
+
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout):
+        captured["data"] = _json.loads(request.data.decode())
+
+        class FakeResp:
+            def read(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        return FakeResp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    plane_cli._send_telegram(env, "blocked")
+
+    text = captured["data"]["text"]
+    assert "Blocked" in text
+    assert "Open issue" in text
+    assert "issue-123" in text
+
+
+def test_send_telegram_for_review_includes_dashboard_url_when_set(monkeypatch):
+    import json as _json
+
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout):
+        captured["data"] = _json.loads(request.data.decode())
+
+        class FakeResp:
+            def read(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        return FakeResp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    env = _env({
+        "TELEGRAM_BOT_TOKEN": "tok",
+        "TELEGRAM_CHAT_ID": "chat",
+        "PLANE_DASHBOARD_URL": "http://plane.example.test/dash/",
+    })
+    plane_cli._send_telegram(env, "review")
+
+    text = captured["data"]["text"]
+    assert "Dashboard" in text
+    assert "http://plane.example.test/dash/" in text
+
+
+def test_send_telegram_omits_dashboard_when_not_set(monkeypatch):
+    import json as _json
+
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout):
+        captured["data"] = _json.loads(request.data.decode())
+
+        class FakeResp:
+            def read(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        return FakeResp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    plane_cli._send_telegram(env, "review")
+
+    text = captured["data"]["text"]
+    assert "Dashboard" not in text

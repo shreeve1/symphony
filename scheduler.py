@@ -16,11 +16,11 @@ from typing import Any, AsyncIterator, Callable, Iterator, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentResult
+from code_version import resolve_code_sha
 from config import SymphonyConfig
 from notifier import (
     TelegramNotifier,
     format_blocked_message,
-    format_released_message,
     format_review_message,
 )
 from plane_poller import CandidateIssue, fetch_todo_issues
@@ -33,6 +33,10 @@ from homelab_router.prompt_renderer import render_previous_comments_block
 
 LOGGER = logging.getLogger(__name__)
 CLAIM_PREFIX = "Symphony claimed at "
+# Resolved once at import time. The ``_claimed_at`` parser at line ~1212 splits
+# the body on CLAIM_PREFIX and takes the first whitespace token after it, so
+# appending ``code_sha=<sha>`` after the timestamp is backwards-compatible.
+_CODE_SHA = resolve_code_sha()
 REPORT_MAX_BYTES = 2048
 STDERR_SUMMARY_MAX_LINES = 8
 STDERR_SUMMARY_MAX_CHARS = 900
@@ -369,7 +373,7 @@ async def run_tick(
     lock_file = lock_path or config.lock_path
     try:
         with scheduler_lock(lock_file):
-            await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier)
+            await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
             scheduled = await _select_scheduled_candidate(adapter, now=now)
             if scheduled is not None:
                 if scheduled.reason == "scheduled-release":
@@ -377,6 +381,7 @@ async def run_tick(
                     try:
                         released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
                     except Exception as exc:
+                        _iu, _du = _build_urls(config, candidate.id)
                         await _block_issue(
                             adapter,
                             candidate.id,
@@ -384,11 +389,13 @@ async def run_tick(
                             issue_name=candidate.name,
                             issue_identifier=candidate.identifier,
                             notifier=notifier,
+                            issue_url=_iu,
+                            dashboard_url=_du,
                         )
                         return TickResult(False, "scheduled-release-failed", candidate.id)
-                    await _notify_released(notifier, candidate, released_event, now=now())
                     candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
                 elif scheduled.reason == "scheduled-missing":
+                    _iu, _du = _build_urls(config, scheduled.candidate.id)
                     await _block_issue(
                         adapter,
                         scheduled.candidate.id,
@@ -396,9 +403,12 @@ async def run_tick(
                         issue_name=scheduled.candidate.name,
                         issue_identifier=scheduled.candidate.identifier,
                         notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
                     )
                     return TickResult(False, "scheduled-missing", scheduled.candidate.id)
                 elif scheduled.reason == "scheduled-malformed":
+                    _iu, _du = _build_urls(config, scheduled.candidate.id)
                     await _block_issue(
                         adapter,
                         scheduled.candidate.id,
@@ -406,6 +416,8 @@ async def run_tick(
                         issue_name=scheduled.candidate.name,
                         issue_identifier=scheduled.candidate.identifier,
                         notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
                     )
                     return TickResult(False, "scheduled-malformed", scheduled.candidate.id)
                 elif scheduled.reason == "scheduled-cancelled":
@@ -458,6 +470,7 @@ async def run_tick(
                     config.homelab_repo_path, candidate, comment_bodies
                 )
                 if plan_path_error:
+                    _iu, _du = _build_urls(config, candidate.id)
                     await _block_issue(
                         adapter,
                         candidate.id,
@@ -465,6 +478,8 @@ async def run_tick(
                         issue_name=candidate.name,
                         issue_identifier=candidate.identifier,
                         notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
                     )
                     return TickResult(False, "invalid-plan-path", candidate.id, mode=mode)
                 if plan_path is None:
@@ -484,6 +499,7 @@ async def run_tick(
                         )
                         await adapter.transition_state(candidate.id, PlaneState.TODO)
                     except Exception as exc:
+                        _iu, _du = _build_urls(config, candidate.id)
                         await _block_issue(
                             adapter,
                             candidate.id,
@@ -491,6 +507,8 @@ async def run_tick(
                             issue_name=candidate.name,
                             issue_identifier=candidate.identifier,
                             notifier=notifier,
+                            issue_url=_iu,
+                            dashboard_url=_du,
                         )
                         return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
                     return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
@@ -499,7 +517,7 @@ async def run_tick(
             claim_time = now().isoformat()
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=f"{CLAIM_PREFIX}{claim_time}"),
+                CommentPayload(body=f"{CLAIM_PREFIX}{claim_time} code_sha={_CODE_SHA}"),
             )
             claim_dt = datetime.fromisoformat(claim_time)
             LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
@@ -514,10 +532,11 @@ async def run_tick(
             try:
                 result = agent_runner(candidate, prompt)
             except Exception as exc:
+                _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter, candidate.id, f"Agent crashed: {exc}",
                     issue_name=candidate.name, issue_identifier=candidate.identifier,
-                    notifier=notifier,
+                    notifier=notifier, issue_url=_iu, dashboard_url=_du,
                 )
                 return TickResult(True, "agent-crashed", candidate.id, mode=mode)
 
@@ -533,10 +552,11 @@ async def run_tick(
                 stdout, stderr = _format_report(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter, candidate.id, msg,
                     issue_name=candidate.name, issue_identifier=candidate.identifier,
-                    notifier=notifier,
+                    notifier=notifier, issue_url=_iu, dashboard_url=_du,
                 )
                 return TickResult(True, "timeout", candidate.id, mode=mode)
             if result.exit_code != 0:
@@ -544,10 +564,11 @@ async def run_tick(
                 stdout, stderr = _format_report(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter, candidate.id, msg,
                     issue_name=candidate.name, issue_identifier=candidate.identifier,
-                    notifier=notifier,
+                    notifier=notifier, issue_url=_iu, dashboard_url=_du,
                 )
                 return TickResult(True, "nonzero", candidate.id, mode=mode)
 
@@ -560,6 +581,7 @@ async def run_tick(
                 stdout=stdout,
                 stderr=stderr,
                 notifier=notifier,
+                config=config,
             )
             if scheduled_after_agent is not None:
                 return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
@@ -568,6 +590,7 @@ async def run_tick(
                 msg = "Agent could not complete because required tool access was denied."
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
                     candidate.id,
@@ -575,6 +598,8 @@ async def run_tick(
                     issue_name=candidate.name,
                     issue_identifier=candidate.identifier,
                     notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
@@ -582,6 +607,7 @@ async def run_tick(
                 msg = "Agent could not complete because operator approval is required."
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
                     candidate.id,
@@ -589,6 +615,8 @@ async def run_tick(
                     issue_name=candidate.name,
                     issue_identifier=candidate.identifier,
                     notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "approval-gate", candidate.id, mode=mode)
 
@@ -623,9 +651,12 @@ async def run_tick(
                 )
                 await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
                 LOGGER.info("state_transitioned issue_id=%s state=in-review mode=plan", candidate.id)
+                _iu, _du = _build_urls(config, candidate.id)
                 await _notify_review(
                     notifier, candidate.name, candidate.identifier,
                     reason="Plan mode completed, awaiting approval",
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "plan", candidate.id, mode=mode)
 
@@ -740,6 +771,7 @@ async def run_tick(
                         msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
                     candidate.id,
@@ -747,6 +779,8 @@ async def run_tick(
                     issue_name=candidate.name,
                     issue_identifier=candidate.identifier,
                     notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
 
@@ -760,9 +794,12 @@ async def run_tick(
                     "state_transitioned issue_id=%s state=in-review reason=marker",
                     candidate.id,
                 )
+                _iu, _du = _build_urls(config, candidate.id)
                 await _notify_review(
                     notifier, candidate.name, candidate.identifier,
                     reason="Agent reported SYMPHONY_RESULT: review",
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "agent-marker-review", candidate.id, mode=mode)
 
@@ -788,6 +825,7 @@ async def reconcile_stale_running(
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
+    config: SymphonyConfig | None = None,
 ) -> None:
     """Block Running issues whose durable claim comment is stale."""
 
@@ -804,10 +842,13 @@ async def reconcile_stale_running(
         if now() - claim_time > timedelta(milliseconds=run_timeout_ms):
             issue_name = str(issue.get("name", ""))
             issue_identifier = str(issue.get("sequence_id", ""))
+            issue_url, dashboard_url = _build_urls(config, issue_id)
             await _block_issue(
                 adapter, issue_id, "Symphony claim timed out after scheduler restart",
                 issue_name=issue_name, issue_identifier=issue_identifier,
                 notifier=notifier,
+                issue_url=issue_url,
+                dashboard_url=dashboard_url,
             )
 
 
@@ -1077,6 +1118,7 @@ async def _detect_agent_schedule(
     stdout: str,
     stderr: str,
     notifier: TelegramNotifier | None,
+    config: SymphonyConfig | None = None,
 ) -> str | None:
     after_agent = await _fetch_issue(adapter, candidate.id)
     label_ids = adapter.contract.label_ids if adapter.contract else None
@@ -1088,6 +1130,7 @@ async def _detect_agent_schedule(
     try:
         event = await _latest_schedule_event(adapter, candidate.id)
     except ScheduleParseError as exc:
+        _iu, _du = _build_urls(config, candidate.id)
         await _block_issue(
             adapter,
             candidate.id,
@@ -1095,6 +1138,8 @@ async def _detect_agent_schedule(
             issue_name=candidate.name,
             issue_identifier=candidate.identifier,
             notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
         )
         return "agent-scheduled-malformed"
     if event is None or not event.is_schedule or event.comment_created_at is None:
@@ -1179,43 +1224,34 @@ async def _claimed_at(adapter: PlaneAdapter, issue_id: str) -> datetime | None:
     return max(claim_times)
 
 
+def _build_urls(config: SymphonyConfig | None, issue_id: str) -> tuple[str, str]:
+    """Return (issue_url, dashboard_url) derived from config, or empty strings."""
+    if config is None:
+        return "", ""
+    return config.issue_url(issue_id), config.plane_dashboard_url
+
+
 async def _notify_review(
     notifier: TelegramNotifier | None,
     issue_name: str,
     issue_identifier: str,
     reason: str = "",
+    *,
+    issue_url: str = "",
+    dashboard_url: str = "",
 ) -> None:
     if notifier is None:
         return
     try:
-        await notifier.send(format_review_message(issue_name, issue_identifier, reason))
-    except Exception as exc:
-        LOGGER.warning("notification_error error=%s", exc)
-
-
-async def _notify_released(
-    notifier: TelegramNotifier | None,
-    candidate: CandidateIssue,
-    event: ScheduleEvent | None,
-    *,
-    now: datetime,
-) -> None:
-    if notifier is None or event is None or event.not_before is None:
-        return
-    late = bool(event.not_after and now.astimezone(UTC) > event.not_after)
-    try:
         await notifier.send(
-            format_released_message(
-                candidate.name,
-                candidate.identifier,
-                not_before=event.not_before.isoformat(),
-                not_after=event.not_after.isoformat() if event.not_after else "",
-                reason=event.reason,
-                late=late,
+            format_review_message(
+                issue_name, issue_identifier, reason,
+                issue_url=issue_url,
+                dashboard_url=dashboard_url,
             )
         )
     except Exception as exc:
-        LOGGER.warning("notification_error issue_id=%s error=%s", candidate.id, exc)
+        LOGGER.warning("notification_error error=%s", exc)
 
 
 async def _block_issue(
@@ -1226,6 +1262,8 @@ async def _block_issue(
     issue_name: str = "",
     issue_identifier: str = "",
     notifier: TelegramNotifier | None = None,
+    issue_url: str = "",
+    dashboard_url: str = "",
 ) -> None:
     await adapter.add_comment(issue_id, CommentPayload(body=message))
     await adapter.transition_state(issue_id, PlaneState.BLOCKED)
@@ -1233,7 +1271,11 @@ async def _block_issue(
     if notifier:
         try:
             await notifier.send(
-                format_blocked_message(issue_name, issue_identifier, message)
+                format_blocked_message(
+                    issue_name, issue_identifier, message,
+                    issue_url=issue_url,
+                    dashboard_url=dashboard_url,
+                )
             )
         except Exception as exc:
             LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)

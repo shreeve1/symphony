@@ -236,3 +236,78 @@ def test_format_released_message_includes_late_flag_and_escapes_html():
     assert "late: true" in msg
     assert "&lt;now&gt;" in msg
     assert "<now>" not in msg
+
+
+def test_format_review_message_includes_issue_url():
+    msg = format_review_message(
+        "Fix storage",
+        "INFRA-1",
+        issue_url="http://plane.example.test/homelab/projects/proj-1/issues/issue-1/",
+    )
+    assert 'href="http://plane.example.test/homelab/projects/proj-1/issues/issue-1/"' in msg
+    assert "Open issue" in msg
+    assert "Dashboard" not in msg
+
+
+def test_format_review_message_includes_dashboard_url():
+    msg = format_review_message(
+        "Fix storage",
+        "INFRA-1",
+        dashboard_url="http://plane.example.test/homelab/",
+    )
+    assert 'href="http://plane.example.test/homelab/"' in msg
+    assert "Dashboard" in msg
+    assert "Open issue" not in msg
+
+
+def test_format_review_message_includes_both_urls():
+    msg = format_review_message(
+        "Fix storage",
+        "INFRA-1",
+        issue_url="http://plane.example.test/homelab/projects/p/issues/i/",
+        dashboard_url="http://plane.example.test/dash/",
+    )
+    assert "Open issue" in msg
+    assert "Dashboard" in msg
+
+
+def test_format_review_message_omits_urls_when_empty():
+    msg = format_review_message("Fix storage", "INFRA-1")
+    assert "Open issue" not in msg
+    assert "Dashboard" not in msg
+    assert "href" not in msg
+
+
+def test_format_blocked_message_includes_issue_url():
+    msg = format_blocked_message(
+        "Deploy failed",
+        "OPS-7",
+        "Agent crashed",
+        issue_url="http://plane.example.test/homelab/projects/p/issues/i/",
+    )
+    assert 'href="http://plane.example.test/homelab/projects/p/issues/i/"' in msg
+    assert "Open issue" in msg
+
+
+def test_format_blocked_message_includes_both_urls():
+    msg = format_blocked_message(
+        "Deploy failed",
+        issue_url="http://plane.example.test/homelab/projects/p/issues/i/",
+        dashboard_url="http://plane.example.test/dash/",
+    )
+    assert "Open issue" in msg
+    assert "Dashboard" in msg
+
+
+def test_format_blocked_message_omits_urls_when_empty():
+    msg = format_blocked_message("Deploy failed")
+    assert "href" not in msg
+
+
+def test_format_review_message_escapes_url_html():
+    msg = format_review_message(
+        "Issue",
+        issue_url='http://plane.example.test/<script>',
+    )
+    assert "&lt;script&gt;" in msg
+    assert "<script>" not in msg

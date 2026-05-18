@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from html import escape as _html_escape
 from typing import Mapping, Protocol, Sequence
 
 # schedule.py is colocated with plane_cli.py in the symphony repo. Import
@@ -19,7 +20,6 @@ from typing import Mapping, Protocol, Sequence
 # rejects naive datetimes, inverted not_after<not_before windows, empty/
 # whitespace-only/line-breaking reasons.
 from schedule import format_cancellation_comment, format_schedule_comment
-from notifier import format_scheduled_message
 
 
 REQUIRED_ENV = (
@@ -204,7 +204,36 @@ def _send_telegram(env: Mapping[str, str], state: str) -> None:
     else:
         return
     issue_id = env.get("SYMPHONY_ISSUE_ID", "")
-    _send_telegram_message(env, f"{emoji} Issue {issue_id} \u2192 <b>{label}</b>")
+    parts = [f"{emoji} Issue {issue_id} \u2192 <b>{label}</b>"]
+    issue_url = _build_issue_url(env, issue_id)
+    if issue_url:
+        parts.append(f'\U0001f517 <a href="{_html_escape(issue_url)}">Open issue</a>')
+    dashboard_url = env.get("PLANE_DASHBOARD_URL", "")
+    if dashboard_url:
+        parts.append(f'\U0001f4ca <a href="{_html_escape(dashboard_url)}">Dashboard</a>')
+    _send_telegram_message(env, "\n".join(parts))
+
+
+def _build_issue_url(env: Mapping[str, str], issue_id: str) -> str:
+    """Derive the Plane frontend issue URL from agent env vars.
+
+    Returns an empty string if any required component is missing so callers
+    can safely skip the URL without crashing.
+    """
+    if not issue_id:
+        return ""
+    base_url = (env.get("SYMPHONY_PLANE_FRONTEND_URL") or env.get("SYMPHONY_PLANE_API_URL", "")).rstrip("/")
+    workspace = env.get("SYMPHONY_PLANE_WORKSPACE_SLUG", "")
+    project_id = env.get("SYMPHONY_PLANE_PROJECT_ID", "")
+    if not base_url or not workspace or not project_id:
+        return ""
+    from urllib.parse import urlparse
+    if env.get("SYMPHONY_PLANE_FRONTEND_URL"):
+        base = base_url
+    else:
+        parsed = urlparse(base_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+    return f"{base}/{workspace}/projects/{project_id}/issues/{issue_id}/"
 
 
 def _send_telegram_message(env: Mapping[str, str], message: str) -> None:
@@ -334,16 +363,6 @@ def run(
         client.post(config.comment_path(), {"comment_html": body})
         _add_label(client, config, "scheduled")
         client.patch(config.issue_path(), {"state": STATE_IDS["todo"]})
-        _send_telegram_message(
-            env,
-            format_scheduled_message(
-                "",
-                env.get("SYMPHONY_ISSUE_ID", ""),
-                not_before=not_before.isoformat(),
-                not_after=not_after.isoformat() if not_after else "",
-                reason=reason,
-            ),
-        )
         return 0
 
     if command == "unschedule":
