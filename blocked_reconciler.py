@@ -346,7 +346,8 @@ async def _fetch_comments(adapter: PlaneAdapter, issue_id: str) -> list[_Comment
     if adapter.transport is None:
         raise RuntimeError("Transport not configured")
     records: list[_CommentRecord] = []
-    path = adapter._comment_path(issue_id)
+    base_path = adapter._comment_path(issue_id)
+    path = base_path
     seen_paths: set[str] = set()
     pages = 0
     while path and pages < MAX_COMMENT_PAGES_PER_ISSUE:
@@ -382,8 +383,8 @@ async def _fetch_comments(adapter: PlaneAdapter, issue_id: str) -> list[_Comment
         if isinstance(next_path, str) and next_path:
             path = next_path
         elif next_cursor:
-            separator = "&" if "?" in path else "?"
-            path = f"{path}{separator}cursor={next_cursor}"
+            separator = "&" if "?" in base_path else "?"
+            path = f"{base_path}{separator}cursor={next_cursor}"
         else:
             break
     if path and pages >= MAX_COMMENT_PAGES_PER_ISSUE:

@@ -395,21 +395,24 @@ async def test_multi_page_pagination_processes_every_issue_once():
 
 
 class _PaginatedCommentsTransport(InMemoryTransport):
-    """Transport that paginates comments for one issue across two pages."""
+    """Transport that paginates comments for one issue across cursor pages."""
 
-    def __init__(self, issue_id: str, page1: list[dict[str, Any]], page2: list[dict[str, Any]]) -> None:
+    def __init__(self, issue_id: str, pages: list[list[dict[str, Any]]]) -> None:
         super().__init__()
         self.issue_id = issue_id
-        self._page1 = page1
-        self._page2 = page2
+        self._pages = pages
         self.comment_calls: list[str] = []
 
     async def get(self, path: str) -> dict[str, Any]:
         if f"/issues/{self.issue_id}/comments/" in path:
             self.comment_calls.append(path)
-            if "cursor=page-2" in path:
-                return {"results": list(self._page2), "next_cursor": None}
-            return {"results": list(self._page1), "next_cursor": "page-2"}
+            cursor = 0
+            if "cursor=page-" in path:
+                cursor = int(path.rsplit("cursor=page-", 1)[1].split("&", 1)[0]) - 1
+            next_cursor = None
+            if cursor + 1 < len(self._pages):
+                next_cursor = f"page-{cursor + 2}"
+            return {"results": list(self._pages[cursor]), "next_cursor": next_cursor}
         return await super().get(path)
 
 
@@ -419,10 +422,10 @@ async def test_comment_pagination_follows_next_cursor_before_deciding():
     issue = _blocked_issue("issue-110", external_id="homelab-patrol-infra-ced58b20")
     transport = _PaginatedCommentsTransport(
         issue["id"],
-        page1=[_patrol_fail("qbittorrent-ct108", now - timedelta(days=2))],
-        page2=[
-            _patrol_pass("qbittorrent-ct108", 1, now - timedelta(hours=2)),
-            _patrol_pass("qbittorrent-ct108", 1, now - timedelta(hours=1)),
+        pages=[
+            [_patrol_fail("qbittorrent-ct108", now - timedelta(days=2))],
+            [_patrol_pass("qbittorrent-ct108", 1, now - timedelta(hours=2))],
+            [_patrol_pass("qbittorrent-ct108", 1, now - timedelta(hours=1))],
         ],
     )
     transport.issues[issue["id"]] = issue
@@ -430,7 +433,9 @@ async def test_comment_pagination_follows_next_cursor_before_deciding():
 
     decisions = await reconcile_blocked(adapter, apply=True)
 
-    assert len(transport.comment_calls) == 2
+    assert len(transport.comment_calls) == 3
+    assert transport.comment_calls[1].count("cursor=") == 1
+    assert transport.comment_calls[2].count("cursor=") == 1
     assert decisions[0].applied is True
     assert transport.issues[issue["id"]]["state"] == adapter._resolve_state(
         PlaneState.DONE
