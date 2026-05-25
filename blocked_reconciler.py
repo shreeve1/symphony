@@ -47,7 +47,7 @@ LOGGER = logging.getLogger(__name__)
 # something to silently chew through.
 BLOCKED_PAGE_SIZE = 50
 MAX_BLOCKED_PAGES_PER_TICK = 3
-MAX_COMMENT_PAGES_PER_ISSUE = 5
+MAX_COMMENT_PAGES_PER_ISSUE = 3
 
 # Comment markers emitted by the homelab patrol workers. These are matched
 # against the *body* of comments fetched from Plane via the adapter; both
@@ -363,6 +363,8 @@ async def _fetch_comments(adapter: PlaneAdapter, issue_id: str) -> list[_Comment
         pages += 1
         raw = response.get("results") if isinstance(response, dict) else response
         if not isinstance(raw, list):
+            break
+        if not raw:
             break
         start_idx = len(records)
         for idx, comment in enumerate(raw, start=start_idx):

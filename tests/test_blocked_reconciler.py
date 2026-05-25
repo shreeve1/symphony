@@ -15,6 +15,7 @@ import pytest
 from blocked_reconciler import (
     DEFAULT_RULES,
     MAX_BLOCKED_PAGES_PER_TICK,
+    MAX_COMMENT_PAGES_PER_ISSUE,
     ReconcileRule,
     reconcile_blocked,
 )
@@ -295,6 +296,10 @@ def test_max_pages_per_tick_is_bounded():
     # Cheap structural assertion to catch a future change that would let the
     # reconciler iterate unboundedly through a giant Blocked column.
     assert MAX_BLOCKED_PAGES_PER_TICK <= 5
+
+
+def test_max_comment_pages_per_issue_is_bounded():
+    assert MAX_COMMENT_PAGES_PER_ISSUE <= 3
 
 
 # ---- W5 / W6 / N13 / N14 dev-review tests ----------------------------------
