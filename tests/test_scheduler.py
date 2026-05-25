@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+import scheduler
 from agent_runner import AgentResult
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
@@ -114,13 +115,76 @@ async def test_run_tick_skips_when_lock_is_held(tmp_path: Path) -> None:
         result = await run_tick(
             _config(tmp_path),
             _adapter(FakeTransport()),
-            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
             lock_path=lock_path,
         )
 
     assert result.dispatched is False
     assert result.reason == "lock-held"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_invokes_blocked_reconciler_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    calls: list[bool] = []
+
+    async def fake_reconcile_blocked(adapter, *, apply: bool, now):
+        calls.append(apply)
+        return []
+
+    monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
+    result = await run_tick(
+        _config(tmp_path, blocked_reconciler_enabled=True, blocked_reconciler_apply=True),
+        _adapter(FakeTransport()),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-reconciler-enabled",
+        poller=lambda adapter: [],
+    )
+
+    assert result.reason == "no-candidates"
+    assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_tick_skips_blocked_reconciler_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    async def fake_reconcile_blocked(adapter, *, apply: bool, now):
+        raise AssertionError("reconciler should be disabled")
+
+    monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
+    result = await run_tick(
+        _config(tmp_path, blocked_reconciler_enabled=False),
+        _adapter(FakeTransport()),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-reconciler-disabled",
+        poller=lambda adapter: [],
+    )
+
+    assert result.reason == "no-candidates"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_continues_when_blocked_reconciler_raises(tmp_path: Path, monkeypatch) -> None:
+    async def fake_reconcile_blocked(adapter, *, apply: bool, now):
+        raise RuntimeError("reconciler exploded")
+
+    monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
+    transport = FakeTransport()
+    transport.issues["i1"] = _issue("i1")
+
+    result = await run_tick(
+        _config(tmp_path, blocked_reconciler_enabled=True),
+        _adapter(transport),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-reconciler-raises",
+        poller=lambda adapter: [_candidate("i1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "agent-clean-done"
+    assert transport.issues["i1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
 
 
 @pytest.mark.asyncio
@@ -457,7 +521,7 @@ async def test_run_tick_skips_approval_required_candidates(tmp_path: Path) -> No
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock-approval",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
@@ -574,7 +638,7 @@ async def test_run_tick_passes_notifier_to_reconcile(tmp_path: Path) -> None:
         await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
             notifier=notifier,
             poller=lambda adapter: [],
@@ -592,7 +656,7 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     changed_result = await run_tick(
         _config(tmp_path),
         _adapter(changed),
-        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock-changed",
         poller=lambda adapter: [_candidate("issue-1")],
@@ -604,7 +668,7 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     approval_result = await run_tick(
         _config(tmp_path),
         _adapter(approval),
-        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock-fresh-approval",
         poller=lambda adapter: [_candidate("issue-2")],
@@ -620,7 +684,7 @@ async def test_run_tick_continues_when_plane_polling_fails(tmp_path: Path) -> No
     result = await run_tick(
         _config(tmp_path),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: (_ for _ in ()).throw(ConnectionError("offline")),
@@ -954,7 +1018,7 @@ async def test_approval_required_filter_works_with_uuid_labels(tmp_path: Path) -
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],

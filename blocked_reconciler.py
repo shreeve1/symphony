@@ -17,9 +17,9 @@ in via ``SYMPHONY_BLOCKED_RECONCILER_APPLY=true``.
 Rules are intentionally narrow:
 
   * Patrol tickets (``external_id`` prefix ``homelab-patrol-``) auto-resolve
-    to Done once the latest ``Patrol pass for`` comment is newer than any
-    failure comment AND the embedded ``consecutive_passes=N`` is at least
-    the rule's threshold.
+    to Done once enough distinct ``Patrol pass for`` comments are newer than
+    any failure comment. The embedded ``consecutive_passes=N`` value is logged
+    only; it does not gate the decision.
   * A more conservative fallback rule moves tickets with a recent Symphony
     completion marker to In Review for human review. It is gated by an
     explicit external_id allowlist on the rule, empty by default.
@@ -47,6 +47,7 @@ LOGGER = logging.getLogger(__name__)
 # something to silently chew through.
 BLOCKED_PAGE_SIZE = 50
 MAX_BLOCKED_PAGES_PER_TICK = 3
+MAX_COMMENT_PAGES_PER_ISSUE = 5
 
 # Comment markers emitted by the homelab patrol workers. These are matched
 # against the *body* of comments fetched from Plane via the adapter; both
@@ -344,22 +345,54 @@ async def _fetch_blocked_issues(
 async def _fetch_comments(adapter: PlaneAdapter, issue_id: str) -> list[_CommentRecord]:
     if adapter.transport is None:
         raise RuntimeError("Transport not configured")
-    response = await adapter.transport.get(adapter._comment_path(issue_id))
     records: list[_CommentRecord] = []
-    raw = response.get("results") if isinstance(response, dict) else response
-    if not isinstance(raw, list):
-        return records
-    for idx, comment in enumerate(raw):
-        if not isinstance(comment, dict):
-            continue
-        created = _parse_iso(comment.get("created_at"))
-        # Fall back to insertion order for transports that don't track timestamps
-        # (e.g. InMemoryTransport during tests). The Unix epoch + idx ordering
-        # preserves comment order without polluting the "newer than failure"
-        # comparison against real timestamps from live Plane.
-        if created is None:
-            created = datetime.fromtimestamp(float(idx), tz=UTC)
-        records.append(_CommentRecord(body=_comment_body(comment), created_at=created))
+    path = adapter._comment_path(issue_id)
+    seen_paths: set[str] = set()
+    pages = 0
+    while path and pages < MAX_COMMENT_PAGES_PER_ISSUE:
+        if path in seen_paths:
+            LOGGER.warning(
+                "blocked_reconcile_comment_cursor_cycle issue_id=%s path=%s",
+                issue_id,
+                path,
+            )
+            break
+        seen_paths.add(path)
+        response = await adapter.transport.get(path)
+        pages += 1
+        raw = response.get("results") if isinstance(response, dict) else response
+        if not isinstance(raw, list):
+            break
+        start_idx = len(records)
+        for idx, comment in enumerate(raw, start=start_idx):
+            if not isinstance(comment, dict):
+                continue
+            created = _parse_iso(comment.get("created_at"))
+            # Fall back to insertion order for transports that don't track timestamps
+            # (e.g. InMemoryTransport during tests). The Unix epoch + idx ordering
+            # preserves comment order without polluting the "newer than failure"
+            # comparison against real timestamps from live Plane.
+            if created is None:
+                created = datetime.fromtimestamp(float(idx), tz=UTC)
+            records.append(_CommentRecord(body=_comment_body(comment), created_at=created))
+        if not isinstance(response, dict):
+            break
+        next_path = response.get("next")
+        next_cursor = response.get("next_cursor")
+        if isinstance(next_path, str) and next_path:
+            path = next_path
+        elif next_cursor:
+            separator = "&" if "?" in path else "?"
+            path = f"{path}{separator}cursor={next_cursor}"
+        else:
+            break
+    if path and pages >= MAX_COMMENT_PAGES_PER_ISSUE:
+        LOGGER.info(
+            "blocked_reconcile_comment_page_limit_reached issue_id=%s pages=%s comments_seen=%s",
+            issue_id,
+            pages,
+            len(records),
+        )
     return records
 
 
