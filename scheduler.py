@@ -16,6 +16,7 @@ from typing import Any, AsyncIterator, Callable, Iterator, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentResult
+from blocked_reconciler import reconcile_blocked
 from code_version import resolve_code_sha
 from config import SymphonyConfig
 from notifier import (
@@ -431,6 +432,26 @@ async def run_tick(
     try:
         with scheduler_lock(lock_file):
             await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
+            if config.blocked_reconciler_enabled:
+                try:
+                    await reconcile_blocked(
+                        adapter,
+                        apply=config.blocked_reconciler_apply,
+                        now=now,
+                    )
+                except Exception as exc:
+                    # Reconciliation is best-effort — it must never block the
+                    # main scheduler tick or take the service down. The
+                    # individual issue paths inside reconcile_blocked already
+                    # log granular failures; this guards against an
+                    # adapter-level explosion (transport down, schema drift).
+                    # exc_info=True is the W7 dev-review fix: a broad catch
+                    # without a traceback would silently mask programmer
+                    # errors (AttributeError, TypeError) from a future
+                    # refactor of the reconciler.
+                    LOGGER.warning(
+                        "blocked_reconcile_failed error=%s", exc, exc_info=True
+                    )
             scheduled = await _select_scheduled_candidate(adapter, now=now)
             if scheduled is not None:
                 if scheduled.reason == "scheduled-release":

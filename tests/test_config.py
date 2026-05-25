@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from config import SymphonyConfig
+from config import SymphonyConfig, _truthy
 
 
 def _env(**overrides):
@@ -124,3 +124,48 @@ def test_issue_url_prefers_frontend_url_over_local_api_url():
         PLANE_FRONTEND_URL="http://10.20.20.16:8000",
     ))
     assert config.issue_url("i-1") == "http://10.20.20.16:8000/homelab/projects/fake-project-uuid/issues/i-1/"
+
+
+# ---- _truthy() N9 dev-review tests ----------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "Yes", "on", "ON"])
+def test_truthy_accepts_canonical_true_values(raw):
+    assert _truthy(raw, default=False) is True
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "FALSE", "No", "off", "OFF"])
+def test_truthy_accepts_canonical_false_values(raw):
+    assert _truthy(raw, default=True) is False
+
+
+@pytest.mark.parametrize("raw", [None, "", "   "])
+def test_truthy_falls_back_to_default_for_empty_or_unset(raw):
+    assert _truthy(raw, default=True) is True
+    assert _truthy(raw, default=False) is False
+
+
+def test_truthy_unparseable_value_logs_warning_and_returns_default(caplog):
+    """N9 dev-review: a typo like APPLY=treu must never silently flip a
+    sensitive flag. Behaviour: fall back to default AND log a discoverable
+    warning so journalctl shows the bad value."""
+    caplog.set_level("WARNING", logger="config")
+    result = _truthy("treu", default=False, name="SYMPHONY_BLOCKED_RECONCILER_APPLY")
+    assert result is False
+    assert any(
+        "config_truthy_unparseable" in record.message
+        and "SYMPHONY_BLOCKED_RECONCILER_APPLY" in record.message
+        and "'treu'" in record.message
+        for record in caplog.records
+    )
+
+
+def test_truthy_unparseable_without_name_does_not_log(caplog):
+    """If no `name=` is supplied, _truthy stays silent (used by call sites
+    that don't want a warning, e.g. ad-hoc parsing in tests)."""
+    caplog.set_level("WARNING", logger="config")
+    result = _truthy("treu", default=True)
+    assert result is True
+    assert not any(
+        "config_truthy_unparseable" in record.message for record in caplog.records
+    )

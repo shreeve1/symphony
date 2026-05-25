@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 _REQUIRED_ENV = (
@@ -15,6 +19,38 @@ _REQUIRED_ENV = (
     "HOMELAB_REPO_PATH",
     "PI_BIN",
 )
+
+
+def _truthy(value: str | None, *, default: bool, name: str = "") -> bool:
+    """Parse an env-style boolean.
+
+    Accepts ``1/true/yes/on`` (case-insensitive) as true and ``0/false/no/off``
+    as false. Empty or unset → ``default``. Any other value also falls back
+    to ``default`` so a typo can never silently flip a sensitive flag like
+    ``SYMPHONY_BLOCKED_RECONCILER_APPLY``.
+
+    When ``name`` is supplied and the value is unparseable (not empty, not in
+    either truthy/falsy set), a warning is logged so an operator typo like
+    ``APPLY=treu`` is discoverable in journalctl instead of silently keeping
+    the default. The N9 dev-review fix: matches the safe-default behaviour
+    with operator visibility.
+    """
+
+    if value is None:
+        return default
+    normalised = value.strip().lower()
+    if not normalised:
+        return default
+    if normalised in {"1", "true", "yes", "on"}:
+        return True
+    if normalised in {"0", "false", "no", "off"}:
+        return False
+    if name:
+        LOGGER.warning(
+            "config_truthy_unparseable name=%s value=%r default=%s",
+            name, value, default,
+        )
+    return default
 
 
 @dataclass(frozen=True)
@@ -36,6 +72,8 @@ class SymphonyConfig:
     telegram_chat_id: str | None = None
     plane_frontend_url: str = ""
     plane_dashboard_url: str = ""
+    blocked_reconciler_enabled: bool = True
+    blocked_reconciler_apply: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
@@ -62,6 +100,16 @@ class SymphonyConfig:
             telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),
             plane_frontend_url=source.get("PLANE_FRONTEND_URL", "").rstrip("/"),
             plane_dashboard_url=source.get("PLANE_DASHBOARD_URL", ""),
+            blocked_reconciler_enabled=_truthy(
+                source.get("SYMPHONY_BLOCKED_RECONCILER_ENABLED"),
+                default=True,
+                name="SYMPHONY_BLOCKED_RECONCILER_ENABLED",
+            ),
+            blocked_reconciler_apply=_truthy(
+                source.get("SYMPHONY_BLOCKED_RECONCILER_APPLY"),
+                default=False,
+                name="SYMPHONY_BLOCKED_RECONCILER_APPLY",
+            ),
         )
 
     def issue_url(self, issue_id: str) -> str:
@@ -101,7 +149,9 @@ class SymphonyConfig:
             f"lock_path={self.lock_path!r}, "
             f"telegram_chat_id={telegram_chat_id!r}, "
             f"plane_frontend_url={self.plane_frontend_url!r}, "
-            f"plane_dashboard_url={self.plane_dashboard_url!r})"
+            f"plane_dashboard_url={self.plane_dashboard_url!r}, "
+            f"blocked_reconciler_enabled={self.blocked_reconciler_enabled!r}, "
+            f"blocked_reconciler_apply={self.blocked_reconciler_apply!r})"
         )
 
     __str__ = __repr__
