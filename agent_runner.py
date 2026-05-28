@@ -19,7 +19,7 @@ from plane_poller import CandidateIssue
 
 LOGGER = logging.getLogger(__name__)
 TERMINATE_GRACE_SECONDS = 5
-PI_HELP_TIMEOUT_SECONDS = 10
+PI_HELP_TIMEOUT_SECONDS = 30
 PI_PROBE_TIMEOUT_SECONDS = 30
 
 

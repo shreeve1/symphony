@@ -84,7 +84,7 @@ def test_verify_pi_support_checks_help_and_probe_with_cwd(tmp_path: Path) -> Non
     verify_pi_support("pi", "zai", "glm-5.1:high", tmp_path, run_func=fake_run)
 
     assert calls[0][0] == ["pi", "--help"]
-    assert calls[0][1]["timeout"] == 10
+    assert calls[0][1]["timeout"] == 30
     assert calls[1][0] == [
         "pi", "--print", "--no-session", "--provider", "zai", "--model", "glm-5.1:high", "ping",
     ]
