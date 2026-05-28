@@ -165,6 +165,25 @@ async def test_run_tick_skips_blocked_reconciler_when_disabled(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
+async def test_run_tick_skips_blocked_reconciler_when_not_due(tmp_path: Path, monkeypatch) -> None:
+    async def fake_reconcile_blocked(adapter, *, apply: bool, now):
+        raise AssertionError("reconciler should not run until due")
+
+    monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
+    result = await run_tick(
+        _config(tmp_path, blocked_reconciler_enabled=True),
+        _adapter(FakeTransport()),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-reconciler-not-due",
+        poller=lambda adapter: [],
+        run_blocked_reconciler=False,
+    )
+
+    assert result.reason == "no-candidates"
+
+
+@pytest.mark.asyncio
 async def test_run_tick_continues_when_blocked_reconciler_raises(tmp_path: Path, monkeypatch) -> None:
     async def fake_reconcile_blocked(adapter, *, apply: bool, now):
         raise RuntimeError("reconciler exploded")

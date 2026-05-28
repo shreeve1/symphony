@@ -401,6 +401,7 @@ async def run_tick(
     auto_commit: Callable[..., str] | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
+    run_blocked_reconciler: bool = True,
 ) -> TickResult:
     """Run one scheduler tick without sleeping forever.
 
@@ -432,7 +433,7 @@ async def run_tick(
     try:
         with scheduler_lock(lock_file):
             await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
-            if config.blocked_reconciler_enabled:
+            if config.blocked_reconciler_enabled and run_blocked_reconciler:
                 try:
                     await reconcile_blocked(
                         adapter,
@@ -960,14 +961,22 @@ async def run_loop(
 ) -> None:
     """Run the scheduler forever, sleeping between ticks."""
 
+    next_blocked_reconcile_at = datetime.now(UTC)
     while True:
+        now_dt = datetime.now(UTC)
+        run_blocked_reconciler = now_dt >= next_blocked_reconcile_at
         result = await run_tick(
             config,
             adapter,
             agent_runner=agent_runner,
             render_prompt=render_prompt,
             notifier=notifier,
+            run_blocked_reconciler=run_blocked_reconciler,
         )
+        if run_blocked_reconciler:
+            next_blocked_reconcile_at = now_dt + timedelta(
+                milliseconds=config.blocked_reconciler_interval_ms
+            )
         LOGGER.info(
             "tick_completed dispatched=%s reason=%s issue_id=%s",
             str(result.dispatched).lower(),

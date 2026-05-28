@@ -74,6 +74,7 @@ class SymphonyConfig:
     plane_dashboard_url: str = ""
     blocked_reconciler_enabled: bool = True
     blocked_reconciler_apply: bool = False
+    blocked_reconciler_interval_ms: int = 1_800_000
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
@@ -109,6 +110,9 @@ class SymphonyConfig:
                 source.get("SYMPHONY_BLOCKED_RECONCILER_APPLY"),
                 default=False,
                 name="SYMPHONY_BLOCKED_RECONCILER_APPLY",
+            ),
+            blocked_reconciler_interval_ms=int(
+                source.get("SYMPHONY_BLOCKED_RECONCILER_INTERVAL_MS", "1800000")
             ),
         )
 
@@ -151,7 +155,8 @@ class SymphonyConfig:
             f"plane_frontend_url={self.plane_frontend_url!r}, "
             f"plane_dashboard_url={self.plane_dashboard_url!r}, "
             f"blocked_reconciler_enabled={self.blocked_reconciler_enabled!r}, "
-            f"blocked_reconciler_apply={self.blocked_reconciler_apply!r})"
+            f"blocked_reconciler_apply={self.blocked_reconciler_apply!r}, "
+            f"blocked_reconciler_interval_ms={self.blocked_reconciler_interval_ms!r})"
         )
 
     __str__ = __repr__

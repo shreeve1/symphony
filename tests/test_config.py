@@ -45,6 +45,7 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.pi_model == "glm-5.1:high"
     assert config.poll_interval_ms == 30_000
     assert config.run_timeout_ms == 1_800_000
+    assert config.blocked_reconciler_interval_ms == 1_800_000
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
 
 
@@ -53,12 +54,14 @@ def test_from_env_loads_optional_values():
         _env(
             SYMPHONY_POLL_INTERVAL_MS="1000",
             SYMPHONY_RUN_TIMEOUT_MS="2000",
+            SYMPHONY_BLOCKED_RECONCILER_INTERVAL_MS="3000",
             SYMPHONY_LOCK_PATH="/run/symphony.lock",
         )
     )
 
     assert config.poll_interval_ms == 1_000
     assert config.run_timeout_ms == 2_000
+    assert config.blocked_reconciler_interval_ms == 3_000
     assert config.lock_path == Path("/run/symphony.lock")
 
 
