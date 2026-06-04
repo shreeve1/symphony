@@ -1,0 +1,5 @@
+# Dispatch Claude through tmux send-keys, not print mode
+
+Symphony dispatches agents heterogeneously: **pi** runs one-shot (`pi --print --no-session`, success from exit code), but **claude** is driven as an interactive session inside a private-socket tmux window, with prompts pasted via `load-buffer`/`paste-buffer` + `Enter` and completion detected by polling `capture-pane` for a per-run nonce Done Marker.
+
+We chose tmux send-keys for claude because Anthropic is removing usable `claude -p` (print/headless) access for this account, so the simpler one-shot path available to pi is not an option. Because a tmux session has no exit code, claude reuses the verdict protocol pi already speaks: a `SYMPHONY_RESULT: done|review|blocked` line (plus optional `SYMPHONY_SUMMARY:`) emitted before the Done Marker, backstopped by post-run side-effect inspection (commit present for `build`, plan artifact written for `plan`). This reuses the existing marker parser the rest of the pipeline already consumes rather than inventing a new vocabulary. The engine is ported from the proven `dev-review-claude` skill rather than invented here.
