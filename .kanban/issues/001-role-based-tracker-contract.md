@@ -1,7 +1,7 @@
 ---
 id: 001
 title: Role-based Tracker Contract — sever the homelab_router import
-status: review
+status: blocked
 blocked_by: []
 updated: 2026-06-04
 actor: ralph
@@ -46,3 +46,7 @@ See `docs/adr/0004-role-based-per-binding-tracker-contract.md`.
 ## Blocked by
 
 None — can start immediately.
+
+## Blocker
+
+Fresh review failed one acceptance criterion: when the contract omits the optional `approval-required` role, the plan-completion path still calls `adapter.add_labels(... TrackerRole.APPROVAL_REQUIRED)` and raises `ValueError` instead of disabling the approval behavior. Reviewer verified `uv run pytest` passed but reproduced the optional-role failure separately.
