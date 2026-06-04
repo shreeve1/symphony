@@ -1,7 +1,7 @@
 ---
 id: 001
 title: Role-based Tracker Contract — sever the homelab_router import
-status: in-progress
+status: review
 blocked_by: []
 updated: 2026-06-04
 actor: ralph
