@@ -1,7 +1,7 @@
 ---
 id: 002
 title: Tracker Adapter seam
-status: review
+status: done
 blocked_by: [1]
 updated: 2026-06-04
 actor: ralph
@@ -25,10 +25,10 @@ no behavior change.
 
 ## Acceptance criteria
 
-- [ ] No engine module issues Plane HTTP calls (httpx / plane_cli) outside the adapter.
-- [ ] The adapter exposes role-resolution + the issue lifecycle ops the engine needs (list candidates, comment, set state).
-- [ ] Engine code references the adapter interface, not a concrete Plane client type.
-- [ ] All existing scheduler/poller behavior is preserved (suite green).
+- [x] No engine module issues Plane HTTP calls (httpx / plane_cli) outside the adapter.
+- [x] The adapter exposes role-resolution + the issue lifecycle ops the engine needs (list candidates, comment, set state).
+- [x] Engine code references the adapter interface, not a concrete Plane client type.
+- [x] All existing scheduler/poller behavior is preserved (suite green).
 
 ## Verification
 
@@ -37,3 +37,7 @@ no behavior change.
 ## Blocked by
 
 - Blocked by #1
+
+## Implementation Notes
+
+Added a `TrackerAdapter` protocol and `PlaneTrackerAdapter` implementation. Moved Plane candidate polling, HTTP transport setup, issue/comment listing, state transitions, and label ops behind the adapter seam while leaving `plane_poller.py` as a compatibility wrapper. Scheduler and blocked reconciler now drive `TrackerAdapter` methods instead of Plane paths/transports directly. Verified with `uv run pytest` and critical LSP diagnostics for touched files.
