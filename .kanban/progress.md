@@ -72,3 +72,10 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Plan→build handoff is git-ref based; `_PLAN_HANDOFF_MARKER` comments should end with a local `symphony/run-<id>` branch ref, not a filesystem path.
 **Verification:** `uv run pytest` passed (364 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 **Notes for next iteration:** Build-mode consumers can assume handoff plan files are validated in the run worktree after branch checkout.
+
+## #007 bindings.yml multi-project config — 2026-06-04
+
+**Result:** Blocked by mandatory fresh review (`RALPH_REVIEW: FAIL`).
+**What changed before block:** Added `bindings.yml` loading into project bindings, config defaults for approval/landing policy, per-binding tracker contract/repo/base/default_agent fields, multi-binding main loop scaffolding, base-branch worktree creation, and tests.
+**Verification before block:** `uv run pytest` passed (371 tests). Critical LSP diagnostics for touched files reported no diagnostics.
+**Blocker:** Review found `default_agent: claude` is rejected by `main.py`, per-issue `agent:claude` / `agent:pi` override is not wired into dispatch, and approval policy default-off is loaded but not enforced by scheduler gating.

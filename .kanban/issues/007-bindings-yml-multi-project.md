@@ -1,7 +1,7 @@
 ---
 id: 007
 title: bindings.yml multi-project config
-status: review
+status: blocked
 blocked_by: [1, 2]
 updated: 2026-06-04
 parent: null
@@ -38,3 +38,11 @@ See the **Project Binding** and **Landing** glossary entries in `CONTEXT.md`.
 
 - Blocked by #1
 - Blocked by #2
+
+## Blocker
+
+Mandatory fresh review failed after implementation commit. Remaining gaps:
+
+- `default_agent: claude` loads but is rejected by `main.py` instead of being executable or routed through an adapter.
+- Per-issue `agent:claude` / `agent:pi` override exists only as `ProjectBinding.resolve_agent()` and is not wired into dispatch.
+- Approval policy default-off is loaded but not enforced; scheduler still gates on `approval-required` labels independent of binding policy.
