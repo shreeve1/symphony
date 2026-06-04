@@ -1,8 +1,10 @@
 ---
 id: 006
 title: git-ref plan→build handoff
-status: pending
+status: in-progress
 blocked_by: [4]
+updated: 2026-06-04
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-04

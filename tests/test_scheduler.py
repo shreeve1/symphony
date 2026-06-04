@@ -723,6 +723,8 @@ def test_resolve_mode_build_takes_priority_over_plan():
 
 @pytest.mark.asyncio
 async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_path: Path) -> None:
+    from run_worktree import _run_id_from_identifier, worktree_branch
+
     transport = FakeTransport()
     transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
     plan_path = _write_plan(tmp_path, "plan-1")
@@ -743,7 +745,8 @@ async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_pat
     assert DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value] in transport.issues["plan-1"]["labels"]
     completion_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
     assert "Plan created" not in completion_comment["comment_html"]
-    assert completion_comment["comment_html"].rstrip().endswith(str(plan_path))
+    assert str(plan_path) not in completion_comment["comment_html"]
+    assert completion_comment["comment_html"].rstrip().endswith(worktree_branch(_run_id_from_identifier("plan-1")))
 
 
 @pytest.mark.asyncio
@@ -967,10 +970,10 @@ async def test_build_mode_blocks_suspicious_plan_comment_path(tmp_path: Path) ->
     )
 
     assert result.dispatched is False
-    assert result.reason == "invalid-plan-path"
+    assert result.reason == "invalid-plan-branch"
     assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     assert any(
-        "does not match the current issue slug" in (c.get("comment_html") or c.get("body") or "")
+        "plan handoff is not a branch ref" in (c.get("comment_html") or c.get("body") or "")
         for c in transport.comments["build-1"]
     )
 
@@ -2539,6 +2542,68 @@ async def test_run_tick_uses_run_worktree_and_keeps_branch(tmp_path: Path) -> No
         check=True,
     )
     assert show.stdout == "done\n"
+
+
+@pytest.mark.asyncio
+async def test_plan_to_build_handoff_uses_plan_branch_ref(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import _run_id_from_identifier, worktree_branch
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    plan_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.PLAN.value]
+    build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
+    transport.issues["plan-1"] = _issue("plan-1", labels=[plan_uuid])
+
+    def plan_agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        plan = worktree_path / "plans" / "plan-1.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text("# Plan\n", encoding="utf-8")
+        return AgentResult(0, 10, False, stdout=f"Plan created\n{plan}")
+
+    plan_result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=plan_agent,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    run_id = _run_id_from_identifier("plan-1")
+    branch = worktree_branch(run_id)
+    handoff_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
+    assert plan_result.reason == "plan"
+    assert handoff_comment["comment_html"].rstrip().endswith(branch)
+    assert "plans/plan-1.md" not in handoff_comment["comment_html"]
+    subprocess.run(["git", "show", f"{branch}:plans/plan-1.md"], cwd=repo, check=True, capture_output=True, text=True)
+
+    transport.issues["plan-1"]["state"] = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    transport.issues["plan-1"]["labels"] = [build_uuid]
+    seen_plan_paths: list[Path] = []
+
+    def build_agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        plan = worktree_path / "plans" / "plan-1.md"
+        assert plan.read_text(encoding="utf-8") == "# Plan\n"
+        seen_plan_paths.append(plan)
+        return AgentResult(0, 10, False)
+
+    build_result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=build_agent,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.BUILD.value])],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert build_result.reason == "agent-clean-done"
+    assert config.worktrees_root is not None
+    assert seen_plan_paths == [config.worktrees_root / f"run-{run_id}" / "plans" / "plan-1.md"]
 
 
 @pytest.mark.asyncio

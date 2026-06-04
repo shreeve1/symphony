@@ -30,6 +30,7 @@ from run_worktree import (
     remove_worktree_if_exists,
     _run_id_from_identifier,
     _run_id_from_worktree_path,
+    worktree_branch,
     worktree_path,
 )
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
@@ -380,7 +381,32 @@ def _validated_fallback_plan_path(repo_path: Path, issue: CandidateIssue) -> Pat
         return None
 
 
-def _plan_path_from_comments(repo_path: Path, issue: CandidateIssue, comments: list[str]) -> tuple[Path | None, str | None]:
+def _validate_plan_branch_ref(repo_path: Path, raw_ref: str) -> str:
+    ref = raw_ref.strip()
+    if not ref or ref.startswith("/") or ref.startswith("-") or re.search(r"\s", ref):
+        raise ValueError("plan handoff is not a branch ref")
+    check = subprocess.run(
+        ["git", "check-ref-format", "--branch", ref],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check.returncode != 0:
+        raise ValueError("plan handoff is not a valid branch ref")
+    exists = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{ref}"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if exists.returncode != 0:
+        raise ValueError("plan handoff branch ref does not exist")
+    return ref
+
+
+def _plan_path_from_comments(repo_path: Path, issue: CandidateIssue, comments: list[str]) -> tuple[str | None, str | None]:
     for body in comments:
         if _PLAN_HANDOFF_MARKER not in body:
             continue
@@ -388,7 +414,7 @@ def _plan_path_from_comments(repo_path: Path, issue: CandidateIssue, comments: l
         if not final_line:
             continue
         try:
-            return _validate_issue_plan_path(repo_path, issue, final_line), None
+            return _validate_plan_branch_ref(repo_path, final_line), None
         except ValueError as exc:
             return None, str(exc)
     return None, None
@@ -558,6 +584,7 @@ async def run_tick(
         return TickResult(False, "scheduled-held", candidate.id)
 
     plan_path: Path | None = None
+    plan_branch_ref: str | None = None
     if mode == "build":
         if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
             try:
@@ -570,25 +597,25 @@ async def run_tick(
                 return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
 
         comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
-        plan_path, plan_path_error = _plan_path_from_comments(
+        plan_branch_ref, plan_branch_error = _plan_path_from_comments(
             config.homelab_repo_path, candidate, comment_bodies
         )
-        if plan_path_error:
+        if plan_branch_error:
             _iu, _du = _build_urls(config, candidate.id)
             await _block_issue(
                 adapter,
                 candidate.id,
-                f"Build could not start: {plan_path_error}.",
+                f"Build could not start: {plan_branch_error}.",
                 issue_name=candidate.name,
                 issue_identifier=candidate.identifier,
                 notifier=notifier,
                 issue_url=_iu,
                 dashboard_url=_du,
             )
-            return TickResult(False, "invalid-plan-path", candidate.id, mode=mode)
-        if plan_path is None:
+            return TickResult(False, "invalid-plan-branch", candidate.id, mode=mode)
+        if plan_branch_ref is None:
             plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
-        if plan_path is None:
+        if plan_branch_ref is None and plan_path is None:
             try:
                 await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
                 await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
@@ -627,12 +654,33 @@ async def run_tick(
         try:
             if _is_git_repo(config.homelab_repo_path):
                 remove_worktree_if_exists(config, run_id)
-                wt_path = create_worktree(config, run_id)
+                wt_path = create_worktree(config, run_id, base_branch=plan_branch_ref)
                 run_repo = wt_path
                 LOGGER.info(
                     "run_worktree_created issue_id=%s run_id=%s path=%s",
                     candidate.id, run_id, wt_path,
                 )
+
+            if mode == "build" and plan_branch_ref is not None:
+                try:
+                    plan_path = _validate_issue_plan_path(
+                        run_repo,
+                        candidate,
+                        str(_expected_plan_path(run_repo, candidate)),
+                    )
+                except ValueError as exc:
+                    _iu, _du = _build_urls(config, candidate.id)
+                    await _block_issue(
+                        adapter,
+                        candidate.id,
+                        f"Build could not start: plan handoff branch `{plan_branch_ref}` did not contain a readable plan file: {exc}.",
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
+                    )
+                    return TickResult(False, "invalid-plan-branch-plan", candidate.id, mode=mode)
 
             # repo_dirty / diff_stat / auto_commit operate in the run worktree
             # when one exists, so commits land on the run branch, never the
@@ -775,12 +823,33 @@ async def run_tick(
                 else:
                     plan_report_path = None
 
+                if plan_report_path and wt_path is not None and _repo_dirty_wt():
+                    try:
+                        _auto_commit_wt(
+                            issue_identifier=candidate.identifier,
+                            issue_name=candidate.name,
+                            issue_id=candidate.id,
+                            plan_path=plan_report_path,
+                        )
+                    except AutoCommitFailed as exc:
+                        _iu, _du = _build_urls(config, candidate.id)
+                        await _block_issue(
+                            adapter,
+                            candidate.id,
+                            f"Plan mode could not commit the handoff artifact to `{worktree_branch(run_id)}`: {exc}",
+                            issue_name=candidate.name,
+                            issue_identifier=candidate.identifier,
+                            notifier=notifier,
+                            issue_url=_iu,
+                            dashboard_url=_du,
+                        )
+                        return TickResult(True, "plan-commit-failed", candidate.id, mode=mode)
+
                 plan_summary = _extract_summary(result, secrets)
                 body = _PLAN_HANDOFF_MARKER
                 if plan_summary:
                     body += f" {plan_summary}"
-                if plan_report_path:
-                    body += f"\n\n{plan_report_path}"
+                body += f"\n\n{worktree_branch(run_id)}"
                 await adapter.add_comment(
                     candidate.id,
                     CommentPayload(body=body),
