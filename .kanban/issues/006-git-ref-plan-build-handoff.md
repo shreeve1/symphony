@@ -1,7 +1,7 @@
 ---
 id: 006
 title: git-ref plan→build handoff
-status: in-progress
+status: review
 blocked_by: [4]
 updated: 2026-06-04
 actor: ralph
