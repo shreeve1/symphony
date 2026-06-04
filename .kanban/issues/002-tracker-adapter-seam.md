@@ -1,7 +1,7 @@
 ---
 id: 002
 title: Tracker Adapter seam
-status: in-progress
+status: review
 blocked_by: [1]
 updated: 2026-06-04
 actor: ralph
