@@ -1,7 +1,7 @@
 ---
 id: 003
 title: Agent Adapter seam (pi one-shot)
-status: review
+status: done
 blocked_by: []
 updated: 2026-06-04
 actor: ralph
@@ -26,10 +26,10 @@ pi behavior unchanged; the claude implementation is a later slice (#9).
 
 ## Acceptance criteria
 
-- [ ] An `AgentAdapter` interface exists with a `PiAgentAdapter` implementation.
-- [ ] pi dispatch goes through the adapter; the engine no longer shells out to pi directly.
-- [ ] Verdict parsing (`SYMPHONY_RESULT`/`SYMPHONY_SUMMARY`, last-occurrence-wins, heuristic fallback) is reused via the adapter path.
-- [ ] Existing pi dispatch behavior is unchanged (suite green).
+- [x] An `AgentAdapter` interface exists with a `PiAgentAdapter` implementation.
+- [x] pi dispatch goes through the adapter; the engine no longer shells out to pi directly.
+- [x] Verdict parsing (`SYMPHONY_RESULT`/`SYMPHONY_SUMMARY`, last-occurrence-wins, heuristic fallback) is reused via the adapter path.
+- [x] Existing pi dispatch behavior is unchanged (suite green).
 
 ## Verification
 
@@ -38,3 +38,7 @@ pi behavior unchanged; the claude implementation is a later slice (#9).
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Added an `AgentAdapter` protocol and `PiAgentAdapter` wrapper for the existing one-shot pi subprocess runner. Wired `main.py` to pass the pi adapter into the scheduler, while preserving the existing `AgentResult` path so verdict parsing remains unchanged. Verified with `uv run pytest`, critical LSP diagnostics for touched files, and mandatory fresh review (`RALPH_REVIEW: PASS`).

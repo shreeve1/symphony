@@ -20,3 +20,13 @@ This file tracks implementation notes across Ralph iterations.
 **Verification:** `uv run pytest` passed (348 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 **Notes for next iteration:** `PlaneAdapter` remains as a compatibility alias to `PlaneTrackerAdapter`; future slices may migrate tests/imports gradually if desired.
 
+## #003 Agent Adapter seam (pi one-shot) — 2026-06-04
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS`).
+**What changed:** Added `AgentAdapter` and `PiAgentAdapter`, wired `main.py` to pass the pi adapter into `run_loop`, and updated scheduler typing/tests around the adapter seam.
+**Files:** `agent_runner.py`, `main.py`, `scheduler.py`, `tests/test_agent_runner.py`, `tests/test_main.py`
+**Decisions:** Kept `run_agent` as the pi one-shot implementation behind `PiAgentAdapter` so existing subprocess behavior and `AgentResult` output are unchanged.
+**Conventions established:** Agent implementations expose the scheduler-compatible `AgentAdapter` call contract and return `AgentResult`; verdict parsing remains in scheduler on the returned stdout/stderr.
+**Verification:** `uv run pytest` passed (349 tests). Critical LSP diagnostics for touched files reported no diagnostics.
+**Notes for next iteration:** #009 can add a Claude adapter behind the same `AgentAdapter` contract without changing scheduler verdict parsing.
+
