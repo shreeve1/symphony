@@ -9,7 +9,7 @@ from agent_runner import run_agent, verify_pi_support
 from code_version import resolve_code_sha
 from config import SymphonyConfig
 from notifier import TelegramNotifier
-from plane_poller import HttpxPlaneTransport, build_adapter
+from plane_adapter import HttpxPlaneTransport, build_adapter
 from scheduler import _resolve_mode, run_loop
 
 from prompt_renderer import IssueData, render_prompt

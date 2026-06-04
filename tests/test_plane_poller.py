@@ -3,7 +3,7 @@ import logging
 import httpx
 import pytest
 
-from plane_adapter import InMemoryTransport, PlaneAdapter
+from plane_adapter import InMemoryTransport, PlaneAdapter, TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 from plane_poller import (
     HttpxPlaneTransport,
@@ -28,6 +28,12 @@ def _issue(issue_id, state="Todo", labels=None):
         "labels": labels or [],
         "created_at": "2026-05-04T00:00:00Z",
     }
+
+
+def test_plane_adapter_satisfies_tracker_adapter_contract():
+    adapter: TrackerAdapter = PlaneAdapter(transport=InMemoryTransport())
+
+    assert adapter.contract is DEFAULT_CONTRACT
 
 
 @pytest.mark.asyncio

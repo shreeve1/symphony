@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable, Sequence
 
-from plane_adapter import CommentPayload, PlaneAdapter
+from plane_adapter import CommentPayload, TrackerAdapter
 from tracker_contract import PlaneState, TrackerRole
 
 
@@ -146,7 +146,7 @@ class ReconcileDecision:
     applied: bool = False
 
 
-def _target_state_name(adapter: PlaneAdapter, state: PlaneState | TrackerRole) -> str:
+def _target_state_name(adapter: TrackerAdapter, state: PlaneState | TrackerRole) -> str:
     if isinstance(state, TrackerRole):
         return adapter.contract.state_name_for_role(state)
     return state.value
@@ -192,10 +192,10 @@ def _extract_labels(issue: dict[str, Any], label_ids: dict[str, str] | None) -> 
     return tuple(extracted)
 
 
-def _is_blocked(issue: dict[str, Any], adapter: PlaneAdapter) -> bool:
+def _is_blocked(issue: dict[str, Any], adapter: TrackerAdapter) -> bool:
     state = issue.get("state")
     blocked_name = adapter.contract.state_name_for_role(TrackerRole.STATE_BLOCKED)
-    blocked_values = {blocked_name, adapter._resolve_state(TrackerRole.STATE_BLOCKED)}
+    blocked_values = {blocked_name, adapter.contract.state_value_for_role(TrackerRole.STATE_BLOCKED)}
     if isinstance(state, str):
         return state in blocked_values
     if isinstance(state, dict):
@@ -306,108 +306,32 @@ def _evaluate_rule(
 
 
 async def _fetch_blocked_issues(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
 ) -> list[dict[str, Any]]:
-    if adapter.transport is None:
-        raise RuntimeError("Transport not configured")
-    blocked_state_id = adapter._resolve_state(TrackerRole.STATE_BLOCKED)
-    issues: list[dict[str, Any]] = []
-    cursor: str | None = None
-    pages = 0
-    while pages < MAX_BLOCKED_PAGES_PER_TICK:
-        path = (
-            f"{adapter._issue_path()}?per_page={BLOCKED_PAGE_SIZE}"
-            f"&state={blocked_state_id}"
-        )
-        if cursor:
-            path = f"{path}&cursor={cursor}"
-        response = await adapter.transport.get(path)
-        pages += 1
-        if isinstance(response, list):
-            items = response
-            cursor = None
-        else:
-            items = response.get("results") or []
-            cursor = (
-                str(response.get("next_cursor"))
-                if response.get("next_cursor")
-                else None
-            )
-        for issue in items:
-            # Defensive: InMemoryTransport's catch-all branch returns every
-            # issue regardless of the ?state= query, so we re-check here.
-            if _is_blocked(issue, adapter):
-                issues.append(issue)
-        if not cursor:
-            break
-    if pages >= MAX_BLOCKED_PAGES_PER_TICK and cursor:
-        LOGGER.info(
-            "blocked_reconcile_page_limit_reached pages=%s blocked_seen=%s",
-            pages,
-            len(issues),
-        )
-    return issues
+    return await adapter.list_issues_by_state(
+        TrackerRole.STATE_BLOCKED,
+        per_page=BLOCKED_PAGE_SIZE,
+        max_pages=MAX_BLOCKED_PAGES_PER_TICK,
+    )
 
 
-async def _fetch_comments(adapter: PlaneAdapter, issue_id: str) -> list[_CommentRecord]:
-    if adapter.transport is None:
-        raise RuntimeError("Transport not configured")
+async def _fetch_comments(adapter: TrackerAdapter, issue_id: str) -> list[_CommentRecord]:
     records: list[_CommentRecord] = []
-    base_path = adapter._comment_path(issue_id)
-    path = base_path
-    seen_paths: set[str] = set()
-    pages = 0
-    while path and pages < MAX_COMMENT_PAGES_PER_ISSUE:
-        if path in seen_paths:
-            LOGGER.warning(
-                "blocked_reconcile_comment_cursor_cycle issue_id=%s path=%s",
-                issue_id,
-                path,
-            )
-            break
-        seen_paths.add(path)
-        response = await adapter.transport.get(path)
-        pages += 1
-        raw = response.get("results") if isinstance(response, dict) else response
-        if not isinstance(raw, list):
-            break
-        if not raw:
-            break
-        start_idx = len(records)
-        for idx, comment in enumerate(raw, start=start_idx):
-            if not isinstance(comment, dict):
-                continue
-            created = _parse_iso(comment.get("created_at"))
-            # Fall back to insertion order for transports that don't track timestamps
-            # (e.g. InMemoryTransport during tests). The Unix epoch + idx ordering
-            # preserves comment order without polluting the "newer than failure"
-            # comparison against real timestamps from live Plane.
-            if created is None:
-                created = datetime.fromtimestamp(float(idx), tz=UTC)
-            records.append(_CommentRecord(body=_comment_body(comment), created_at=created))
-        if not isinstance(response, dict):
-            break
-        next_path = response.get("next")
-        next_cursor = response.get("next_cursor")
-        if isinstance(next_path, str) and next_path:
-            path = next_path
-        elif next_cursor:
-            separator = "&" if "?" in base_path else "?"
-            path = f"{base_path}{separator}cursor={next_cursor}"
-        else:
-            break
-    if path and pages >= MAX_COMMENT_PAGES_PER_ISSUE:
-        LOGGER.info(
-            "blocked_reconcile_comment_page_limit_reached issue_id=%s pages=%s comments_seen=%s",
-            issue_id,
-            pages,
-            len(records),
-        )
+    raw_comments = await adapter.list_comments(issue_id, max_pages=MAX_COMMENT_PAGES_PER_ISSUE)
+    for idx, comment in enumerate(raw_comments):
+        created = _parse_iso(comment.get("created_at"))
+        # Fall back to insertion order for transports that don't track timestamps
+        # (e.g. InMemoryTransport during tests). The Unix epoch + idx ordering
+        # preserves comment order without polluting the "newer than failure"
+        # comparison against real timestamps from live Plane.
+        if created is None:
+            created = datetime.fromtimestamp(float(idx), tz=UTC)
+        records.append(_CommentRecord(body=_comment_body(comment), created_at=created))
     return records
 
 
 async def reconcile_blocked(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     *,
     apply: bool = False,
     rules: Sequence[ReconcileRule] = DEFAULT_RULES,

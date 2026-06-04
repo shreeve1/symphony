@@ -24,10 +24,9 @@ from notifier import (
     format_blocked_message,
     format_review_message,
 )
-from plane_poller import CandidateIssue, fetch_todo_issues
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
-from plane_adapter import CommentPayload, PlaneAdapter
+from plane_adapter import CandidateIssue, CommentPayload, TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from prompt_renderer import render_previous_comments_block
 
@@ -406,12 +405,12 @@ def scheduler_lock(lock_path: Path) -> Iterator[object]:
 
 async def run_tick(
     config: SymphonyConfig,
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     *,
     agent_runner: AgentCallable,
     render_prompt: Callable[[CandidateIssue], str],
     lock_path: Path | None = None,
-    poller: Callable[[PlaneAdapter], Any] = fetch_todo_issues,
+    poller: Callable[[TrackerAdapter], Any] | None = None,
     repo_dirty: Callable[[Path], bool] | None = None,
     diff_stat: Callable[[Path], str] | None = None,
     auto_commit: Callable[..., str] | None = None,
@@ -524,7 +523,9 @@ async def run_tick(
                 candidate = None
 
             try:
-                candidates = [] if candidate is not None else await _maybe_await(poller(adapter))
+                candidates = [] if candidate is not None else await _maybe_await(
+                    poller(adapter) if poller is not None else adapter.list_candidates()
+                )
             except Exception as exc:
                 LOGGER.warning("plane_poll_failed error=%s", exc)
                 return TickResult(False, "plane-unreachable")
@@ -936,7 +937,7 @@ async def run_tick(
 
 
 async def reconcile_stale_running(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     run_timeout_ms: int,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -945,12 +946,11 @@ async def reconcile_stale_running(
 ) -> None:
     """Block Running issues whose durable claim comment is stale."""
 
-    if adapter.transport is None:
-        raise SchedulerError("Plane transport not configured")
-    response = await adapter.transport.get(adapter._issue_path())
-    for issue in response.get("results", []):
-        if not _is_state(issue, adapter, TrackerRole.STATE_RUNNING):
-            continue
+    for issue in await adapter.list_issues_by_state(
+        TrackerRole.STATE_RUNNING,
+        per_page=SCHEDULED_RELEASE_PAGE_SIZE,
+        max_pages=SCHEDULED_RELEASE_MAX_PAGES_PER_TICK,
+    ):
         issue_id = str(issue["id"])
         claim_time = await _claimed_at(adapter, issue_id)
         if claim_time is None:
@@ -970,7 +970,7 @@ async def reconcile_stale_running(
 
 async def run_loop(
     config: SymphonyConfig,
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     *,
     agent_runner: AgentCallable,
     render_prompt: Callable[[CandidateIssue], str],
@@ -1019,57 +1019,37 @@ def _oldest_candidate(
 
 
 async def _select_scheduled_candidate(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     *,
     now: Callable[[], datetime],
 ) -> _ScheduledSelection | None:
-    if adapter.transport is None:
-        raise SchedulerError("Plane transport not configured")
     label_ids = adapter.contract.label_ids if adapter.contract else None
     due: list[tuple[datetime, str, str, CandidateIssue, ScheduleEvent]] = []
     now_dt = now()
-    cursor: str | None = None
-    pages_fetched = 0
-    todo_state_id = adapter._resolve_state(TrackerRole.STATE_TODO)
 
-    while pages_fetched < SCHEDULED_RELEASE_MAX_PAGES_PER_TICK:
-        path = f"{adapter._issue_path()}?per_page={SCHEDULED_RELEASE_PAGE_SIZE}&state={todo_state_id}"
-        if cursor:
-            path = f"{path}&cursor={cursor}"
-        response = await adapter.transport.get(path)
-        pages_fetched += 1
-
-        for issue in _response_items(response):
-            if not _is_state(issue, adapter, TrackerRole.STATE_TODO):
-                continue
-            labels = _extract_labels(issue, label_ids=label_ids)
-            if not adapter.labels_contain_role(labels, TrackerRole.SCHEDULED):
-                continue
-            candidate = _candidate_from_issue(issue, labels=labels)
-            try:
-                event = await _latest_schedule_event(adapter, candidate.id)
-            except ScheduleParseError as exc:
-                return _ScheduledSelection(candidate, "scheduled-malformed", error=str(exc))
-            if event is None:
-                event = _default_scheduled_label_event(now_dt)
-            if event.is_cancellation:
-                return _ScheduledSelection(candidate, "scheduled-cancelled", event=event)
-            if event.not_before is None:
-                return _ScheduledSelection(candidate, "scheduled-malformed", error="not_before missing")
-            if event.not_before > now_dt:
-                continue
-            due.append((event.not_before, candidate.created_at, candidate.id, candidate, event))
-
-        cursor = _next_cursor(response)
-        if not cursor:
-            break
-
-    if pages_fetched >= SCHEDULED_RELEASE_MAX_PAGES_PER_TICK and cursor:
-        LOGGER.info(
-            "scheduled_release_page_limit_reached pages=%s due=%s",
-            pages_fetched,
-            len(due),
-        )
+    issues = await adapter.list_issues_by_state(
+        TrackerRole.STATE_TODO,
+        per_page=SCHEDULED_RELEASE_PAGE_SIZE,
+        max_pages=SCHEDULED_RELEASE_MAX_PAGES_PER_TICK,
+    )
+    for issue in issues:
+        labels = _extract_labels(issue, label_ids=label_ids)
+        if not adapter.labels_contain_role(labels, TrackerRole.SCHEDULED):
+            continue
+        candidate = _candidate_from_issue(issue, labels=labels)
+        try:
+            event = await _latest_schedule_event(adapter, candidate.id)
+        except ScheduleParseError as exc:
+            return _ScheduledSelection(candidate, "scheduled-malformed", error=str(exc))
+        if event is None:
+            event = _default_scheduled_label_event(now_dt)
+        if event.is_cancellation:
+            return _ScheduledSelection(candidate, "scheduled-cancelled", event=event)
+        if event.not_before is None:
+            return _ScheduledSelection(candidate, "scheduled-malformed", error="not_before missing")
+        if event.not_before > now_dt:
+            continue
+        due.append((event.not_before, candidate.created_at, candidate.id, candidate, event))
     if not due:
         return None
     _, _, _, candidate, event = sorted(due, key=lambda item: item[:3])[0]
@@ -1161,12 +1141,9 @@ def _candidate_from_issue(issue: dict[str, Any], *, labels: tuple[str, ...]) -> 
     )
 
 
-async def _latest_schedule_event(adapter: PlaneAdapter, issue_id: str) -> ScheduleEvent | None:
-    if adapter.transport is None:
-        return None
-    response = await adapter.transport.get(adapter._comment_path(issue_id))
+async def _latest_schedule_event(adapter: TrackerAdapter, issue_id: str) -> ScheduleEvent | None:
     comments: list[CandidateComment] = []
-    for idx, comment in enumerate(response.get("results", [])):
+    for idx, comment in enumerate(await adapter.list_comments(issue_id)):
         created = _parse_optional_datetime(comment.get("created_at"))
         comments.append(
             CandidateComment(
@@ -1192,7 +1169,7 @@ def _parse_optional_datetime(value: object) -> datetime | None:
 
 
 async def _release_scheduled_candidate(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     issue_id: str,
     event: ScheduleEvent | None,
 ) -> ScheduleEvent:
@@ -1227,7 +1204,7 @@ async def _release_scheduled_candidate(
 
 
 async def _repair_cancelled_schedule(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     issue_id: str,
     event: ScheduleEvent | None,
 ) -> None:
@@ -1240,7 +1217,7 @@ async def _repair_cancelled_schedule(
 
 
 async def _detect_agent_schedule(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     candidate: CandidateIssue,
     *,
     claim_dt: datetime,
@@ -1289,17 +1266,12 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
-async def _fetch_issue(adapter: PlaneAdapter, issue_id: str) -> dict[str, Any]:
-    if adapter.transport is None:
-        raise SchedulerError("Plane transport not configured")
-    return await adapter.transport.get(adapter._issue_path(issue_id))
+async def _fetch_issue(adapter: TrackerAdapter, issue_id: str) -> dict[str, Any]:
+    return await adapter.get_issue(issue_id)
 
 
-async def _fetch_issue_comments(adapter: PlaneAdapter, issue_id: str) -> str:
-    if adapter.transport is None:
-        return ""
-    response = await adapter.transport.get(adapter._comment_path(issue_id))
-    comments = response.get("results", [])
+async def _fetch_issue_comments(adapter: TrackerAdapter, issue_id: str) -> str:
+    comments = await adapter.list_comments(issue_id)
     comments.sort(key=lambda c: c.get("created_at", ""))
     parts: list[str] = []
     for comment in comments:
@@ -1312,15 +1284,12 @@ async def _fetch_issue_comments(adapter: PlaneAdapter, issue_id: str) -> str:
 
 
 async def _fetch_issue_comment_bodies(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     issue_id: str,
     *,
     newest_first: bool = True,
 ) -> list[str]:
-    if adapter.transport is None:
-        return []
-    response = await adapter.transport.get(adapter._comment_path(issue_id))
-    comments = response.get("results", [])
+    comments = await adapter.list_comments(issue_id)
     comments.sort(key=lambda c: c.get("created_at", ""), reverse=newest_first)
     bodies: list[str] = []
     for comment in comments:
@@ -1334,12 +1303,9 @@ async def _fetch_issue_comment_bodies(
     return bodies
 
 
-async def _claimed_at(adapter: PlaneAdapter, issue_id: str) -> datetime | None:
-    if adapter.transport is None:
-        raise SchedulerError("Plane transport not configured")
-    response = await adapter.transport.get(adapter._comment_path(issue_id))
+async def _claimed_at(adapter: TrackerAdapter, issue_id: str) -> datetime | None:
     claim_times: list[datetime] = []
-    for comment in response.get("results", []):
+    for comment in await adapter.list_comments(issue_id):
         body = str(comment.get("comment_html") or comment.get("body") or "")
         if CLAIM_PREFIX not in body:
             continue
@@ -1384,7 +1350,7 @@ async def _notify_review(
 
 
 async def _block_issue(
-    adapter: PlaneAdapter,
+    adapter: TrackerAdapter,
     issue_id: str,
     message: str,
     *,
@@ -1410,10 +1376,10 @@ async def _block_issue(
             LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)
 
 
-def _is_state(issue: dict[str, Any], adapter: PlaneAdapter, state: TrackerRole) -> bool:
+def _is_state(issue: dict[str, Any], adapter: TrackerAdapter, state: TrackerRole) -> bool:
     current = issue.get("state")
     state_name = adapter.contract.state_name_for_role(state)
-    wanted = {state_name, adapter._resolve_state(state)}
+    wanted = {state_name, adapter.contract.state_value_for_role(state)}
     if isinstance(current, str):
         return current in wanted
     if isinstance(current, dict):

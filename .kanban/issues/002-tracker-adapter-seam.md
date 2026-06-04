@@ -1,8 +1,10 @@
 ---
 id: 002
 title: Tracker Adapter seam
-status: pending
+status: in-progress
 blocked_by: [1]
+updated: 2026-06-04
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-04

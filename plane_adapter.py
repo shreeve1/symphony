@@ -1,12 +1,14 @@
-"""Plane client adapter owned by Symphony.
+"""Tracker adapter seam owned by Symphony.
 
-All state/label resolution goes through the per-binding tracker role contract.
+The scheduler branches on tracker roles and issue lifecycle operations. Plane is
+confined to ``PlaneTrackerAdapter`` and its transport implementation.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from tracker_contract import (
@@ -19,6 +21,39 @@ from tracker_contract import (
     coerce_label_role,
     coerce_state_role,
 )
+
+
+LOGGER = logging.getLogger(__name__)
+PAGE_SIZE = 50
+MAX_PAGES_PER_TICK = 3
+MAX_MIXED_STATE_PAGES_PER_TICK = 10
+
+
+class PlanePollingAuthError(RuntimeError):
+    """Raised when Plane rejects configured credentials."""
+
+
+class PlanePollingSchemaError(RuntimeError):
+    """Raised when Plane returns an unexpected issue shape."""
+
+
+class PlaneContractError(RuntimeError):
+    """Raised when the configured Plane contract fails validation."""
+
+
+@dataclass(frozen=True)
+class CandidateIssue:
+    id: str
+    identifier: str
+    name: str
+    description: str
+    labels: tuple[str, ...]
+    created_at: str
+    schedule_not_before: str = ""
+    schedule_not_after: str = ""
+    schedule_reason: str = ""
+    schedule_source: str = ""
+    schedule_late: str = ""
 
 
 def stable_external_id(runbook: str, external_key: str) -> str:
@@ -69,6 +104,28 @@ class PlaneTransport(Protocol):
     async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class TrackerAdapter(Protocol):
+    """Issue-tracker operations the engine is allowed to use."""
+
+    contract: TrackerContract
+
+    def labels_contain_role(self, labels: tuple[str, ...] | list[str], role: TrackerRole) -> bool: ...
+    async def list_candidates(self) -> list[CandidateIssue]: ...
+    async def list_issues_by_state(
+        self,
+        state: PlaneState | TrackerRole,
+        *,
+        per_page: int = PAGE_SIZE,
+        max_pages: int = MAX_PAGES_PER_TICK,
+    ) -> list[dict[str, Any]]: ...
+    async def get_issue(self, issue_id: str) -> dict[str, Any]: ...
+    async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]: ...
+    async def add_comment(self, issue_id: str, comment: CommentPayload) -> dict[str, Any]: ...
+    async def transition_state(self, issue_id: str, state: PlaneState | TrackerRole) -> dict[str, Any]: ...
+    async def add_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]: ...
+    async def remove_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]: ...
+
+
 class InMemoryTransport:
     def __init__(self, labels: dict[str, str] | None = None) -> None:
         self.issues: dict[str, dict[str, Any]] = {}
@@ -114,7 +171,7 @@ class InMemoryTransport:
 
 
 @dataclass
-class PlaneAdapter:
+class PlaneTrackerAdapter:
     contract: TrackerContract = DEFAULT_CONTRACT
     transport: PlaneTransport | None = None
     resolved_label_ids: dict[str, str] = field(default_factory=dict)
@@ -211,6 +268,125 @@ class PlaneAdapter:
         self.resolved_label_ids.update(subset)
         return subset
 
+    async def list_issues_by_state(
+        self,
+        state: PlaneState | TrackerRole,
+        *,
+        per_page: int = PAGE_SIZE,
+        max_pages: int = MAX_PAGES_PER_TICK,
+    ) -> list[dict[str, Any]]:
+        if self.transport is None:
+            raise RuntimeError("Transport not configured")
+        state_id = self._resolve_state(state)
+        state_role = coerce_state_role(state)
+        issues: list[dict[str, Any]] = []
+        cursor: str | None = None
+        pages = 0
+        while pages < max_pages:
+            path = f"{self._issue_path()}?per_page={per_page}&state={state_id}"
+            if cursor:
+                path = f"{path}&cursor={cursor}"
+            response = await self.transport.get(path)
+            pages += 1
+            items = _page_items(response)
+            for issue in items:
+                if _is_state(issue, self, state_role):
+                    issues.append(issue)
+            cursor = _next_cursor(response)
+            if not cursor:
+                break
+        return issues
+
+    async def list_candidates(self) -> list[CandidateIssue]:
+        """Fetch Todo issues that do not require approval or scheduling."""
+
+        candidates: list[CandidateIssue] = []
+        cursor: str | None = None
+        pages_fetched = 0
+        mixed_state_seen = False
+        todo_state_id = self._resolve_state(TrackerRole.STATE_TODO)
+
+        if self.transport is None:
+            raise RuntimeError("Transport not configured")
+
+        try:
+            while pages_fetched < MAX_MIXED_STATE_PAGES_PER_TICK:
+                path = f"{self._issue_path()}?per_page={PAGE_SIZE}&state={todo_state_id}"
+                if cursor:
+                    path = f"{path}&cursor={cursor}"
+                response = await self.transport.get(path)
+                pages_fetched += 1
+                items = _page_items(response)
+                if not items:
+                    return candidates
+                label_ids = self.contract.label_ids if self.contract else None
+                for issue in items:
+                    labels = _extract_labels(issue, label_ids=label_ids)
+                    if self.labels_contain_role(labels, TrackerRole.APPROVAL_REQUIRED):
+                        continue
+                    if self.labels_contain_role(labels, TrackerRole.SCHEDULED):
+                        continue
+                    if not _is_state(issue, self, TrackerRole.STATE_TODO):
+                        mixed_state_seen = True
+                        continue
+                    candidates.append(_candidate_from_issue(issue, label_ids=label_ids))
+                cursor = _next_cursor(response)
+                if not cursor:
+                    return candidates
+                if pages_fetched >= MAX_PAGES_PER_TICK and not mixed_state_seen:
+                    break
+            LOGGER.info(
+                "plane_poll_page_limit_reached pages=%s candidates=%s",
+                pages_fetched,
+                len(candidates),
+            )
+            return candidates
+        except PlanePollingAuthError:
+            LOGGER.error("Plane authentication failed", exc_info=True)
+            raise
+        except PlanePollingSchemaError:
+            LOGGER.error("Plane polling schema error", exc_info=True)
+            raise
+        except Exception as exc:
+            if _is_transient_error(exc):
+                LOGGER.warning("Transient Plane polling failure: %s", exc)
+                return []
+            raise
+
+    async def get_issue(self, issue_id: str) -> dict[str, Any]:
+        if self.transport is None:
+            raise RuntimeError("Transport not configured")
+        return await self.transport.get(self._issue_path(issue_id))
+
+    async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]:
+        if self.transport is None:
+            raise RuntimeError("Transport not configured")
+        comments: list[dict[str, Any]] = []
+        base_path = self._comment_path(issue_id)
+        path: str | None = base_path
+        seen_paths: set[str] = set()
+        pages = 0
+        while path and pages < max_pages:
+            if path in seen_paths:
+                break
+            seen_paths.add(path)
+            response = await self.transport.get(path)
+            pages += 1
+            raw = response.get("results") if isinstance(response, dict) else response
+            if not isinstance(raw, list) or not raw:
+                break
+            comments.extend(comment for comment in raw if isinstance(comment, dict))
+            next_path = response.get("next") if isinstance(response, dict) else None
+            next_cursor = response.get("next_cursor") if isinstance(response, dict) else None
+            if isinstance(next_path, str) and next_path:
+                path = next_path
+            elif next_cursor:
+                separator = "&" if "?" in base_path else "?"
+                path = f"{base_path}{separator}cursor={next_cursor}"
+            else:
+                break
+        return comments
+
     async def find_by_external_id(self, external_id: str) -> dict[str, Any] | None:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
@@ -264,3 +440,153 @@ class PlaneAdapter:
         remove_uuids = {self._resolve_label(label) for label in labels}
         remaining = [label_uuid for label_uuid in list(current.get("labels") or []) if label_uuid not in remove_uuids]
         return await self.transport.patch(self._issue_path(issue_id), {"labels": remaining})
+
+
+PlaneAdapter = PlaneTrackerAdapter
+
+
+class HttpxPlaneTransport:
+    """Minimal async HTTP transport used only by the Plane tracker adapter."""
+
+    def __init__(self, api_url: str, api_key: str) -> None:
+        import httpx
+
+        self._client = httpx.AsyncClient(
+            base_url=f"{api_url.rstrip('/')}/api/v1",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            timeout=30,
+            follow_redirects=True,
+        )
+
+    async def get(self, path: str) -> dict[str, Any]:
+        return await self._request("GET", path)
+
+    async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method in {"POST", "PATCH"} and "?" not in path and not path.endswith("/"):
+            path = f"{path}/"
+        response = await self._client.request(method, path, json=body)
+        if response.status_code in {401, 403}:
+            LOGGER.error("Plane authentication failed with status %s", response.status_code)
+            raise PlanePollingAuthError(f"Plane authentication failed: {response.status_code}")
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, list):
+            return {"results": data, "next_cursor": None}
+        if not isinstance(data, dict):
+            raise PlanePollingSchemaError("Plane response was not an object")
+        return data
+
+    async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", path, body)
+
+    async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("PATCH", path, body)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+def build_adapter(
+    transport: PlaneTransport,
+    *,
+    workspace_slug: str = DEFAULT_CONTRACT.workspace_slug,
+    project_id: str = DEFAULT_CONTRACT.project_id,
+) -> PlaneTrackerAdapter:
+    """Build the Plane tracker adapter around the provided transport."""
+
+    contract = replace(
+        DEFAULT_CONTRACT,
+        workspace_slug=workspace_slug,
+        project_id=project_id,
+    )
+    errors = contract.validate_shape()
+    if errors:
+        raise PlaneContractError(
+            "Plane contract is invalid: " + "; ".join(errors)
+        )
+    return PlaneTrackerAdapter(contract=contract, transport=transport)
+
+
+def _extract_labels(
+    issue: dict[str, Any],
+    label_ids: dict[str, str] | None = None,
+) -> tuple[str, ...]:
+    labels = issue.get("labels") or []
+    uuid_to_name: dict[str, str] = {}
+    if label_ids:
+        uuid_to_name = {v: k for k, v in label_ids.items()}
+    extracted: list[str] = []
+    for label in labels:
+        if isinstance(label, str):
+            extracted.append(uuid_to_name.get(label, label))
+        elif isinstance(label, dict):
+            name = label.get("name") or label.get("value")
+            if isinstance(name, str):
+                extracted.append(name)
+    return tuple(extracted)
+
+
+def _is_state(issue: dict[str, Any], adapter: PlaneTrackerAdapter, state: TrackerRole) -> bool:
+    current = issue.get("state")
+    state_name = adapter.contract.state_name_for_role(state)
+    wanted = {state_name, adapter._resolve_state(state)}
+    if isinstance(current, str):
+        return current in wanted
+    if isinstance(current, dict):
+        return current.get("name") == state_name or current.get("id") in wanted
+    return False
+
+
+def _candidate_from_issue(
+    issue: dict[str, Any],
+    label_ids: dict[str, str] | None = None,
+) -> CandidateIssue:
+    try:
+        return CandidateIssue(
+            id=str(issue["id"]),
+            identifier=str(issue.get("identifier") or issue.get("sequence_id") or ""),
+            name=str(issue["name"]),
+            description=str(issue.get("description") or issue.get("description_html") or ""),
+            labels=_extract_labels(issue, label_ids=label_ids),
+            created_at=str(issue.get("created_at") or ""),
+        )
+    except KeyError as exc:
+        raise PlanePollingSchemaError(f"Plane issue missing field: {exc.args[0]}") from exc
+
+
+def _page_items(response: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if isinstance(response, list):
+        return response
+    results = response.get("results")
+    if isinstance(results, list):
+        return results
+    raise PlanePollingSchemaError("Plane response missing results list")
+
+
+def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    cursor = response.get("next_cursor")
+    if cursor:
+        return str(cursor)
+    next_url = response.get("next")
+    if isinstance(next_url, str) and "cursor=" in next_url:
+        return next_url.split("cursor=", 1)[1].split("&", 1)[0]
+    return None
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+    return exc.__class__.__module__.startswith("httpx") and exc.__class__.__name__ in {
+        "ConnectError",
+        "ConnectTimeout",
+        "NetworkError",
+        "PoolTimeout",
+        "ReadError",
+        "ReadTimeout",
+        "TimeoutException",
+        "TransportError",
+        "WriteError",
+        "WriteTimeout",
+    }
