@@ -1,7 +1,7 @@
 ---
 id: 004
 title: Run Worktree lifecycle at cap=1 (replace global flock)
-status: in-progress
+status: review
 blocked_by: [2, 3]
 updated: 2026-06-04
 actor: ralph
