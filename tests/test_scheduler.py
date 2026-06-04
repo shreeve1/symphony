@@ -765,6 +765,29 @@ async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_plan_mode_skips_missing_optional_approval_required_label(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
+    adapter = PlaneAdapter(contract=_contract_without_optional_roles(), transport=transport)
+    plan_path = _write_plan(tmp_path, "plan-1")
+
+    result = await run_tick(
+        _config(tmp_path),
+        adapter,
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-no-approval-required",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "plan"
+    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert transport.issues["plan-1"].get("labels", []) == [PlaneLabel.PLAN.value]
+
+
+@pytest.mark.asyncio
 async def test_plan_mode_omits_invalid_stdout_plan_path(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])

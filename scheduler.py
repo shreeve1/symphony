@@ -751,9 +751,10 @@ async def run_tick(
                     candidate.id,
                     CommentPayload(body=body),
                 )
-                await adapter.add_labels(
-                    candidate.id, [TrackerRole.APPROVAL_REQUIRED]
-                )
+                if adapter.contract.optional_label_binding(TrackerRole.APPROVAL_REQUIRED) is not None:
+                    await adapter.add_labels(
+                        candidate.id, [TrackerRole.APPROVAL_REQUIRED]
+                    )
                 await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
                 LOGGER.info("state_transitioned issue_id=%s state=in-review mode=plan", candidate.id)
                 _iu, _du = _build_urls(config, candidate.id)
