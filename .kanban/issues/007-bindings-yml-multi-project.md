@@ -1,7 +1,7 @@
 ---
 id: 007
 title: bindings.yml multi-project config
-status: in-progress
+status: review
 blocked_by: [1, 2]
 updated: 2026-06-04
 parent: null
