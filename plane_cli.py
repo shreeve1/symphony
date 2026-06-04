@@ -43,7 +43,7 @@ _SECRET_ENV_KEYS = (
 _REDACTED = "***REDACTED***"
 
 # BEGIN GENERATED PLANE IDS
-# Source: homelab_router.plane_contract.DEFAULT_CONTRACT
+# Source: tracker_contract.DEFAULT_CONTRACT
 # Regenerate with: python3 scripts/sync_plane_ids.py
 # Drift is enforced by tests/test_plane_cli.py.
 

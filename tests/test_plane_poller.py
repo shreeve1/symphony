@@ -3,8 +3,8 @@ import logging
 import httpx
 import pytest
 
-from homelab_router.plane_adapter import InMemoryTransport, PlaneAdapter
-from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
+from plane_adapter import InMemoryTransport, PlaneAdapter
+from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 from plane_poller import (
     HttpxPlaneTransport,
     MAX_MIXED_STATE_PAGES_PER_TICK,

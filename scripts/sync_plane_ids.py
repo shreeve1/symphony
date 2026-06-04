@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
-"""Regenerate STATE_IDS and LABEL_IDS in plane_cli.py from plane_contract.
-
-plane_cli.py is intentionally a standalone urllib script because it runs
-inside the Symphony-launched agent environment via PATH injection (see
-agent_runner.run_agent). It cannot import homelab_router at runtime, so
-its UUID dicts are kept in sync with homelab_router.plane_contract.DEFAULT_CONTRACT
-by this generator. Drift is enforced at test time by tests/test_plane_cli.py.
-
-Run from /home/james/plane/symphony:
-
-    python3 scripts/sync_plane_ids.py
-
-Exits 0 on no change, 0 after rewriting, non-zero if the homelab repo
-cannot be located or the sentinel block is missing.
-"""
+"""Regenerate STATE_IDS and LABEL_IDS in plane_cli.py from tracker_contract."""
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -28,7 +13,7 @@ BEGIN_SENTINEL = "# BEGIN GENERATED PLANE IDS"
 END_SENTINEL = "# END GENERATED PLANE IDS"
 
 # plane_cli STATE_IDS is keyed by terminal-state command verbs plus the
-# `todo` key needed by the schedule/unschedule commands. plane_contract.state_ids
+# `todo` key needed by the schedule/unschedule commands. tracker_contract.state_ids
 # is keyed by full PlaneState names.
 STATE_KEY_MAP = {
     "done": "Done",
@@ -38,30 +23,11 @@ STATE_KEY_MAP = {
 }
 
 
-def _resolve_homelab_path() -> Path:
-    candidates = []
-    env_path = os.environ.get("HOMELAB_REPO_PATH")
-    if env_path:
-        candidates.append(Path(env_path))
-    candidates.append(Path("/home/james/homelab"))
-    candidates.append(SYMPHONY_DIR.parent.parent / "homelab")
-    for cand in candidates:
-        contract = cand / "automation/homelab-stack/src/homelab_router/plane_contract.py"
-        if contract.is_file():
-            return cand
-    raise SystemExit(
-        "Could not locate homelab repo. Set HOMELAB_REPO_PATH or run from /home/james/plane/symphony."
-    )
-
-
 def _load_default_contract():
-    homelab = _resolve_homelab_path()
-    src_root = homelab / "automation/homelab-stack/src"
-    sys.path.insert(0, str(src_root))
-    try:
-        from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
-    finally:
-        sys.path.pop(0)
+    if str(SYMPHONY_DIR) not in sys.path:
+        sys.path.insert(0, str(SYMPHONY_DIR))
+    from tracker_contract import DEFAULT_CONTRACT, PlaneState
+
     return DEFAULT_CONTRACT, PlaneState
 
 
@@ -79,7 +45,7 @@ def _build_block(default_contract, plane_state) -> str:
         try:
             uuid = default_contract.state_ids[state_name]
         except KeyError as exc:
-            raise SystemExit(f"plane_contract is missing state '{state_name}'") from exc
+            raise SystemExit(f"tracker_contract is missing state '{state_name}'") from exc
         state_ids[verb] = uuid
 
     label_ids = dict(default_contract.label_ids)
@@ -87,7 +53,7 @@ def _build_block(default_contract, plane_state) -> str:
     return "\n\n".join(
         [
             BEGIN_SENTINEL
-            + "\n# Source: homelab_router.plane_contract.DEFAULT_CONTRACT"
+            + "\n# Source: tracker_contract.DEFAULT_CONTRACT"
             + "\n# Regenerate with: python3 scripts/sync_plane_ids.py"
             + "\n# Drift is enforced by tests/test_plane_cli.py.",
             _format_dict("STATE_IDS", state_ids),
@@ -115,7 +81,7 @@ def main() -> int:
 
     updated = text[:begin] + new_block + text[end:]
     if updated == text:
-        print(f"plane_cli.py already in sync with plane_contract.")
+        print("plane_cli.py already in sync with tracker_contract.")
         return 0
 
     PLANE_CLI.write_text(updated)

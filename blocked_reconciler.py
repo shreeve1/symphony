@@ -36,8 +36,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable, Sequence
 
-from homelab_router.plane_adapter import CommentPayload, PlaneAdapter
-from homelab_router.plane_contract import PlaneLabel, PlaneState
+from plane_adapter import CommentPayload, PlaneAdapter
+from tracker_contract import PlaneState, TrackerRole
 
 
 LOGGER = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ class ReconcileRule:
 
     name: str
     external_id_prefix: str
-    target_state: PlaneState
+    target_state: PlaneState | TrackerRole
     min_pass_comments_since_fail: int = 1
     require_symphony_completion: bool = False
     comment_template: str = (
@@ -141,9 +141,15 @@ class ReconcileDecision:
     name: str
     external_id: str
     rule: ReconcileRule | None
-    target_state: PlaneState | None
+    target_state: PlaneState | TrackerRole | None
     reason: str
     applied: bool = False
+
+
+def _target_state_name(adapter: PlaneAdapter, state: PlaneState | TrackerRole) -> str:
+    if isinstance(state, TrackerRole):
+        return adapter.contract.state_name_for_role(state)
+    return state.value
 
 
 def _parse_iso(value: object) -> datetime | None:
@@ -188,11 +194,12 @@ def _extract_labels(issue: dict[str, Any], label_ids: dict[str, str] | None) -> 
 
 def _is_blocked(issue: dict[str, Any], adapter: PlaneAdapter) -> bool:
     state = issue.get("state")
-    blocked_values = {PlaneState.BLOCKED.value, adapter._resolve_state(PlaneState.BLOCKED)}
+    blocked_name = adapter.contract.state_name_for_role(TrackerRole.STATE_BLOCKED)
+    blocked_values = {blocked_name, adapter._resolve_state(TrackerRole.STATE_BLOCKED)}
     if isinstance(state, str):
         return state in blocked_values
     if isinstance(state, dict):
-        return state.get("name") == PlaneState.BLOCKED.value or state.get("id") in blocked_values
+        return state.get("name") == blocked_name or state.get("id") in blocked_values
     return False
 
 
@@ -303,7 +310,7 @@ async def _fetch_blocked_issues(
 ) -> list[dict[str, Any]]:
     if adapter.transport is None:
         raise RuntimeError("Transport not configured")
-    blocked_state_id = adapter._resolve_state(PlaneState.BLOCKED)
+    blocked_state_id = adapter._resolve_state(TrackerRole.STATE_BLOCKED)
     issues: list[dict[str, Any]] = []
     cursor: str | None = None
     pages = 0
@@ -430,7 +437,7 @@ async def reconcile_blocked(
         external_id = str(issue.get("external_id") or "")
 
         labels = _extract_labels(issue, label_ids=label_ids)
-        if PlaneLabel.APPROVAL_REQUIRED.value in labels:
+        if adapter.labels_contain_role(labels, TrackerRole.APPROVAL_REQUIRED):
             decisions.append(
                 ReconcileDecision(
                     issue_id, identifier, name, external_id,
@@ -497,16 +504,17 @@ async def reconcile_blocked(
             applied=False,
         )
 
+        target_state_name = _target_state_name(adapter, rule.target_state)
         if not apply:
             LOGGER.info(
                 "blocked_reconcile_would_apply issue_id=%s identifier=%s rule=%s target_state=%s",
-                issue_id, identifier, rule.name, rule.target_state.value,
+                issue_id, identifier, rule.name, target_state_name,
             )
             decisions.append(decision)
             continue
 
         comment_body = rule.comment_template.format(
-            target_state=rule.target_state.value,
+            target_state=target_state_name,
             rule=rule.name,
         )
         # W3 (dev-review): transition first, then comment. If the transition
@@ -546,7 +554,7 @@ async def reconcile_blocked(
 
         LOGGER.info(
             "blocked_reconcile_applied issue_id=%s identifier=%s rule=%s target_state=%s",
-            issue_id, identifier, rule.name, rule.target_state.value,
+            issue_id, identifier, rule.name, _target_state_name(adapter, rule.target_state),
         )
         decisions.append(
             ReconcileDecision(

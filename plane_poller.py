@@ -3,25 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any
 
-try:
-    from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
-    from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
-except ModuleNotFoundError:
-    _repo_env = os.environ.get("HOMELAB_REPO_PATH")
-    if not _repo_env:
-        raise
-    _homelab_repo = Path(_repo_env)
-    _src = _homelab_repo / "automation" / "homelab-stack" / "src"
-    if str(_src) not in sys.path:
-        sys.path.insert(0, str(_src))
-    from homelab_router.plane_adapter import PlaneAdapter, PlaneTransport
-    from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
+from plane_adapter import PlaneAdapter, PlaneTransport
+from tracker_contract import DEFAULT_CONTRACT, TrackerRole
 
 
 LOGGER = logging.getLogger(__name__)
@@ -78,11 +64,12 @@ def _extract_labels(
 
 def _is_todo(issue: dict[str, Any], adapter: PlaneAdapter) -> bool:
     state = issue.get("state")
-    todo_values = {PlaneState.TODO.value, adapter._resolve_state(PlaneState.TODO)}
+    todo_name = adapter.contract.state_name_for_role(TrackerRole.STATE_TODO)
+    todo_values = {todo_name, adapter._resolve_state(TrackerRole.STATE_TODO)}
     if isinstance(state, str):
         return state in todo_values
     if isinstance(state, dict):
-        return state.get("name") == PlaneState.TODO.value or state.get("id") in todo_values
+        return state.get("name") == todo_name or state.get("id") in todo_values
     return False
 
 
@@ -151,7 +138,7 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
     cursor: str | None = None
     pages_fetched = 0
     mixed_state_seen = False
-    todo_state_id = adapter._resolve_state(PlaneState.TODO)
+    todo_state_id = adapter._resolve_state(TrackerRole.STATE_TODO)
 
     try:
         while pages_fetched < MAX_MIXED_STATE_PAGES_PER_TICK:
@@ -166,9 +153,9 @@ async def fetch_todo_issues(adapter: PlaneAdapter) -> list[CandidateIssue]:
             label_ids = adapter.contract.label_ids if adapter.contract else None
             for issue in items:
                 labels = _extract_labels(issue, label_ids=label_ids)
-                if PlaneLabel.APPROVAL_REQUIRED.value in labels:
+                if adapter.labels_contain_role(labels, TrackerRole.APPROVAL_REQUIRED):
                     continue
-                if PlaneLabel.SCHEDULED.value in labels:
+                if adapter.labels_contain_role(labels, TrackerRole.SCHEDULED):
                     continue
                 if not _is_todo(issue, adapter):
                     mixed_state_seen = True

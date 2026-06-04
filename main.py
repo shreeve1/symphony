@@ -12,7 +12,7 @@ from notifier import TelegramNotifier
 from plane_poller import HttpxPlaneTransport, build_adapter
 from scheduler import _resolve_mode, run_loop
 
-from homelab_router.prompt_renderer import IssueData, render_prompt
+from prompt_renderer import IssueData, render_prompt
 
 
 def _render_candidate_prompt(issue) -> str:

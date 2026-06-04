@@ -16,8 +16,8 @@ from schedule import format_cancellation_comment, format_schedule_comment
 
 from notifier import TelegramNotifier
 
-from homelab_router.plane_adapter import PlaneAdapter
-from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
+from plane_adapter import PlaneAdapter
+from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState, RoleBinding, TrackerContract, TrackerRole
 
 
 class FakeTransport:
@@ -341,7 +341,7 @@ async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: P
     """Dirty repo + clean exit + no marker: auto-commit and transition Done (not Review)."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
-    seen_commit_kwargs: dict[str, str] = {}
+    seen_commit_kwargs: dict[str, str | None] = {}
 
     def fake_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
         seen_commit_kwargs.update(
@@ -2699,3 +2699,48 @@ async def test_run_tick_timeline_on_blocked_marker(tmp_path: Path) -> None:
     assert "**Timeline**" in blocked_comment
     assert "- verdict: agent-marker-blocked" in blocked_comment
     assert "- agent_duration_ms: 500" in blocked_comment
+
+
+def _contract_without_optional_roles() -> TrackerContract:
+    return TrackerContract(
+        project_id="project",
+        state_roles=DEFAULT_CONTRACT.state_roles,
+        label_roles={
+            TrackerRole.MODE_PLAN: DEFAULT_CONTRACT.label_roles[TrackerRole.MODE_PLAN],
+            TrackerRole.MODE_BUILD: DEFAULT_CONTRACT.label_roles[TrackerRole.MODE_BUILD],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_optional_roles_missing_disable_scheduled_and_approval_paths(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", labels=["approval-required", "scheduled"])
+    adapter = PlaneAdapter(contract=_contract_without_optional_roles(), transport=transport)
+
+    result = await run_tick(
+        _config(tmp_path),
+        adapter,
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-optional-roles",
+        poller=lambda adapter: [_candidate("issue-1", labels=["approval-required", "scheduled"])],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-clean-done"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+
+
+def test_contract_requires_mode_and_state_roles() -> None:
+    contract = TrackerContract(
+        project_id="project",
+        state_roles={TrackerRole.STATE_TODO: RoleBinding("Todo", "todo-id")},
+        label_roles={TrackerRole.MODE_PLAN: RoleBinding("plan", "plan-id")},
+    )
+
+    errors = contract.validate_shape()
+
+    assert "missing required label role: mode:build" in errors
+    assert "missing required state role: state:done" in errors

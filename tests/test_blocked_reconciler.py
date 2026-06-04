@@ -19,8 +19,8 @@ from blocked_reconciler import (
     ReconcileRule,
     reconcile_blocked,
 )
-from homelab_router.plane_adapter import InMemoryTransport, PlaneAdapter
-from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
+from plane_adapter import InMemoryTransport, PlaneAdapter
+from tracker_contract import DEFAULT_CONTRACT, PlaneState
 
 
 def _blocked_issue(

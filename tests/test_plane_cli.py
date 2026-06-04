@@ -1,5 +1,6 @@
 import os
 import subprocess
+from email.message import Message
 from pathlib import Path
 import urllib.error
 
@@ -254,7 +255,7 @@ def test_urllib_transport_sets_plane_api_key_header(monkeypatch):
 
 def test_urllib_transport_maps_http_error(monkeypatch):
     def fake_urlopen(request, timeout):
-        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", Message(), None)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     config = PlaneCliConfig.from_env(_env())
@@ -277,30 +278,16 @@ def test_urllib_transport_maps_url_error(monkeypatch):
 
 
 def _import_plane_contract():
-    """Import plane_contract using the same fallback pattern as plane_poller.
+    """Import the Symphony-owned tracker contract for plane_cli drift tests."""
+    from tracker_contract import DEFAULT_CONTRACT, PlaneState
 
-    plane_cli is intentionally standalone (urllib only) so the contract
-    test loads plane_contract here, not in plane_cli itself.
-    """
-    import os
-    import sys
-    from pathlib import Path
-
-    try:
-        from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
-    except ModuleNotFoundError:
-        repo_env = os.environ.get("HOMELAB_REPO_PATH", "/home/james/homelab")
-        src = Path(repo_env) / "automation" / "homelab-stack" / "src"
-        if str(src) not in sys.path:
-            sys.path.insert(0, str(src))
-        from homelab_router.plane_contract import DEFAULT_CONTRACT, PlaneState
     return DEFAULT_CONTRACT, PlaneState
 
 
 def test_state_ids_match_plane_contract_default_contract():
     """plane_cli.STATE_IDS must match DEFAULT_CONTRACT.state_ids.
 
-    plane_cli keys by command verb (done/review/blocked); plane_contract keys
+    plane_cli keys by command verb (done/review/blocked); tracker_contract keys
     by PlaneState enum. Drift here means the generator (scripts/sync_plane_ids.py)
     was not run after a contract change.
     """

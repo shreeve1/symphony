@@ -27,9 +27,9 @@ from notifier import (
 from plane_poller import CandidateIssue, fetch_todo_issues
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
-from homelab_router.plane_adapter import CommentPayload, PlaneAdapter
-from homelab_router.plane_contract import PlaneLabel, PlaneState
-from homelab_router.prompt_renderer import render_previous_comments_block
+from plane_adapter import CommentPayload, PlaneAdapter
+from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
+from prompt_renderer import render_previous_comments_block
 
 
 LOGGER = logging.getLogger(__name__)
@@ -283,7 +283,7 @@ class LockHeld(RuntimeError):
 
 
 class AgentCallable(Protocol):
-    def __call__(self, issue: CandidateIssue, rendered_prompt: str) -> AgentResult: ...
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult: ...
 
 
 @dataclass(frozen=True)
@@ -302,11 +302,27 @@ class _ScheduledSelection:
     error: str = ""
 
 
-def _resolve_mode(labels: tuple[str, ...]) -> str:
-    label_set = set(labels)
-    if PlaneLabel.BUILD.value in label_set:
+def _labels_contain_role(
+    labels: tuple[str, ...] | list[str],
+    contract: TrackerContract,
+    role: TrackerRole,
+) -> bool:
+    binding = contract.optional_label_binding(role)
+    if binding is None:
+        return False
+    values = {binding.name}
+    if binding.uuid:
+        values.add(binding.uuid)
+    return bool(values & set(labels))
+
+
+def _resolve_mode(
+    labels: tuple[str, ...],
+    contract: TrackerContract = DEFAULT_CONTRACT,
+) -> str:
+    if _labels_contain_role(labels, contract, TrackerRole.MODE_BUILD):
         return "build"
-    if PlaneLabel.PLAN.value in label_set:
+    if _labels_contain_role(labels, contract, TrackerRole.MODE_PLAN):
         return "plan"
     return "execute"
 
@@ -513,30 +529,30 @@ async def run_tick(
                 LOGGER.warning("plane_poll_failed error=%s", exc)
                 return TickResult(False, "plane-unreachable")
 
-            candidate = candidate or _oldest_candidate(candidates)
+            candidate = candidate or _oldest_candidate(candidates, adapter.contract)
             if candidate is None:
                 return TickResult(False, "no-candidates")
-            if PlaneLabel.APPROVAL_REQUIRED.value in candidate.labels:
+            if adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
                 return TickResult(False, "approval-required", candidate.id)
 
-            mode = _resolve_mode(candidate.labels)
+            mode = _resolve_mode(candidate.labels, adapter.contract)
 
             fresh = await _fetch_issue(adapter, candidate.id)
-            if not _is_state(fresh, adapter, PlaneState.TODO):
+            if not _is_state(fresh, adapter, TrackerRole.STATE_TODO):
                 return TickResult(False, "state-changed", candidate.id)
             label_ids = adapter.contract.label_ids if adapter.contract else None
-            if PlaneLabel.APPROVAL_REQUIRED.value in _extract_labels(fresh, label_ids=label_ids):
+            fresh_labels = _extract_labels(fresh, label_ids=label_ids)
+            if adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
                 return TickResult(False, "approval-required", candidate.id)
 
-            fresh_labels = _extract_labels(fresh, label_ids=label_ids)
-            if PlaneLabel.SCHEDULED.value in fresh_labels:
+            if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
                 return TickResult(False, "scheduled-held", candidate.id)
 
             plan_path: Path | None = None
             if mode == "build":
-                if PlaneLabel.PLAN.value in fresh_labels:
+                if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
                     try:
-                        await adapter.remove_labels(candidate.id, [PlaneLabel.PLAN])
+                        await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
                     except Exception as exc:
                         await adapter.add_comment(
                             candidate.id,
@@ -565,8 +581,8 @@ async def run_tick(
                     plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
                 if plan_path is None:
                     try:
-                        await adapter.add_labels(candidate.id, [PlaneLabel.PLAN])
-                        await adapter.remove_labels(candidate.id, [PlaneLabel.BUILD])
+                        await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
+                        await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
                         await adapter.add_comment(
                             candidate.id,
                             CommentPayload(
@@ -576,7 +592,7 @@ async def run_tick(
                                 )
                             ),
                         )
-                        await adapter.transition_state(candidate.id, PlaneState.TODO)
+                        await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
                     except Exception as exc:
                         _iu, _du = _build_urls(config, candidate.id)
                         await _block_issue(
@@ -592,7 +608,7 @@ async def run_tick(
                         return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
                     return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
 
-            await adapter.transition_state(candidate.id, PlaneState.RUNNING)
+            await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
             claim_time = now().isoformat()
             await adapter.add_comment(
                 candidate.id,
@@ -736,9 +752,9 @@ async def run_tick(
                     CommentPayload(body=body),
                 )
                 await adapter.add_labels(
-                    candidate.id, [PlaneLabel.APPROVAL_REQUIRED]
+                    candidate.id, [TrackerRole.APPROVAL_REQUIRED]
                 )
-                await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
                 LOGGER.info("state_transitioned issue_id=%s state=in-review mode=plan", candidate.id)
                 _iu, _du = _build_urls(config, candidate.id)
                 await _notify_review(
@@ -787,21 +803,21 @@ async def run_tick(
                 return body
 
             after_agent = await _fetch_issue(adapter, candidate.id)
-            if _is_state(after_agent, adapter, PlaneState.DONE):
+            if _is_state(after_agent, adapter, TrackerRole.STATE_DONE):
                 if auto_commit_error is not None:
                     await adapter.add_comment(
                         candidate.id,
                         CommentPayload(body=_auto_commit_warning_body()),
                     )
                 return TickResult(True, "agent-done", candidate.id, mode=mode)
-            if _is_state(after_agent, adapter, PlaneState.IN_REVIEW):
+            if _is_state(after_agent, adapter, TrackerRole.STATE_IN_REVIEW):
                 if auto_commit_error is not None:
                     await adapter.add_comment(
                         candidate.id,
                         CommentPayload(body=_auto_commit_warning_body()),
                     )
                 return TickResult(True, "agent-review", candidate.id, mode=mode)
-            if _is_state(after_agent, adapter, PlaneState.BLOCKED):
+            if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
                 if auto_commit_error is not None:
                     await adapter.add_comment(
                         candidate.id,
@@ -888,7 +904,7 @@ async def run_tick(
                     candidate.id,
                     CommentPayload(body=_completion_body("agent-marker-review")),
                 )
-                await adapter.transition_state(candidate.id, PlaneState.IN_REVIEW)
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
                 LOGGER.info(
                     "state_transitioned issue_id=%s state=in-review reason=marker",
                     candidate.id,
@@ -908,7 +924,7 @@ async def run_tick(
                 candidate.id,
                 CommentPayload(body=_completion_body(reason_code)),
             )
-            await adapter.transition_state(candidate.id, PlaneState.DONE)
+            await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
             LOGGER.info(
                 "state_transitioned issue_id=%s state=done reason=%s",
                 candidate.id, reason_code,
@@ -932,7 +948,7 @@ async def reconcile_stale_running(
         raise SchedulerError("Plane transport not configured")
     response = await adapter.transport.get(adapter._issue_path())
     for issue in response.get("results", []):
-        if not _is_state(issue, adapter, PlaneState.RUNNING):
+        if not _is_state(issue, adapter, TrackerRole.STATE_RUNNING):
             continue
         issue_id = str(issue["id"])
         claim_time = await _claimed_at(adapter, issue_id)
@@ -986,12 +1002,15 @@ async def run_loop(
         await asyncio.sleep(config.poll_interval_ms / 1000)
 
 
-def _oldest_candidate(candidates: Sequence[CandidateIssue]) -> CandidateIssue | None:
+def _oldest_candidate(
+    candidates: Sequence[CandidateIssue],
+    contract: TrackerContract = DEFAULT_CONTRACT,
+) -> CandidateIssue | None:
     eligible = [
         issue
         for issue in candidates
-        if PlaneLabel.APPROVAL_REQUIRED.value not in issue.labels
-        and PlaneLabel.SCHEDULED.value not in issue.labels
+        if not _labels_contain_role(issue.labels, contract, TrackerRole.APPROVAL_REQUIRED)
+        and not _labels_contain_role(issue.labels, contract, TrackerRole.SCHEDULED)
     ]
     if not eligible:
         return None
@@ -1010,7 +1029,7 @@ async def _select_scheduled_candidate(
     now_dt = now()
     cursor: str | None = None
     pages_fetched = 0
-    todo_state_id = adapter._resolve_state(PlaneState.TODO)
+    todo_state_id = adapter._resolve_state(TrackerRole.STATE_TODO)
 
     while pages_fetched < SCHEDULED_RELEASE_MAX_PAGES_PER_TICK:
         path = f"{adapter._issue_path()}?per_page={SCHEDULED_RELEASE_PAGE_SIZE}&state={todo_state_id}"
@@ -1020,10 +1039,10 @@ async def _select_scheduled_candidate(
         pages_fetched += 1
 
         for issue in _response_items(response):
-            if not _is_state(issue, adapter, PlaneState.TODO):
+            if not _is_state(issue, adapter, TrackerRole.STATE_TODO):
                 continue
             labels = _extract_labels(issue, label_ids=label_ids)
-            if PlaneLabel.SCHEDULED.value not in labels:
+            if not adapter.labels_contain_role(labels, TrackerRole.SCHEDULED):
                 continue
             candidate = _candidate_from_issue(issue, labels=labels)
             try:
@@ -1185,6 +1204,8 @@ async def _release_scheduled_candidate(
         raise SchedulerError("latest schedule event disappeared before release")
     if latest.is_cancellation:
         raise SchedulerError("schedule was cancelled before release")
+    if latest.not_before is None:
+        raise SchedulerError("latest schedule event missing not_before")
     if (
         latest.not_before != event.not_before
         or latest.not_after != event.not_after
@@ -1200,7 +1221,7 @@ async def _release_scheduled_candidate(
             )
         ),
     )
-    await adapter.remove_labels(issue_id, [PlaneLabel.SCHEDULED])
+    await adapter.remove_labels(issue_id, [TrackerRole.SCHEDULED])
     return latest
 
 
@@ -1214,7 +1235,7 @@ async def _repair_cancelled_schedule(
         issue_id,
         CommentPayload(body=f"Symphony schedule cancellation repaired stale scheduled label: {reason}"),
     )
-    await adapter.remove_labels(issue_id, [PlaneLabel.SCHEDULED])
+    await adapter.remove_labels(issue_id, [TrackerRole.SCHEDULED])
 
 
 async def _detect_agent_schedule(
@@ -1230,9 +1251,9 @@ async def _detect_agent_schedule(
     after_agent = await _fetch_issue(adapter, candidate.id)
     label_ids = adapter.contract.label_ids if adapter.contract else None
     labels = _extract_labels(after_agent, label_ids=label_ids)
-    if not _is_state(after_agent, adapter, PlaneState.TODO):
+    if not _is_state(after_agent, adapter, TrackerRole.STATE_TODO):
         return None
-    if PlaneLabel.SCHEDULED.value not in labels:
+    if not adapter.labels_contain_role(labels, TrackerRole.SCHEDULED):
         return None
     try:
         event = await _latest_schedule_event(adapter, candidate.id)
@@ -1373,7 +1394,7 @@ async def _block_issue(
     dashboard_url: str = "",
 ) -> None:
     await adapter.add_comment(issue_id, CommentPayload(body=message))
-    await adapter.transition_state(issue_id, PlaneState.BLOCKED)
+    await adapter.transition_state(issue_id, TrackerRole.STATE_BLOCKED)
     LOGGER.info("state_transitioned issue_id=%s state=blocked", issue_id)
     if notifier:
         try:
@@ -1388,13 +1409,14 @@ async def _block_issue(
             LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)
 
 
-def _is_state(issue: dict[str, Any], adapter: PlaneAdapter, state: PlaneState) -> bool:
+def _is_state(issue: dict[str, Any], adapter: PlaneAdapter, state: TrackerRole) -> bool:
     current = issue.get("state")
-    wanted = {state.value, adapter._resolve_state(state)}
+    state_name = adapter.contract.state_name_for_role(state)
+    wanted = {state_name, adapter._resolve_state(state)}
     if isinstance(current, str):
         return current in wanted
     if isinstance(current, dict):
-        return current.get("name") == state.value or current.get("id") in wanted
+        return current.get("name") == state_name or current.get("id") in wanted
     return False
 
 
