@@ -1,7 +1,7 @@
 ---
 id: 003
 title: Agent Adapter seam (pi one-shot)
-status: in-progress
+status: review
 blocked_by: []
 updated: 2026-06-04
 actor: ralph
