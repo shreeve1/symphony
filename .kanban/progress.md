@@ -52,3 +52,13 @@ This file tracks implementation notes across Ralph iterations.
 **What checked:** Worker diff `d170898f000c984232d1826c2836b002169366a3..HEAD` was empty; audited historical #003 diff and current agent adapter/scheduler/main files.
 **Verification:** `uv run pytest` passed (353 tests). Critical LSP diagnostics for #003-touched files reported no diagnostics.
 
+
+## #005 Startup reconcile + reaper — 2026-06-04
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS`).
+**What changed:** Added startup reconciliation before the scheduler loop, reaping orphan worktrees, stale per-run tmux sessions, and Running tracker issues with no live run.
+**Files:** `scheduler.py`, `run_worktree.py`, `main.py`, `tests/test_scheduler.py`, `tests/test_run_worktree.py`, `tests/test_main.py`
+**Decisions:** Running issues with stale/no-live claims are reconciled by moving them to Blocked and cleaning deterministic run resources rather than blindly redispatching on startup.
+**Conventions established:** Reaper matching uses the #004 `run-<id>` naming scheme across tracker identifiers, worktree paths, branches, and tmux session names.
+**Verification:** `uv run pytest` passed (363 tests). Critical LSP diagnostics for touched files reported no diagnostics.
+**Notes for next iteration:** #010 can rely on startup reconciliation preserving semaphore correctness after process restarts.
