@@ -1,7 +1,7 @@
 ---
 id: 004
 title: Run Worktree lifecycle at cap=1 (replace global flock)
-status: review
+status: blocked
 blocked_by: [2, 3]
 updated: 2026-06-04
 actor: ralph
@@ -43,3 +43,10 @@ See `docs/adr/0003-worktree-per-run-with-global-concurrency-cap.md`.
 
 - Blocked by #2
 - Blocked by #3
+
+## Blocker
+
+Fresh review failed the implementation:
+
+- `PiAgentAdapter.__call__` ignores `worktree_path`, so production pi runs still execute from the shared checkout instead of the per-Run worktree.
+- Crash/orphan recovery is incomplete; timeout cleanup is covered, but pre-existing orphan recovery was not implemented.

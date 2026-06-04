@@ -30,3 +30,11 @@ This file tracks implementation notes across Ralph iterations.
 **Verification:** `uv run pytest` passed (349 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 **Notes for next iteration:** #009 can add a Claude adapter behind the same `AgentAdapter` contract without changing scheduler verdict parsing.
 
+## #004 Run Worktree lifecycle at cap=1 — 2026-06-04
+
+**Result:** Blocked after mandatory fresh review (`RALPH_REVIEW: FAIL`).
+**What changed:** Initial implementation added per-run worktree helpers, scheduler semaphore cap=1, worktree-based auto-commit plumbing, and tests for worktree cleanup/branch retention.
+**Verification:** Implementer ran `uv run pytest` (351 tests) and critical LSP diagnostics for touched files reported no diagnostics.
+**Blocker:** Reviewer found production `PiAgentAdapter.__call__` does not pass `worktree_path` into `run_agent`, so pi still runs in the shared checkout. Reviewer also found crash/orphan recovery incomplete beyond timeout cleanup.
+**Notes for next iteration:** Fix the adapter worktree propagation first, then add/clarify orphan recovery expectations before rerunning review.
+
