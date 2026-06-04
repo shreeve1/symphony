@@ -1,8 +1,9 @@
 ---
 id: 007
 title: bindings.yml multi-project config
-status: pending
+status: in-progress
 blocked_by: [1, 2]
+updated: 2026-06-04
 parent: null
 priority: 0
 created: 2026-06-04

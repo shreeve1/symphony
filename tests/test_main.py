@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
 import pytest
 
@@ -8,6 +9,10 @@ from agent_runner import AgentRunnerError
 from plane_poller import CandidateIssue
 
 import main
+
+
+class StopLoop(Exception):
+    pass
 
 
 def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
@@ -47,92 +52,137 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
     assert captured["issue"].schedule_late == "false"
 
 
-def test_async_main_passes_configured_agent_runner(monkeypatch):
+def test_async_main_passes_configured_bindings_loop(monkeypatch):
     calls = {}
 
     class FakeConfig:
-        plane_api_url = "http://plane.local"
-        plane_api_key = "token"
-        plane_workspace_slug = "homelab"
-        plane_project_id = "project-uuid"
-        pi_bin = "pi"
-        pi_provider = "zai"
-        pi_model = "glm-5.1:high"
-        homelab_repo_path = "/home/james/homelab"
+        bindings = ("binding",)
 
         @classmethod
         def from_env(cls):
             return cls()
 
-    class FakeTransport:
-        def __init__(self, api_url, api_key):
-            calls["transport"] = (api_url, api_key)
-
-        async def aclose(self):
-            calls["closed"] = True
-
-    def fake_build_adapter(transport, *, workspace_slug, project_id):
-        calls["adapter"] = (transport, workspace_slug, project_id)
-        return "adapter"
-
-    class FakePiAgentAdapter:
-        def __init__(self, config):
-            calls["agent_adapter_config"] = config
-
-        def __call__(self, issue, rendered_prompt):
-            calls["agent_adapter_call"] = (issue, rendered_prompt)
-            return "agent-result"
-
-    def fake_verify_pi_support(pi_bin, provider, model, cwd):
-        calls["verify"] = (pi_bin, provider, model, cwd)
-        assert "transport" not in calls
-
-    async def fake_reconcile_startup(config, adapter, *, notifier=None):
-        calls["reconcile_startup"] = (config, adapter, notifier)
-        return 0
-
-    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
-        calls["run_loop"] = (config, adapter, render_prompt)
-        calls["notifier"] = notifier
-        calls["agent_result"] = agent_runner("issue", "prompt")
+    async def fake_run_bindings_loop(config, *, notifier=None):
+        calls["run_bindings_loop"] = (config, notifier)
 
     monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)
-    monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
-    monkeypatch.setattr(main, "build_adapter", fake_build_adapter)
-    monkeypatch.setattr(main, "PiAgentAdapter", FakePiAgentAdapter)
-    monkeypatch.setattr(main, "verify_pi_support", fake_verify_pi_support)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
-    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+    monkeypatch.setattr(main.TelegramNotifier, "from_env", staticmethod(lambda: "notifier"))
+    monkeypatch.setattr(main, "run_bindings_loop", fake_run_bindings_loop)
 
     asyncio.run(main.async_main())
 
-    config = calls["run_loop"][0]
-    assert calls["verify"] == ("pi", "zai", "glm-5.1:high", "/home/james/homelab")
-    assert calls["transport"] == ("http://plane.local", "token")
-    assert calls["adapter"][1:] == ("homelab", "project-uuid")
-    assert calls["agent_adapter_config"] == config
-    assert calls["agent_adapter_call"] == ("issue", "prompt")
-    assert calls["agent_result"] == "agent-result"
-    assert calls["reconcile_startup"] is not None
-    assert "closed" in calls
+    assert isinstance(calls["run_bindings_loop"][0], FakeConfig)
+    assert calls["run_bindings_loop"][1] == "notifier"
 
 
-def test_async_main_verifier_failure_aborts_before_transport(monkeypatch):
-    calls = {}
+@pytest.mark.asyncio
+async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
+    calls = []
+    closed = []
+
+    class FakeTransport:
+        def __init__(self, name):
+            self.name = name
+
+        async def aclose(self):
+            closed.append(self.name)
+
+    class FakeResult:
+        dispatched = False
+        reason = "no-candidates"
+        issue_id = None
 
     class FakeConfig:
-        plane_api_url = "http://plane.local"
-        plane_api_key = "token"
-        plane_workspace_slug = "homelab"
-        plane_project_id = "project-uuid"
-        pi_bin = "pi"
-        pi_provider = "zai"
-        pi_model = "glm-5.1:high"
-        homelab_repo_path = "/home/james/homelab"
+        bindings = ("one", "two")
+        poll_interval_ms = 30000
 
-        @classmethod
-        def from_env(cls):
-            return cls()
+    class FakeAdapter:
+        contract = None
+
+        def __init__(self, name):
+            self.name = name
+
+        def __eq__(self, other):
+            return other == f"adapter-{self.name}"
+
+    def fake_build_runtime(config, binding):
+        return main.BindingRuntime(
+            name=binding,
+            config=cast(Any, f"config-{binding}"),
+            transport=cast(Any, FakeTransport(binding)),
+            adapter=cast(Any, FakeAdapter(binding)),
+            agent_adapter=cast(Any, f"agent-{binding}"),
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+        calls.append(("reconcile", config, adapter, notifier))
+        return 0
+
+    async def fake_run_tick(config, adapter, *, agent_runner, render_prompt, notifier=None):
+        calls.append(("tick", config, adapter, agent_runner, notifier))
+        return FakeResult()
+
+    async def fake_sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_tick", fake_run_tick)
+    monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        await main.run_bindings_loop(cast(Any, FakeConfig()), notifier=cast(Any, "notifier"))
+
+    assert calls == [
+        ("reconcile", "config-one", "adapter-one", "notifier"),
+        ("reconcile", "config-two", "adapter-two", "notifier"),
+        ("tick", "config-one", "adapter-one", "agent-one", "notifier"),
+        ("tick", "config-two", "adapter-two", "agent-two", "notifier"),
+        ("sleep", 30.0),
+    ]
+    assert closed == ["one", "two"]
+
+
+def test_build_binding_runtime_rejects_unsupported_agent(monkeypatch, tmp_path):
+    config = main.SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.test",
+            "PLANE_API_KEY": "key",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PLANE_PROJECT_ID": "project",
+            "HOMELAB_REPO_PATH": str(tmp_path),
+            "PI_BIN": "pi",
+        }
+    )
+    binding = config.bindings[0]
+    binding = type(binding)(
+        name=binding.name,
+        plane_project_id=binding.plane_project_id,
+        repo_path=binding.repo_path,
+        base_branch=binding.base_branch,
+        tracker_contract=binding.tracker_contract,
+        default_agent="claude",
+        approval_policy=binding.approval_policy,
+        landing_policy=binding.landing_policy,
+    )
+
+    with pytest.raises(RuntimeError, match="Claude adapter"):
+        main._build_binding_runtime(config, binding)
+
+
+def test_build_binding_runtime_verifier_failure_aborts_before_transport(monkeypatch, tmp_path):
+    calls = {}
+    config = main.SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.test",
+            "PLANE_API_KEY": "key",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PLANE_PROJECT_ID": "project",
+            "HOMELAB_REPO_PATH": str(tmp_path),
+            "PI_BIN": "pi",
+        }
+    )
 
     class FakeTransport:
         def __init__(self, api_url, api_key):
@@ -142,12 +192,11 @@ def test_async_main_verifier_failure_aborts_before_transport(monkeypatch):
         calls["verify"] = args
         raise AgentRunnerError("bad pi")
 
-    monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)
     monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
     monkeypatch.setattr(main, "verify_pi_support", fake_verify_pi_support)
 
     with pytest.raises(AgentRunnerError, match="bad pi"):
-        asyncio.run(main.async_main())
+        main._build_binding_runtime(config, config.bindings[0])
 
     assert "verify" in calls
     assert "transport" not in calls

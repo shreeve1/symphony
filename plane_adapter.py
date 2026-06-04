@@ -102,6 +102,7 @@ class PlaneTransport(Protocol):
     async def get(self, path: str) -> dict[str, Any]: ...
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]: ...
     async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]: ...
+    async def aclose(self) -> None: ...
 
 
 class TrackerAdapter(Protocol):
@@ -491,20 +492,21 @@ def build_adapter(
     *,
     workspace_slug: str = DEFAULT_CONTRACT.workspace_slug,
     project_id: str = DEFAULT_CONTRACT.project_id,
+    contract: TrackerContract | None = None,
 ) -> PlaneTrackerAdapter:
     """Build the Plane tracker adapter around the provided transport."""
 
-    contract = replace(
+    resolved_contract = contract or replace(
         DEFAULT_CONTRACT,
         workspace_slug=workspace_slug,
         project_id=project_id,
     )
-    errors = contract.validate_shape()
+    errors = resolved_contract.validate_shape()
     if errors:
         raise PlaneContractError(
             "Plane contract is invalid: " + "; ".join(errors)
         )
-    return PlaneTrackerAdapter(contract=contract, transport=transport)
+    return PlaneTrackerAdapter(contract=resolved_contract, transport=transport)
 
 
 def _extract_labels(

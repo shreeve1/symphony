@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from config import SymphonyConfig, _truthy
+from config import ConfigError, SymphonyConfig, _truthy
 
 
 def _env(**overrides):
@@ -127,6 +127,139 @@ def test_issue_url_prefers_frontend_url_over_local_api_url():
         PLANE_FRONTEND_URL="http://10.20.20.16:8000",
     ))
     assert config.issue_url("i-1") == "http://10.20.20.16:8000/homelab/projects/fake-project-uuid/issues/i-1/"
+
+
+def test_from_env_without_bindings_yml_preserves_single_binding_defaults():
+    config = SymphonyConfig.from_env(_env(SYMPHONY_BASE_BRANCH="main"))
+
+    assert len(config.bindings) == 1
+    binding = config.bindings[0]
+    assert binding.plane_project_id == "fake-project-uuid"
+    assert binding.repo_path == Path("/home/james/homelab")
+    assert binding.base_branch == "main"
+    assert binding.default_agent == "pi"
+    assert binding.approval_policy.enabled is False
+    assert binding.landing_policy.mode == "local"
+    assert binding.tracker_contract.project_id == "fake-project-uuid"
+
+
+def test_from_env_loads_multi_binding_yaml(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: homelab
+    plane_project_id: project-a
+    repo_path: /srv/homelab
+    base_branch: main
+    default_agent: pi
+  - name: tools
+    plane_project_id: project-b
+    repo_path: /srv/tools
+    base_branch: develop
+    default_agent: claude
+    approval:
+      enabled: true
+    landing:
+      mode: local
+    tracker_contract:
+      project_slug: tools
+      state_roles:
+        state:todo: Todo
+        state:running: Running
+        state:in-review: In Review
+        state:blocked: Blocked
+        state:done: Done
+      label_roles:
+        mode:plan: plan
+        mode:build: build
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+    assert config.plane_api_key == "env-secret"
+    assert config.plane_project_id == "project-a"
+    assert config.homelab_repo_path == Path("/srv/homelab")
+    assert [binding.name for binding in config.bindings] == ["homelab", "tools"]
+    assert config.bindings[0].approval_policy.enabled is False
+    assert config.bindings[0].landing_policy.mode == "local"
+    assert config.bindings[1].plane_project_id == "project-b"
+    assert config.bindings[1].repo_path == Path("/srv/tools")
+    assert config.bindings[1].base_branch == "develop"
+    assert config.bindings[1].default_agent == "claude"
+    assert config.bindings[1].approval_policy.enabled is True
+    assert config.bindings[1].tracker_contract.project_id == "project-b"
+    assert config.bindings[1].tracker_contract.project_slug == "tools"
+
+
+def test_binding_resolves_agent_label_override():
+    binding = SymphonyConfig.from_env(_env(SYMPHONY_DEFAULT_AGENT="pi")).bindings[0]
+
+    assert binding.resolve_agent(()) == "pi"
+    assert binding.resolve_agent(("agent:claude",)) == "claude"
+    assert binding.resolve_agent(("agent:pi",)) == "pi"
+
+
+def test_bindings_yml_missing_required_field_names_field(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: homelab
+    plane_project_id: project-a
+    base_branch: main
+    default_agent: pi
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"bindings\[0\]\.repo_path is required"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
+
+
+def test_bindings_yml_rejects_yaml_secrets(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: homelab
+    plane_project_id: project-a
+    repo_path: /srv/homelab
+    base_branch: main
+    default_agent: pi
+    plane_api_key: should-not-be-read
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="secrets must come from env"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
 
 
 # ---- _truthy() N9 dev-review tests ----------------------------------------

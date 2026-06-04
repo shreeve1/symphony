@@ -654,7 +654,7 @@ async def run_tick(
         try:
             if _is_git_repo(config.homelab_repo_path):
                 remove_worktree_if_exists(config, run_id)
-                wt_path = create_worktree(config, run_id, base_branch=plan_branch_ref)
+                wt_path = create_worktree(config, run_id, base_branch=plan_branch_ref or config.base_branch)
                 run_repo = wt_path
                 LOGGER.info(
                     "run_worktree_created issue_id=%s run_id=%s path=%s",
