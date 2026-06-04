@@ -1,7 +1,7 @@
 ---
 id: 005
 title: Startup reconcile + reaper
-status: in-progress
+status: review
 updated: 2026-06-04
 actor: ralph
 blocked_by: [4]
