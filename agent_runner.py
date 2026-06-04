@@ -60,7 +60,9 @@ class AgentResult:
 class AgentAdapter(Protocol):
     """Common dispatch contract for agent implementations."""
 
-    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult: ...
+    def __call__(
+        self, issue: CandidateIssue, rendered_prompt: str, /, *, worktree_path: Path | None = None
+    ) -> AgentResult: ...
 
 
 def verify_pi_support(
@@ -131,6 +133,7 @@ def run_agent(
     issue: CandidateIssue,
     rendered_prompt: str,
     *,
+    worktree_path: Path | None = None,
     plane_cli_source: Path | None = None,
     popen_factory: Callable[..., ProcessLike] | None = None,
     mkdtemp: Callable[..., str] = tempfile.mkdtemp,
@@ -194,9 +197,10 @@ def run_agent(
             config.pi_model,
             rendered_prompt,
         ]
+        cwd = str(worktree_path) if worktree_path else str(config.homelab_repo_path)
         LOGGER.info(
-            "pi_dispatch issue_id=%s provider=%s model=%s",
-            issue.id, config.pi_provider, config.pi_model,
+            "pi_dispatch issue_id=%s provider=%s model=%s cwd=%s",
+            issue.id, config.pi_provider, config.pi_model, cwd,
         )
         process = popen_factory(
             command,
@@ -204,7 +208,7 @@ def run_agent(
             stderr=subprocess.PIPE,
             text=True,
             env=env,
-            cwd=str(config.homelab_repo_path),
+            cwd=cwd,
             start_new_session=True,
         )
         try:

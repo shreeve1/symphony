@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import inspect
 import logging
 import re
 import subprocess
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,6 +22,11 @@ from notifier import (
     format_blocked_message,
     format_review_message,
 )
+from run_worktree import (
+    create_worktree,
+    remove_worktree_if_exists,
+    _run_id_from_identifier,
+)
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
 from plane_adapter import CandidateIssue, CommentPayload, TrackerAdapter
@@ -32,6 +35,9 @@ from prompt_renderer import render_previous_comments_block
 
 
 LOGGER = logging.getLogger(__name__)
+# Global semaphore capping live Runs at 1. Replaces the old per-tick fcntl flock;
+# serial dispatch behaviour is unchanged, mechanism is the semaphore.
+_RUN_SEMAPHORE = asyncio.Semaphore(1)
 CLAIM_PREFIX = "Symphony claimed at "
 # Resolved once at import time. The ``_claimed_at`` parser at line ~1212 splits
 # the body on CLAIM_PREFIX and takes the first whitespace token after it, so
@@ -383,27 +389,37 @@ def _plan_path_from_comments(repo_path: Path, issue: CandidateIssue, comments: l
     return None, None
 
 
-@contextmanager
-def scheduler_lock(lock_path: Path) -> Iterator[object]:
-    """Acquire a nonblocking fcntl lock for one scheduler tick."""
+def _is_git_repo(path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
 
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = lock_path.open("w")
+
+def _invoke_agent_runner(
+    agent_runner: Callable[..., AgentResult],
+    candidate: CandidateIssue,
+    prompt: str,
+    *,
+    worktree_path: Path | None,
+) -> AgentResult:
     try:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise LockHeld("Symphony scheduler lock is already held") from exc
-        yield handle
-    finally:
-        handle.close()
+        return agent_runner(candidate, prompt, worktree_path=worktree_path)
+    except TypeError as exc:
+        if "worktree_path" not in str(exc):
+            raise
+        return agent_runner(candidate, prompt)
 
 
 async def run_tick(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
     *,
-    agent_runner: AgentAdapter,
+    agent_runner: Callable[..., AgentResult],
     render_prompt: Callable[[CandidateIssue], str],
     lock_path: Path | None = None,
     poller: Callable[[TrackerAdapter], Any] | None = None,
@@ -440,170 +456,185 @@ async def run_tick(
     repo_dirty = _repo_dirty if repo_dirty is None else repo_dirty
     diff_stat = _diff_stat if diff_stat is None else diff_stat
     auto_commit = _auto_commit if auto_commit is None else auto_commit
-    lock_file = lock_path or config.lock_path
-    try:
-        with scheduler_lock(lock_file):
-            await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
-            if config.blocked_reconciler_enabled and run_blocked_reconciler:
-                try:
-                    await reconcile_blocked(
-                        adapter,
-                        apply=config.blocked_reconciler_apply,
-                        now=now,
-                    )
-                except Exception as exc:
-                    # Reconciliation is best-effort — it must never block the
-                    # main scheduler tick or take the service down. The
-                    # individual issue paths inside reconcile_blocked already
-                    # log granular failures; this guards against an
-                    # adapter-level explosion (transport down, schema drift).
-                    # exc_info=True is the W7 dev-review fix: a broad catch
-                    # without a traceback would silently mask programmer
-                    # errors (AttributeError, TypeError) from a future
-                    # refactor of the reconciler.
-                    LOGGER.warning(
-                        "blocked_reconcile_failed error=%s", exc, exc_info=True
-                    )
-            scheduled = await _select_scheduled_candidate(adapter, now=now)
-            if scheduled is not None:
-                if scheduled.reason == "scheduled-release":
-                    candidate = scheduled.candidate
-                    try:
-                        released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
-                    except Exception as exc:
-                        _iu, _du = _build_urls(config, candidate.id)
-                        await _block_issue(
-                            adapter,
-                            candidate.id,
-                            f"Scheduled release failed after becoming due: {exc}",
-                            issue_name=candidate.name,
-                            issue_identifier=candidate.identifier,
-                            notifier=notifier,
-                            issue_url=_iu,
-                            dashboard_url=_du,
-                        )
-                        return TickResult(False, "scheduled-release-failed", candidate.id)
-                    candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
-                elif scheduled.reason == "scheduled-missing":
-                    _iu, _du = _build_urls(config, scheduled.candidate.id)
-                    await _block_issue(
-                        adapter,
-                        scheduled.candidate.id,
-                        "Scheduled ticket is missing a valid Symphony-Schedule comment.",
-                        issue_name=scheduled.candidate.name,
-                        issue_identifier=scheduled.candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(False, "scheduled-missing", scheduled.candidate.id)
-                elif scheduled.reason == "scheduled-malformed":
-                    _iu, _du = _build_urls(config, scheduled.candidate.id)
-                    await _block_issue(
-                        adapter,
-                        scheduled.candidate.id,
-                        f"Scheduled ticket has a malformed latest schedule comment: {scheduled.error}",
-                        issue_name=scheduled.candidate.name,
-                        issue_identifier=scheduled.candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(False, "scheduled-malformed", scheduled.candidate.id)
-                elif scheduled.reason == "scheduled-cancelled":
-                    await _repair_cancelled_schedule(adapter, scheduled.candidate.id, scheduled.event)
-                    return TickResult(False, "scheduled-cancelled", scheduled.candidate.id)
-                else:
-                    candidate = None
-            else:
-                candidate = None
 
+    # reconcile_stale_running and reconcile_blocked run every tick, outside
+    # the semaphore, so they are not blocked by an in-flight Run.
+    await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
+    if config.blocked_reconciler_enabled and run_blocked_reconciler:
+        try:
+            await reconcile_blocked(
+                adapter,
+                apply=config.blocked_reconciler_apply,
+                now=now,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "blocked_reconcile_failed error=%s", exc, exc_info=True
+            )
+    scheduled = await _select_scheduled_candidate(adapter, now=now)
+    if scheduled is not None:
+        if scheduled.reason == "scheduled-release":
+            candidate = scheduled.candidate
             try:
-                candidates = [] if candidate is not None else await _maybe_await(
-                    poller(adapter) if poller is not None else adapter.list_candidates()
-                )
+                released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
             except Exception as exc:
-                LOGGER.warning("plane_poll_failed error=%s", exc)
-                return TickResult(False, "plane-unreachable")
-
-            candidate = candidate or _oldest_candidate(candidates, adapter.contract)
-            if candidate is None:
-                return TickResult(False, "no-candidates")
-            if adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
-                return TickResult(False, "approval-required", candidate.id)
-
-            mode = _resolve_mode(candidate.labels, adapter.contract)
-
-            fresh = await _fetch_issue(adapter, candidate.id)
-            if not _is_state(fresh, adapter, TrackerRole.STATE_TODO):
-                return TickResult(False, "state-changed", candidate.id)
-            label_ids = adapter.contract.label_ids if adapter.contract else None
-            fresh_labels = _extract_labels(fresh, label_ids=label_ids)
-            if adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
-                return TickResult(False, "approval-required", candidate.id)
-
-            if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
-                return TickResult(False, "scheduled-held", candidate.id)
-
-            plan_path: Path | None = None
-            if mode == "build":
-                if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
-                    try:
-                        await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
-                    except Exception as exc:
-                        await adapter.add_comment(
-                            candidate.id,
-                            CommentPayload(body=f"Build could not start: failed to remove stale `plan` label: {exc}"),
-                        )
-                        return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
-
-                comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
-                plan_path, plan_path_error = _plan_path_from_comments(
-                    config.homelab_repo_path, candidate, comment_bodies
+                _iu, _du = _build_urls(config, candidate.id)
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    f"Scheduled release failed after becoming due: {exc}",
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
-                if plan_path_error:
-                    _iu, _du = _build_urls(config, candidate.id)
-                    await _block_issue(
-                        adapter,
-                        candidate.id,
-                        f"Build could not start: {plan_path_error}.",
-                        issue_name=candidate.name,
-                        issue_identifier=candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(False, "invalid-plan-path", candidate.id, mode=mode)
-                if plan_path is None:
-                    plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
-                if plan_path is None:
-                    try:
-                        await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
-                        await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
-                        await adapter.add_comment(
-                            candidate.id,
-                            CommentPayload(
-                                body=(
-                                    "Build could not start because no readable plan file was found. "
-                                    "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
-                                )
-                            ),
+                return TickResult(False, "scheduled-release-failed", candidate.id)
+            candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
+        elif scheduled.reason == "scheduled-missing":
+            _iu, _du = _build_urls(config, scheduled.candidate.id)
+            await _block_issue(
+                adapter,
+                scheduled.candidate.id,
+                "Scheduled ticket is missing a valid Symphony-Schedule comment.",
+                issue_name=scheduled.candidate.name,
+                issue_identifier=scheduled.candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(False, "scheduled-missing", scheduled.candidate.id)
+        elif scheduled.reason == "scheduled-malformed":
+            _iu, _du = _build_urls(config, scheduled.candidate.id)
+            await _block_issue(
+                adapter,
+                scheduled.candidate.id,
+                f"Scheduled ticket has a malformed latest schedule comment: {scheduled.error}",
+                issue_name=scheduled.candidate.name,
+                issue_identifier=scheduled.candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(False, "scheduled-malformed", scheduled.candidate.id)
+        elif scheduled.reason == "scheduled-cancelled":
+            await _repair_cancelled_schedule(adapter, scheduled.candidate.id, scheduled.event)
+            return TickResult(False, "scheduled-cancelled", scheduled.candidate.id)
+        else:
+            candidate = None
+    else:
+        candidate = None
+
+    try:
+        candidates = [] if candidate is not None else await _maybe_await(
+            poller(adapter) if poller is not None else adapter.list_candidates()
+        )
+    except Exception as exc:
+        LOGGER.warning("plane_poll_failed error=%s", exc)
+        return TickResult(False, "plane-unreachable")
+
+    candidate = candidate or _oldest_candidate(candidates, adapter.contract)
+    if candidate is None:
+        return TickResult(False, "no-candidates")
+    if adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
+        return TickResult(False, "approval-required", candidate.id)
+
+    mode = _resolve_mode(candidate.labels, adapter.contract)
+
+    fresh = await _fetch_issue(adapter, candidate.id)
+    if not _is_state(fresh, adapter, TrackerRole.STATE_TODO):
+        return TickResult(False, "state-changed", candidate.id)
+    label_ids = adapter.contract.label_ids if adapter.contract else None
+    fresh_labels = _extract_labels(fresh, label_ids=label_ids)
+    if adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
+        return TickResult(False, "approval-required", candidate.id)
+
+    if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
+        return TickResult(False, "scheduled-held", candidate.id)
+
+    plan_path: Path | None = None
+    if mode == "build":
+        if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
+            try:
+                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
+            except Exception as exc:
+                await adapter.add_comment(
+                    candidate.id,
+                    CommentPayload(body=f"Build could not start: failed to remove stale `plan` label: {exc}"),
+                )
+                return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
+
+        comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
+        plan_path, plan_path_error = _plan_path_from_comments(
+            config.homelab_repo_path, candidate, comment_bodies
+        )
+        if plan_path_error:
+            _iu, _du = _build_urls(config, candidate.id)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Build could not start: {plan_path_error}.",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(False, "invalid-plan-path", candidate.id, mode=mode)
+        if plan_path is None:
+            plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
+        if plan_path is None:
+            try:
+                await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
+                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
+                await adapter.add_comment(
+                    candidate.id,
+                    CommentPayload(
+                        body=(
+                            "Build could not start because no readable plan file was found. "
+                            "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
                         )
-                        await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
-                    except Exception as exc:
-                        _iu, _du = _build_urls(config, candidate.id)
-                        await _block_issue(
-                            adapter,
-                            candidate.id,
-                            f"Build plan recovery failed after no readable plan was found: {exc}",
-                            issue_name=candidate.name,
-                            issue_identifier=candidate.identifier,
-                            notifier=notifier,
-                            issue_url=_iu,
-                            dashboard_url=_du,
-                        )
-                        return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
-                    return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
+                    ),
+                )
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+            except Exception as exc:
+                _iu, _du = _build_urls(config, candidate.id)
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    f"Build plan recovery failed after no readable plan was found: {exc}",
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
+                )
+                return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
+            return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
+
+    # The semaphore (cap=1) replaces the old fcntl flock: serial behaviour
+    # is preserved, mechanism is the live-run semaphore, not a global scheduler
+    # flock around dispatch.
+    async with _RUN_SEMAPHORE:
+        run_id = _run_id_from_identifier(candidate.identifier)
+        wt_path: Path | None = None
+        run_repo = config.homelab_repo_path
+        try:
+            if _is_git_repo(config.homelab_repo_path):
+                wt_path = create_worktree(config, run_id)
+                run_repo = wt_path
+                LOGGER.info(
+                    "run_worktree_created issue_id=%s run_id=%s path=%s",
+                    candidate.id, run_id, wt_path,
+                )
+
+            # repo_dirty / diff_stat / auto_commit operate in the run worktree
+            # when one exists, so commits land on the run branch, never the
+            # shared checkout.
+            _wt: Path = run_repo
+            _repo_dirty_wt = lambda: repo_dirty(_wt)
+            _diff_stat_wt = lambda: diff_stat(_wt)
+            _auto_commit_wt: Callable[..., str] = lambda *a, **kw: auto_commit(_wt, *a, **kw)
 
             await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
             claim_time = now().isoformat()
@@ -622,7 +653,7 @@ async def run_tick(
                 prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
 
             try:
-                result = agent_runner(candidate, prompt)
+                result = _invoke_agent_runner(candidate=candidate, prompt=prompt, agent_runner=agent_runner, worktree_path=wt_path)
             except Exception as exc:
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
@@ -728,7 +759,7 @@ async def run_tick(
                     try:
                         plan_report_path = str(
                             _validate_issue_plan_path(
-                                config.homelab_repo_path,
+                                _wt,
                                 candidate,
                                 plan_report_path,
                             )
@@ -766,11 +797,10 @@ async def run_tick(
             committed_sha: str | None = None
             committed_stat: str | None = None
             auto_commit_error: str | None = None
-            if repo_dirty(config.homelab_repo_path):
-                committed_stat = diff_stat(config.homelab_repo_path)
+            if _repo_dirty_wt():
+                committed_stat = _diff_stat_wt()
                 try:
-                    committed_sha = auto_commit(
-                        config.homelab_repo_path,
+                    committed_sha = _auto_commit_wt(
                         issue_identifier=candidate.identifier,
                         issue_name=candidate.name,
                         issue_id=candidate.id,
@@ -779,7 +809,7 @@ async def run_tick(
                 except AutoCommitFailed as exc:
                     LOGGER.warning(
                         "auto_commit_failed issue_id=%s repo=%s error=%s",
-                        candidate.id, config.homelab_repo_path, exc,
+                        candidate.id, wt_path, exc,
                     )
                     auto_commit_error = str(exc)
                     if exc.stderr:
@@ -830,12 +860,6 @@ async def run_tick(
             summary = _extract_summary(result, secrets)
 
             def _completion_body(verdict_label: str) -> str:
-                # Success-path comments intentionally omit agent stderr: the
-                # `pi` CLI emits its full tool trace and WORKFLOW.md echoes
-                # on stderr, which is noise on a clean run. Stderr is still
-                # surfaced on failure paths (timeout, nonzero, gated). A short
-                # SYMPHONY_SUMMARY line from the agent, if present, is the
-                # only per-run signal we carry through on success.
                 if summary:
                     body = f"**Symphony completed:** {summary}"
                 else:
@@ -928,8 +952,12 @@ async def run_tick(
                 candidate.id, reason_code,
             )
             return TickResult(True, reason_code, candidate.id, mode=mode)
-    except LockHeld:
-        return TickResult(False, "lock-held")
+        finally:
+            # Guaranteed cleanup: remove worktree on every exit path from the
+            # semaphore block so no orphan is left behind after verdict
+            # reconciliation, crash, or timeout.
+            if wt_path is not None:
+                remove_worktree_if_exists(config, run_id)
 
 
 async def reconcile_stale_running(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -108,20 +109,20 @@ def _write_plan(repo: Path, issue_identifier: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_run_tick_skips_when_lock_is_held(tmp_path: Path) -> None:
+async def test_run_tick_no_longer_uses_legacy_flock(tmp_path: Path) -> None:
     lock_path = tmp_path / ".symphony.lock"
     with lock_path.open("w") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = await run_tick(
             _config(tmp_path),
             _adapter(FakeTransport()),
-            agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+            agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
             lock_path=lock_path,
         )
 
     assert result.dispatched is False
-    assert result.reason == "lock-held"
+    assert result.reason == "no-candidates"
 
 
 @pytest.mark.asyncio
@@ -136,9 +137,8 @@ async def test_run_tick_invokes_blocked_reconciler_when_enabled(tmp_path: Path, 
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=True, blocked_reconciler_apply=True),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-reconciler-enabled",
         poller=lambda adapter: [],
     )
 
@@ -155,9 +155,8 @@ async def test_run_tick_skips_blocked_reconciler_when_disabled(tmp_path: Path, m
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=False),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-reconciler-disabled",
         poller=lambda adapter: [],
     )
 
@@ -173,9 +172,8 @@ async def test_run_tick_skips_blocked_reconciler_when_not_due(tmp_path: Path, mo
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=True),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-reconciler-not-due",
         poller=lambda adapter: [],
         run_blocked_reconciler=False,
     )
@@ -195,9 +193,8 @@ async def test_run_tick_continues_when_blocked_reconciler_raises(tmp_path: Path,
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=True),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-reconciler-raises",
         poller=lambda adapter: [_candidate("i1")],
         repo_dirty=lambda path: False,
     )
@@ -216,9 +213,8 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [
             _candidate("newer", created_at="2026-05-04T02:00:00+00:00"),
             _candidate("older", created_at="2026-05-04T01:00:00+00:00"),
@@ -244,9 +240,8 @@ async def test_claim_comment_includes_code_sha(tmp_path: Path, monkeypatch) -> N
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("i1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -271,9 +266,8 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -295,9 +289,8 @@ async def test_run_tick_omits_secret_bearing_stdout(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -320,9 +313,8 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(tmp_path: Path)
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "docs/file.md | 2 ++",
@@ -355,9 +347,8 @@ async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: P
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "docs/file.md | 2 ++",
@@ -397,7 +388,6 @@ async def test_run_tick_accepts_explicit_agent_terminal_state(
         _adapter(transport),
         agent_runner=agent_runner,
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-terminal",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -414,7 +404,7 @@ async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> N
         tick = await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt, result=result: result,
+            agent_runner=lambda issue, prompt, *, worktree_path=None, result=result: result,
             render_prompt=lambda issue: "prompt",
             lock_path=tmp_path / f"lock-{reason}",
             poller=lambda adapter: [_candidate("issue-1")],
@@ -458,9 +448,8 @@ async def test_run_tick_summarizes_long_stderr_in_blocked_comments(tmp_path: Pat
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(2, 10, False, stderr=stderr),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(2, 10, False, stderr=stderr),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-nonzero-stderr-summary",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -482,14 +471,13 @@ async def test_run_tick_strips_ansi_from_stderr_summary(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             2,
             10,
             False,
             stderr="\x1b[31mpermission denied\x1b[0m",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-nonzero-stderr-ansi",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -510,9 +498,8 @@ async def test_run_tick_dirty_worktree_auto_commits_and_completes(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 1, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-dirty",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "preexisting.md | 1 +",
@@ -540,9 +527,8 @@ async def test_run_tick_skips_approval_required_candidates(tmp_path: Path) -> No
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-approval",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
         repo_dirty=lambda path: False,
     )
@@ -657,7 +643,7 @@ async def test_run_tick_passes_notifier_to_reconcile(tmp_path: Path) -> None:
         await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+            agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
             notifier=notifier,
             poller=lambda adapter: [],
@@ -675,9 +661,8 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     changed_result = await run_tick(
         _config(tmp_path),
         _adapter(changed),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-changed",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -687,9 +672,8 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     approval_result = await run_tick(
         _config(tmp_path),
         _adapter(approval),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-fresh-approval",
         poller=lambda adapter: [_candidate("issue-2")],
         repo_dirty=lambda path: False,
     )
@@ -703,9 +687,8 @@ async def test_run_tick_continues_when_plane_polling_fails(tmp_path: Path) -> No
     result = await run_tick(
         _config(tmp_path),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: (_ for _ in ()).throw(ConnectionError("offline")),
         repo_dirty=lambda path: False,
     )
@@ -747,9 +730,8 @@ async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -774,9 +756,8 @@ async def test_plan_mode_skips_missing_optional_approval_required_label(tmp_path
     result = await run_tick(
         _config(tmp_path),
         adapter,
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-no-approval-required",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -796,9 +777,8 @@ async def test_plan_mode_omits_invalid_stdout_plan_path(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=f"Plan created\n{invalid_path}"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{invalid_path}"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -819,9 +799,8 @@ async def test_plan_mode_runs_when_repo_is_dirty(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False, stdout="Plan output"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False, stdout="Plan output"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "plans/plan-1.md | 1 +",
@@ -845,7 +824,7 @@ async def test_permission_gate_blocks_instead_of_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0,
             10,
             False,
@@ -853,7 +832,6 @@ async def test_permission_gate_blocks_instead_of_review(tmp_path: Path) -> None:
             stderr="permission requested: skill (Plan); auto-rejecting",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-permission-gate",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
         repo_dirty=lambda path: False,
     )
@@ -874,14 +852,13 @@ async def test_approval_gate_blocks_instead_of_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0,
             10,
             False,
             stdout="Cannot execute destructive prune without approval. Awaiting explicit approval.",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-approval-gate",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -907,9 +884,8 @@ async def test_approval_gate_ignores_benign_approval_phrases(tmp_path: Path, std
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=stdout),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-benign-approval-gate",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -927,9 +903,8 @@ async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -957,7 +932,6 @@ async def test_build_mode_returns_to_plan_when_no_plan_exists(tmp_path: Path) ->
         _adapter(transport),
         agent_runner=agent_runner,
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
         repo_dirty=lambda path: False,
     )
@@ -986,9 +960,8 @@ async def test_build_mode_blocks_suspicious_plan_comment_path(tmp_path: Path) ->
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
         repo_dirty=lambda path: False,
     )
@@ -1013,9 +986,8 @@ async def test_build_mode_removes_stale_plan_label_before_running(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.PLAN.value, PlaneLabel.BUILD.value])],
         repo_dirty=lambda path: False,
     )
@@ -1060,9 +1032,8 @@ async def test_approval_required_filter_works_with_uuid_labels(tmp_path: Path) -
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
         repo_dirty=lambda path: False,
     )
@@ -1084,9 +1055,8 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(tmp_path:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="done output", stderr="warning: minor issue"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="done output", stderr="warning: minor issue"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1108,9 +1078,8 @@ async def test_run_tick_stderr_appears_in_blocked_timeout_comment(tmp_path: Path
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(-1, 20, True, stdout="partial", stderr="timeout error detail"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(-1, 20, True, stdout="partial", stderr="timeout error detail"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -1130,9 +1099,8 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="done output"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="done output"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1154,11 +1122,10 @@ async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             1, 10, False, stderr="Debug: key=fake-plane-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1180,11 +1147,10 @@ async def test_run_tick_redacts_zai_api_key_from_stderr(monkeypatch, tmp_path: P
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             1, 10, False, stderr="Debug: key=secret-zai-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-zai-redaction",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1205,11 +1171,10 @@ async def test_run_tick_redacts_legacy_cliproxy_api_key_from_stderr(monkeypatch,
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             1, 10, False, stderr="Debug: key=secret-cliproxy-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-cliproxy-redaction",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1232,11 +1197,10 @@ async def test_run_tick_strips_ansi_escapes_from_failure_stderr(tmp_path: Path) 
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             1, 10, False, stderr=raw_stderr,
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-ansi",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
     )
@@ -1264,12 +1228,11 @@ async def test_run_tick_summary_marker_appears_in_success_comment(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False,
             stdout="some chatter\nSYMPHONY_SUMMARY: Jellyfin CT106 healthy. HTTP 200, mounts OK.\nmore chatter",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1292,12 +1255,11 @@ async def test_run_tick_summary_marker_last_occurrence_wins(tmp_path: Path) -> N
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False,
             stdout="SYMPHONY_SUMMARY: draft summary\nthen\nSYMPHONY_SUMMARY: final summary",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-summary-last",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1319,12 +1281,11 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False,
             stdout=f"SYMPHONY_SUMMARY: {huge}",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-summary-trunc",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1351,13 +1312,12 @@ async def test_run_tick_summary_marker_falls_back_to_stderr(tmp_path: Path) -> N
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False,
             stdout="",
             stderr="some logging\nSYMPHONY_SUMMARY: From stderr stream.",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-summary-stderr",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1378,12 +1338,11 @@ async def test_run_tick_summary_marker_strips_ansi(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False,
             stdout="SYMPHONY_SUMMARY: \x1b[32mgreen result\x1b[0m line",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-summary-ansi",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1404,9 +1363,8 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="ok"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="ok"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-summary-absent",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1435,13 +1393,12 @@ async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path)
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False,
             stdout="SYMPHONY_SUMMARY: Backup target offline.\nSYMPHONY_RESULT: blocked",
             stderr="ssh: connection refused",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-summary-blocked",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1500,9 +1457,8 @@ async def test_comments_appended_to_agent_prompt(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1529,9 +1485,8 @@ async def test_claim_comments_excluded_from_prompt(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1551,9 +1506,8 @@ async def test_no_comments_no_extra_section(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1577,9 +1531,8 @@ async def test_comments_sorted_oldest_first(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
@@ -1606,9 +1559,8 @@ async def test_long_previous_comments_are_condensed_before_prompt(tmp_path: Path
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
-        lock_path=tmp_path / "lock-condensed-comments",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
@@ -1632,9 +1584,8 @@ async def test_previous_comments_escape_prompt_delimiters(tmp_path: Path) -> Non
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 3, 0, tzinfo=UTC),
@@ -1667,11 +1618,10 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
     result = await run_tick(
         config,
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 10, False, stdout="Debug: token=secret-telegram-token-12345\nAll good"
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1695,9 +1645,8 @@ async def test_plan_mode_does_not_warn_when_worktree_becomes_dirty(tmp_path: Pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="Plan output"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="Plan output"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/plan.md | 5 ++++",
@@ -1724,9 +1673,8 @@ async def test_marker_done_transitions_to_done(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1748,9 +1696,8 @@ async def test_marker_review_transitions_to_in_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1771,9 +1718,8 @@ async def test_marker_blocked_blocks_issue(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1796,9 +1742,8 @@ async def test_marker_last_occurrence_wins(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1817,9 +1762,8 @@ async def test_marker_case_insensitive(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1838,9 +1782,8 @@ async def test_marker_done_with_dirty_repo_auto_commits_and_done(tmp_path: Path)
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/foo.py | 1 +",
@@ -1863,9 +1806,8 @@ async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/foo.py | 1 +",
@@ -1891,9 +1833,8 @@ async def test_auto_commit_failure_completes_with_warning(tmp_path: Path) -> Non
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="ok"),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="ok"),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
         diff_stat=lambda path: "src/foo.py | 1 +",
@@ -1970,9 +1911,8 @@ async def test_marker_unknown_value_falls_through_to_clean_done(tmp_path: Path) 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -1990,9 +1930,8 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=""),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=""),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2017,9 +1956,8 @@ async def test_future_scheduled_ticket_is_held_while_ordinary_dispatches(tmp_pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2042,9 +1980,8 @@ async def test_future_scheduled_ticket_returned_by_poller_is_not_dispatched(tmp_
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("future", labels=(PlaneLabel.SCHEDULED.value,))],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2068,9 +2005,8 @@ async def test_fresh_scheduled_label_blocks_stale_poller_candidate(tmp_path: Pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("future")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2096,9 +2032,8 @@ async def test_due_scheduled_ticket_releases_before_ordinary(tmp_path: Path) -> 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2138,9 +2073,8 @@ async def test_due_scheduled_ticket_does_not_send_release_notification(tmp_path:
         result = await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
             render_prompt=lambda issue: "prompt",
-            lock_path=tmp_path / "lock",
             poller=lambda adapter: [],
             repo_dirty=lambda path: False,
             now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2188,9 +2122,8 @@ async def test_schedule_not_after_change_aborts_release_before_notification(tmp_
         result = await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
             render_prompt=lambda issue: "prompt",
-            lock_path=tmp_path / "lock",
             poller=lambda adapter: [],
             repo_dirty=lambda path: False,
             now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2224,9 +2157,8 @@ async def test_due_scheduled_ticket_carries_schedule_context(tmp_path: Path) -> 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: captured.setdefault("issue", issue) and "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2254,9 +2186,8 @@ async def test_due_scheduled_ticket_order_uses_not_before_then_created_at(tmp_pa
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2293,9 +2224,8 @@ async def test_due_scheduled_ticket_on_second_page_preempts_ordinary(tmp_path: P
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2315,9 +2245,8 @@ async def test_label_only_scheduled_ticket_waits_until_maintenance_window(tmp_pa
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [],
         now=lambda: datetime(2026, 5, 4, 6, 0, tzinfo=UTC),
     )
@@ -2340,9 +2269,8 @@ async def test_label_only_scheduled_ticket_releases_during_maintenance_window(tm
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: captured.setdefault("issue", issue) and "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 9, 0, tzinfo=UTC),
@@ -2372,9 +2300,8 @@ async def test_label_only_scheduled_ticket_after_window_waits_for_next_window(tm
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 14, 0, tzinfo=UTC),
@@ -2397,9 +2324,8 @@ async def test_scheduled_ticket_with_malformed_latest_event_blocks(tmp_path: Pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [],
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
@@ -2424,9 +2350,8 @@ async def test_cancelled_schedule_repairs_stale_scheduled_label(tmp_path: Path) 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [],
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
@@ -2460,7 +2385,6 @@ async def test_agent_created_schedule_returns_without_done_or_auto_commit(tmp_pa
         _adapter(transport),
         agent_runner=agent,
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         diff_stat=lambda path: "dirty",
@@ -2496,7 +2420,6 @@ async def test_stale_preclaim_schedule_is_ignored_after_agent(tmp_path: Path) ->
         _adapter(transport),
         agent_runner=agent,
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2529,7 +2452,6 @@ async def test_agent_created_malformed_schedule_blocks(tmp_path: Path) -> None:
         _adapter(transport),
         agent_runner=agent,
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2563,6 +2485,90 @@ def _init_tmp_repo(repo: Path) -> None:
          "commit", "--allow-empty", "-q", "-m", "seed"],
         cwd=repo, check=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_tick_uses_run_worktree_and_keeps_branch(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import _run_id_from_identifier, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    seen_worktrees: list[Path | None] = []
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        seen_worktrees.append(worktree_path)
+        assert worktree_path is not None
+        assert worktree_path != repo
+        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
+        return AgentResult(0, 10, False)
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    run_id = _run_id_from_identifier("issue-1")
+    branch = worktree_branch(run_id)
+    wt_path = worktree_path(config, run_id)
+    assert result.reason == "agent-clean-done"
+    assert seen_worktrees == [wt_path]
+    assert not wt_path.exists()
+    assert not (repo / "agent-output.txt").exists()
+
+    branches = subprocess.run(
+        ["git", "branch", "--list", branch],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert branch in branches.stdout
+    show = subprocess.run(
+        ["git", "show", f"{branch}:agent-output.txt"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert show.stdout == "done\n"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_removes_worktree_after_timeout(tmp_path: Path) -> None:
+    from run_worktree import _run_id_from_identifier, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    seen_worktrees: list[Path | None] = []
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        seen_worktrees.append(worktree_path)
+        assert worktree_path is not None
+        return AgentResult(-1, 20, True)
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+    )
+
+    wt_path = worktree_path(config, _run_id_from_identifier("issue-1"))
+    assert result.reason == "timeout"
+    assert seen_worktrees == [wt_path]
+    assert not wt_path.exists()
 
 
 def test_auto_commit_creates_commit_under_symphony_identity(tmp_path: Path) -> None:
@@ -2675,11 +2681,10 @@ async def test_run_tick_appends_terminal_timeline_block(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 1234, False, stdout="SYMPHONY_SUMMARY: ok"
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-timeline",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2706,12 +2711,11 @@ async def test_run_tick_timeline_on_blocked_marker(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt: AgentResult(
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
             0, 500, False,
             stdout="SYMPHONY_SUMMARY: nope\nSYMPHONY_RESULT: blocked",
         ),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-timeline-blocked",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2744,9 +2748,8 @@ async def test_optional_roles_missing_disable_scheduled_and_approval_paths(tmp_p
     result = await run_tick(
         _config(tmp_path),
         adapter,
-        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
-        lock_path=tmp_path / "lock-optional-roles",
         poller=lambda adapter: [_candidate("issue-1", labels=["approval-required", "scheduled"])],
         repo_dirty=lambda path: False,
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),

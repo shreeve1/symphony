@@ -72,9 +72,18 @@ class SymphonyConfig:
     telegram_chat_id: str | None = None
     plane_frontend_url: str = ""
     plane_dashboard_url: str = ""
+    worktrees_root: Path | None = None
     blocked_reconciler_enabled: bool = True
     blocked_reconciler_apply: bool = False
     blocked_reconciler_interval_ms: int = 1_800_000
+
+    def __post_init__(self) -> None:
+        if self.worktrees_root is None:
+            object.__setattr__(
+                self,
+                "worktrees_root",
+                self.homelab_repo_path.parent / f".{self.homelab_repo_path.name}-symphony-worktrees",
+            )
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
@@ -101,6 +110,11 @@ class SymphonyConfig:
             telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),
             plane_frontend_url=source.get("PLANE_FRONTEND_URL", "").rstrip("/"),
             plane_dashboard_url=source.get("PLANE_DASHBOARD_URL", ""),
+            worktrees_root=(
+                Path(source["SYMPHONY_WORKTREES_ROOT"])
+                if source.get("SYMPHONY_WORKTREES_ROOT")
+                else None
+            ),
             blocked_reconciler_enabled=_truthy(
                 source.get("SYMPHONY_BLOCKED_RECONCILER_ENABLED"),
                 default=True,
