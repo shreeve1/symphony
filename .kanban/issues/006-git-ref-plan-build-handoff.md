@@ -1,7 +1,7 @@
 ---
 id: 006
 title: git-ref plan→build handoff
-status: review
+status: done
 blocked_by: [4]
 updated: 2026-06-04
 actor: ralph
@@ -27,11 +27,11 @@ See `docs/adr/0003-worktree-per-run-with-global-concurrency-cap.md`.
 
 ## Acceptance criteria
 
-- [ ] A plan Run posts a handoff comment carrying its branch ref (not a filesystem path).
-- [ ] A build Run reads that comment and creates its worktree off the plan branch.
-- [ ] `plans/<slug>.md` resolves inside the build worktree and passes `_validate_issue_plan_path`.
-- [ ] `_PLAN_HANDOFF_MARKER` / `_plan_path_from_comments` are reused; only the payload changed.
-- [ ] Plan→build handoff covered end-to-end by a test, suite green.
+- [x] A plan Run posts a handoff comment carrying its branch ref (not a filesystem path).
+- [x] A build Run reads that comment and creates its worktree off the plan branch.
+- [x] `plans/<slug>.md` resolves inside the build worktree and passes `_validate_issue_plan_path`.
+- [x] `_PLAN_HANDOFF_MARKER` / `_plan_path_from_comments` are reused; only the payload changed.
+- [x] Plan→build handoff covered end-to-end by a test, suite green.
 
 ## Verification
 
@@ -40,3 +40,7 @@ See `docs/adr/0003-worktree-per-run-with-global-concurrency-cap.md`.
 ## Blocked by
 
 - Blocked by #4
+
+## Implementation Notes
+
+Changed the plan handoff payload from an absolute plan path to the deterministic run branch ref. Plan runs now commit valid reported plan artifacts into the run branch before posting the handoff, and build runs validate that branch ref, create the build worktree from it, then validate `plans/<slug>.md` inside the build worktree before dispatch. Added an end-to-end plan→build handoff test covering branch payload, retained plan artifact, build worktree resolution, and suite-green behavior.

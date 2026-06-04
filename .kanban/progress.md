@@ -62,3 +62,13 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Reaper matching uses the #004 `run-<id>` naming scheme across tracker identifiers, worktree paths, branches, and tmux session names.
 **Verification:** `uv run pytest` passed (363 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 **Notes for next iteration:** #010 can rely on startup reconciliation preserving semaphore correctness after process restarts.
+
+## #006 git-ref plan→build handoff — 2026-06-04
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS`).
+**What changed:** Plan handoff comments now carry the deterministic run branch ref instead of an absolute filesystem path; build runs validate that ref, create their worktree from it, and validate `plans/<slug>.md` inside the build worktree.
+**Files:** `scheduler.py`, `tests/test_scheduler.py`, `.kanban/issues/006-git-ref-plan-build-handoff.md`
+**Decisions:** Valid reported plan artifacts are auto-committed to the run branch before the plan handoff is posted, so the retained local branch is the artifact store.
+**Conventions established:** Plan→build handoff is git-ref based; `_PLAN_HANDOFF_MARKER` comments should end with a local `symphony/run-<id>` branch ref, not a filesystem path.
+**Verification:** `uv run pytest` passed (364 tests). Critical LSP diagnostics for touched files reported no diagnostics.
+**Notes for next iteration:** Build-mode consumers can assume handoff plan files are validated in the run worktree after branch checkout.
