@@ -621,6 +621,7 @@ async def run_tick(
         run_repo = config.homelab_repo_path
         try:
             if _is_git_repo(config.homelab_repo_path):
+                remove_worktree_if_exists(config, run_id)
                 wt_path = create_worktree(config, run_id)
                 run_repo = wt_path
                 LOGGER.info(
@@ -981,7 +982,7 @@ async def reconcile_stale_running(
             continue
         if now() - claim_time > timedelta(milliseconds=run_timeout_ms):
             issue_name = str(issue.get("name", ""))
-            issue_identifier = str(issue.get("sequence_id", ""))
+            issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
             issue_url, dashboard_url = _build_urls(config, issue_id)
             await _block_issue(
                 adapter, issue_id, "Symphony claim timed out after scheduler restart",
@@ -990,6 +991,8 @@ async def reconcile_stale_running(
                 issue_url=issue_url,
                 dashboard_url=dashboard_url,
             )
+            if config is not None and _is_git_repo(config.homelab_repo_path):
+                remove_worktree_if_exists(config, _run_id_from_identifier(issue_identifier))
 
 
 async def run_loop(

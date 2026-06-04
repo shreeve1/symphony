@@ -251,8 +251,10 @@ class PiAgentAdapter:
 
     config: SymphonyConfig
 
-    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
-        return run_agent(self.config, issue, rendered_prompt)
+    def __call__(
+        self, issue: CandidateIssue, rendered_prompt: str, /, *, worktree_path: Path | None = None
+    ) -> AgentResult:
+        return run_agent(self.config, issue, rendered_prompt, worktree_path=worktree_path)
 
 
 def _terminate_process_group(

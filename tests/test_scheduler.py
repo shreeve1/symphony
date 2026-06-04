@@ -2571,6 +2571,84 @@ async def test_run_tick_removes_worktree_after_timeout(tmp_path: Path) -> None:
     assert not wt_path.exists()
 
 
+@pytest.mark.asyncio
+async def test_run_tick_recovers_existing_orphan_worktree_before_dispatch(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import _run_id_from_identifier, create_worktree, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    run_id = _run_id_from_identifier("issue-1")
+    orphan = create_worktree(config, run_id)
+    assert orphan.exists()
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    seen_worktrees: list[Path | None] = []
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        seen_worktrees.append(worktree_path)
+        if worktree_path is None:
+            raise AssertionError("missing worktree_path")
+        assert worktree_path == worktree_path_expected
+        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
+        return AgentResult(0, 10, False)
+
+    worktree_path_expected = worktree_path(config, run_id)
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+    )
+
+    assert result.reason == "agent-clean-done"
+    assert seen_worktrees == [worktree_path_expected]
+    assert not worktree_path_expected.exists()
+    show = subprocess.run(
+        ["git", "show", f"symphony/run-{run_id}:agent-output.txt"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert show.stdout == "done\n"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_running_removes_orphan_worktree(tmp_path: Path) -> None:
+    from run_worktree import _run_id_from_identifier, create_worktree, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    run_id = _run_id_from_identifier("HOM-1")
+    create_worktree(config, run_id)
+    wt_path = worktree_path(config, run_id)
+    assert wt_path.exists()
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.RUNNING.value),
+        "sequence_id": "HOM-1",
+    }
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+
+    await reconcile_stale_running(
+        _adapter(transport),
+        1000,
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+        config=config,
+    )
+
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    assert not wt_path.exists()
+
+
 def test_auto_commit_creates_commit_under_symphony_identity(tmp_path: Path) -> None:
     import subprocess
     from scheduler import _auto_commit

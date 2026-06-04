@@ -165,18 +165,19 @@ def test_verify_pi_support_wraps_probe_timeout(tmp_path: Path) -> None:
 def test_pi_agent_adapter_delegates_to_pi_runner(monkeypatch, tmp_path: Path) -> None:
     calls = {}
 
-    def fake_run_agent(config, issue, rendered_prompt):
-        calls["args"] = (config, issue, rendered_prompt)
+    def fake_run_agent(config, issue, rendered_prompt, *, worktree_path=None):
+        calls["args"] = (config, issue, rendered_prompt, worktree_path)
         return "agent-result"
 
     monkeypatch.setattr(agent_runner_module, "run_agent", fake_run_agent)
     config = _config(tmp_path)
     issue = _issue()
+    worktree = tmp_path / "worktree"
 
-    result = PiAgentAdapter(config)(issue, "rendered prompt")
+    result = PiAgentAdapter(config)(issue, "rendered prompt", worktree_path=worktree)
 
     assert result == "agent-result"
-    assert calls["args"] == (config, issue, "rendered prompt")
+    assert calls["args"] == (config, issue, "rendered prompt", worktree)
 
 
 def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> None:

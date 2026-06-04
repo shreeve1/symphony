@@ -32,9 +32,11 @@ This file tracks implementation notes across Ralph iterations.
 
 ## #004 Run Worktree lifecycle at cap=1 — 2026-06-04
 
-**Result:** Blocked after mandatory fresh review (`RALPH_REVIEW: FAIL`).
-**What changed:** Initial implementation added per-run worktree helpers, scheduler semaphore cap=1, worktree-based auto-commit plumbing, and tests for worktree cleanup/branch retention.
-**Verification:** Implementer ran `uv run pytest` (351 tests) and critical LSP diagnostics for touched files reported no diagnostics.
-**Blocker:** Reviewer found production `PiAgentAdapter.__call__` does not pass `worktree_path` into `run_agent`, so pi still runs in the shared checkout. Reviewer also found crash/orphan recovery incomplete beyond timeout cleanup.
-**Notes for next iteration:** Fix the adapter worktree propagation first, then add/clarify orphan recovery expectations before rerunning review.
+**Result:** Completed after actionable review fix.
+**What changed:** Added per-run worktree helpers, scheduler semaphore cap=1, worktree-based auto-commit plumbing, and tests for worktree cleanup/branch retention.
+**Fixes:** `PiAgentAdapter.__call__` now forwards `worktree_path` into `run_agent`; scheduler removes deterministic orphan worktrees before redispatch and during stale running reconciliation.
+**Files:** `agent_runner.py`, `scheduler.py`, `tests/test_agent_runner.py`, `tests/test_scheduler.py`, `.kanban/issues/004-run-worktree-lifecycle-cap1.md`
+**Decisions:** Existing orphan worktrees for the same deterministic run id are treated as stale crash residue and force-removed before a new dispatch.
+**Conventions established:** Production agent adapters must preserve the scheduler `worktree_path` keyword so agents run in their isolated branch checkout.
+**Verification:** `uv run pytest` passed (353 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 
