@@ -1,8 +1,10 @@
 ---
 id: 003
 title: Agent Adapter seam (pi one-shot)
-status: pending
+status: in-progress
 blocked_by: []
+updated: 2026-06-04
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-04

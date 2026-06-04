@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_runner import AgentRunnerError, run_agent, verify_pi_support
+import agent_runner as agent_runner_module
+from agent_runner import AgentRunnerError, PiAgentAdapter, run_agent, verify_pi_support
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
 
@@ -159,6 +160,23 @@ def test_verify_pi_support_wraps_probe_timeout(tmp_path: Path) -> None:
 
     with pytest.raises(AgentRunnerError, match="probe timed out"):
         verify_pi_support("pi", "zai", "glm-5.1:high", tmp_path, run_func=fake_run)
+
+
+def test_pi_agent_adapter_delegates_to_pi_runner(monkeypatch, tmp_path: Path) -> None:
+    calls = {}
+
+    def fake_run_agent(config, issue, rendered_prompt):
+        calls["args"] = (config, issue, rendered_prompt)
+        return "agent-result"
+
+    monkeypatch.setattr(agent_runner_module, "run_agent", fake_run_agent)
+    config = _config(tmp_path)
+    issue = _issue()
+
+    result = PiAgentAdapter(config)(issue, "rendered prompt")
+
+    assert result == "agent-result"
+    assert calls["args"] == (config, issue, "rendered prompt")
 
 
 def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> None:

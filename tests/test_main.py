@@ -75,9 +75,13 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
         calls["adapter"] = (transport, workspace_slug, project_id)
         return "adapter"
 
-    def fake_run_agent(config, issue, rendered_prompt):
-        calls["run_agent"] = (config, issue, rendered_prompt)
-        return "agent-result"
+    class FakePiAgentAdapter:
+        def __init__(self, config):
+            calls["agent_adapter_config"] = config
+
+        def __call__(self, issue, rendered_prompt):
+            calls["agent_adapter_call"] = (issue, rendered_prompt)
+            return "agent-result"
 
     def fake_verify_pi_support(pi_bin, provider, model, cwd):
         calls["verify"] = (pi_bin, provider, model, cwd)
@@ -91,7 +95,7 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
     monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)
     monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
     monkeypatch.setattr(main, "build_adapter", fake_build_adapter)
-    monkeypatch.setattr(main, "run_agent", fake_run_agent)
+    monkeypatch.setattr(main, "PiAgentAdapter", FakePiAgentAdapter)
     monkeypatch.setattr(main, "verify_pi_support", fake_verify_pi_support)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
@@ -101,7 +105,8 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
     assert calls["verify"] == ("pi", "zai", "glm-5.1:high", "/home/james/homelab")
     assert calls["transport"] == ("http://plane.local", "token")
     assert calls["adapter"][1:] == ("homelab", "project-uuid")
-    assert calls["run_agent"] == (config, "issue", "prompt")
+    assert calls["agent_adapter_config"] == config
+    assert calls["agent_adapter_call"] == ("issue", "prompt")
     assert calls["agent_result"] == "agent-result"
     assert calls["closed"] is True
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from agent_runner import run_agent, verify_pi_support
+from agent_runner import PiAgentAdapter, verify_pi_support
 from code_version import resolve_code_sha
 from config import SymphonyConfig
 from notifier import TelegramNotifier
@@ -52,8 +52,7 @@ async def async_main() -> None:
         config.homelab_repo_path,
     )
     transport = HttpxPlaneTransport(config.plane_api_url, config.plane_api_key)
-    def configured_agent_runner(issue, rendered_prompt):
-        return run_agent(config, issue, rendered_prompt)
+    agent_adapter = PiAgentAdapter(config)
 
     notifier = TelegramNotifier.from_env()
     if notifier:
@@ -69,7 +68,7 @@ async def async_main() -> None:
                 workspace_slug=config.plane_workspace_slug,
                 project_id=config.plane_project_id,
             ),
-            agent_runner=configured_agent_runner,
+            agent_runner=agent_adapter,
             render_prompt=_render_candidate_prompt,
             notifier=notifier,
         )

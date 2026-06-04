@@ -11,7 +11,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Protocol, cast
 
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
@@ -27,9 +27,23 @@ class AgentRunnerError(RuntimeError):
     """Raised when pi cannot be launched safely."""
 
 
+class CompletedLike(Protocol):
+    @property
+    def stdout(self) -> str: ...
+
+    @property
+    def stderr(self) -> str: ...
+
+    @property
+    def returncode(self) -> int: ...
+
+
 class ProcessLike(Protocol):
-    pid: int
-    returncode: int | None
+    @property
+    def pid(self) -> int: ...
+
+    @property
+    def returncode(self) -> int | None: ...
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]: ...
 
@@ -43,12 +57,18 @@ class AgentResult:
     stderr: str = ""
 
 
+class AgentAdapter(Protocol):
+    """Common dispatch contract for agent implementations."""
+
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult: ...
+
+
 def verify_pi_support(
     pi_bin: str,
     provider: str,
     model: str,
     cwd: Path | str,
-    run_func: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    run_func: Callable[..., CompletedLike] = subprocess.run,
 ) -> None:
     """Fail fast if the configured pi binary cannot run print/no-session mode."""
 
@@ -112,7 +132,7 @@ def run_agent(
     rendered_prompt: str,
     *,
     plane_cli_source: Path | None = None,
-    popen_factory: Callable[..., ProcessLike] = subprocess.Popen,
+    popen_factory: Callable[..., ProcessLike] | None = None,
     mkdtemp: Callable[..., str] = tempfile.mkdtemp,
     copy_file: Callable[[Path, Path], object] = shutil.copy2,
     remove_tree: Callable[[str], object] = shutil.rmtree,
@@ -123,6 +143,8 @@ def run_agent(
     """Run pi for a Plane issue with a temporary Plane helper in PATH."""
 
     helper_source = plane_cli_source or Path(__file__).with_name("plane_cli.py")
+    if popen_factory is None:
+        popen_factory = cast(Callable[..., ProcessLike], subprocess.Popen)
     temp_dir = mkdtemp(prefix="symphony-plane-cli-")
     started = clock()
     process: ProcessLike | None = None
@@ -217,6 +239,16 @@ def run_agent(
             return AgentResult(-1, duration_ms, True, stdout, stderr)
     finally:
         remove_tree(temp_dir)
+
+
+@dataclass(frozen=True)
+class PiAgentAdapter:
+    """Pi one-shot subprocess adapter."""
+
+    config: SymphonyConfig
+
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
+        return run_agent(self.config, issue, rendered_prompt)
 
 
 def _terminate_process_group(

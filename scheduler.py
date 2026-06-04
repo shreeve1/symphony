@@ -12,10 +12,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Iterator, Protocol, Sequence
+from typing import Any, AsyncIterator, Callable, Iterator, Sequence
 from zoneinfo import ZoneInfo
 
-from agent_runner import AgentResult
+from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
 from code_version import resolve_code_sha
 from config import SymphonyConfig
@@ -281,10 +281,6 @@ class LockHeld(RuntimeError):
     """Raised when another scheduler owns the workspace lock."""
 
 
-class AgentCallable(Protocol):
-    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult: ...
-
-
 @dataclass(frozen=True)
 class TickResult:
     dispatched: bool
@@ -407,7 +403,7 @@ async def run_tick(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
     *,
-    agent_runner: AgentCallable,
+    agent_runner: AgentAdapter,
     render_prompt: Callable[[CandidateIssue], str],
     lock_path: Path | None = None,
     poller: Callable[[TrackerAdapter], Any] | None = None,
@@ -972,7 +968,7 @@ async def run_loop(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
     *,
-    agent_runner: AgentCallable,
+    agent_runner: AgentAdapter,
     render_prompt: Callable[[CandidateIssue], str],
     notifier: TelegramNotifier | None = None,
 ) -> None:
