@@ -12,7 +12,7 @@ import scheduler
 from agent_runner import AgentResult
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
-from scheduler import reconcile_stale_running, run_tick, _resolve_mode, _extract_labels
+from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels
 from schedule import format_cancellation_comment, format_schedule_comment
 
 from notifier import TelegramNotifier
@@ -2848,3 +2848,147 @@ def test_contract_requires_mode_and_state_roles() -> None:
 
     assert "missing required label role: mode:build" in errors
     assert "missing required state role: state:done" in errors
+
+
+# --- Startup reconcile tests ---
+
+
+@pytest.mark.asyncio
+async def test_reconcile_startup_reaps_stale_running_issue(tmp_path: Path) -> None:
+    from run_worktree import _run_id_from_identifier
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    run_id = _run_id_from_identifier("HOM-1")
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.RUNNING.value),
+        "sequence_id": "HOM-1",
+    }
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+
+    cleaned = await reconcile_startup(
+        config,
+        _adapter(transport),
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+    )
+
+    assert cleaned >= 1
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_startup_skips_live_running_issue(tmp_path: Path) -> None:
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_timeout_ms=90_000)  # generous so 30s claim is "live"
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.RUNNING.value),
+        "sequence_id": "HOM-1",
+    }
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+
+    cleaned = await reconcile_startup(
+        config,
+        _adapter(transport),
+        now=lambda: datetime(2026, 5, 4, 1, 0, 30, tzinfo=UTC),  # 30s elapsed, well within 90s timeout
+    )
+
+    # Nothing reaped: claim is still live.
+    assert cleaned == 0
+    assert transport.issues["issue-1"]["state"] == PlaneState.RUNNING.value
+
+
+@pytest.mark.asyncio
+async def test_reconcile_startup_reaps_orphan_worktree_with_no_running_issue(tmp_path: Path) -> None:
+    from run_worktree import create_worktree, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    # Create an orphan worktree (no Running issue in Plane for this run).
+    orphan_run_id = "deadbeef"
+    orphan = create_worktree(config, orphan_run_id)
+    assert orphan.exists()
+    transport = FakeTransport()
+    # No Running issues at all.
+
+    cleaned = await reconcile_startup(
+        config,
+        _adapter(transport),
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert cleaned >= 1
+    assert not orphan.exists()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_startup_skips_live_worktree(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import create_worktree, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_timeout_ms=90_000)  # generous so 30s claim is "live"
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.RUNNING.value),
+        "sequence_id": "LIVE-1",
+    }
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+    # Create worktree for the live issue.
+    live_run_id = "b76bcdde"
+    live_wt = create_worktree(config, live_run_id)
+    assert live_wt.exists()
+
+    cleaned = await reconcile_startup(
+        config,
+        _adapter(transport),
+        now=lambda: datetime(2026, 5, 4, 1, 0, 30, tzinfo=UTC),
+    )
+
+    assert cleaned == 0
+    assert live_wt.exists()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_startup_sends_notification_for_stale_issue(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(
+        repo,
+        plane_frontend_url="http://plane.test",
+        plane_dashboard_url="http://plane.test/dashboard",
+    )
+    transport = FakeTransport()
+    stale = _issue("issue-1", state=PlaneState.RUNNING.value)
+    stale["name"] = "Stale Task"
+    transport.issues["issue-1"] = stale
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        cleaned = await reconcile_startup(
+            config,
+            _adapter(transport),
+            now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+            notifier=notifier,
+        )
+
+    assert cleaned >= 1
+    mock_send.assert_called_once()
+    message = mock_send.call_args[0][0]
+    assert "Stale Task" in message

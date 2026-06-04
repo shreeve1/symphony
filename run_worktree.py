@@ -52,19 +52,133 @@ def tmux_session_name(run_id: str) -> str:
     return f"symphony-{run_id}"
 
 
-def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def list_worktrees(homelab_repo_path: Path) -> list[tuple[Path, str]]:
+    """List all worktrees for the homelab repo.
+
+    Returns a list of (worktree_path, branch) tuples. The homelab shared checkout
+    itself is excluded so only per-run worktrees are returned.
+    """
     result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=homelab_repo_path,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
-    return result
+    if result.returncode != 0:
+        return []
+
+    worktrees: list[tuple[Path, str]] = []
+    lines = result.stdout.splitlines()
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].strip()
+        if line.startswith("worktree "):
+            wt_path = Path(line[len("worktree "):].strip())
+            branch = ""
+            # Skip the commit hash line if present.
+            idx += 1
+            while idx < len(lines):
+                next_line = lines[idx].strip()
+                if next_line.startswith("worktree "):
+                    break
+                if next_line.startswith("branch "):
+                    branch = next_line[len("branch "):].strip()
+                idx += 1
+            # Exclude the shared checkout itself.
+            if wt_path.resolve() != homelab_repo_path.resolve():
+                worktrees.append((wt_path, branch))
+        else:
+            idx += 1
+    return worktrees
+
+
+def _run_id_from_worktree_path(homelab_repo_path: Path, wt_path: Path) -> str | None:
+    """Derive run_id from a worktree path, or None if it doesn't match the pattern.
+
+    Handles two naming conventions:
+    1. Worktrees inside the homelab repo at ``worktrees/run-<id>``.
+    2. Worktrees at an external worktrees_root at ``<worktrees_root>/run-<id>``.
+    """
+    try:
+        relative = wt_path.resolve().relative_to(homelab_repo_path.resolve())
+    except ValueError:
+        # Not relative to homelab — could be under worktrees_root.
+        # Try to match the tail segment "run-<id>" directly.
+        wt_name = wt_path.name
+        if wt_name.startswith("run-"):
+            return wt_name[len("run-"):]
+        return None
+
+    parts = relative.parts
+    # Pattern 1: <repo>/worktrees/run-<id>
+    if len(parts) >= 2 and parts[0] == "worktrees" and parts[1].startswith("run-"):
+        return parts[1][len("run-"):]
+    return None
+
+
+def _tmux_sessions_for_prefix(prefix: str = "symphony-") -> list[str]:
+    """List tmux session names matching the prefix, filtering out non-existent."""
+
+    result = subprocess.run(
+        ["tmux", "list-sessions", "-F", "#{session_name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):  # 1 = no sessions
+        return []
+    return [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip().startswith(prefix)
+    ]
+
+
+def _tmux_session_alive(session_name: str) -> bool:
+    """Return True if a tmux session has at least one live client/window."""
+
+    result = subprocess.run(
+        ["tmux", "list-panes", "-t", session_name, "-F", "#{session_attached}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # Non-zero exit or no output means no attached client.
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() != "0"
+
+
+def kill_tmux_session(run_id: str) -> None:
+    """Kill the per-run tmux session if it exists and has no attached client."""
+
+    session_name = tmux_session_name(run_id)
+    existing = _tmux_sessions_for_prefix()
+    if session_name not in existing:
+        LOGGER.debug("tmux_session_already_gone run_id=%s session=%s", run_id, session_name)
+        return
+    if _tmux_session_alive(session_name):
+        LOGGER.debug("tmux_session_owned_by_live_process run_id=%s session=%s", run_id, session_name)
+        return
+
+    result = subprocess.run(
+        ["tmux", "kill-session", "-t", session_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        LOGGER.info("tmux_session_killed run_id=%s session=%s", run_id, session_name)
+    else:
+        LOGGER.warning(
+            "tmux_session_kill_failed run_id=%s session=%s error=%s",
+            run_id, session_name, result.stderr.strip(),
+        )
 
 
 def _git_checked(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    """Like _git but raises RuntimeError on non-zero exit."""
+    """Like subprocess.run with check=True, but captures output and returns it."""
 
     result = subprocess.run(
         ["git", *args],
@@ -103,12 +217,6 @@ def create_worktree(
     wt_path = worktree_path(config, run_id)
     branch = worktree_branch(run_id)
     base_ref = base_branch or DEFAULT_BASE_BRANCH
-
-    # Check if worktree already exists (crash-recovery scenario).
-    try:
-        _git("worktree", "list", "--porcelain", cwd=config.homelab_repo_path)
-    except subprocess.CalledProcessError:
-        pass  # listed below
 
     list_result = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
@@ -159,7 +267,6 @@ def remove_worktree(config: SymphonyConfig, run_id: str) -> None:
     """
 
     wt_path = worktree_path(config, run_id)
-    branch = worktree_branch(run_id)
 
     # Check worktree exists.
     list_result = subprocess.run(
@@ -191,7 +298,7 @@ def remove_worktree(config: SymphonyConfig, run_id: str) -> None:
             pass
         raise WorktreeError(f"git worktree remove failed: {exc}") from exc
 
-    LOGGER.info("worktree_removed run_id=%s path=%s branch=%s", run_id, wt_path, branch)
+    LOGGER.info("worktree_removed run_id=%s path=%s", run_id, wt_path)
 
 
 def remove_worktree_if_exists(config: SymphonyConfig, run_id: str) -> None:

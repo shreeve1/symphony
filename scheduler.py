@@ -24,8 +24,13 @@ from notifier import (
 )
 from run_worktree import (
     create_worktree,
+    kill_tmux_session,
+    list_worktrees,
+    remove_worktree,
     remove_worktree_if_exists,
     _run_id_from_identifier,
+    _run_id_from_worktree_path,
+    worktree_path,
 )
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
@@ -993,6 +998,113 @@ async def reconcile_stale_running(
             )
             if config is not None and _is_git_repo(config.homelab_repo_path):
                 remove_worktree_if_exists(config, _run_id_from_identifier(issue_identifier))
+
+
+async def reconcile_startup(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    notifier: TelegramNotifier | None = None,
+) -> int:
+    """Reconcile startup state: clean orphaned worktrees, stale tmux sessions,
+    and Plane issues stuck in Running.
+
+    Returns the number of items cleaned up. Runs before the main tick loop so
+    the scheduler starts clean after a restart.
+    """
+    cleaned = 0
+    if not _is_git_repo(config.homelab_repo_path):
+        LOGGER.debug("reconcile_startup_skipped not_a_git_repo")
+        return cleaned
+
+    # Build the set of run_ids that have a live Plane issue in Running state
+    # with a non-stale claim comment. Only these are considered "live".
+    live_run_ids: set[str] = set()
+    stale_running_issues: list[dict[str, Any]] = []
+    for issue in await adapter.list_issues_by_state(
+        TrackerRole.STATE_RUNNING,
+        per_page=SCHEDULED_RELEASE_PAGE_SIZE,
+        max_pages=SCHEDULED_RELEASE_MAX_PAGES_PER_TICK,
+    ):
+        issue_id = str(issue["id"])
+        identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        run_id = _run_id_from_identifier(identifier)
+        claim_time = await _claimed_at(adapter, issue_id)
+        if claim_time is not None and (now() - claim_time) <= timedelta(milliseconds=config.run_timeout_ms):
+            live_run_ids.add(run_id)
+        else:
+            stale_running_issues.append({
+                "id": issue_id,
+                "identifier": identifier,
+                "name": issue.get("name", ""),
+                "run_id": run_id,
+                "claim_time": claim_time,
+            })
+
+    # Reap stale Running issues first (transition to Blocked, then clean worktree).
+    for issue in stale_running_issues:
+        issue_url, dashboard_url = _build_urls(config, issue["id"])
+        if issue["claim_time"] is None:
+            message = "Symphony claim missing after scheduler restart"
+        else:
+            elapsed_ms = int((now() - issue["claim_time"]).total_seconds() * 1000)
+            message = (
+                f"Symphony claim timed out after scheduler restart "
+                f"(claimed {elapsed_ms}ms ago, timeout={config.run_timeout_ms}ms)"
+            )
+        await _block_issue(
+            adapter,
+            issue["id"],
+            message,
+            issue_name=str(issue["name"]),
+            issue_identifier=issue["identifier"],
+            notifier=notifier,
+            issue_url=issue_url,
+            dashboard_url=dashboard_url,
+        )
+        remove_worktree_if_exists(config, issue["run_id"])
+        kill_tmux_session(issue["run_id"])
+        cleaned += 1
+        LOGGER.info(
+            "reconcile_startup_reaped_issue issue_id=%s run_id=%s",
+            issue["id"], issue["run_id"],
+        )
+
+    # Reap orphaned worktrees: worktrees whose run_id has no live Plane issue.
+    for wt_path, branch in list_worktrees(config.homelab_repo_path):
+        run_id = _run_id_from_worktree_path(config.homelab_repo_path, wt_path)
+        if run_id is None:
+            continue
+        if run_id in live_run_ids:
+            continue
+        # Not live: this worktree is an orphan. Remove it.
+        try:
+            remove_worktree(config, run_id)
+            LOGGER.info(
+                "reconcile_startup_reaped_worktree run_id=%s path=%s branch=%s",
+                run_id, wt_path, branch,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "reconcile_startup_worktree_remove_failed run_id=%s path=%s error=%s",
+                run_id, wt_path, exc,
+            )
+        kill_tmux_session(run_id)
+        cleaned += 1
+
+    # Reap orphaned tmux sessions: sessions whose run_id has no live Plane issue
+    # and no worktree. Sessions that still have a worktree are handled above.
+    # Also skip sessions with live attached clients (handled by kill_tmux_session).
+    for worktree_wt_path, _ in list_worktrees(config.homelab_repo_path):
+        existing_run_id = _run_id_from_worktree_path(config.homelab_repo_path, worktree_wt_path)
+        if existing_run_id is not None:
+            live_run_ids.discard(existing_run_id)
+    for run_id in live_run_ids:
+        kill_tmux_session(run_id)
+
+    LOGGER.info("reconcile_startup_completed cleaned=%d", cleaned)
+    return cleaned
 
 
 async def run_loop(

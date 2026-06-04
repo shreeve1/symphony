@@ -1,7 +1,9 @@
 ---
 id: 005
 title: Startup reconcile + reaper
-status: pending
+status: in-progress
+updated: 2026-06-04
+actor: ralph
 blocked_by: [4]
 parent: null
 priority: 0

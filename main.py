@@ -10,7 +10,7 @@ from code_version import resolve_code_sha
 from config import SymphonyConfig
 from notifier import TelegramNotifier
 from plane_adapter import HttpxPlaneTransport, build_adapter
-from scheduler import _resolve_mode, run_loop
+from scheduler import _resolve_mode, reconcile_startup, run_loop
 
 from prompt_renderer import IssueData, render_prompt
 
@@ -52,6 +52,11 @@ async def async_main() -> None:
         config.homelab_repo_path,
     )
     transport = HttpxPlaneTransport(config.plane_api_url, config.plane_api_key)
+    adapter = build_adapter(
+        transport,
+        workspace_slug=config.plane_workspace_slug,
+        project_id=config.plane_project_id,
+    )
     agent_adapter = PiAgentAdapter(config)
 
     notifier = TelegramNotifier.from_env()
@@ -60,14 +65,14 @@ async def async_main() -> None:
     else:
         logging.getLogger(__name__).info("telegram_notifications_disabled")
 
+    logging.getLogger(__name__).info("reconcile_startup_begin")
+    cleaned = await reconcile_startup(config, adapter, notifier=notifier)
+    logging.getLogger(__name__).info("reconcile_startup_done cleaned=%d", cleaned)
+
     try:
         await run_loop(
             config,
-            build_adapter(
-                transport,
-                workspace_slug=config.plane_workspace_slug,
-                project_id=config.plane_project_id,
-            ),
+            adapter,
             agent_runner=agent_adapter,
             render_prompt=_render_candidate_prompt,
             notifier=notifier,

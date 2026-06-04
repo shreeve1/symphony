@@ -87,6 +87,10 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
         calls["verify"] = (pi_bin, provider, model, cwd)
         assert "transport" not in calls
 
+    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+        calls["reconcile_startup"] = (config, adapter, notifier)
+        return 0
+
     async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
         calls["run_loop"] = (config, adapter, render_prompt)
         calls["notifier"] = notifier
@@ -97,6 +101,7 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
     monkeypatch.setattr(main, "build_adapter", fake_build_adapter)
     monkeypatch.setattr(main, "PiAgentAdapter", FakePiAgentAdapter)
     monkeypatch.setattr(main, "verify_pi_support", fake_verify_pi_support)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     asyncio.run(main.async_main())
@@ -108,7 +113,8 @@ def test_async_main_passes_configured_agent_runner(monkeypatch):
     assert calls["agent_adapter_config"] == config
     assert calls["agent_adapter_call"] == ("issue", "prompt")
     assert calls["agent_result"] == "agent-result"
-    assert calls["closed"] is True
+    assert calls["reconcile_startup"] is not None
+    assert "closed" in calls
 
 
 def test_async_main_verifier_failure_aborts_before_transport(monkeypatch):
