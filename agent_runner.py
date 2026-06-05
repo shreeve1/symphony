@@ -17,7 +17,7 @@ from typing import Callable, Protocol, cast
 
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
-from run_worktree import _run_id_from_identifier, tmux_session_name
+from run_worktree import _run_id_from_identifier, tmux_session_name, tmux_socket_name
 
 
 LOGGER = logging.getLogger(__name__)
@@ -291,7 +291,7 @@ class ClaudeAgentAdapter:
     ) -> AgentResult:
         run_id = _run_id_from_identifier(issue.identifier or issue.id)
         session = tmux_session_name(run_id)
-        socket = f"symphony-run-{run_id}"
+        socket = tmux_socket_name(run_id)
         target = f"{session}:0.0"
         cwd = worktree_path or self.config.homelab_repo_path
         marker = f"SYMPHONY_DONE_{self.nonce_factory()}"

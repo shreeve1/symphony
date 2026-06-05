@@ -52,6 +52,12 @@ def tmux_session_name(run_id: str) -> str:
     return f"symphony-{run_id}"
 
 
+def tmux_socket_name(run_id: str) -> str:
+    """Private tmux socket name for the Run's Claude session."""
+
+    return f"symphony-run-{run_id}"
+
+
 def list_worktrees(homelab_repo_path: Path) -> list[tuple[Path, str]]:
     """List all worktrees for the homelab repo.
 
@@ -117,15 +123,27 @@ def _run_id_from_worktree_path(homelab_repo_path: Path, wt_path: Path) -> str | 
     return None
 
 
-def _tmux_sessions_for_prefix(prefix: str = "symphony-") -> list[str]:
+def _tmux_command(socket_name: str | None, *args: str) -> list[str]:
+    command = ["tmux"]
+    if socket_name:
+        command.extend(["-L", socket_name])
+    command.extend(args)
+    return command
+
+
+def _tmux_sessions_for_prefix(prefix: str = "symphony-", *, socket_name: str | None = None) -> list[str]:
     """List tmux session names matching the prefix, filtering out non-existent."""
 
-    result = subprocess.run(
-        ["tmux", "list-sessions", "-F", "#{session_name}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            _tmux_command(socket_name, "list-sessions", "-F", "#{session_name}"),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        LOGGER.debug("tmux_session_list_unavailable socket=%s error=%s", socket_name or "default", exc)
+        return []
     if result.returncode not in (0, 1):  # 1 = no sessions
         return []
     return [
@@ -135,46 +153,59 @@ def _tmux_sessions_for_prefix(prefix: str = "symphony-") -> list[str]:
     ]
 
 
-def _tmux_session_alive(session_name: str) -> bool:
+def _tmux_session_alive(session_name: str, *, socket_name: str | None = None) -> bool:
     """Return True if a tmux session has at least one live client/window."""
 
-    result = subprocess.run(
-        ["tmux", "list-panes", "-t", session_name, "-F", "#{session_attached}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            _tmux_command(socket_name, "list-panes", "-t", session_name, "-F", "#{session_attached}"),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
     # Non-zero exit or no output means no attached client.
     if result.returncode != 0:
         return False
     return result.stdout.strip() != "0"
 
 
-def kill_tmux_session(run_id: str) -> None:
-    """Kill the per-run tmux session if it exists and has no attached client."""
-
+def _kill_tmux_session_on_socket(run_id: str, *, socket_name: str | None = None) -> None:
     session_name = tmux_session_name(run_id)
-    existing = _tmux_sessions_for_prefix()
+    socket_label = socket_name or "default"
+    existing = _tmux_sessions_for_prefix(socket_name=socket_name)
     if session_name not in existing:
-        LOGGER.debug("tmux_session_already_gone run_id=%s session=%s", run_id, session_name)
+        LOGGER.debug("tmux_session_already_gone run_id=%s session=%s socket=%s", run_id, session_name, socket_label)
         return
-    if _tmux_session_alive(session_name):
-        LOGGER.debug("tmux_session_owned_by_live_process run_id=%s session=%s", run_id, session_name)
+    if _tmux_session_alive(session_name, socket_name=socket_name):
+        LOGGER.debug("tmux_session_owned_by_live_process run_id=%s session=%s socket=%s", run_id, session_name, socket_label)
         return
 
-    result = subprocess.run(
-        ["tmux", "kill-session", "-t", session_name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            _tmux_command(socket_name, "kill-session", "-t", session_name),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        LOGGER.debug("tmux_session_kill_unavailable run_id=%s session=%s socket=%s error=%s", run_id, session_name, socket_label, exc)
+        return
     if result.returncode == 0:
-        LOGGER.info("tmux_session_killed run_id=%s session=%s", run_id, session_name)
+        LOGGER.info("tmux_session_killed run_id=%s session=%s socket=%s", run_id, session_name, socket_label)
     else:
         LOGGER.warning(
-            "tmux_session_kill_failed run_id=%s session=%s error=%s",
-            run_id, session_name, result.stderr.strip(),
+            "tmux_session_kill_failed run_id=%s session=%s socket=%s error=%s",
+            run_id, session_name, socket_label, result.stderr.strip(),
         )
+
+
+def kill_tmux_session(run_id: str) -> None:
+    """Kill the per-run tmux session on default and private Claude sockets."""
+
+    _kill_tmux_session_on_socket(run_id)
+    _kill_tmux_session_on_socket(run_id, socket_name=tmux_socket_name(run_id))
 
 
 def _git_checked(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:

@@ -92,10 +92,11 @@ This file tracks implementation notes across Ralph iterations.
 
 ## #010 Concurrent dispatcher at cap=2–3 — 2026-06-05
 
-**Result:** Blocked by mandatory fresh review (`RALPH_REVIEW: FAIL`).
-**What changed before block:** Added configurable `run_cap`, concurrent `run_loop` task management, semaphore initialization, and dispatcher tests.
-**Verification before block:** Implementation worker reported `uv run pytest` passed (383 tests) and critical LSP diagnostics for touched files reported no diagnostics.
-**Blocker:** Review found dispatcher task scheduling can hot-spin, semaphore acquisition is nested so cap=2 can serialize, cancellation/tmux cleanup coverage is incomplete, and tests do not objectively prove overlapping concurrent runs/cap+1 waiting/worktree isolation.
+**Result:** Completed after actionable review fix.
+**What changed:** Removed nested semaphore acquisition from `run_tick`, made `_dispatch_one` the single cap owner, changed `run_loop` to wait on active tasks instead of spinning, and moved synchronous agent execution to `asyncio.to_thread` so Runs can overlap.
+**Fixes:** Cancellation cleanup now releases the semaphore, removes the worktree, and invokes deterministic tmux cleanup; tmux cleanup covers Claude's private socket and tolerates hosts without tmux installed.
+**Files:** `scheduler.py`, `run_worktree.py`, `agent_runner.py`, `tests/test_scheduler.py`, `tests/test_run_worktree.py`, `.kanban/issues/010-concurrent-dispatcher-cap.md`
+**Verification:** `uv run pytest` passed (399 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 
 ## #007 bindings.yml multi-project config actionable review — 2026-06-05
 

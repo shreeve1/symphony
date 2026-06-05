@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3186,6 +3187,312 @@ async def test_dispatch_one_runs_and_returns_tick_result(tmp_path: Path) -> None
 
     assert isinstance(result, sched_mod.TickResult)
     assert result.dispatched is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_enforces_cap_plus_one_waits(tmp_path: Path, monkeypatch) -> None:
+    """At cap=2, the third dispatch must not enter run_tick until a slot frees."""
+    import scheduler as sched_mod
+
+    config = _config(tmp_path, run_cap=2)
+    init_run_semaphore(config)
+    entered = 0
+    max_entered = 0
+    both_entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_run_tick(*args, **kwargs):
+        nonlocal entered, max_entered
+        entered += 1
+        max_entered = max(max_entered, entered)
+        if entered == 2:
+            both_entered.set()
+        await release.wait()
+        entered -= 1
+        return sched_mod.TickResult(True, "done", f"issue-{entered}")
+
+    monkeypatch.setattr(sched_mod, "run_tick", fake_run_tick)
+    tasks = [
+        asyncio.create_task(
+            sched_mod._dispatch_one(
+                config,
+                _adapter(FakeTransport()),
+                lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+                lambda issue: "prompt",
+                None,
+                False,
+            )
+        )
+        for _ in range(3)
+    ]
+
+    await asyncio.wait_for(both_entered.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert max_entered == 2
+    assert entered == 2
+
+    release.set()
+    await asyncio.gather(*tasks)
+    assert max_entered == 2
+    assert sched_mod._RUN_SEMAPHORE._value == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_overlaps_same_repo_runs_in_isolated_worktrees(tmp_path: Path) -> None:
+    """Two cap slots can run the same repo at once without sharing a worktree."""
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_cap=2)
+    init_run_semaphore(config)
+
+    transport = FakeTransport()
+    for idx in range(1, 3):
+        issue_id = f"issue-{idx}"
+        transport.issues[issue_id] = {**_issue(issue_id), "identifier": issue_id}
+    adapter = _adapter(transport)
+
+    entered = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    seen_worktrees: list[Path] = []
+    seen_issue_ids: list[str] = []
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        with lock:
+            seen_issue_ids.append(issue.id)
+            seen_worktrees.append(worktree_path)
+            if len(seen_worktrees) == 2:
+                entered.set()
+        assert worktree_path.exists()
+        (worktree_path / f"{issue.id}.txt").write_text(issue.id, encoding="utf-8")
+        assert release.wait(timeout=2)
+        return AgentResult(0, 50, False)
+
+    tasks = [
+        asyncio.create_task(
+            _dispatch_one(
+                config,
+                adapter,
+                agent,
+                lambda issue: "prompt",
+                None,
+                False,
+            )
+        )
+        for _ in range(2)
+    ]
+
+    await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=2)
+    assert sorted(seen_issue_ids) == ["issue-1", "issue-2"]
+    assert len(seen_worktrees) == 2
+    assert seen_worktrees[0] != seen_worktrees[1]
+    assert all(path.exists() for path in seen_worktrees)
+    assert not (repo / "issue-1.txt").exists()
+    assert not (repo / "issue-2.txt").exists()
+
+    release.set()
+    results = await asyncio.gather(*tasks)
+    assert [result.reason for result in results] == ["agent-clean-done", "agent-clean-done"]
+    assert all(not path.exists() for path in seen_worktrees)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_does_not_duplicate_in_flight_issue(tmp_path: Path) -> None:
+    """Two dispatch tasks sharing one Todo issue must not run it twice."""
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_cap=2)
+    init_run_semaphore(config)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
+    adapter = _adapter(transport)
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        calls.append(issue.id)
+        entered.set()
+        assert release.wait(timeout=2)
+        return AgentResult(0, 50, False)
+
+    tasks = [
+        asyncio.create_task(
+            _dispatch_one(config, adapter, agent, lambda issue: "prompt", None, False)
+        )
+        for _ in range(2)
+    ]
+
+    await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=2)
+    await asyncio.sleep(0)
+    assert calls == ["issue-1"]
+    release.set()
+    results = await asyncio.gather(*tasks)
+    assert sorted(result.reason for result in results) == ["agent-clean-done", "no-candidates"]
+    assert calls == ["issue-1"]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_release_reserved_before_side_effects(tmp_path: Path, monkeypatch) -> None:
+    """Concurrent scheduled dispatches must not both release the same issue."""
+    import scheduler as sched_mod
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_cap=2)
+    init_run_semaphore(config)
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", labels=[scheduled_uuid]),
+        "identifier": "issue-1",
+    }
+    due = datetime(2026, 5, 4, 1, 0, tzinfo=UTC)
+    transport.comments["issue-1"] = [_schedule_comment(due)]
+    adapter = _adapter(transport)
+    release_entered = asyncio.Event()
+    release_continue = asyncio.Event()
+    release_calls = 0
+
+    async def fake_release(release_adapter, issue_id, event):
+        nonlocal release_calls
+        release_calls += 1
+        release_entered.set()
+        await release_continue.wait()
+        await release_adapter.remove_labels(issue_id, [TrackerRole.SCHEDULED])
+        return event
+
+    monkeypatch.setattr(sched_mod, "_release_scheduled_candidate", fake_release)
+
+    tasks = [
+        asyncio.create_task(
+            sched_mod._dispatch_one(
+                config,
+                adapter,
+                lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+                lambda issue: "prompt",
+                None,
+                False,
+            )
+        )
+        for _ in range(2)
+    ]
+
+    await asyncio.wait_for(release_entered.wait(), timeout=2)
+    await asyncio.sleep(0)
+    assert release_calls == 1
+    release_continue.set()
+    results = await asyncio.gather(*tasks)
+    assert sorted(result.reason for result in results) == ["agent-clean-done", "already-in-flight"]
+    assert release_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduled_release_failure_holds_reservation_until_blocked(tmp_path: Path, monkeypatch) -> None:
+    """Failed scheduled release must not expose the same issue before blocking it."""
+    import scheduler as sched_mod
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_cap=2)
+    init_run_semaphore(config)
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", labels=[scheduled_uuid]),
+        "identifier": "issue-1",
+    }
+    due = datetime(2026, 5, 4, 1, 0, tzinfo=UTC)
+    transport.comments["issue-1"] = [_schedule_comment(due)]
+    adapter = _adapter(transport)
+    block_entered = asyncio.Event()
+    block_continue = asyncio.Event()
+    release_calls = 0
+
+    async def fake_release(*args, **kwargs):
+        nonlocal release_calls
+        release_calls += 1
+        raise RuntimeError("release failed")
+
+    async def fake_block(block_adapter, issue_id, message, **kwargs):
+        block_entered.set()
+        await block_continue.wait()
+        await block_adapter.transition_state(issue_id, TrackerRole.STATE_BLOCKED)
+
+    monkeypatch.setattr(sched_mod, "_release_scheduled_candidate", fake_release)
+    monkeypatch.setattr(sched_mod, "_block_issue", fake_block)
+
+    tasks = [
+        asyncio.create_task(
+            sched_mod._dispatch_one(
+                config,
+                adapter,
+                lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+                lambda issue: "prompt",
+                None,
+                False,
+            )
+        )
+        for _ in range(2)
+    ]
+
+    await asyncio.wait_for(block_entered.wait(), timeout=2)
+    await asyncio.sleep(0)
+    assert release_calls == 1
+    block_continue.set()
+    results = await asyncio.gather(*tasks)
+    assert sorted(result.reason for result in results) == ["already-in-flight", "scheduled-release-failed"]
+    assert release_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_cancel_releases_slot_and_cleans_worktree_and_tmux(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Cancellation must release the semaphore and run per-run cleanup."""
+    import scheduler as sched_mod
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_cap=1)
+    init_run_semaphore(config)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
+    entered = threading.Event()
+    release = threading.Event()
+    seen_worktrees: list[Path] = []
+    killed_run_ids: list[str] = []
+    monkeypatch.setattr(sched_mod, "kill_tmux_session", lambda run_id: killed_run_ids.append(run_id))
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        seen_worktrees.append(worktree_path)
+        entered.set()
+        release.wait(timeout=2)
+        return AgentResult(0, 50, False)
+
+    task = asyncio.create_task(
+        sched_mod._dispatch_one(
+            config,
+            _adapter(transport),
+            agent,
+            lambda issue: "prompt",
+            None,
+            False,
+        )
+    )
+    await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    assert sched_mod._RUN_SEMAPHORE._value == 1
+    assert seen_worktrees and not seen_worktrees[0].exists()
+    assert killed_run_ids == [run_id]
 
 
 # --- Semaphore cap enforcement tests ---

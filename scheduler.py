@@ -48,19 +48,8 @@ LOGGER = logging.getLogger(__name__)
 # live-run semaphore.
 _RUN_SEMAPHORE: asyncio.Semaphore = None  # type: ignore[assignment]
 _POLL_INTERVAL_S = 0.0  # replaced by init_run_semaphore
-
-
-class _NullAsyncContext:
-    """No-op async context manager for skipping a nested semaphore acquire."""
-
-    async def __aenter__(self) -> None:
-        return None
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
-
-
-_NULL_ASYNC_CONTEXT = _NullAsyncContext()
+_IN_FLIGHT_ISSUE_IDS: set[str] = set()
+_IN_FLIGHT_LOCK: asyncio.Lock | None = None
 CLAIM_PREFIX = "Symphony claimed at "
 # Resolved once at import time. The ``_claimed_at`` parser at line ~1212 splits
 # the body on CLAIM_PREFIX and takes the first whitespace token after it, so
@@ -528,24 +517,32 @@ async def run_tick(
             LOGGER.warning(
                 "blocked_reconcile_failed error=%s", exc, exc_info=True
             )
+    scheduled_reserved = False
     scheduled = await _select_scheduled_candidate(adapter, now=now)
     if scheduled is not None:
         if scheduled.reason == "scheduled-release":
             candidate = scheduled.candidate
+            if not await _reserve_specific_candidate(candidate):
+                return TickResult(False, "already-in-flight", candidate.id)
+            scheduled_reserved = True
             try:
                 released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
             except Exception as exc:
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    f"Scheduled release failed after becoming due: {exc}",
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
+                try:
+                    _iu, _du = _build_urls(config, candidate.id)
+                    await _block_issue(
+                        adapter,
+                        candidate.id,
+                        f"Scheduled release failed after becoming due: {exc}",
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
+                    )
+                finally:
+                    await _release_candidate(candidate.id)
+                    scheduled_reserved = False
                 return TickResult(False, "scheduled-release-failed", candidate.id)
             candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
         elif scheduled.reason == "scheduled-missing":
@@ -591,117 +588,114 @@ async def run_tick(
         return TickResult(False, "plane-unreachable")
 
     approval_policy_enabled = _approval_policy_enabled(config)
-    candidate = candidate or _oldest_candidate(
-        candidates,
-        adapter.contract,
-        approval_policy_enabled=approval_policy_enabled,
-    )
+    if candidate is None:
+        candidate = await _reserve_candidate(
+            candidates,
+            adapter.contract,
+            approval_policy_enabled=approval_policy_enabled,
+        )
+    elif not scheduled_reserved and not await _reserve_specific_candidate(candidate):
+        return TickResult(False, "already-in-flight", candidate.id)
     if candidate is None:
         return TickResult(False, "no-candidates")
-    if approval_policy_enabled and adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
-        return TickResult(False, "approval-required", candidate.id)
 
-    mode = _resolve_mode(candidate.labels, adapter.contract)
+    try:
+        if approval_policy_enabled and adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
+            return TickResult(False, "approval-required", candidate.id)
 
-    fresh = await _fetch_issue(adapter, candidate.id)
-    if not _is_state(fresh, adapter, TrackerRole.STATE_TODO):
-        return TickResult(False, "state-changed", candidate.id)
-    label_ids = adapter.contract.label_ids if adapter.contract else None
-    fresh_labels = _extract_labels(fresh, label_ids=label_ids)
-    if approval_policy_enabled and adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
-        return TickResult(False, "approval-required", candidate.id)
+        mode = _resolve_mode(candidate.labels, adapter.contract)
 
-    if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
-        return TickResult(False, "scheduled-held", candidate.id)
+        fresh = await _fetch_issue(adapter, candidate.id)
+        if not _is_state(fresh, adapter, TrackerRole.STATE_TODO):
+            return TickResult(False, "state-changed", candidate.id)
+        label_ids = adapter.contract.label_ids if adapter.contract else None
+        fresh_labels = _extract_labels(fresh, label_ids=label_ids)
+        if approval_policy_enabled and adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
+            return TickResult(False, "approval-required", candidate.id)
 
-    plan_path: Path | None = None
-    plan_branch_ref: str | None = None
-    if mode == "build":
-        if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
-            try:
-                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
-            except Exception as exc:
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(body=f"Build could not start: failed to remove stale `plan` label: {exc}"),
-                )
-                return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
+        if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
+            return TickResult(False, "scheduled-held", candidate.id)
 
-        comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
-        plan_branch_ref, plan_branch_error = _plan_path_from_comments(
-            config.homelab_repo_path, candidate, comment_bodies
-        )
-        if plan_branch_error:
-            _iu, _du = _build_urls(config, candidate.id)
-            await _block_issue(
-                adapter,
-                candidate.id,
-                f"Build could not start: {plan_branch_error}.",
-                issue_name=candidate.name,
-                issue_identifier=candidate.identifier,
-                notifier=notifier,
-                issue_url=_iu,
-                dashboard_url=_du,
+        plan_path: Path | None = None
+        plan_branch_ref: str | None = None
+        if mode == "build":
+            if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
+                try:
+                    await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
+                except Exception as exc:
+                    await adapter.add_comment(
+                        candidate.id,
+                        CommentPayload(body=f"Build could not start: failed to remove stale `plan` label: {exc}"),
+                    )
+                    return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
+
+            comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
+            plan_branch_ref, plan_branch_error = _plan_path_from_comments(
+                config.homelab_repo_path, candidate, comment_bodies
             )
-            return TickResult(False, "invalid-plan-branch", candidate.id, mode=mode)
-        if plan_branch_ref is None:
-            plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
-        if plan_branch_ref is None and plan_path is None:
-            try:
-                await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
-                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(
-                        body=(
-                            "Build could not start because no readable plan file was found. "
-                            "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
-                        )
-                    ),
-                )
-                await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
-            except Exception as exc:
+            if plan_branch_error:
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
                     candidate.id,
-                    f"Build plan recovery failed after no readable plan was found: {exc}",
+                    f"Build could not start: {plan_branch_error}.",
                     issue_name=candidate.name,
                     issue_identifier=candidate.identifier,
                     notifier=notifier,
                     issue_url=_iu,
                     dashboard_url=_du,
                 )
-                return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
-            return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
+                return TickResult(False, "invalid-plan-branch", candidate.id, mode=mode)
+            if plan_branch_ref is None:
+                plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
+            if plan_branch_ref is None and plan_path is None:
+                try:
+                    await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
+                    await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
+                    await adapter.add_comment(
+                        candidate.id,
+                        CommentPayload(
+                            body=(
+                                "Build could not start because no readable plan file was found. "
+                                "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
+                            )
+                        ),
+                    )
+                    await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+                except Exception as exc:
+                    _iu, _du = _build_urls(config, candidate.id)
+                    await _block_issue(
+                        adapter,
+                        candidate.id,
+                        f"Build plan recovery failed after no readable plan was found: {exc}",
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
+                    )
+                    return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
+                return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
 
-    try:
-        comments_text = await _fetch_issue_comments(adapter, candidate.id)
-        prompt = render_prompt(candidate)
-        if comments_text:
-            prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
-    except OSError as exc:
-        _iu, _du = _build_urls(config, candidate.id)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            f"Workflow prompt could not be rendered: {exc}",
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return TickResult(False, "workflow-missing", candidate.id, mode=mode)
+        try:
+            comments_text = await _fetch_issue_comments(adapter, candidate.id)
+            prompt = render_prompt(candidate)
+            if comments_text:
+                prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
+        except OSError as exc:
+            _iu, _du = _build_urls(config, candidate.id)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Workflow prompt could not be rendered: {exc}",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(False, "workflow-missing", candidate.id, mode=mode)
 
-    # The semaphore (cap=1) replaces the old fcntl flock: serial behaviour
-    # is preserved, mechanism is the live-run semaphore, not a global scheduler
-    # flock around dispatch. Skip nested acquire: _dispatch_one already holds
-    # the slot, and Python 3.11+ asyncio Semaphore.acquire() deadlocks the
-    # current task when already holding the lock.
-    _outer_locked = _RUN_SEMAPHORE is not None and _RUN_SEMAPHORE.locked()
-
-    async with _RUN_SEMAPHORE if not _outer_locked else _NULL_ASYNC_CONTEXT:
         run_id = _run_id_from_identifier(candidate.identifier)
         wt_path: Path | None = None
         run_repo = config.homelab_repo_path
@@ -756,7 +750,13 @@ async def run_tick(
             secrets = _collect_secrets(config)
 
             try:
-                result = _invoke_agent_runner(candidate=candidate, prompt=prompt, agent_runner=agent_runner, worktree_path=wt_path)
+                result = await asyncio.to_thread(
+                    _invoke_agent_runner,
+                    candidate=candidate,
+                    prompt=prompt,
+                    agent_runner=agent_runner,
+                    worktree_path=wt_path,
+                )
             except Exception as exc:
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
@@ -1077,11 +1077,15 @@ async def run_tick(
             )
             return TickResult(True, reason_code, candidate.id, mode=mode)
         finally:
-            # Guaranteed cleanup: remove worktree on every exit path from the
-            # semaphore block so no orphan is left behind after verdict
-            # reconciliation, crash, or timeout.
+            # Guaranteed cleanup: remove worktree and any detached tmux session
+            # on every exit path so no orphan is left behind after verdict
+            # reconciliation, crash, timeout, or task cancellation.
             if wt_path is not None:
                 remove_worktree_if_exists(config, run_id)
+            kill_tmux_session(run_id)
+
+    finally:
+        await _release_candidate(candidate.id)
 
 
 async def _dispatch_one(
@@ -1098,6 +1102,9 @@ async def _dispatch_one(
     and releases the slot on every exit path. The semaphore slot is held for
     the entire Run duration so the cap correctly blocks new dispatches when full.
     """
+    global _RUN_SEMAPHORE
+    if _RUN_SEMAPHORE is None:
+        _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
     async with _RUN_SEMAPHORE:
         return await run_tick(
             config,
@@ -1256,9 +1263,11 @@ def init_run_semaphore(config: SymphonyConfig) -> None:
     Called once at startup and when the cap changes. Must be called before
     run_loop uses the semaphore.
     """
-    global _RUN_SEMAPHORE, _POLL_INTERVAL_S
+    global _RUN_SEMAPHORE, _POLL_INTERVAL_S, _IN_FLIGHT_ISSUE_IDS, _IN_FLIGHT_LOCK
     _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
     _POLL_INTERVAL_S = config.poll_interval_ms / 1000
+    _IN_FLIGHT_ISSUE_IDS = set()
+    _IN_FLIGHT_LOCK = asyncio.Lock()
 
 
 async def run_loop(
@@ -1311,11 +1320,69 @@ async def run_loop(
             )
             active_tasks.add(task)
 
-        # Brief yield so tasks can start acquiring the semaphore before
-        # we consider sleeping. Without this the loop would spin-lock
-        # waiting for tasks to begin.
-        if not active_tasks:
+        if active_tasks:
+            done_wait, pending = await asyncio.wait(
+                active_tasks,
+                timeout=_POLL_INTERVAL_S,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            all_idle = bool(done_wait)
+            for task in done_wait:
+                result = task.result()
+                all_idle = all_idle and not result.dispatched
+                LOGGER.info(
+                    "dispatch_completed dispatched=%s reason=%s issue_id=%s",
+                    str(result.dispatched).lower(),
+                    result.reason,
+                    result.issue_id or "",
+                )
+            active_tasks = set(pending)
+            if not active_tasks and all_idle:
+                await asyncio.sleep(_POLL_INTERVAL_S)
+        else:
             await asyncio.sleep(_POLL_INTERVAL_S)
+
+
+def _in_flight_lock() -> asyncio.Lock:
+    global _IN_FLIGHT_LOCK
+    if _IN_FLIGHT_LOCK is None:
+        _IN_FLIGHT_LOCK = asyncio.Lock()
+    return _IN_FLIGHT_LOCK
+
+
+async def _reserve_candidate(
+    candidates: Sequence[CandidateIssue],
+    contract: TrackerContract,
+    *,
+    approval_policy_enabled: bool,
+) -> CandidateIssue | None:
+    async with _in_flight_lock():
+        available = [
+            candidate
+            for candidate in candidates
+            if candidate.id not in _IN_FLIGHT_ISSUE_IDS
+        ]
+        selected = _oldest_candidate(
+            available,
+            contract,
+            approval_policy_enabled=approval_policy_enabled,
+        )
+        if selected is not None:
+            _IN_FLIGHT_ISSUE_IDS.add(selected.id)
+        return selected
+
+
+async def _reserve_specific_candidate(candidate: CandidateIssue) -> bool:
+    async with _in_flight_lock():
+        if candidate.id in _IN_FLIGHT_ISSUE_IDS:
+            return False
+        _IN_FLIGHT_ISSUE_IDS.add(candidate.id)
+        return True
+
+
+async def _release_candidate(issue_id: str) -> None:
+    async with _in_flight_lock():
+        _IN_FLIGHT_ISSUE_IDS.discard(issue_id)
 
 
 def _oldest_candidate(
