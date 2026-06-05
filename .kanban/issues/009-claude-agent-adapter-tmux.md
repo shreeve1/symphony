@@ -1,8 +1,10 @@
 ---
 id: 009
 title: claude Agent Adapter (tmux send-keys)
-status: pending
+status: in-progress
 blocked_by: [3]
+updated: 2026-06-05
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-04

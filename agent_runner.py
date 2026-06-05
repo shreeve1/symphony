@@ -4,23 +4,28 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol, cast
 
-from config import SymphonyConfig
+from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
+from run_worktree import _run_id_from_identifier, tmux_session_name
 
 
 LOGGER = logging.getLogger(__name__)
 TERMINATE_GRACE_SECONDS = 5
 PI_HELP_TIMEOUT_SECONDS = 30
 PI_PROBE_TIMEOUT_SECONDS = 30
+TMUX_POLL_INTERVAL_SECONDS = 1
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 class AgentRunnerError(RuntimeError):
@@ -46,6 +51,18 @@ class ProcessLike(Protocol):
     def returncode(self) -> int | None: ...
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]: ...
+
+
+class TmuxRunLike(Protocol):
+    def __call__(
+        self,
+        command: list[str],
+        *,
+        capture_output: bool = True,
+        text: bool = True,
+        check: bool = False,
+        input: str | None = None,
+    ) -> CompletedLike: ...
 
 
 @dataclass(frozen=True)
@@ -255,6 +272,131 @@ class PiAgentAdapter:
         self, issue: CandidateIssue, rendered_prompt: str, /, *, worktree_path: Path | None = None
     ) -> AgentResult:
         return run_agent(self.config, issue, rendered_prompt, worktree_path=worktree_path)
+
+
+@dataclass(frozen=True)
+class ClaudeAgentAdapter:
+    """Claude tmux adapter using a per-run done marker."""
+
+    config: SymphonyConfig
+    claude_bin: str = "claude"
+    tmux_bin: str = "tmux"
+    run_func: TmuxRunLike = cast(TmuxRunLike, subprocess.run)
+    clock: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], object] = time.sleep
+    nonce_factory: Callable[[], str] = lambda: uuid.uuid4().hex
+
+    def __call__(
+        self, issue: CandidateIssue, rendered_prompt: str, /, *, worktree_path: Path | None = None
+    ) -> AgentResult:
+        run_id = _run_id_from_identifier(issue.identifier or issue.id)
+        session = tmux_session_name(run_id)
+        socket = f"symphony-run-{run_id}"
+        target = f"{session}:0.0"
+        cwd = worktree_path or self.config.homelab_repo_path
+        marker = f"SYMPHONY_DONE_{self.nonce_factory()}"
+        prompt = _prompt_with_done_marker(rendered_prompt, marker)
+        started = self.clock()
+        last_pane = ""
+
+        try:
+            new_session = self._tmux(
+                socket,
+                ["new-session", "-d", "-s", session, "-c", str(cwd), self.claude_bin],
+            )
+            if new_session.returncode != 0:
+                return self._result(started, 127, False, stderr=new_session.stderr)
+            loaded = self._tmux(socket, ["load-buffer", "-"], input=prompt)
+            if loaded.returncode != 0:
+                self._kill(socket, session)
+                return self._result(started, 127, False, stderr=loaded.stderr)
+            pasted = self._tmux(socket, ["paste-buffer", "-t", target])
+            if pasted.returncode != 0:
+                self._kill(socket, session)
+                return self._result(started, 127, False, stderr=pasted.stderr)
+            entered = self._tmux(socket, ["send-keys", "-t", target, "Enter"])
+            if entered.returncode != 0:
+                self._kill(socket, session)
+                return self._result(started, 127, False, stderr=entered.stderr)
+
+            timeout_seconds = self.config.run_timeout_ms / 1000
+            while True:
+                pane = self._tmux(socket, ["capture-pane", "-p", "-t", target, "-S", "-"])
+                if pane.returncode != 0:
+                    self._kill(socket, session)
+                    return self._result(started, 127, False, stdout=last_pane, stderr=pane.stderr)
+                last_pane = pane.stdout
+                before_marker = _pane_before_marker(last_pane, marker)
+                if before_marker is not None:
+                    self._kill(socket, session)
+                    return self._result(started, 0, False, stdout=before_marker)
+                if self.clock() - started >= timeout_seconds:
+                    self._kill(socket, session)
+                    stderr = f"Claude adapter timed out before done marker {marker}"
+                    return self._result(started, -1, True, stdout=_strip_ansi(last_pane), stderr=stderr)
+                self.sleep(TMUX_POLL_INTERVAL_SECONDS)
+        except OSError as exc:
+            self._kill(socket, session)
+            return self._result(started, 127, False, stdout=_strip_ansi(last_pane), stderr=str(exc))
+
+    def _tmux(self, socket: str, args: list[str], *, input: str | None = None) -> CompletedLike:
+        return self.run_func(
+            [self.tmux_bin, "-L", socket, *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            input=input,
+        )
+
+    def _kill(self, socket: str, session: str) -> None:
+        self._tmux(socket, ["kill-session", "-t", session])
+
+    def _result(
+        self,
+        started: float,
+        exit_code: int,
+        timed_out: bool,
+        *,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> AgentResult:
+        duration_ms = int((self.clock() - started) * 1000)
+        return AgentResult(exit_code, duration_ms, timed_out, stdout, stderr)
+
+
+@dataclass(frozen=True)
+class RoutingAgentAdapter:
+    """Select pi or claude per binding default and issue override labels."""
+
+    binding: ProjectBinding
+    pi_adapter: AgentAdapter
+    claude_adapter: AgentAdapter
+
+    def __call__(
+        self, issue: CandidateIssue, rendered_prompt: str, /, *, worktree_path: Path | None = None
+    ) -> AgentResult:
+        selected = self.binding.resolve_agent(issue.labels)
+        adapter = self.claude_adapter if selected == "claude" else self.pi_adapter
+        return adapter(issue, rendered_prompt, worktree_path=worktree_path)
+
+
+def _prompt_with_done_marker(rendered_prompt: str, marker: str) -> str:
+    return (
+        f"{rendered_prompt}\n\n"
+        "When all requested work is complete, print this exact done marker on its own line:\n"
+        f"{marker}\n"
+    )
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def _pane_before_marker(pane: str, marker: str) -> str | None:
+    cleaned = _strip_ansi(pane)
+    if marker not in cleaned:
+        return None
+    return cleaned.split(marker, 1)[0].rstrip()
 
 
 def _terminate_process_group(

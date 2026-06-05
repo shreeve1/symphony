@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from agent_runner import PiAgentAdapter, verify_pi_support
+from agent_runner import AgentAdapter, ClaudeAgentAdapter, PiAgentAdapter, RoutingAgentAdapter, verify_pi_support
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
@@ -23,7 +23,7 @@ class BindingRuntime:
     config: SymphonyConfig
     transport: PlaneTransport
     adapter: TrackerAdapter
-    agent_adapter: PiAgentAdapter
+    agent_adapter: AgentAdapter
 
 
 def _render_candidate_prompt(issue, contract: TrackerContract | None = None) -> str:
@@ -46,16 +46,13 @@ def _render_candidate_prompt(issue, contract: TrackerContract | None = None) -> 
 
 def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> BindingRuntime:
     binding_config = config.for_binding(binding)
-    if binding.default_agent != "pi":
-        raise RuntimeError(
-            f"binding {binding.name!r} default_agent={binding.default_agent!r} is not supported until the Claude adapter is installed"
+    if binding.default_agent == "pi":
+        verify_pi_support(
+            binding_config.pi_bin,
+            binding_config.pi_provider,
+            binding_config.pi_model,
+            binding_config.homelab_repo_path,
         )
-    verify_pi_support(
-        binding_config.pi_bin,
-        binding_config.pi_provider,
-        binding_config.pi_model,
-        binding_config.homelab_repo_path,
-    )
     transport = HttpxPlaneTransport(binding_config.plane_api_url, binding_config.plane_api_key)
     adapter = build_adapter(transport, contract=binding.tracker_contract)
     return BindingRuntime(
@@ -63,7 +60,11 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
         config=binding_config,
         transport=transport,
         adapter=adapter,
-        agent_adapter=PiAgentAdapter(binding_config),
+        agent_adapter=RoutingAgentAdapter(
+            binding=binding,
+            pi_adapter=PiAgentAdapter(binding_config),
+            claude_adapter=ClaudeAgentAdapter(binding_config),
+        ),
     )
 
 

@@ -144,7 +144,8 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
     assert closed == ["one", "two"]
 
 
-def test_build_binding_runtime_rejects_unsupported_agent(monkeypatch, tmp_path):
+def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
+    calls = {}
     config = main.SymphonyConfig.from_env(
         {
             "PLANE_API_URL": "http://plane.test",
@@ -167,8 +168,21 @@ def test_build_binding_runtime_rejects_unsupported_agent(monkeypatch, tmp_path):
         landing_policy=binding.landing_policy,
     )
 
-    with pytest.raises(RuntimeError, match="Claude adapter"):
-        main._build_binding_runtime(config, binding)
+    class FakeTransport:
+        def __init__(self, api_url, api_key):
+            calls["transport"] = (api_url, api_key)
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
+    monkeypatch.setattr(main, "verify_pi_support", lambda *args: calls.setdefault("verify", args))
+
+    runtime = main._build_binding_runtime(config, binding)
+
+    assert runtime.name == "default"
+    assert "transport" in calls
+    assert "verify" not in calls
 
 
 def test_build_binding_runtime_verifier_failure_aborts_before_transport(monkeypatch, tmp_path):
