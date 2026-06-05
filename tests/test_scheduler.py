@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,7 @@ import pytest
 
 import scheduler
 from agent_runner import AgentResult
-from config import SymphonyConfig
+from config import ApprovalPolicy, SymphonyConfig
 from plane_poller import CandidateIssue
 from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels, init_run_semaphore, _dispatch_one
 from schedule import format_cancellation_comment, format_schedule_comment
@@ -70,6 +71,12 @@ def _config(tmp_path: Path, **overrides: Any) -> SymphonyConfig:
 
 def _adapter(transport: FakeTransport) -> PlaneAdapter:
     return PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
+
+
+def _config_with_approval_policy(tmp_path: Path, *, enabled: bool) -> SymphonyConfig:
+    config = _config(tmp_path)
+    binding = replace(config.bindings[0], approval_policy=ApprovalPolicy(enabled=enabled))
+    return config.for_binding(binding)
 
 
 def _issue(issue_id: str, *, state: str = PlaneState.TODO.value, labels=()) -> dict[str, Any]:
@@ -520,12 +527,12 @@ async def test_run_tick_dirty_worktree_auto_commits_and_completes(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_run_tick_skips_approval_required_candidates(tmp_path: Path) -> None:
+async def test_run_tick_skips_approval_required_candidates_when_policy_enabled(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])
 
     result = await run_tick(
-        _config(tmp_path),
+        _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(transport),
         agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
@@ -534,6 +541,25 @@ async def test_run_tick_skips_approval_required_candidates(tmp_path: Path) -> No
     )
 
     assert result.reason == "no-candidates"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_dispatches_approval_required_candidates_when_policy_disabled(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])
+    seen: list[str] = []
+
+    result = await run_tick(
+        _config_with_approval_policy(tmp_path, enabled=False),
+        _adapter(transport),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "agent-clean-done"
+    assert seen == ["issue-1"]
 
 
 @pytest.mark.asyncio
@@ -670,7 +696,7 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     approval = FakeTransport()
     approval.issues["issue-2"] = _issue("issue-2", labels=[PlaneLabel.APPROVAL_REQUIRED.value])
     approval_result = await run_tick(
-        _config(tmp_path),
+        _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(approval),
         agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
@@ -730,7 +756,7 @@ async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_pat
     plan_path = _write_plan(tmp_path, "plan-1")
 
     result = await run_tick(
-        _config(tmp_path),
+        _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(transport),
         agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
         render_prompt=lambda issue: "prompt",
@@ -757,7 +783,7 @@ async def test_plan_mode_skips_missing_optional_approval_required_label(tmp_path
     plan_path = _write_plan(tmp_path, "plan-1")
 
     result = await run_tick(
-        _config(tmp_path),
+        _config_with_approval_policy(tmp_path, enabled=True),
         adapter,
         agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
         render_prompt=lambda issue: "prompt",
@@ -769,6 +795,26 @@ async def test_plan_mode_skips_missing_optional_approval_required_label(tmp_path
     assert result.reason == "plan"
     assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     assert transport.issues["plan-1"].get("labels", []) == [PlaneLabel.PLAN.value]
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_policy_disabled_does_not_add_approval_required_label(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
+    plan_path = _write_plan(tmp_path, "plan-1")
+
+    result = await run_tick(
+        _config_with_approval_policy(tmp_path, enabled=False),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "plan"
+    assert DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value] not in transport.issues["plan-1"].get("labels", [])
 
 
 @pytest.mark.asyncio
@@ -1027,13 +1073,13 @@ def test_extract_labels_no_label_ids_passthrough():
 
 
 @pytest.mark.asyncio
-async def test_approval_required_filter_works_with_uuid_labels(tmp_path: Path) -> None:
+async def test_approval_required_filter_works_with_uuid_labels_when_policy_enabled(tmp_path: Path) -> None:
     ar_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value]
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1", labels=[ar_uuid])
 
     result = await run_tick(
-        _config(tmp_path),
+        _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(transport),
         agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",

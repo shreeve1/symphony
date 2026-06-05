@@ -37,7 +37,7 @@ def test_plane_adapter_satisfies_tracker_adapter_contract():
 
 
 @pytest.mark.asyncio
-async def test_returns_only_todo_without_approval_required_label():
+async def test_returns_todo_with_approval_required_label_for_scheduler_policy():
     transport = InMemoryTransport()
     transport.issues = {
         "todo": _issue("todo", state=PlaneState.TODO.value, labels=["media"]),
@@ -50,7 +50,7 @@ async def test_returns_only_todo_without_approval_required_label():
 
     candidates = await fetch_todo_issues(adapter)
 
-    assert [candidate.id for candidate in candidates] == ["todo"]
+    assert [candidate.id for candidate in candidates] == ["todo", "approval"]
 
 
 @pytest.mark.asyncio

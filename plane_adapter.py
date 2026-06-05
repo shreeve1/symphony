@@ -102,6 +102,9 @@ class PlaneTransport(Protocol):
     async def get(self, path: str) -> dict[str, Any]: ...
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]: ...
     async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class ClosablePlaneTransport(PlaneTransport, Protocol):
     async def aclose(self) -> None: ...
 
 
@@ -299,7 +302,7 @@ class PlaneTrackerAdapter:
         return issues
 
     async def list_candidates(self) -> list[CandidateIssue]:
-        """Fetch Todo issues that do not require approval or scheduling."""
+        """Fetch Todo issues that are not held by scheduling."""
 
         candidates: list[CandidateIssue] = []
         cursor: str | None = None
@@ -323,8 +326,6 @@ class PlaneTrackerAdapter:
                 label_ids = self.contract.label_ids if self.contract else None
                 for issue in items:
                     labels = _extract_labels(issue, label_ids=label_ids)
-                    if self.labels_contain_role(labels, TrackerRole.APPROVAL_REQUIRED):
-                        continue
                     if self.labels_contain_role(labels, TrackerRole.SCHEDULED):
                         continue
                     if not _is_state(issue, self, TrackerRole.STATE_TODO):

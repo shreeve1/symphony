@@ -10,7 +10,7 @@ from agent_runner import AgentAdapter, ClaudeAgentAdapter, PiAgentAdapter, Routi
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
-from plane_adapter import HttpxPlaneTransport, PlaneTransport, TrackerAdapter, build_adapter
+from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, TrackerAdapter, build_adapter
 from scheduler import _resolve_mode, init_run_semaphore, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
 
@@ -21,7 +21,7 @@ from prompt_renderer import IssueData, render_prompt
 class BindingRuntime:
     name: str
     config: SymphonyConfig
-    transport: PlaneTransport
+    transport: ClosablePlaneTransport
     adapter: TrackerAdapter
     agent_adapter: AgentAdapter
 

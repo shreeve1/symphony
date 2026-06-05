@@ -351,6 +351,10 @@ def _resolve_mode(
     return "execute"
 
 
+def _approval_policy_enabled(config: SymphonyConfig) -> bool:
+    return bool(config.bindings and config.bindings[0].approval_policy.enabled)
+
+
 def _issue_slug(issue: CandidateIssue) -> str:
     raw = issue.identifier or issue.id
     slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
@@ -586,10 +590,15 @@ async def run_tick(
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
 
-    candidate = candidate or _oldest_candidate(candidates, adapter.contract)
+    approval_policy_enabled = _approval_policy_enabled(config)
+    candidate = candidate or _oldest_candidate(
+        candidates,
+        adapter.contract,
+        approval_policy_enabled=approval_policy_enabled,
+    )
     if candidate is None:
         return TickResult(False, "no-candidates")
-    if adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
+    if approval_policy_enabled and adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
         return TickResult(False, "approval-required", candidate.id)
 
     mode = _resolve_mode(candidate.labels, adapter.contract)
@@ -599,7 +608,7 @@ async def run_tick(
         return TickResult(False, "state-changed", candidate.id)
     label_ids = adapter.contract.label_ids if adapter.contract else None
     fresh_labels = _extract_labels(fresh, label_ids=label_ids)
-    if adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
+    if approval_policy_enabled and adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
         return TickResult(False, "approval-required", candidate.id)
 
     if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
@@ -880,7 +889,7 @@ async def run_tick(
                     candidate.id,
                     CommentPayload(body=body),
                 )
-                if adapter.contract.optional_label_binding(TrackerRole.APPROVAL_REQUIRED) is not None:
+                if approval_policy_enabled and adapter.contract.optional_label_binding(TrackerRole.APPROVAL_REQUIRED) is not None:
                     await adapter.add_labels(
                         candidate.id, [TrackerRole.APPROVAL_REQUIRED]
                     )
@@ -1298,11 +1307,16 @@ async def run_loop(
 def _oldest_candidate(
     candidates: Sequence[CandidateIssue],
     contract: TrackerContract = DEFAULT_CONTRACT,
+    *,
+    approval_policy_enabled: bool = True,
 ) -> CandidateIssue | None:
     eligible = [
         issue
         for issue in candidates
-        if not _labels_contain_role(issue.labels, contract, TrackerRole.APPROVAL_REQUIRED)
+        if (
+            not approval_policy_enabled
+            or not _labels_contain_role(issue.labels, contract, TrackerRole.APPROVAL_REQUIRED)
+        )
         and not _labels_contain_role(issue.labels, contract, TrackerRole.SCHEDULED)
     ]
     if not eligible:
