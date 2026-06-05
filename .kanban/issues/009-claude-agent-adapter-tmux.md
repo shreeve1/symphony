@@ -1,7 +1,7 @@
 ---
 id: 009
 title: claude Agent Adapter (tmux send-keys)
-status: review
+status: done
 blocked_by: [3]
 updated: 2026-06-05
 actor: ralph
@@ -26,12 +26,12 @@ See `docs/adr/0001-claude-via-tmux-send-keys.md`.
 
 ## Acceptance criteria
 
-- [ ] A `ClaudeAgentAdapter` drives the full tmux lifecycle (session create → paste → poll → kill) against a mocked tmux.
-- [ ] The per-run Done Marker nonce is detected to signal completion (no exit code relied on).
-- [ ] `SYMPHONY_RESULT`/`SYMPHONY_SUMMARY` are scraped from the pane; absent/unknown falls through to the side-effect backstop.
-- [ ] A binding/issue selecting claude dispatches via this adapter; pi path unaffected.
-- [ ] tmux session name follows the #004 run-id naming scheme.
-- [ ] Suite green with mocked-tmux coverage.
+- [x] A `ClaudeAgentAdapter` drives the full tmux lifecycle (session create → paste → poll → kill) against a mocked tmux.
+- [x] The per-run Done Marker nonce is detected to signal completion (no exit code relied on).
+- [x] `SYMPHONY_RESULT`/`SYMPHONY_SUMMARY` are scraped from the pane; absent/unknown falls through to the side-effect backstop.
+- [x] A binding/issue selecting claude dispatches via this adapter; pi path unaffected.
+- [x] tmux session name follows the #004 run-id naming scheme.
+- [x] Suite green with mocked-tmux coverage.
 
 ## Verification
 
@@ -40,3 +40,7 @@ See `docs/adr/0001-claude-via-tmux-send-keys.md`.
 ## Blocked by
 
 - Blocked by #3
+
+## Implementation Notes
+
+Added `ClaudeAgentAdapter` using a private per-run tmux socket/session, `load-buffer`/`paste-buffer` prompt delivery, polling for a nonce done marker, pane scraping before the marker, and cleanup via `kill-session`. Added `RoutingAgentAdapter` so `default_agent: claude` and `agent:claude` labels dispatch through the Claude adapter while the pi path remains unchanged. Verified with `uv run pytest`, critical LSP diagnostics for touched files, and mandatory fresh review (`RALPH_REVIEW: PASS_WITH_NOTES`).

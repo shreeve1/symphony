@@ -79,3 +79,13 @@ This file tracks implementation notes across Ralph iterations.
 **What changed before block:** Added `bindings.yml` loading into project bindings, config defaults for approval/landing policy, per-binding tracker contract/repo/base/default_agent fields, multi-binding main loop scaffolding, base-branch worktree creation, and tests.
 **Verification before block:** `uv run pytest` passed (371 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 **Blocker:** Review found `default_agent: claude` is rejected by `main.py`, per-issue `agent:claude` / `agent:pi` override is not wired into dispatch, and approval policy default-off is loaded but not enforced by scheduler gating.
+
+## #009 claude Agent Adapter (tmux send-keys) — 2026-06-05
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS_WITH_NOTES`).
+**What changed:** Added `ClaudeAgentAdapter` with private per-run tmux socket/session lifecycle, nonce done-marker polling, pane scraping before the marker, and cleanup. Added `RoutingAgentAdapter` so binding defaults and `agent:claude` / `agent:pi` issue labels select the correct adapter.
+**Files:** `agent_runner.py`, `main.py`, `tests/test_agent_runner.py`, `tests/test_main.py`, `.kanban/issues/009-claude-agent-adapter-tmux.md`
+**Decisions:** Claude completion is marker-based; stdout returned to the scheduler is pane content before the marker so existing `SYMPHONY_RESULT` / `SYMPHONY_SUMMARY` parsing and side-effect backstops remain scheduler-owned.
+**Conventions established:** Claude tmux sessions use the #004 deterministic run id through `tmux_session_name(run_id)` and private socket `symphony-run-<run_id>`.
+**Verification:** `uv run pytest` passed (374 tests). Critical LSP diagnostics for touched files reported no diagnostics.
+**Notes for next iteration:** Fresh review noted a non-blocking robustness follow-up: `_kill` could suppress `OSError` if tmux itself is unavailable during cleanup.
