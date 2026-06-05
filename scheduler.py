@@ -41,9 +41,26 @@ from prompt_renderer import render_previous_comments_block
 
 
 LOGGER = logging.getLogger(__name__)
-# Global semaphore capping live Runs at 1. Replaces the old per-tick fcntl flock;
-# serial dispatch behaviour is unchanged, mechanism is the semaphore.
-_RUN_SEMAPHORE = asyncio.Semaphore(1)
+# Global semaphore capping live Runs. Created per-config in run_loop via
+# init_run_semaphore() so the cap is driven by config.run_cap, not a
+# hard-coded constant. The cap replaces the old per-tick fcntl flock;
+# serial dispatch behaviour at cap=1 is unchanged, mechanism is the
+# live-run semaphore.
+_RUN_SEMAPHORE: asyncio.Semaphore = None  # type: ignore[assignment]
+_POLL_INTERVAL_S = 0.0  # replaced by init_run_semaphore
+
+
+class _NullAsyncContext:
+    """No-op async context manager for skipping a nested semaphore acquire."""
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+_NULL_ASYNC_CONTEXT = _NullAsyncContext()
 CLAIM_PREFIX = "Symphony claimed at "
 # Resolved once at import time. The ``_claimed_at`` parser at line ~1212 splits
 # the body on CLAIM_PREFIX and takes the first whitespace token after it, so
@@ -488,6 +505,11 @@ async def run_tick(
     diff_stat = _diff_stat if diff_stat is None else diff_stat
     auto_commit = _auto_commit if auto_commit is None else auto_commit
 
+    # Initialize semaphore lazily on first use so unit tests that call run_tick
+    # directly (without going through init_run_semaphore or run_loop) still work.
+    global _RUN_SEMAPHORE
+    if _RUN_SEMAPHORE is None:
+        _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
     # reconcile_stale_running and reconcile_blocked run every tick, outside
     # the semaphore, so they are not blocked by an in-flight Run.
     await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
@@ -646,8 +668,12 @@ async def run_tick(
 
     # The semaphore (cap=1) replaces the old fcntl flock: serial behaviour
     # is preserved, mechanism is the live-run semaphore, not a global scheduler
-    # flock around dispatch.
-    async with _RUN_SEMAPHORE:
+    # flock around dispatch. Skip nested acquire: _dispatch_one already holds
+    # the slot, and Python 3.11+ asyncio Semaphore.acquire() deadlocks the
+    # current task when already holding the lock.
+    _outer_locked = _RUN_SEMAPHORE is not None and _RUN_SEMAPHORE.locked()
+
+    async with _RUN_SEMAPHORE if not _outer_locked else _NULL_ASYNC_CONTEXT:
         run_id = _run_id_from_identifier(candidate.identifier)
         wt_path: Path | None = None
         run_repo = config.homelab_repo_path
@@ -1035,6 +1061,31 @@ async def run_tick(
                 remove_worktree_if_exists(config, run_id)
 
 
+async def _dispatch_one(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    agent_runner: AgentAdapter,
+    render_prompt: Callable[[CandidateIssue], str],
+    notifier: TelegramNotifier | None,
+    run_blocked_reconciler: bool,
+) -> TickResult:
+    """Dispatch a single Run to the semaphore-bounded worktree slot.
+
+    Acquires the semaphore, runs the full tick logic with worktree lifecycle,
+    and releases the slot on every exit path. The semaphore slot is held for
+    the entire Run duration so the cap correctly blocks new dispatches when full.
+    """
+    async with _RUN_SEMAPHORE:
+        return await run_tick(
+            config,
+            adapter,
+            agent_runner=agent_runner,
+            render_prompt=render_prompt,
+            notifier=notifier,
+            run_blocked_reconciler=run_blocked_reconciler,
+        )
+
+
 async def reconcile_stale_running(
     adapter: TrackerAdapter,
     run_timeout_ms: int,
@@ -1176,6 +1227,17 @@ async def reconcile_startup(
     return cleaned
 
 
+def init_run_semaphore(config: SymphonyConfig) -> None:
+    """Create or replace the global live-run semaphore with the configured cap.
+
+    Called once at startup and when the cap changes. Must be called before
+    run_loop uses the semaphore.
+    """
+    global _RUN_SEMAPHORE, _POLL_INTERVAL_S
+    _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
+    _POLL_INTERVAL_S = config.poll_interval_ms / 1000
+
+
 async def run_loop(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -1184,31 +1246,53 @@ async def run_loop(
     render_prompt: Callable[[CandidateIssue], str],
     notifier: TelegramNotifier | None = None,
 ) -> None:
-    """Run the scheduler forever, sleeping between ticks."""
+    """Run the concurrent dispatcher forever, sleeping between dispatches.
 
+    The dispatcher launches up to run_cap Runs concurrently as async tasks.
+    Each task holds its semaphore slot until the Run's worktree cleanup completes
+    (on all exit paths — verdict, crash, timeout).
+    Per-tick single-run serialization is removed; the semaphore cap is the only
+    concurrency governor.
+    """
     next_blocked_reconcile_at = datetime.now(UTC)
+    active_tasks: set[asyncio.Task[TickResult]] = set()
+
     while True:
         now_dt = datetime.now(UTC)
-        run_blocked_reconciler = now_dt >= next_blocked_reconcile_at
-        result = await run_tick(
-            config,
-            adapter,
-            agent_runner=agent_runner,
-            render_prompt=render_prompt,
-            notifier=notifier,
-            run_blocked_reconciler=run_blocked_reconciler,
-        )
-        if run_blocked_reconciler:
+        run_blocked_reconcile = now_dt >= next_blocked_reconcile_at
+
+        # Reap completed tasks and propagate their log lines.
+        done = {t for t in active_tasks if t.done()}
+        for task in done:
+            result = task.result()
+            LOGGER.info(
+                "dispatch_completed dispatched=%s reason=%s issue_id=%s",
+                str(result.dispatched).lower(),
+                result.reason,
+                result.issue_id or "",
+            )
+        active_tasks -= done
+
+        if run_blocked_reconcile:
             next_blocked_reconcile_at = now_dt + timedelta(
                 milliseconds=config.blocked_reconciler_interval_ms
             )
-        LOGGER.info(
-            "tick_completed dispatched=%s reason=%s issue_id=%s",
-            str(result.dispatched).lower(),
-            result.reason,
-            result.issue_id or "",
-        )
-        await asyncio.sleep(config.poll_interval_ms / 1000)
+
+        # Dispatch up to (run_cap - active) new runs. Each task acquires the
+        # semaphore and holds it through worktree cleanup so the cap is enforced
+        # regardless of how the Run exits.
+        slots_available = config.run_cap - len(active_tasks)
+        for _ in range(slots_available):
+            task = asyncio.create_task(
+                _dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconcile)
+            )
+            active_tasks.add(task)
+
+        # Brief yield so tasks can start acquiring the semaphore before
+        # we consider sleeping. Without this the loop would spin-lock
+        # waiting for tasks to begin.
+        if not active_tasks:
+            await asyncio.sleep(_POLL_INTERVAL_S)
 
 
 def _oldest_candidate(

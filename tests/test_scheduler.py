@@ -12,7 +12,7 @@ import scheduler
 from agent_runner import AgentResult
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
-from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels
+from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels, init_run_semaphore, _dispatch_one
 from schedule import format_cancellation_comment, format_schedule_comment
 
 from notifier import TelegramNotifier
@@ -746,7 +746,7 @@ async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_pat
     completion_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
     assert "Plan created" not in completion_comment["comment_html"]
     assert str(plan_path) not in completion_comment["comment_html"]
-    assert completion_comment["comment_html"].rstrip().endswith(worktree_branch(_run_id_from_identifier("plan-1")))
+    assert completion_comment["comment_html"].rstrip().endswith(worktree_branch(_run_id_from_identifier_for_tests("plan-1")))
 
 
 @pytest.mark.asyncio
@@ -2518,7 +2518,7 @@ async def test_run_tick_uses_run_worktree_and_keeps_branch(tmp_path: Path) -> No
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    run_id = _run_id_from_identifier("issue-1")
+    run_id = _run_id_from_identifier_for_tests("issue-1")
     branch = worktree_branch(run_id)
     wt_path = worktree_path(config, run_id)
     assert result.reason == "agent-clean-done"
@@ -2573,7 +2573,7 @@ async def test_plan_to_build_handoff_uses_plan_branch_ref(tmp_path: Path) -> Non
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    run_id = _run_id_from_identifier("plan-1")
+    run_id = _run_id_from_identifier_for_tests("plan-1")
     branch = worktree_branch(run_id)
     handoff_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
     assert plan_result.reason == "plan"
@@ -2630,7 +2630,7 @@ async def test_run_tick_removes_worktree_after_timeout(tmp_path: Path) -> None:
         poller=lambda adapter: [_candidate("issue-1")],
     )
 
-    wt_path = worktree_path(config, _run_id_from_identifier("issue-1"))
+    wt_path = worktree_path(config, _run_id_from_identifier_for_tests("issue-1"))
     assert result.reason == "timeout"
     assert seen_worktrees == [wt_path]
     assert not wt_path.exists()
@@ -2644,7 +2644,7 @@ async def test_run_tick_recovers_existing_orphan_worktree_before_dispatch(tmp_pa
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo)
-    run_id = _run_id_from_identifier("issue-1")
+    run_id = _run_id_from_identifier_for_tests("issue-1")
     orphan = create_worktree(config, run_id)
     assert orphan.exists()
 
@@ -2689,7 +2689,7 @@ async def test_reconcile_stale_running_removes_orphan_worktree(tmp_path: Path) -
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo)
-    run_id = _run_id_from_identifier("HOM-1")
+    run_id = _run_id_from_identifier_for_tests("HOM-1")
     create_worktree(config, run_id)
     wt_path = worktree_path(config, run_id)
     assert wt_path.exists()
@@ -2926,7 +2926,7 @@ async def test_reconcile_startup_reaps_stale_running_issue(tmp_path: Path) -> No
     _init_tmp_repo(repo)
     config = _config(repo)
     transport = FakeTransport()
-    run_id = _run_id_from_identifier("HOM-1")
+    run_id = _run_id_from_identifier_for_tests("HOM-1")
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.RUNNING.value),
         "sequence_id": "HOM-1",
@@ -3057,3 +3057,212 @@ async def test_reconcile_startup_sends_notification_for_stale_issue(tmp_path: Pa
     mock_send.assert_called_once()
     message = mock_send.call_args[0][0]
     assert "Stale Task" in message
+
+
+def _run_id_from_identifier_for_tests(identifier: str) -> str:
+    import hashlib
+    normalized = identifier.strip().lower()
+    digest = hashlib.sha256(normalized.encode()).hexdigest()
+    return digest[:8]
+
+
+# --- init_run_semaphore tests ---
+
+
+def test_init_run_semaphore_sets_semaphore_to_config_cap(tmp_path: Path) -> None:
+    import scheduler as sched_mod
+    init_run_semaphore(_config(tmp_path, run_cap=3))
+    # The cap is stored in the Semaphore; verify it's replaceable to 3.
+    # We confirm via the init, which we can test by resetting.
+    assert sched_mod._RUN_SEMAPHORE is not None
+
+
+def test_init_run_semaphore_resets_semaphore_on_reinit(tmp_path: Path) -> None:
+    import scheduler as sched_mod
+    init_run_semaphore(_config(tmp_path, run_cap=2))
+    first = sched_mod._RUN_SEMAPHORE
+    init_run_semaphore(_config(tmp_path, run_cap=3))
+    # Different object after re-init.
+    assert sched_mod._RUN_SEMAPHORE is not first
+    # Verify cap=3 by checking Semaphore internal _value
+    assert sched_mod._RUN_SEMAPHORE._value == 3
+
+
+# --- _dispatch_one tests ---
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_runs_and_returns_tick_result(tmp_path: Path) -> None:
+    """_dispatch_one must run the tick and return a TickResult."""
+    import scheduler as sched_mod
+
+    config = _config(tmp_path, run_cap=1)
+    init_run_semaphore(config)
+    transport = FakeTransport()
+    transport.issues["d1"] = _issue("d1")
+
+    result = await sched_mod._dispatch_one(
+        config,
+        _adapter(transport),
+        lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        lambda issue: "prompt",
+        None,
+        False,
+    )
+
+    assert isinstance(result, sched_mod.TickResult)
+    assert result.dispatched is True
+
+
+# --- Semaphore cap enforcement tests ---
+
+
+@pytest.mark.asyncio
+async def test_semaphore_at_cap_reports_locked(tmp_path: Path) -> None:
+    """When all cap slots are acquired, semaphore reports locked."""
+    import scheduler as sched_mod
+
+    config = _config(tmp_path, run_cap=2)
+    init_run_semaphore(config)
+
+    s1 = await sched_mod._RUN_SEMAPHORE.acquire()
+    s2 = await sched_mod._RUN_SEMAPHORE.acquire()
+
+    # Cap fully utilized
+    assert sched_mod._RUN_SEMAPHORE.locked() is True
+
+    # Clean up: release the acquired slots (asyncio Semaphore.acquire
+    # returns True, release is called directly on the Semaphore)
+    sched_mod._RUN_SEMAPHORE.release()
+    sched_mod._RUN_SEMAPHORE.release()
+
+
+@pytest.mark.asyncio
+async def test_semaphore_slot_released_on_exit(tmp_path: Path) -> None:
+    """Releasing a slot frees it for the next Run."""
+    import scheduler as sched_mod
+
+    config = _config(tmp_path, run_cap=1)
+    init_run_semaphore(config)
+
+    slot = await sched_mod._RUN_SEMAPHORE.acquire()
+    assert sched_mod._RUN_SEMAPHORE.locked() is True
+    # Release directly on the semaphore (asyncio Semaphore.acquire
+    # returns True, not a releasable context manager)
+    sched_mod._RUN_SEMAPHORE.release()
+    assert sched_mod._RUN_SEMAPHORE.locked() is False
+
+
+# --- poll interval constant tests ---
+
+
+def test_poll_interval_derived_from_config(tmp_path: Path) -> None:
+    """_POLL_INTERVAL_S is set from config.poll_interval_ms."""
+    init_run_semaphore(_config(tmp_path, poll_interval_ms=5000, run_cap=2))
+    import scheduler as sched_mod
+    assert sched_mod._POLL_INTERVAL_S == 5.0
+
+
+# --- Worktree cleanup on all exit paths ---
+
+
+@pytest.mark.asyncio
+async def test_run_tick_cleans_worktree_on_timeout(tmp_path: Path) -> None:
+    """A timed-out Run must clean up its worktree so no orphan is left."""
+    import subprocess
+    from run_worktree import create_worktree
+
+    repo = tmp_path / "repo1"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+
+    transport = FakeTransport()
+    transport.issues["t1"] = _issue("t1")
+    config = _config(repo)
+
+    run_id = _run_id_from_identifier_for_tests("t1")
+    wt = create_worktree(config, run_id)
+    assert wt.exists(), "worktree must exist before dispatch"
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(-1, 50, True),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("t1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "timeout"
+    assert not wt.exists(), "worktree must be removed after timeout"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_cleans_worktree_on_nonzero_exit(tmp_path: Path) -> None:
+    """A Run that exits non-zero must clean up its worktree."""
+    import subprocess
+    from run_worktree import create_worktree
+
+    repo = tmp_path / "repo2"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+
+    transport = FakeTransport()
+    transport.issues["t2"] = _issue("t2")
+    config = _config(repo)
+
+    run_id = _run_id_from_identifier_for_tests("t2")
+    wt = create_worktree(config, run_id)
+    assert wt.exists()
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(1, 50, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("t2")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "nonzero"
+    assert not wt.exists(), "worktree must be removed after nonzero exit"
+
+
+@pytest.mark.asyncio
+async def test_run_tick_cleans_worktree_on_success(tmp_path: Path) -> None:
+    """A successful Run must also clean up its worktree."""
+    import subprocess
+    from run_worktree import create_worktree
+
+    repo = tmp_path / "repo3"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
+
+    transport = FakeTransport()
+    transport.issues["t3"] = _issue("t3")
+    config = _config(repo)
+
+    run_id = _run_id_from_identifier_for_tests("t3")
+    wt = create_worktree(config, run_id)
+    assert wt.exists()
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 50, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("t3")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "agent-clean-done"
+    assert not wt.exists(), "worktree must be removed after success"

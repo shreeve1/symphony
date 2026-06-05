@@ -95,6 +95,10 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
     class FakeConfig:
         bindings = ("one", "two")
         poll_interval_ms = 30000
+        run_cap = 2
+        blocked_reconciler_enabled = True
+        blocked_reconciler_apply = False
+        blocked_reconciler_interval_ms = 1_800_000
 
     class FakeAdapter:
         contract = None
@@ -114,33 +118,49 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
             agent_adapter=cast(Any, f"agent-{binding}"),
         )
 
-    async def fake_reconcile_startup(config, adapter, *, notifier=None):
-        calls.append(("reconcile", config, adapter, notifier))
-        return 0
-
-    async def fake_run_tick(config, adapter, *, agent_runner, render_prompt, notifier=None):
+    async def fake_run_loop(
+        config,
+        adapter,
+        *,
+        agent_runner,
+        render_prompt,
+        notifier=None,
+    ):
+        """Simulate run_loop: one reconcile+tick cycle then raises StopLoop."""
+        calls.append(("reconcile-tick", config, adapter, notifier))
         calls.append(("tick", config, adapter, agent_runner, notifier))
-        return FakeResult()
+        raise StopLoop
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+        calls.append(("reconcile-startup", config, adapter, notifier))
+        return 0
 
     async def fake_sleep(seconds):
         calls.append(("sleep", seconds))
         raise StopLoop
 
     monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "init_run_semaphore", lambda c: None)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
-    monkeypatch.setattr(main, "run_tick", fake_run_tick)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
     monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
 
     with pytest.raises(StopLoop):
         await main.run_bindings_loop(cast(Any, FakeConfig()), notifier=cast(Any, "notifier"))
 
-    assert calls == [
-        ("reconcile", "config-one", "adapter-one", "notifier"),
-        ("reconcile", "config-two", "adapter-two", "notifier"),
-        ("tick", "config-one", "adapter-one", "agent-one", "notifier"),
-        ("tick", "config-two", "adapter-two", "agent-two", "notifier"),
-        ("sleep", 30.0),
-    ]
+    # Structure: startup reconcile for all bindings (sequential), then
+    # concurrent run_loop tasks run in parallel (gather) — order of tick
+    # entries is non-deterministic but all appear before StopLoop exits.
+    reconcile_startups = [(c[0], c[1]) for c in calls if c[0] == "reconcile-startup"]
+    tick_calls = [(c[0], c[1]) for c in calls if c[0] in ("reconcile-tick", "tick")]
+
+    assert reconcile_startups == [
+        ("reconcile-startup", "config-one"),
+        ("reconcile-startup", "config-two"),
+    ], f"Startup reconcile should run sequentially before dispatch: {calls}"
+    assert len(tick_calls) == 4, f"Expected 4 dispatch calls (reconcile+tick per binding): {calls}"
+    assert ("tick", "config-one") in tick_calls
+    assert ("tick", "config-two") in tick_calls
     assert closed == ["one", "two"]
 
 

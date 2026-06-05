@@ -127,6 +127,7 @@ class SymphonyConfig:
     pi_model: str = "glm-5.1:high"
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 1_800_000
+    run_cap: int = 2
     lock_path: Path | None = None
     telegram_bot_token: str | None = field(default=None, repr=False)
     telegram_chat_id: str | None = None
@@ -197,6 +198,7 @@ class SymphonyConfig:
             pi_model=source.get("SYMPHONY_PI_MODEL", "glm-5.1:high"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "1800000")),
+            run_cap=int(source.get("SYMPHONY_RUN_CAP", "2")),
             lock_path=Path(source["SYMPHONY_LOCK_PATH"]) if source.get("SYMPHONY_LOCK_PATH") else None,
             telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),
             telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),
@@ -235,6 +237,7 @@ class SymphonyConfig:
             bindings=(binding,),
             lock_path=binding.repo_path / ".symphony.lock",
             worktrees_root=binding.repo_path.parent / f".{binding.repo_path.name}-symphony-worktrees",
+            run_cap=self.run_cap,
         )
 
     def issue_url(self, issue_id: str) -> str:
@@ -266,6 +269,7 @@ class SymphonyConfig:
             f"pi_model={self.pi_model!r}, "
             f"poll_interval_ms={self.poll_interval_ms!r}, "
             f"run_timeout_ms={self.run_timeout_ms!r}, "
+            f"run_cap={self.run_cap!r}, "
             f"lock_path={self.lock_path!r}, "
             f"telegram_chat_id={telegram_chat_id!r}, "
             f"plane_frontend_url={self.plane_frontend_url!r}, "

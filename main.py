@@ -11,7 +11,7 @@ from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
 from plane_adapter import HttpxPlaneTransport, PlaneTransport, TrackerAdapter, build_adapter
-from scheduler import _resolve_mode, reconcile_startup, run_tick
+from scheduler import _resolve_mode, init_run_semaphore, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
 
 from prompt_renderer import IssueData, render_prompt
@@ -69,7 +69,14 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
 
 
 async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifier | None = None) -> None:
-    """Run one scheduler tick per binding each interval."""
+    """Run the concurrent dispatcher for all bindings.
+
+    Each binding gets its own run_loop with per-binding config (and thus
+    per-binding semaphore cap). Startup reconcile runs for all bindings
+    before the dispatcher loop starts.
+    """
+    # Initialise the global semaphore before any run_loop uses it.
+    init_run_semaphore(config)
 
     runtimes = [_build_binding_runtime(config, binding) for binding in config.bindings]
     try:
@@ -81,23 +88,18 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
                 runtime.name,
                 cleaned,
             )
-        while True:
-            for runtime in runtimes:
-                result = await run_tick(
-                    runtime.config,
-                    runtime.adapter,
-                    agent_runner=runtime.agent_adapter,
-                    render_prompt=lambda issue, contract=runtime.adapter.contract: _render_candidate_prompt(issue, contract),
-                    notifier=notifier,
-                )
-                logging.getLogger(__name__).info(
-                    "tick_completed binding=%s dispatched=%s reason=%s issue_id=%s",
-                    runtime.name,
-                    str(result.dispatched).lower(),
-                    result.reason,
-                    result.issue_id or "",
-                )
-            await asyncio.sleep(config.poll_interval_ms / 1000)
+        # Each binding runs its own concurrent dispatcher loop.
+        tasks = [
+            run_loop(
+                runtime.config,
+                runtime.adapter,
+                agent_runner=runtime.agent_adapter,
+                render_prompt=lambda issue, contract=runtime.adapter.contract: _render_candidate_prompt(issue, contract),
+                notifier=notifier,
+            )
+            for runtime in runtimes
+        ]
+        await asyncio.gather(*tasks)
     finally:
         for runtime in runtimes:
             await runtime.transport.aclose()
