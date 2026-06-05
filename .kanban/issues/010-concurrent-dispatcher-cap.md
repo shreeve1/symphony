@@ -1,7 +1,7 @@
 ---
 id: 010
 title: Concurrent dispatcher at cap=2–3
-status: in-progress
+status: review
 blocked_by: [4, 5]
 updated: 2026-06-05
 actor: ralph
