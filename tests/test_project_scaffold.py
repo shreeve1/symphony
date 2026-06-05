@@ -1,20 +1,21 @@
+import importlib
 from pathlib import Path
 
 import pytest
 
 from config import SymphonyConfig
-from project_scaffold import (
-    PlaneProjectScaffoldTracker,
-    ProjectScaffoldApprovalError,
-    ProjectScaffoldError,
-    ScaffoldProject,
-    ScaffoldProjectRequest,
-    STANDARD_PROJECT_LABELS,
-    STANDARD_PROJECT_STATES,
-    TrackerResource,
-    scaffold_project,
-)
 from tracker_contract import TrackerRole
+
+project_scaffold = importlib.import_module("project_scaffold")
+PlaneProjectScaffoldTracker = project_scaffold.PlaneProjectScaffoldTracker
+ProjectScaffoldApprovalError = project_scaffold.ProjectScaffoldApprovalError
+ProjectScaffoldError = project_scaffold.ProjectScaffoldError
+ScaffoldProject = project_scaffold.ScaffoldProject
+ScaffoldProjectRequest = project_scaffold.ScaffoldProjectRequest
+STANDARD_PROJECT_LABELS = project_scaffold.STANDARD_PROJECT_LABELS
+STANDARD_PROJECT_STATES = project_scaffold.STANDARD_PROJECT_STATES
+TrackerResource = project_scaffold.TrackerResource
+scaffold_project = project_scaffold.scaffold_project
 
 
 class FakeScaffoldTracker:
