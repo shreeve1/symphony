@@ -1,7 +1,7 @@
 ---
 id: 008
 title: WORKFLOW.md mandatory renderer
-status: in-progress
+status: review
 blocked_by: [7]
 parent: null
 priority: 0
