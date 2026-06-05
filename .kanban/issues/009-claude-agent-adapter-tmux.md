@@ -1,7 +1,7 @@
 ---
 id: 009
 title: claude Agent Adapter (tmux send-keys)
-status: in-progress
+status: review
 blocked_by: [3]
 updated: 2026-06-05
 actor: ralph
