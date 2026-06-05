@@ -1,7 +1,7 @@
 ---
 id: 010
 title: Concurrent dispatcher at cap=2–3
-status: review
+status: blocked
 blocked_by: [4, 5]
 updated: 2026-06-05
 actor: ralph
@@ -39,3 +39,12 @@ already uses `pytest-asyncio` (`asyncio_mode = "auto"`).
 
 - Blocked by #4
 - Blocked by #5
+
+## Blocker
+
+Mandatory fresh review failed. Remaining gaps:
+
+- `scheduler.py` dispatcher loop can hot-spin after creating tasks because it only awaits when `active_tasks` is empty, so newly-created tasks may not run as intended.
+- Semaphore acquisition is nested: `_dispatch_one()` acquires a slot, then `run_tick()` can acquire again when cap >1, making cap=2 effectively serial.
+- Timeout/cancel cleanup coverage is incomplete for cancellation/tmux cleanup.
+- New tests do not objectively assert overlapping concurrent runs, cap+1 waiting, or same-repo worktree isolation under overlap.
