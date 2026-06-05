@@ -1,7 +1,7 @@
 ---
 id: 011
 title: Project Scaffold skill (mock-tested; live run gated)
-status: in-progress
+status: review
 blocked_by: [7, 8]
 updated: 2026-06-05
 actor: ralph
