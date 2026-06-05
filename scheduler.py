@@ -675,6 +675,25 @@ async def run_tick(
                 return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
             return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
 
+    try:
+        comments_text = await _fetch_issue_comments(adapter, candidate.id)
+        prompt = render_prompt(candidate)
+        if comments_text:
+            prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
+    except OSError as exc:
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            f"Workflow prompt could not be rendered: {exc}",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(False, "workflow-missing", candidate.id, mode=mode)
+
     # The semaphore (cap=1) replaces the old fcntl flock: serial behaviour
     # is preserved, mechanism is the live-run semaphore, not a global scheduler
     # flock around dispatch. Skip nested acquire: _dispatch_one already holds
@@ -735,11 +754,6 @@ async def run_tick(
             LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
 
             secrets = _collect_secrets(config)
-
-            comments_text = await _fetch_issue_comments(adapter, candidate.id)
-            prompt = render_prompt(candidate)
-            if comments_text:
-                prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
 
             try:
                 result = _invoke_agent_runner(candidate=candidate, prompt=prompt, agent_runner=agent_runner, worktree_path=wt_path)

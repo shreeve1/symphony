@@ -1,20 +1,19 @@
-"""Prompt renderer — reads WORKFLOW.md on every call and renders with issue data.
+"""Prompt renderer for per-repo WORKFLOW.md policy.
 
-Parses YAML front matter, substitutes template variables, and wraps issue
-content in <issue> delimiters. Re-reads from disk on every call for hot-reload.
+The renderer is pure mechanism: read WORKFLOW.md, apply issue-variable
+substitution, escape untrusted issue/comment content, and append scheduler-owned
+context blocks. Repo-specific policy lives entirely in WORKFLOW.md.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 
-_WORKFLOW_DIR = Path(__file__).resolve().parent
-_DEFAULT_WORKFLOW_PATH = _WORKFLOW_DIR / "WORKFLOW.md"
 _PREVIOUS_COMMENTS_MAX_CHARS = 12000
 
 
@@ -50,11 +49,13 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return meta, m.group(2)
 
 
-def load_workflow(path: Path | None = None) -> tuple[WorkflowConfig, str]:
-    p = path or _DEFAULT_WORKFLOW_PATH
-    if not p.exists():
-        raise FileNotFoundError(f"WORKFLOW.md not found: {p}")
-    raw = p.read_text(encoding="utf-8")
+def load_workflow(path: Path) -> tuple[WorkflowConfig, str]:
+    if not path.is_file():
+        raise FileNotFoundError(f"WORKFLOW.md not found or unreadable: {path}")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise OSError(f"WORKFLOW.md not readable: {path}") from exc
     meta, body = _parse_frontmatter(raw)
     cfg = WorkflowConfig(
         poll_interval_ms=int(meta.get("poll_interval_ms", 30000)),
@@ -99,137 +100,6 @@ def _substitute(text: str, issue: IssueData) -> str:
     return _VARIABLE_RE.sub(_repl, text)
 
 
-_DEFAULT_PLAN_DIRECTIVE = (
-    "MODE: PLAN — run the /Development pipeline Plan skill with loop codex 2. "
-    "If skill loading is unavailable, read and follow "
-    "/home/james/.claude/skills/Development/Plan/SKILL.md and "
-    "/home/james/.claude/skills/Development/Plan/Workflows/CreatePlan.md. "
-    "Create only issue-scoped plans/<issue-slug>.md and "
-    "plans/.<issue-slug>.state.yml artifacts; do not implement production changes."
-)
-
-_ROUTINE_UPDATE_PLAN_DIRECTIVE = (
-    "MODE: PLAN — routine infra/docker update planning. Do not invoke the Plan skill "
-    "or any interactive planning workflow. Read the relevant host, service, and runbook "
-    "docs plus the diagnostic context, then create a concise reviewable update plan "
-    "directly at plans/<issue-slug>.md with assumptions, risk checks, exact read-only "
-    "verification commands, proposed update commands for later approval, rollback notes, "
-    "and an approval checklist. Create only issue-scoped plans/<issue-slug>.md and "
-    "plans/.<issue-slug>.state.yml artifacts; do not implement production changes."
-)
-
-_MODE_DIRECTIVES: dict[str, str] = {
-    "plan": _DEFAULT_PLAN_DIRECTIVE,
-    "build": (
-        "MODE: BUILD — run the /Development pipeline Build skill with Codex checks "
-        "at the end of each wave. If skill loading is unavailable, read and follow "
-        "/home/james/.claude/skills/Development/Build/SKILL.md and "
-        "/home/james/.claude/skills/Development/Build/Workflows/ExecutePlan.md. "
-        "Execute only the approved readable plan for this issue."
-    ),
-}
-
-
-_DOMAIN_OVERLAYS: dict[str, str] = {
-    "security": """
-## Domain Instructions: Security
-- Treat credentials, tokens, hashes, private keys, and auth configuration as sensitive.
-- Read relevant security runbooks and affected service documentation before acting.
-- Do not print, copy, summarize, or commit secret values.
-- Do not change authentication, authorization, firewall, credential, or alerting behavior without explicit approval.
-- Prefer evidence from logs, status checks, and configuration reads over assumptions.
-""".strip(),
-    "infra": """
-## Domain Instructions: Infrastructure
-- Identify the affected host, VM, container, cluster role, and dependencies before acting.
-- Read relevant host docs, service docs, and infrastructure runbooks before changing anything.
-- Medium-risk reloads/restarts of one non-excluded application service are allowed under the general autonomy policy.
-- Proxmox and TrueNAS service-impacting work is scheduled-only unless James explicitly approved it in the ticket.
-- Do not reboot, stop, migrate, resize, delete, or change HA, quorum, storage, or network settings without explicit approval.
-- Verify current state with read-only checks before remediation and verify recovery within 2-5 minutes after any allowed change.
-""".strip(),
-    "network": """
-## Domain Instructions: Network
-- Treat DNS, DHCP, VLAN, routing, firewall, and gateway changes as production-impacting.
-- Read relevant networking runbooks, host docs, and affected service docs before acting.
-- Record current values before proposing any change.
-- Do not change firewall, routing, DNS, DHCP, VLAN, or gateway behavior without explicit approval.
-- Verify connectivity from the affected host or service path, not just from one workstation.
-""".strip(),
-    "media": """
-## Domain Instructions: Media
-- Consider the full media chain: download client, indexers, ARR apps, storage mounts, transcoders, and Jellyfin.
-- Read relevant media runbooks and affected service docs before acting.
-- Verify storage mounts and path mappings before blaming an application.
-- Non-Jellyfin service reloads/restarts are allowed under the general autonomy policy when verification is targeted and recovery completes within 2-5 minutes.
-- Jellyfin service-impacting work is scheduled-only unless James explicitly approved it in the ticket.
-- Do not delete media, rewrite libraries, mass-edit root folders, or trigger broad rescans without explicit approval.
-- Prefer targeted health checks, logs, and scoped service recovery over disruptive repairs.
-""".strip(),
-    "storage": """
-## Domain Instructions: Storage
-- Prioritize data safety over speed.
-- Read relevant storage runbooks, TrueNAS docs, host docs, and affected service docs before acting.
-- Identify pools, datasets, shares, mounts, snapshots, and clients involved.
-- Check health and current state before proposing writes.
-- Safe cleanup is limited to documented temp/cache/log paths and must not touch media, datasets, snapshots, shares, backups, or application data.
-- TrueNAS service-impacting work is scheduled-only unless James explicitly approved it in the ticket.
-- Do not delete datasets, snapshots, shares, replication tasks, or change ACL, SMB, pool, or dataset settings without explicit approval and rollback notes.
-""".strip(),
-    "docker": """
-## Domain Instructions: Docker
-- Identify the compose project, service, image, volume mounts, networks, and environment source before acting.
-- Read relevant service docs and automation runbooks before changing containers.
-- `docker compose restart <service>` and `docker compose up -d <service>` are allowed for one non-excluded service under the general autonomy policy.
-- Do not remove volumes, prune resources, change data mounts, or intentionally recreate stateful storage without explicit approval.
-- Prefer config validation, logs, health checks, and dry-run style commands before mutations; verify recovery within 2-5 minutes after allowed changes.
-""".strip(),
-}
-
-_OVERLAY_ORDER = ("security", "infra", "network", "media", "storage", "docker")
-
-
-def _normalize_labels(labels: str | Iterable[str]) -> tuple[str, ...]:
-    if isinstance(labels, str):
-        raw_labels = labels.split(",")
-    else:
-        raw_labels = list(labels)
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for label in raw_labels:
-        value = str(label).strip().lower()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-    return tuple(normalized)
-
-
-def _render_domain_overlays(labels: str | Iterable[str]) -> str:
-    label_set = set(_normalize_labels(labels))
-    overlays = [_DOMAIN_OVERLAYS[label] for label in _OVERLAY_ORDER if label in label_set]
-    return "\n\n".join(overlays)
-
-
-def _is_routine_update_plan(issue: IssueData) -> bool:
-    labels = set(_normalize_labels(issue.labels))
-    if issue.mode != "plan" or "plan" not in labels:
-        return False
-    if not ({"infra", "docker"} & labels):
-        return False
-    searchable = f"{issue.name}\n{issue.description}".lower()
-    return "update" in searchable and any(
-        marker in searchable
-        for marker in (
-            "package",
-            "image",
-            "reboot-required",
-            "registry-digest",
-            "upgradable",
-        )
-    )
-
-
 def render_previous_comments_block(comments_text: str) -> str:
     comments = comments_text.strip()
     if not comments:
@@ -268,22 +138,9 @@ def _render_schedule_context(issue: IssueData) -> str:
     return "\n".join(lines)
 
 
-def render_prompt(
-    issue: IssueData,
-    path: Path | None = None,
-) -> str:
-    cfg, body = load_workflow(path)
+def render_prompt(issue: IssueData, *, path: Path) -> str:
+    _cfg, body = load_workflow(path)
     rendered = _substitute(body, issue)
-
-    directive = _MODE_DIRECTIVES.get(issue.mode, "")
-    if _is_routine_update_plan(issue):
-        directive = _ROUTINE_UPDATE_PLAN_DIRECTIVE
-    if directive:
-        rendered = f"**{directive}**\n\n{rendered}"
-
-    overlays = _render_domain_overlays(issue.labels)
-    if overlays:
-        rendered = f"{rendered}\n\n{overlays}"
 
     schedule_context = _render_schedule_context(issue)
     if schedule_context:

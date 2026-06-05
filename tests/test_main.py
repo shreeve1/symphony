@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -15,11 +16,12 @@ class StopLoop(Exception):
     pass
 
 
-def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
+def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_render(issue_data):
+    def fake_render(issue_data, *, path):
         captured["issue"] = issue_data
+        captured["path"] = path
         return "rendered prompt"
 
     monkeypatch.setattr(main, "render_prompt", fake_render)
@@ -37,7 +39,7 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
         schedule_late="false",
     )
 
-    prompt = main._render_candidate_prompt(issue)
+    prompt = main._render_candidate_prompt(issue, repo_path=tmp_path)
 
     assert prompt == "rendered prompt"
     assert captured["issue"].id == "issue-1"
@@ -45,6 +47,8 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch):
     assert captured["issue"].name == "Check proxy"
     assert captured["issue"].description == "Verify proxy container"
     assert captured["issue"].labels == "media, maintenance"
+    assert captured["issue"].mode == "execute"
+    assert captured["path"] == tmp_path / "WORKFLOW.md"
     assert captured["issue"].schedule_not_before == "2026-05-08T20:00:00+00:00"
     assert captured["issue"].schedule_not_after == "2026-05-08T22:00:00+00:00"
     assert captured["issue"].schedule_reason == "maintenance window"
@@ -109,10 +113,18 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
         def __eq__(self, other):
             return other == f"adapter-{self.name}"
 
+    class FakeRuntimeConfig:
+        def __init__(self, name):
+            self.name = name
+            self.homelab_repo_path = Path(f"/tmp/{name}")
+
+        def __eq__(self, other):
+            return other == f"config-{self.name}"
+
     def fake_build_runtime(config, binding):
         return main.BindingRuntime(
             name=binding,
-            config=cast(Any, f"config-{binding}"),
+            config=cast(Any, FakeRuntimeConfig(binding)),
             transport=cast(Any, FakeTransport(binding)),
             adapter=cast(Any, FakeAdapter(binding)),
             agent_adapter=cast(Any, f"agent-{binding}"),

@@ -563,6 +563,34 @@ async def test_run_tick_dispatches_approval_required_candidates_when_policy_disa
 
 
 @pytest.mark.asyncio
+async def test_run_tick_blocks_missing_workflow_before_agent_dispatch(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    seen: list[str] = []
+    missing = tmp_path / "WORKFLOW.md"
+
+    def missing_workflow(issue: CandidateIssue) -> str:
+        raise FileNotFoundError(f"WORKFLOW.md not found or unreadable: {missing}")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 1, False),
+        render_prompt=missing_workflow,
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.dispatched is False
+    assert result.reason == "workflow-missing"
+    assert seen == []
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert "WORKFLOW.md" in blocked_comment
+    assert str(missing) in blocked_comment
+
+
+@pytest.mark.asyncio
 async def test_reconcile_stale_running_blocks_expired_claim(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)

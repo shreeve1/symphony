@@ -1,11 +1,13 @@
 ---
 id: 008
 title: WORKFLOW.md mandatory renderer
-status: pending
+status: in-progress
 blocked_by: [7]
 parent: null
 priority: 0
 created: 2026-06-04
+updated: 2026-06-05
+actor: ralph
 ---
 
 ## What to build

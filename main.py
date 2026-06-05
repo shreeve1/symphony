@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent_runner import AgentAdapter, ClaudeAgentAdapter, PiAgentAdapter, RoutingAgentAdapter, verify_pi_support
 from code_version import resolve_code_sha
@@ -26,7 +27,12 @@ class BindingRuntime:
     agent_adapter: AgentAdapter
 
 
-def _render_candidate_prompt(issue, contract: TrackerContract | None = None) -> str:
+def _render_candidate_prompt(
+    issue,
+    contract: TrackerContract | None = None,
+    repo_path: Path | None = None,
+) -> str:
+    workflow_path = (repo_path or Path.cwd()) / "WORKFLOW.md"
     return render_prompt(
         IssueData(
             id=issue.id,
@@ -40,7 +46,8 @@ def _render_candidate_prompt(issue, contract: TrackerContract | None = None) -> 
             schedule_reason=getattr(issue, "schedule_reason", ""),
             schedule_source=getattr(issue, "schedule_source", ""),
             schedule_late=getattr(issue, "schedule_late", ""),
-        )
+        ),
+        path=workflow_path,
     )
 
 
@@ -94,7 +101,10 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
                 runtime.config,
                 runtime.adapter,
                 agent_runner=runtime.agent_adapter,
-                render_prompt=lambda issue, contract=runtime.adapter.contract: _render_candidate_prompt(issue, contract),
+                render_prompt=(
+                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path:
+                    _render_candidate_prompt(issue, contract, repo_path)
+                ),
                 notifier=notifier,
             )
             for runtime in runtimes
