@@ -1,7 +1,7 @@
 ---
 id: 011
 title: Project Scaffold skill (mock-tested; live run gated)
-status: review
+status: done
 blocked_by: [7, 8]
 updated: 2026-06-05
 actor: ralph
@@ -31,12 +31,12 @@ See the **Project Scaffold** glossary entry in `CONTEXT.md`.
 
 ## Acceptance criteria
 
-- [ ] Against a mocked tracker, the skill issues a create-project request matching the standard-template shape (states + labels, no domain labels).
-- [ ] Fresh per-project state/label UUIDs are introspected and mapped onto a new binding contract.
-- [ ] A complete, valid entry is appended to `bindings.yml` and re-loads cleanly via #007.
-- [ ] A `WORKFLOW.md` stub is written to the target repo root.
-- [ ] No test performs a live Plane mutation; the live path is explicitly gated behind manual approval.
-- [ ] Suite green.
+- [x] Against a mocked tracker, the skill issues a create-project request matching the standard-template shape (states + labels, no domain labels).
+- [x] Fresh per-project state/label UUIDs are introspected and mapped onto a new binding contract.
+- [x] A complete, valid entry is appended to `bindings.yml` and re-loads cleanly via #007.
+- [x] A `WORKFLOW.md` stub is written to the target repo root.
+- [x] No test performs a live Plane mutation; the live path is explicitly gated behind manual approval.
+- [x] Suite green.
 
 ## Verification
 
@@ -46,3 +46,7 @@ See the **Project Scaffold** glossary entry in `CONTEXT.md`.
 
 - Blocked by #7
 - Blocked by #8
+
+## Implementation Notes
+
+Added `project_scaffold.py` with a standard Plane project template, mockable scaffold tracker protocol, live Plane mutation approval gate, binding append logic, and `WORKFLOW.md` stub writer. Added mocked tests covering create-project shape, UUID introspection into `bindings.yml`, config reload, workflow stub creation, incomplete introspection failure, and live-mutation refusal. Verified with `uv run pytest`, critical LSP diagnostics for touched Python files, and mandatory fresh review (`RALPH_REVIEW: PASS_WITH_NOTES`).

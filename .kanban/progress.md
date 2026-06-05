@@ -116,3 +116,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Binding dispatch must pass the bound repo root to prompt rendering; missing `<repo>/WORKFLOW.md` is a hard pre-dispatch block with a Plane comment naming the file.
 **Verification:** `uv run pytest` passed (388 tests). Critical LSP diagnostics for touched files reported no diagnostics. Fresh review reran `uv run pytest` and compile/import checks with a clean worktree.
 **Notes for next iteration:** #011 can rely on project scaffolding creating a `WORKFLOW.md` stub because dispatch now refuses repos without one.
+
+## #011 Project Scaffold skill — 2026-06-05
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS_WITH_NOTES`).
+**What changed:** Added a project scaffold helper that creates the standard Plane project template through a mockable tracker, introspects state/label UUIDs, appends a valid `bindings.yml` entry, and writes a repo `WORKFLOW.md` stub.
+**Files:** `project_scaffold.py`, `tests/test_project_scaffold.py`, `.kanban/issues/011-project-scaffold-skill.md`
+**Decisions:** Live Plane project creation is blocked unless `approve_live_mutation=True` is passed for that exact scaffold tracker; Ralph coverage stays fully mocked.
+**Conventions established:** Scaffolded projects use states Todo / In Review / Running / Blocked / Done and labels plan / build / approval-required / agent:claude / agent:pi only; agent labels are stored as contract `extra_label_ids` because they are dispatch overrides, not TrackerRole branches.
+**Verification:** `uv run pytest` passed (391 tests). Critical LSP diagnostics for touched Python files reported no diagnostics. Fresh review reran `uv run pytest` and returned `PASS_WITH_NOTES` only because the reviewer session did not have an LSP tool.
