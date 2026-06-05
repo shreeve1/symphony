@@ -1,8 +1,10 @@
 ---
 id: 011
 title: Project Scaffold skill (mock-tested; live run gated)
-status: pending
+status: in-progress
 blocked_by: [7, 8]
+updated: 2026-06-05
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-04
