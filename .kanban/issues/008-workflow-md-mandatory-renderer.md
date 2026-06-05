@@ -1,7 +1,7 @@
 ---
 id: 008
 title: WORKFLOW.md mandatory renderer
-status: review
+status: done
 blocked_by: [7]
 parent: null
 priority: 0
@@ -25,11 +25,11 @@ See the **Workflow** and **Mode** glossary entries in `CONTEXT.md`.
 
 ## Acceptance criteria
 
-- [ ] The renderer composes the prompt from the bound repo's `WORKFLOW.md` plus engine-supplied variables.
-- [ ] Missing/unreadable `WORKFLOW.md` ⇒ no dispatch, issue skipped, and a blocked comment posted naming the file.
-- [ ] The renderer performs no label-based prompt-fragment selection (pure mechanism).
-- [ ] Mode is exposed to the renderer as a variable; engine still owns the side-effect backstop.
-- [ ] Suite green, covering both the happy path and the missing-file refusal.
+- [x] The renderer composes the prompt from the bound repo's `WORKFLOW.md` plus engine-supplied variables.
+- [x] Missing/unreadable `WORKFLOW.md` ⇒ no dispatch, issue skipped, and a blocked comment posted naming the file.
+- [x] The renderer performs no label-based prompt-fragment selection (pure mechanism).
+- [x] Mode is exposed to the renderer as a variable; engine still owns the side-effect backstop.
+- [x] Suite green, covering both the happy path and the missing-file refusal.
 
 ## Verification
 
@@ -38,3 +38,10 @@ See the **Workflow** and **Mode** glossary entries in `CONTEXT.md`.
 ## Blocked by
 
 - Blocked by #7
+
+## Implementation Notes
+
+- `main.py` passes each binding's repo root to the renderer so prompts are built from that repo's `WORKFLOW.md`.
+- `prompt_renderer.py` now only loads `WORKFLOW.md`, substitutes issue variables, escapes issue/comment content, and appends schedule context; legacy mode directives and domain overlays were removed.
+- `scheduler.py` renders before dispatch and blocks the issue with a comment naming `WORKFLOW.md` when the workflow file is missing or unreadable.
+- Added prompt-renderer and scheduler coverage for happy path, missing workflow refusal, mode variables, and absence of label-selected fragments.

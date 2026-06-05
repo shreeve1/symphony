@@ -106,3 +106,13 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Approval-required labels are only a scheduler hold when the binding approval policy is enabled; default-off bindings still dispatch those issues.
 **Verification:** `uv run pytest` passed (385 tests). Critical LSP diagnostics for touched files reported no diagnostics.
 **Notes for next iteration:** #008 can assume multi-binding config and agent routing are complete; #010 remains blocked independently on dispatcher concurrency concerns.
+
+## #008 WORKFLOW.md mandatory renderer — 2026-06-05
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS`).
+**What changed:** Made repo-root `WORKFLOW.md` mandatory for prompt rendering, removed label-selected prompt fragments/mode directives from the renderer, and made the scheduler block before dispatch when the workflow file is missing or unreadable.
+**Files:** `prompt_renderer.py`, `main.py`, `scheduler.py`, `tests/test_prompt_renderer.py`, `tests/test_main.py`, `tests/test_scheduler.py`, `.kanban/issues/008-workflow-md-mandatory-renderer.md`
+**Decisions:** The renderer is now pure mechanism: `WORKFLOW.md` + issue variables + escaped issue/comment/schedule context. Mode remains an engine-owned variable and side-effect backstop input, not a renderer-selected instruction block.
+**Conventions established:** Binding dispatch must pass the bound repo root to prompt rendering; missing `<repo>/WORKFLOW.md` is a hard pre-dispatch block with a Plane comment naming the file.
+**Verification:** `uv run pytest` passed (388 tests). Critical LSP diagnostics for touched files reported no diagnostics. Fresh review reran `uv run pytest` and compile/import checks with a clean worktree.
+**Notes for next iteration:** #011 can rely on project scaffolding creating a `WORKFLOW.md` stub because dispatch now refuses repos without one.
