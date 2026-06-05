@@ -1,7 +1,7 @@
 ---
 id: 007
 title: bindings.yml multi-project config
-status: review
+status: done
 blocked_by: [1, 2]
 updated: 2026-06-05
 actor: ralph
@@ -24,12 +24,12 @@ See the **Project Binding** and **Landing** glossary entries in `CONTEXT.md`.
 
 ## Acceptance criteria
 
-- [ ] `bindings.yml` loads into a list of binding objects at startup.
-- [ ] A binding resolves its contract, repo+base branch, default_agent, approval policy (default off), and landing policy (default local).
-- [ ] Secrets (Plane API key) are read from env, never from the yaml.
-- [ ] A missing required binding field is a clear config error naming the field.
-- [ ] The engine iterates all bindings (homelab is just one entry); single-binding behavior preserved.
-- [ ] Suite green, including a multi-binding load test.
+- [x] `bindings.yml` loads into a list of binding objects at startup.
+- [x] A binding resolves its contract, repo+base branch, default_agent, approval policy (default off), and landing policy (default local).
+- [x] Secrets (Plane API key) are read from env, never from the yaml.
+- [x] A missing required binding field is a clear config error naming the field.
+- [x] The engine iterates all bindings (homelab is just one entry); single-binding behavior preserved.
+- [x] Suite green, including a multi-binding load test.
 
 ## Verification
 
@@ -40,10 +40,8 @@ See the **Project Binding** and **Landing** glossary entries in `CONTEXT.md`.
 - Blocked by #1
 - Blocked by #2
 
-## Blocker
+## Implementation Notes
 
-Mandatory fresh review failed after implementation commit. Remaining gaps:
+Resolved the review blocker by relying on the #009 `RoutingAgentAdapter` for `default_agent: claude` and per-issue `agent:claude` / `agent:pi` overrides, moving approval-required candidate filtering out of the Plane adapter and into scheduler policy checks, and making plan-mode approval-required labels opt-in on the binding approval policy. Added regression coverage for default-off approval dispatch, opt-in approval holds, plan label behavior, and poller approval-label pass-through.
 
-- `default_agent: claude` loads but is rejected by `main.py` instead of being executable or routed through an adapter.
-- Per-issue `agent:claude` / `agent:pi` override exists only as `ProjectBinding.resolve_agent()` and is not wired into dispatch.
-- Approval policy default-off is loaded but not enforced; scheduler still gates on `approval-required` labels independent of binding policy.
+Verification: `uv run pytest` passed (385 tests). Critical LSP diagnostics for `main.py`, `plane_adapter.py`, `scheduler.py`, `tests/test_plane_poller.py`, and `tests/test_scheduler.py` reported no diagnostics. Mandatory fresh review returned `RALPH_REVIEW: PASS_WITH_NOTES`.

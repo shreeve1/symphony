@@ -96,3 +96,13 @@ This file tracks implementation notes across Ralph iterations.
 **What changed before block:** Added configurable `run_cap`, concurrent `run_loop` task management, semaphore initialization, and dispatcher tests.
 **Verification before block:** Implementation worker reported `uv run pytest` passed (383 tests) and critical LSP diagnostics for touched files reported no diagnostics.
 **Blocker:** Review found dispatcher task scheduling can hot-spin, semaphore acquisition is nested so cap=2 can serialize, cancellation/tmux cleanup coverage is incomplete, and tests do not objectively prove overlapping concurrent runs/cap+1 waiting/worktree isolation.
+
+## #007 bindings.yml multi-project config actionable review — 2026-06-05
+
+**Result:** Completed after mandatory fresh review (`RALPH_REVIEW: PASS_WITH_NOTES`).
+**What changed:** Resolved #007 blocker by letting `RoutingAgentAdapter` handle `default_agent: claude` and `agent:*` overrides, moving approval-required filtering from the Plane adapter into scheduler policy checks, and making plan-mode approval-required labels opt-in on binding approval policy.
+**Files:** `main.py`, `plane_adapter.py`, `scheduler.py`, `tests/test_plane_poller.py`, `tests/test_scheduler.py`, `.kanban/issues/007-bindings-yml-multi-project.md`
+**Decisions:** `PlaneTrackerAdapter.list_candidates()` returns approval-required Todo issues; scheduler decides whether to hold them based on the binding approval policy.
+**Conventions established:** Approval-required labels are only a scheduler hold when the binding approval policy is enabled; default-off bindings still dispatch those issues.
+**Verification:** `uv run pytest` passed (385 tests). Critical LSP diagnostics for touched files reported no diagnostics.
+**Notes for next iteration:** #008 can assume multi-binding config and agent routing are complete; #010 remains blocked independently on dispatcher concurrency concerns.
