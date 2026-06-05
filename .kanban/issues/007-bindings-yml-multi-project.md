@@ -1,9 +1,10 @@
 ---
 id: 007
 title: bindings.yml multi-project config
-status: blocked
+status: review
 blocked_by: [1, 2]
-updated: 2026-06-04
+updated: 2026-06-05
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-04
