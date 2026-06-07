@@ -6,6 +6,7 @@ before this module sends a create-project request through a Plane transport.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -62,6 +63,9 @@ schedule context. Keep repo-specific policy here; Symphony only renders it.
 - Replace this stub with project-specific instructions before running agents.
 """
 
+_SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+_SLUG_MAX_LEN = 32
+
 
 class ProjectScaffoldError(RuntimeError):
     """Raised when project scaffolding cannot produce a valid binding."""
@@ -77,6 +81,9 @@ class ScaffoldProjectRequest:
     slug: str
     states: tuple[str, ...] = STANDARD_PROJECT_STATES
     labels: tuple[str, ...] = STANDARD_PROJECT_LABELS
+
+    def __post_init__(self) -> None:
+        validate_project_slug(self.slug)
 
 
 @dataclass(frozen=True)
@@ -145,10 +152,41 @@ class PlaneProjectScaffoldTracker:
         return _resources_from_response(data)
 
 
+class MockProjectScaffoldTracker:
+    """Mock tracker for dry-run previews. Returns synthetic but valid UUIDs."""
+
+    _COUNTER = 0
+
+    def __init__(self) -> None:
+        MockProjectScaffoldTracker._COUNTER += 1
+        self._seq = MockProjectScaffoldTracker._COUNTER
+
+    async def create_project(self, request: ScaffoldProjectRequest) -> ScaffoldProject:
+        return ScaffoldProject(
+            id=f"mock-project-{self._seq}",
+            slug=request.slug,
+            name=request.name,
+        )
+
+    async def list_project_states(self, project_id: str) -> tuple[TrackerResource, ...]:
+        return tuple(
+            TrackerResource(name=name, uuid=f"mock-state-{name.lower().replace(' ', '-')}-{self._seq}")
+            for name in STANDARD_PROJECT_STATES
+        )
+
+    async def list_project_labels(self, project_id: str) -> tuple[TrackerResource, ...]:
+        return tuple(
+            TrackerResource(name=name, uuid=f"mock-label-{name.replace(':', '-')}-{self._seq}")
+            for name in STANDARD_PROJECT_LABELS
+        )
+
+
 async def scaffold_project(
     tracker: ProjectScaffoldTracker,
     *,
     bindings_path: Path,
+    bindings_read_path: Path | None = None,
+    bindings_output_path: Path | None = None,
     repo_path: Path,
     project_name: str,
     project_slug: str,
@@ -157,6 +195,8 @@ async def scaffold_project(
     approval_enabled: bool = False,
     landing_mode: str = "local",
     workflow_stub: str = WORKFLOW_STUB,
+    workflow_output_path: Path | None = None,
+    workflow_allow_overwrite: bool = False,
 ) -> ProjectScaffoldResult:
     """Create a mock/live-gated Plane project and append its binding."""
 
@@ -174,15 +214,53 @@ async def scaffold_project(
         states=states,
         labels=labels,
     )
-    _append_binding(bindings_path, binding)
-    workflow_path = repo_path / "WORKFLOW.md"
-    _write_workflow_stub(workflow_path, workflow_stub)
+    _append_binding(
+        bindings_path,
+        binding,
+        read_path=bindings_read_path,
+        output_path=bindings_output_path,
+    )
+    workflow_path = workflow_output_path or (repo_path / "WORKFLOW.md")
+    _write_workflow_stub(workflow_path, workflow_stub, allow_overwrite=workflow_allow_overwrite)
     return ProjectScaffoldResult(
         project=project,
         binding_name=project.slug,
-        bindings_path=bindings_path,
+        bindings_path=bindings_output_path or bindings_path,
         workflow_path=workflow_path,
     )
+
+
+def validate_project_slug(slug: str) -> None:
+    """Validate a Plane project identifier slug."""
+    if not _SLUG_RE.match(slug) or len(slug) > _SLUG_MAX_LEN:
+        raise ProjectScaffoldError(
+            f"invalid slug {slug!r}: must be lowercase alphanumeric with hyphens, max {_SLUG_MAX_LEN} chars"
+        )
+
+
+def _preflight_check(
+    *,
+    repo_path: Path,
+    bindings_path: Path,
+    workflow_path: Path,
+    project_slug: str,
+) -> None:
+    """Validate prerequisites before a live Plane mutation."""
+    if not repo_path.exists():
+        raise ProjectScaffoldError(f"repo_path does not exist: {repo_path}")
+    if not repo_path.is_dir():
+        raise ProjectScaffoldError(f"repo_path is not a directory: {repo_path}")
+    if bindings_path.exists():
+        raw = yaml.safe_load(bindings_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or not isinstance(raw.get("bindings"), list):
+            raise ProjectScaffoldError(f"{bindings_path}: expected mapping with bindings list")
+        # Reject a name collision before mutating Plane, to avoid orphaning a
+        # created project when the post-creation append guard would fire.
+        for existing in raw["bindings"]:
+            if isinstance(existing, dict) and existing.get("name") == project_slug:
+                raise ProjectScaffoldError(f"binding already exists: name={project_slug}")
+    if workflow_path.exists():
+        raise ProjectScaffoldError(f"{workflow_path}: WORKFLOW.md already exists")
 
 
 def _binding_entry(
@@ -234,22 +312,43 @@ def _binding_entry(
     }
 
 
-def _append_binding(path: Path, binding: dict[str, Any]) -> None:
-    if path.exists():
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+def _append_binding(
+    path: Path,
+    binding: dict[str, Any],
+    *,
+    read_path: Path | None = None,
+    output_path: Path | None = None,
+) -> None:
+    source = read_path or path
+    target = output_path or path
+
+    if source.exists():
+        raw = yaml.safe_load(source.read_text(encoding="utf-8"))
     else:
         raw = None
     if raw is None:
         raw = {"bindings": []}
     if not isinstance(raw, dict) or not isinstance(raw.get("bindings"), list):
-        raise ProjectScaffoldError(f"{path}: expected mapping with bindings list")
+        raise ProjectScaffoldError(f"{source}: expected mapping with bindings list")
+
+    # Duplicate guard
+    slug = binding.get("name")
+    project_id = binding.get("plane_project_id")
+    for existing in raw["bindings"]:
+        if not isinstance(existing, dict):
+            continue
+        if existing.get("name") == slug or existing.get("plane_project_id") == project_id:
+            raise ProjectScaffoldError(
+                f"binding already exists: name={slug} plane_project_id={project_id}"
+            )
+
     raw["bindings"].append(binding)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
 
-def _write_workflow_stub(path: Path, content: str) -> None:
-    if path.exists():
+def _write_workflow_stub(path: Path, content: str, *, allow_overwrite: bool = False) -> None:
+    if path.exists() and not allow_overwrite:
         raise ProjectScaffoldError(f"{path}: WORKFLOW.md already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -268,3 +367,125 @@ def _resources_from_response(data: dict[str, Any]) -> tuple[TrackerResource, ...
         if isinstance(name, str) and isinstance(uuid, str):
             resources.append(TrackerResource(name=name, uuid=uuid))
     return tuple(resources)
+
+
+def _build_parser():
+    import argparse
+
+    p = argparse.ArgumentParser(description="Scaffold a new Plane project for Symphony")
+    p.add_argument("--name", required=True)
+    p.add_argument("--slug", required=True)
+    p.add_argument("--repo-path", type=Path, required=True)
+    p.add_argument("--base-branch", required=True)
+    p.add_argument("--bindings-path", type=Path, required=True)
+    p.add_argument("--default-agent", default="pi", choices=["pi", "claude"])
+    p.add_argument("--approval-enabled", action="store_true")
+    p.add_argument("--landing-mode", default="local", choices=["local", "remote"])
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--approve-live-mutation", action="store_true")
+    return p
+
+
+def _confirm_live_mutation(slug: str) -> None:
+    print(f"Live Plane mutation requested for project '{slug}'.")
+    typed = input(f"Type the project slug '{slug}' to confirm: ")
+    if typed.strip() != slug:
+        raise SystemExit("confirmation failed — live mutation aborted")
+
+
+async def _main(argv: "list[str] | None" = None) -> int:
+    import os
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if args.dry_run and args.approve_live_mutation:
+        print("error: --dry-run and --approve-live-mutation are mutually exclusive")
+        return 1
+
+    validate_project_slug(args.slug)
+
+    bindings_path = Path(os.environ.get("SYMPHONY_BINDINGS_PATH") or args.bindings_path)
+    workflow_path = args.repo_path / "WORKFLOW.md"
+
+    if args.dry_run:
+        tracker = MockProjectScaffoldTracker()
+        preview_bindings = bindings_path.parent / ".bindings.yml.preview"
+        preview_workflow = bindings_path.parent / ".WORKFLOW.md.preview"
+        result = await scaffold_project(
+            tracker,
+            bindings_path=bindings_path,
+            bindings_read_path=bindings_path if bindings_path.exists() else None,
+            bindings_output_path=preview_bindings,
+            repo_path=args.repo_path,
+            project_name=args.name,
+            project_slug=args.slug,
+            base_branch=args.base_branch,
+            default_agent=args.default_agent,
+            approval_enabled=args.approval_enabled,
+            landing_mode=args.landing_mode,
+            workflow_output_path=preview_workflow,
+            workflow_allow_overwrite=True,
+        )
+        print("Dry-run complete.")
+        print(f"  Preview bindings: {result.bindings_path}")
+        print(f"  Preview workflow: {result.workflow_path}")
+        print("  NOTE: UUIDs in preview are synthetic placeholders.")
+        return 0
+
+    if not args.approve_live_mutation:
+        print("Live mutation requires --approve-live-mutation")
+        return 1
+
+    _preflight_check(
+        repo_path=args.repo_path,
+        bindings_path=bindings_path,
+        workflow_path=workflow_path,
+        project_slug=args.slug,
+    )
+
+    try:
+        api_url = os.environ["PLANE_API_URL"]
+        api_key = os.environ["PLANE_API_KEY"]
+        workspace_slug = os.environ["PLANE_WORKSPACE_SLUG"]
+    except KeyError as exc:
+        print(f"error: missing required environment variable {exc}")
+        return 1
+
+    _confirm_live_mutation(args.slug)
+
+    from plane_adapter import HttpxPlaneTransport
+
+    transport = HttpxPlaneTransport(api_url, api_key)
+    tracker = PlaneProjectScaffoldTracker(
+        transport,
+        workspace_slug=workspace_slug,
+        approve_live_mutation=True,
+    )
+
+    try:
+        result = await scaffold_project(
+            tracker,
+            bindings_path=bindings_path,
+            repo_path=args.repo_path,
+            project_name=args.name,
+            project_slug=args.slug,
+            base_branch=args.base_branch,
+            default_agent=args.default_agent,
+            approval_enabled=args.approval_enabled,
+            landing_mode=args.landing_mode,
+        )
+    finally:
+        await transport.aclose()
+
+    print("Live scaffold complete.")
+    print(f"  Project: {result.project.name} ({result.project.slug})")
+    print(f"  Bindings: {result.bindings_path}")
+    print(f"  Workflow: {result.workflow_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    raise SystemExit(asyncio.run(_main()))

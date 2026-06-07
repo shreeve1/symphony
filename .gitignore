@@ -4,3 +4,5 @@ __pycache__/
 .env
 *.env
 plans/
+.bindings.yml.preview
+.WORKFLOW.md.preview
