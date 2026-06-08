@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import random
 import re
 import subprocess
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Iterator, Sequence
+from typing import Any, AsyncIterator, Callable, Iterator, Sequence, cast
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
@@ -23,6 +24,8 @@ from notifier import (
     format_review_message,
 )
 from run_worktree import (
+    _delete_run_branch,
+    _run_branch_exists,
     create_worktree,
     kill_tmux_session,
     list_worktrees,
@@ -35,7 +38,7 @@ from run_worktree import (
 )
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
-from plane_adapter import CandidateIssue, CommentPayload, TrackerAdapter
+from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from prompt_renderer import render_previous_comments_block
 
@@ -65,6 +68,11 @@ PREVIOUS_COMMENT_TAIL_CHARS = 500
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 SCHEDULED_RELEASE_PAGE_SIZE = 50
 SCHEDULED_RELEASE_MAX_PAGES_PER_TICK = 3
+RATE_LIMIT_BASE_COOLDOWN_S = 30.0
+RATE_LIMIT_MAX_COOLDOWN_S = 300.0
+RATE_LIMIT_JITTER_FRACTION = 0.2
+DONE_LANDING_PAGE_SIZE = 50
+DONE_LANDING_MAX_PAGES_PER_TICK = 3
 SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
 SCHEDULED_LABEL_WINDOW_START_HOUR = 0
 SCHEDULED_LABEL_WINDOW_END_HOUR = 6
@@ -74,7 +82,7 @@ _REDACTED = "***REDACTED***"
 _PLAN_HANDOFF_MARKER = "Symphony completed plan."
 
 
-@dataclass(frozen=True)
+@dataclass
 class _DispatchState:
     """Per-binding dispatch state — isolates concurrency from module globals.
 
@@ -93,6 +101,52 @@ class _DispatchState:
     in_flight_ids: set[str]
     in_flight_lock: asyncio.Lock
     poll_interval: float
+    cooldown_until: datetime | None = None
+    cooldown_attempts: int = 0
+
+
+def _cooldown_remaining_s(
+    state: _DispatchState,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> float:
+    if state.cooldown_until is None:
+        return 0.0
+    remaining = (state.cooldown_until - now()).total_seconds()
+    if remaining <= 0:
+        state.cooldown_until = None
+        return 0.0
+    return remaining
+
+
+def _record_rate_limit(
+    state: _DispatchState,
+    exc: PlaneRateLimitError,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    jitter: Callable[[], float] = random.random,
+) -> None:
+    state.cooldown_attempts += 1
+    if exc.retry_after_s is not None:
+        delay_s = exc.retry_after_s
+    else:
+        delay_s = min(
+            RATE_LIMIT_MAX_COOLDOWN_S,
+            RATE_LIMIT_BASE_COOLDOWN_S * (2 ** max(0, state.cooldown_attempts - 1)),
+        )
+        delay_s += delay_s * RATE_LIMIT_JITTER_FRACTION * jitter()
+    state.cooldown_until = now() + timedelta(seconds=delay_s)
+    LOGGER.warning(
+        "plane_rate_limited cooldown_s=%.3f attempts=%s",
+        delay_s,
+        state.cooldown_attempts,
+    )
+
+
+def _clear_rate_limit(state: _DispatchState) -> None:
+    state.cooldown_until = None
+    state.cooldown_attempts = 0
+
 
 # SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
 # on its own line in stdout to declare an explicit verdict. Last occurrence wins,
@@ -337,9 +391,12 @@ class _ScheduledSelection:
 
 def _labels_contain_role(
     labels: tuple[str, ...] | list[str],
-    contract: TrackerContract,
+    tracker: TrackerAdapter | TrackerContract,
     role: TrackerRole,
 ) -> bool:
+    if hasattr(tracker, "labels_contain_role"):
+        return tracker.labels_contain_role(labels, role)  # type: ignore[union-attr]
+    contract = cast(TrackerContract, tracker)
     binding = contract.optional_label_binding(role)
     if binding is None:
         return False
@@ -351,11 +408,11 @@ def _labels_contain_role(
 
 def _resolve_mode(
     labels: tuple[str, ...],
-    contract: TrackerContract = DEFAULT_CONTRACT,
+    tracker: TrackerAdapter | TrackerContract = DEFAULT_CONTRACT,
 ) -> str:
-    if _labels_contain_role(labels, contract, TrackerRole.MODE_BUILD):
+    if _labels_contain_role(labels, tracker, TrackerRole.MODE_BUILD):
         return "build"
-    if _labels_contain_role(labels, contract, TrackerRole.MODE_PLAN):
+    if _labels_contain_role(labels, tracker, TrackerRole.MODE_PLAN):
         return "plan"
     return "execute"
 
@@ -461,6 +518,151 @@ def _is_git_repo(path: Path) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+class LandingFailed(RuntimeError):
+    """Raised when Done-triggered landing cannot complete safely."""
+
+    def __init__(self, message: str, *, details: str = "") -> None:
+        super().__init__(message)
+        self.details = details
+
+
+def _landing_issue_identity(issue: dict[str, Any]) -> tuple[str, str, str]:
+    issue_id = str(issue["id"])
+    identifier = str(issue.get("identifier") or issue.get("sequence_id") or issue_id)
+    name = str(issue.get("name") or "")
+    return issue_id, identifier, name
+
+
+async def reconcile_done_landing(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    notifier: TelegramNotifier | None = None,
+) -> int:
+    del now
+    if config.bindings[0].landing_policy.mode != "local":
+        LOGGER.info("done_landing_skipped mode=%s", config.bindings[0].landing_policy.mode)
+        return 0
+    if not _is_git_repo(config.homelab_repo_path):
+        return 0
+
+    landed = 0
+    issues = await adapter.list_issues_by_state(
+        TrackerRole.STATE_DONE,
+        per_page=DONE_LANDING_PAGE_SIZE,
+        max_pages=DONE_LANDING_MAX_PAGES_PER_TICK,
+    )
+    for issue in issues:
+        issue_id, identifier, name = _landing_issue_identity(issue)
+        run_id = _run_id_from_identifier(identifier)
+        if not _run_branch_exists(config, run_id) and not worktree_path(config, run_id).exists():
+            continue
+        try:
+            landing_summary = _land_done_issue(
+                config,
+                run_id,
+                issue_identifier=identifier,
+                issue_name=name,
+                issue_id=issue_id,
+            )
+        except LandingFailed as exc:
+            message = f"Done landing failed: {exc}"
+            if exc.details:
+                message += f"\n\n{_format_stderr_summary(exc.details)}"
+            issue_url, dashboard_url = _build_urls(config, issue_id)
+            await _block_issue(
+                adapter,
+                issue_id,
+                message,
+                issue_name=name,
+                issue_identifier=identifier,
+                notifier=notifier,
+                issue_url=issue_url,
+                dashboard_url=dashboard_url,
+            )
+            continue
+        await adapter.add_comment(issue_id, CommentPayload(body=landing_summary))
+        landed += 1
+    return landed
+
+
+def _land_done_issue(
+    config: SymphonyConfig,
+    run_id: str,
+    *,
+    issue_identifier: str,
+    issue_name: str,
+    issue_id: str,
+) -> str:
+    wt_path = worktree_path(config, run_id)
+    branch = worktree_branch(run_id)
+    if wt_path.exists() and _repo_dirty(wt_path):
+        try:
+            committed_sha = _auto_commit(
+                wt_path,
+                issue_identifier=issue_identifier,
+                issue_name=issue_name,
+                issue_id=issue_id,
+            )
+        except AutoCommitFailed as exc:
+            raise LandingFailed("could not commit dirty run work", details=exc.stderr) from exc
+    else:
+        committed_sha = None
+
+    if not _run_branch_exists(config, run_id):
+        if wt_path.exists():
+            remove_worktree(config, run_id)
+        return "Symphony Done landing found no run branch changes; cleaned run worktree."
+
+    if _repo_dirty(config.homelab_repo_path):
+        raise LandingFailed("binding base checkout is dirty; refusing to merge")
+
+    checkout = subprocess.run(
+        ["git", "switch", config.base_branch],
+        cwd=config.homelab_repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if checkout.returncode != 0:
+        raise LandingFailed("could not switch to binding base branch", details=checkout.stderr)
+
+    merge = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-edit", branch],
+        cwd=config.homelab_repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge.returncode != 0:
+        subprocess.run(["git", "merge", "--abort"], cwd=config.homelab_repo_path, check=False)
+        raise LandingFailed("merge conflict while landing run branch", details=merge.stderr or merge.stdout)
+
+    merge_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=config.homelab_repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_sha.returncode != 0:
+        raise LandingFailed("could not read landed commit", details=merge_sha.stderr)
+
+    remove_worktree_if_exists(config, run_id)
+    try:
+        _delete_run_branch(config, run_id)
+    except Exception as exc:
+        raise LandingFailed("could not delete landed run branch", details=str(exc)) from exc
+
+    body = f"Symphony landed `{branch}` into `{config.base_branch}`."
+    if committed_sha is not None:
+        body += f"\n\n**Run commit:** `{committed_sha}`"
+    body += f"\n**Landing HEAD:** `{merge_sha.stdout.strip()}`"
+    body += "\n\nCleaned run worktree and branch."
+    return body
+
+
 def _invoke_agent_runner(
     agent_runner: Callable[..., AgentResult],
     candidate: CandidateIssue,
@@ -519,22 +721,29 @@ async def run_tick(
     diff_stat = _diff_stat if diff_stat is None else diff_stat
     auto_commit = _auto_commit if auto_commit is None else auto_commit
 
+    await reconcile_done_landing(config, adapter, now=now, notifier=notifier)
+
     # reconcile_stale_running and reconcile_blocked run every tick, outside
     # the semaphore, so they are not blocked by an in-flight Run.
-    await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
-    if config.blocked_reconciler_enabled and run_blocked_reconciler:
-        try:
-            await reconcile_blocked(
-                adapter,
-                apply=config.blocked_reconciler_apply,
-                now=now,
-            )
-        except Exception as exc:
-            LOGGER.warning(
-                "blocked_reconcile_failed error=%s", exc, exc_info=True
-            )
-    scheduled_reserved = False
-    scheduled = await _select_scheduled_candidate(adapter, now=now)
+    try:
+        await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
+        if config.blocked_reconciler_enabled and run_blocked_reconciler:
+            try:
+                await reconcile_blocked(
+                    adapter,
+                    apply=config.blocked_reconciler_apply,
+                    now=now,
+                )
+            except PlaneRateLimitError:
+                raise
+            except Exception as exc:
+                LOGGER.warning(
+                    "blocked_reconcile_failed error=%s", exc, exc_info=True
+                )
+        scheduled_reserved = False
+        scheduled = await _select_scheduled_candidate(adapter, now=now)
+    except PlaneRateLimitError:
+        raise
     if scheduled is not None:
         if scheduled.reason == "scheduled-release":
             candidate = scheduled.candidate
@@ -543,6 +752,8 @@ async def run_tick(
             scheduled_reserved = True
             try:
                 released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
+            except PlaneRateLimitError:
+                raise
             except Exception as exc:
                 try:
                     _iu, _du = _build_urls(config, candidate.id)
@@ -599,9 +810,13 @@ async def run_tick(
         candidates = [] if candidate is not None else await _maybe_await(
             poller(adapter) if poller is not None else adapter.list_candidates()
         )
+    except PlaneRateLimitError:
+        raise
     except Exception as exc:
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
+    if dispatch_state is not None:
+        _clear_rate_limit(dispatch_state)
 
     approval_policy_enabled = _binding_approval_enabled(config)
     if candidate is None:
@@ -641,6 +856,8 @@ async def run_tick(
             if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
                 try:
                     await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
+                except PlaneRateLimitError:
+                    raise
                 except Exception as exc:
                     await adapter.add_comment(
                         candidate.id,
@@ -681,6 +898,8 @@ async def run_tick(
                         ),
                     )
                     await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+                except PlaneRateLimitError:
+                    raise
                 except Exception as exc:
                     _iu, _du = _build_urls(config, candidate.id)
                     await _block_issue(
@@ -718,6 +937,7 @@ async def run_tick(
         run_id = _run_id_from_identifier(candidate.identifier)
         wt_path: Path | None = None
         run_repo = config.homelab_repo_path
+        retain_run_worktree = False
         try:
             if _is_git_repo(config.homelab_repo_path):
                 remove_worktree_if_exists(config, run_id)
@@ -937,68 +1157,20 @@ async def run_tick(
                 )
                 return TickResult(True, "plan", candidate.id, mode=mode)
 
-            committed_sha: str | None = None
-            committed_stat: str | None = None
-            auto_commit_error: str | None = None
-            if _repo_dirty_wt():
-                committed_stat = _diff_stat_wt()
-                try:
-                    committed_sha = _auto_commit_wt(
-                        issue_identifier=candidate.identifier,
-                        issue_name=candidate.name,
-                        issue_id=candidate.id,
-                        plan_path=str(plan_path) if plan_path else None,
-                    )
-                except AutoCommitFailed as exc:
-                    LOGGER.warning(
-                        "auto_commit_failed issue_id=%s repo=%s error=%s",
-                        candidate.id, wt_path, exc,
-                    )
-                    auto_commit_error = str(exc)
-                    if exc.stderr:
-                        auto_commit_error += (
-                            f"\n\n**git stderr:**\n```\n{_sanitize_report(exc.stderr, secrets)}\n```"
-                        )
-                else:
-                    LOGGER.info(
-                        "auto_commit_succeeded issue_id=%s sha=%s",
-                        candidate.id, committed_sha,
-                    )
-
-            def _auto_commit_warning_body() -> str:
-                body = f"**WARNING: Symphony auto-commit failed:** {auto_commit_error}"
-                if committed_stat and committed_stat != "No diff stat available":
-                    body += (
-                        f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
-                    )
-                return body
+            dirty_after_agent = _repo_dirty_wt()
+            dirty_stat = _diff_stat_wt() if dirty_after_agent else None
 
             after_agent = await _fetch_issue(adapter, candidate.id)
             if _is_state(after_agent, adapter, TrackerRole.STATE_DONE):
-                if auto_commit_error is not None:
-                    await adapter.add_comment(
-                        candidate.id,
-                        CommentPayload(body=_auto_commit_warning_body()),
-                    )
-                return TickResult(True, "agent-done", candidate.id, mode=mode)
+                retain_run_worktree = True
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+                after_agent = await _fetch_issue(adapter, candidate.id)
             if _is_state(after_agent, adapter, TrackerRole.STATE_IN_REVIEW):
-                if auto_commit_error is not None:
-                    await adapter.add_comment(
-                        candidate.id,
-                        CommentPayload(body=_auto_commit_warning_body()),
-                    )
+                retain_run_worktree = True
                 return TickResult(True, "agent-review", candidate.id, mode=mode)
             if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
-                if auto_commit_error is not None:
-                    await adapter.add_comment(
-                        candidate.id,
-                        CommentPayload(body=_auto_commit_warning_body()),
-                    )
                 return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
-            # No repo changes, no in-agent state transition. Resolve the
-            # agent's verdict from an explicit SYMPHONY_RESULT marker in
-            # stdout, or fall through to a clean-exit Done.
             verdict = _parse_result_marker(stdout)
             summary = _extract_summary(result, secrets)
 
@@ -1007,19 +1179,12 @@ async def run_tick(
                     body = f"**Symphony completed:** {summary}"
                 else:
                     body = "**Symphony completed:**"
-                if committed_sha is not None:
-                    commit_block = (
-                        f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
-                    )
-                    if committed_stat and committed_stat != "No diff stat available":
-                        commit_block += f"\n\n```\n{committed_stat}\n```"
-                    body += commit_block
-                elif auto_commit_error is not None:
-                    body += (
-                        f"\n\n**WARNING: Symphony auto-commit failed:** {auto_commit_error}"
-                    )
-                    if committed_stat and committed_stat != "No diff stat available":
-                        body += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
+                body += f"\n\n**Run branch:** `{worktree_branch(run_id)}`"
+                if wt_path is not None:
+                    body += f"\n**Run worktree:** `{wt_path}`"
+                if dirty_stat and dirty_stat != "No diff stat available":
+                    body += f"\n\n**Pending diff stat:**\n```\n{dirty_stat}\n```"
+                body += "\n\nMove this issue to Done to land the work, or move it back to Todo to rerun."
                 body += "\n\n" + _format_timeline(
                     claim_dt, now,
                     duration_ms=result.duration_ms,
@@ -1032,18 +1197,6 @@ async def run_tick(
                     msg = f"Agent reported a blocked result: {summary}"
                 else:
                     msg = "Agent reported a blocked result."
-                if committed_sha is not None:
-                    msg += (
-                        f"\n\n**Symphony auto-committed changes:** `{committed_sha}`"
-                    )
-                    if committed_stat and committed_stat != "No diff stat available":
-                        msg += f"\n\n```\n{committed_stat}\n```"
-                elif auto_commit_error is not None:
-                    msg += (
-                        f"\n\n**WARNING: Symphony auto-commit failed:** {auto_commit_error}"
-                    )
-                    if committed_stat and committed_stat != "No diff stat available":
-                        msg += f"\n\n**Pending diff stat:**\n```\n{committed_stat}\n```"
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
@@ -1064,42 +1217,31 @@ async def run_tick(
                 )
                 return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
 
-            if verdict == "review":
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(body=_completion_body("agent-marker-review")),
-                )
-                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
-                LOGGER.info(
-                    "state_transitioned issue_id=%s state=in-review reason=marker",
-                    candidate.id,
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _notify_review(
-                    notifier, candidate.name, candidate.identifier,
-                    reason="Agent reported SYMPHONY_RESULT: review",
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "agent-marker-review", candidate.id, mode=mode)
-
-            # verdict == "done" or no marker: trust clean exit and mark Done.
-            reason_code = "agent-marker-done" if verdict == "done" else "agent-clean-done"
+            reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
+            retain_run_worktree = True
             await adapter.add_comment(
                 candidate.id,
                 CommentPayload(body=_completion_body(reason_code)),
             )
-            await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
+            await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
             LOGGER.info(
-                "state_transitioned issue_id=%s state=done reason=%s",
-                candidate.id, reason_code,
+                "state_transitioned issue_id=%s state=in-review reason=%s",
+                candidate.id,
+                reason_code,
+            )
+            _iu, _du = _build_urls(config, candidate.id)
+            await _notify_review(
+                notifier, candidate.name, candidate.identifier,
+                reason="Agent completed, awaiting operator Done landing",
+                issue_url=_iu,
+                dashboard_url=_du,
             )
             return TickResult(True, reason_code, candidate.id, mode=mode)
         finally:
             # Guaranteed cleanup: remove worktree and any detached tmux session
             # on every exit path so no orphan is left behind after verdict
             # reconciliation, crash, timeout, or task cancellation.
-            if wt_path is not None:
+            if wt_path is not None and not retain_run_worktree:
                 remove_worktree_if_exists(config, run_id)
             kill_tmux_session(run_id)
 
@@ -1124,15 +1266,20 @@ async def _dispatch_one(
     """
     state = dispatch_state or _fallback_dispatch_state(config)
     async with state.semaphore:
-        return await run_tick(
-            config,
-            adapter,
-            agent_runner=agent_runner,
-            render_prompt=render_prompt,
-            notifier=notifier,
-            run_blocked_reconciler=run_blocked_reconciler,
-            dispatch_state=state,
-        )
+        try:
+            result = await run_tick(
+                config,
+                adapter,
+                agent_runner=agent_runner,
+                render_prompt=render_prompt,
+                notifier=notifier,
+                run_blocked_reconciler=run_blocked_reconciler,
+                dispatch_state=state,
+            )
+        except PlaneRateLimitError as exc:
+            _record_rate_limit(state, exc)
+            return TickResult(False, "plane-rate-limited")
+        return result
 
 
 async def reconcile_stale_running(
@@ -1240,12 +1387,23 @@ async def reconcile_startup(
             issue["id"], issue["run_id"],
         )
 
+    retained_run_ids: set[str] = set()
+    for state_role in (TrackerRole.STATE_IN_REVIEW, TrackerRole.STATE_DONE):
+        for issue in await adapter.list_issues_by_state(
+            state_role,
+            per_page=SCHEDULED_RELEASE_PAGE_SIZE,
+            max_pages=SCHEDULED_RELEASE_MAX_PAGES_PER_TICK,
+        ):
+            identifier = str(issue.get("identifier") or issue.get("sequence_id") or issue.get("id") or "")
+            if identifier:
+                retained_run_ids.add(_run_id_from_identifier(identifier))
+
     # Reap orphaned worktrees: worktrees whose run_id has no live Plane issue.
     for wt_path, branch in list_worktrees(config.homelab_repo_path):
         run_id = _run_id_from_worktree_path(config.homelab_repo_path, wt_path)
         if run_id is None:
             continue
-        if run_id in live_run_ids:
+        if run_id in live_run_ids or run_id in retained_run_ids:
             continue
         # Not live: this worktree is an orphan. Remove it.
         try:
@@ -1354,6 +1512,7 @@ async def run_loop(
                 result.issue_id or "",
             )
         active_tasks -= done
+        cooldown_remaining = _cooldown_remaining_s(state, now=lambda: now_dt)
 
         if run_blocked_reconcile:
             next_blocked_reconcile_at = now_dt + timedelta(
@@ -1366,16 +1525,20 @@ async def run_loop(
         # trip Plane 429s; subsequent cycles fill remaining slots while long
         # Runs are active.
         slots_available = config.run_cap - len(active_tasks)
-        if slots_available > 0:
+        if slots_available > 0 and cooldown_remaining <= 0:
             task = asyncio.create_task(
                 _dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconcile, state)
             )
             active_tasks.add(task)
 
+        wait_timeout = state.poll_interval
+        if cooldown_remaining > 0 and not active_tasks:
+            wait_timeout = min(wait_timeout, cooldown_remaining)
+
         if active_tasks:
             done_wait, pending = await asyncio.wait(
                 active_tasks,
-                timeout=state.poll_interval,
+                timeout=wait_timeout,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             all_idle = bool(done_wait)
@@ -1394,9 +1557,9 @@ async def run_loop(
                 )
             active_tasks = set(pending)
             if not active_tasks and all_idle:
-                await asyncio.sleep(state.poll_interval)
+                await asyncio.sleep(wait_timeout)
         else:
-            await asyncio.sleep(state.poll_interval)
+            await asyncio.sleep(wait_timeout)
 
 
 def _in_flight_lock() -> asyncio.Lock:
