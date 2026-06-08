@@ -1046,6 +1046,10 @@ async def run_tick(
                 return TickResult(True, "nonzero", candidate.id, mode=mode)
 
             stdout, stderr = _format_report(result, secrets)
+            # From this point, the agent clean-exited. Preserve the run worktree
+            # before any post-agent Plane reads/writes can rate-limit, so a
+            # transient tracker failure cannot destroy review/landing evidence.
+            retain_run_worktree = wt_path is not None
 
             scheduled_after_agent = await _detect_agent_schedule(
                 adapter,
@@ -1057,9 +1061,11 @@ async def run_tick(
                 config=config,
             )
             if scheduled_after_agent is not None:
+                retain_run_worktree = False
                 return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
             if _hit_permission_gate(stdout, stderr):
+                retain_run_worktree = False
                 msg = "Agent could not complete because required tool access was denied."
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
@@ -1077,6 +1083,7 @@ async def run_tick(
                 return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
             if _hit_approval_gate(stdout, stderr):
+                retain_run_worktree = False
                 msg = "Agent could not complete because operator approval is required."
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
@@ -1094,6 +1101,7 @@ async def run_tick(
                 return TickResult(True, "approval-gate", candidate.id, mode=mode)
 
             if mode == "plan":
+                retain_run_worktree = False
                 plan_report_path = _final_non_empty_line(stdout) if stdout else None
                 if plan_report_path and plan_report_path.startswith("/"):
                     try:
@@ -1167,6 +1175,7 @@ async def run_tick(
                 retain_run_worktree = True
                 return TickResult(True, "agent-review", candidate.id, mode=mode)
             if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
+                retain_run_worktree = False
                 return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
             verdict = _parse_result_marker(stdout)
@@ -1191,6 +1200,7 @@ async def run_tick(
                 return body
 
             if verdict == "blocked":
+                retain_run_worktree = False
                 if summary:
                     msg = f"Agent reported a blocked result: {summary}"
                 else:

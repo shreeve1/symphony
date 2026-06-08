@@ -3950,6 +3950,52 @@ async def test_done_landing_conflict_blocks_and_preserves_evidence(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_rate_limit_during_post_agent_schedule_detection_retains_worktree(tmp_path: Path) -> None:
+    from plane_adapter import PlaneRateLimitError
+    from run_worktree import worktree_path
+
+    class RateLimitOnPostAgentIssueFetchTransport(FakeTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.issue_reads = 0
+
+        async def get(self, path: str) -> dict[str, Any]:
+            if "/issues/" in path and "/comments" not in path:
+                issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
+                if issue_id:
+                    self.issue_reads += 1
+                    if self.issue_reads == 2:
+                        raise PlaneRateLimitError("rate limited", retry_after_s=30)
+            return await super().get(path)
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = RateLimitOnPostAgentIssueFetchTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
+        return AgentResult(0, 10, False)
+
+    result = await _dispatch_one(
+        config,
+        _adapter(transport),
+        agent,
+        lambda issue: "prompt",
+        None,
+        False,
+    )
+
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    retained = worktree_path(config, run_id)
+    assert result.reason == "plane-rate-limited"
+    assert retained.exists()
+    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_during_review_transition_retains_worktree(tmp_path: Path) -> None:
     from plane_adapter import PlaneRateLimitError
     from run_worktree import worktree_path
