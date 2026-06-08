@@ -22,8 +22,11 @@ scaffold_project = project_scaffold.scaffold_project
 
 
 class FakeScaffoldTracker:
-    def __init__(self, *, states=None, labels=None):
+    def __init__(self, *, states=None, labels=None, existing_project=None):
         self.requests = []
+        self.created_states = []
+        self.created_labels = []
+        self.existing_project = existing_project
         self.states = tuple(
             states
             if states is not None
@@ -39,13 +42,28 @@ class FakeScaffoldTracker:
         self.requests.append(request)
         return ScaffoldProject(id="project-new", slug=request.slug, name=request.name)
 
+    async def get_project(self, project_id: str) -> ScaffoldProject:
+        if self.existing_project is None:
+            raise AssertionError("get_project called without existing_project configured")
+        return self.existing_project
+
     async def list_project_states(self, project_id: str) -> tuple[TrackerResource, ...]:
-        assert project_id == "project-new"
         return self.states
 
     async def list_project_labels(self, project_id: str) -> tuple[TrackerResource, ...]:
-        assert project_id == "project-new"
         return self.labels
+
+    async def create_project_state(self, project_id: str, name: str) -> TrackerResource:
+        resource = TrackerResource(name, f"state-created-{name.lower().replace(' ', '-')}")
+        self.created_states.append(resource)
+        self.states = self.states + (resource,)
+        return resource
+
+    async def create_project_label(self, project_id: str, name: str) -> TrackerResource:
+        resource = TrackerResource(name, f"label-created-{name.replace(':', '-')}")
+        self.created_labels.append(resource)
+        self.labels = self.labels + (resource,)
+        return resource
 
 
 @pytest.mark.asyncio
@@ -106,18 +124,25 @@ async def test_project_scaffold_mock_creates_template_binding_and_workflow(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_project_scaffold_refuses_incomplete_introspection(tmp_path: Path):
+async def test_project_scaffold_fills_missing_labels_via_fill_loop(tmp_path: Path):
+    # Replaces the old "refuses incomplete introspection" semantics: the
+    # post-create fill loop now creates the labels Plane silently dropped.
     tracker = FakeScaffoldTracker(labels=[TrackerResource("plan", "label-plan")])
 
-    with pytest.raises(ProjectScaffoldError, match="missing required resources"):
-        await scaffold_project(
-            tracker,
-            bindings_path=tmp_path / "bindings.yml",
-            repo_path=tmp_path / "repo",
-            project_name="Tools",
-            project_slug="tools",
-            base_branch="main",
-        )
+    await scaffold_project(
+        tracker,
+        bindings_path=tmp_path / "bindings.yml",
+        repo_path=tmp_path / "repo",
+        project_name="Tools",
+        project_slug="tools",
+        base_branch="main",
+    )
+
+    created_names = [r.name for r in tracker.created_labels]
+    assert set(created_names) == set(STANDARD_PROJECT_LABELS) - {"plan"}
+    final_names = [r.name for r in tracker.labels]
+    for name in STANDARD_PROJECT_LABELS:
+        assert name in final_names
 
 
 @pytest.mark.asyncio
@@ -414,3 +439,180 @@ def test_cli_mutually_exclusive_flags():
         ])
     )
     assert rc == 1
+
+
+# --- Bug 1: fill loop tests ---
+
+
+@pytest.mark.asyncio
+async def test_fill_loop_creates_missing_states_when_plane_returns_defaults(tmp_path: Path):
+    # Plane creates 5 defaults; only Todo + Done overlap with STANDARD_PROJECT_STATES.
+    # Fill loop must POST the 3 missing states (In Review, Running, Blocked).
+    plane_defaults = [
+        TrackerResource("Backlog", "state-default-backlog"),
+        TrackerResource("Todo", "state-default-todo"),
+        TrackerResource("In Progress", "state-default-in-progress"),
+        TrackerResource("Done", "state-default-done"),
+        TrackerResource("Cancelled", "state-default-cancelled"),
+    ]
+    tracker = FakeScaffoldTracker(states=plane_defaults, labels=[])
+
+    await scaffold_project(
+        tracker,
+        bindings_path=tmp_path / "bindings.yml",
+        repo_path=tmp_path / "repo",
+        project_name="Tools",
+        project_slug="tools",
+        base_branch="main",
+    )
+
+    created_state_names = [r.name for r in tracker.created_states]
+    assert set(created_state_names) == {"In Review", "Running", "Blocked"}
+    created_label_names = [r.name for r in tracker.created_labels]
+    assert set(created_label_names) == set(STANDARD_PROJECT_LABELS)
+
+
+@pytest.mark.asyncio
+async def test_fill_loop_idempotent_when_all_resources_present(tmp_path: Path):
+    # FakeScaffoldTracker default state is "all 5 standards pre-populated."
+    # Fill loop should observe nothing missing and create nothing.
+    tracker = FakeScaffoldTracker()
+
+    await scaffold_project(
+        tracker,
+        bindings_path=tmp_path / "bindings.yml",
+        repo_path=tmp_path / "repo",
+        project_name="Tools",
+        project_slug="tools",
+        base_branch="main",
+    )
+
+    assert tracker.created_states == []
+    assert tracker.created_labels == []
+
+
+@pytest.mark.asyncio
+async def test_plane_tracker_does_not_send_states_or_labels_in_create_body():
+    # Regression guard: Plane silently drops these keys, so the script must
+    # not bother sending them. Per-resource POSTs handle states/labels.
+    captured = {}
+
+    class CapturingTransport:
+        async def post(self, path, body):
+            captured["path"] = path
+            captured["body"] = body
+            return {"id": "p1", "identifier": "tools", "name": "Tools"}
+
+    tracker = PlaneProjectScaffoldTracker(
+        CapturingTransport(),
+        workspace_slug="homelab",
+        approve_live_mutation=True,
+    )
+    await tracker.create_project(ScaffoldProjectRequest(name="Tools", slug="tools"))
+
+    assert "states" not in captured["body"]
+    assert "labels" not in captured["body"]
+    assert captured["body"] == {"name": "Tools", "identifier": "tools"}
+
+
+# --- Bug 2: existing-project-id resume tests ---
+
+
+@pytest.mark.asyncio
+async def test_existing_project_id_skips_create_and_fills(tmp_path: Path):
+    existing = ScaffoldProject(id="existing-uuid", slug="tools", name="Tools")
+    tracker = FakeScaffoldTracker(
+        states=[TrackerResource("Todo", "s-todo"), TrackerResource("Done", "s-done")],
+        labels=[],
+        existing_project=existing,
+    )
+
+    await scaffold_project(
+        tracker,
+        bindings_path=tmp_path / "bindings.yml",
+        repo_path=tmp_path / "repo",
+        project_name="Tools",
+        project_slug="tools",
+        base_branch="main",
+        existing_project_id="existing-uuid",
+    )
+
+    # create_project was NOT called
+    assert tracker.requests == []
+    # fill loop ran for missing states + all labels
+    assert {r.name for r in tracker.created_states} == {"In Review", "Running", "Blocked"}
+    assert {r.name for r in tracker.created_labels} == set(STANDARD_PROJECT_LABELS)
+
+
+@pytest.mark.asyncio
+async def test_existing_project_id_slug_mismatch_aborts(tmp_path: Path):
+    existing = ScaffoldProject(id="existing-uuid", slug="OTHER", name="Other")
+    tracker = FakeScaffoldTracker(existing_project=existing)
+
+    with pytest.raises(ProjectScaffoldError, match="does not match --slug"):
+        await scaffold_project(
+            tracker,
+            bindings_path=tmp_path / "bindings.yml",
+            repo_path=tmp_path / "repo",
+            project_name="Tools",
+            project_slug="tools",
+            base_branch="main",
+            existing_project_id="existing-uuid",
+        )
+
+    assert tracker.requests == []
+    assert tracker.created_states == []
+    assert tracker.created_labels == []
+
+
+def test_cli_existing_project_id_flag():
+    from project_scaffold import _build_parser
+
+    parser = _build_parser()
+    args = parser.parse_args([
+        "--name", "X", "--slug", "x",
+        "--repo-path", "/tmp/r", "--base-branch", "main",
+        "--bindings-path", "/tmp/b.yml",
+        "--existing-project-id", "abc-uuid",
+    ])
+    assert args.existing_project_id == "abc-uuid"
+
+
+def test_cli_existing_project_id_mutex_with_dry_run():
+    import asyncio
+
+    from project_scaffold import _main
+
+    rc = asyncio.run(
+        _main([
+            "--name", "X", "--slug", "x",
+            "--repo-path", "/tmp/r", "--base-branch", "main",
+            "--bindings-path", "/tmp/b.yml",
+            "--dry-run", "--existing-project-id", "abc-uuid",
+        ])
+    )
+    assert rc == 1
+
+
+# --- Bug 3: slug 12-char limit ---
+
+
+def test_validate_project_slug_accepts_12_char_boundary():
+    validate_project_slug("a" * 12)
+    validate_project_slug("trading")
+
+
+def test_validate_project_slug_rejects_13_chars():
+    with pytest.raises(ProjectScaffoldError, match="≤12 characters"):
+        validate_project_slug("a" * 13)
+
+
+def test_validate_project_slug_rejects_crypto_trading_agents():
+    # The literal slug that crashed the trading rollout on 2026-06-08 ~00:50 UTC.
+    with pytest.raises(ProjectScaffoldError, match="≤12 characters"):
+        validate_project_slug("crypto-trading-agents")
+
+
+def test_validate_project_slug_rejects_bad_chars_with_regex_message():
+    with pytest.raises(ProjectScaffoldError, match=r"must match \[a-z0-9-\]\+"):
+        validate_project_slug("Foo_Bar")

@@ -64,7 +64,7 @@ schedule context. Keep repo-specific policy here; Symphony only renders it.
 """
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-_SLUG_MAX_LEN = 32
+_SLUG_MAX_LEN = 12
 
 
 class ProjectScaffoldError(RuntimeError):
@@ -109,8 +109,11 @@ class ProjectScaffoldResult:
 
 class ProjectScaffoldTracker(Protocol):
     async def create_project(self, request: ScaffoldProjectRequest) -> ScaffoldProject: ...
+    async def get_project(self, project_id: str) -> ScaffoldProject: ...
     async def list_project_states(self, project_id: str) -> tuple[TrackerResource, ...]: ...
     async def list_project_labels(self, project_id: str) -> tuple[TrackerResource, ...]: ...
+    async def create_project_state(self, project_id: str, name: str) -> TrackerResource: ...
+    async def create_project_label(self, project_id: str, name: str) -> TrackerResource: ...
 
 
 class PlaneProjectScaffoldTracker:
@@ -130,17 +133,27 @@ class PlaneProjectScaffoldTracker:
             raise ProjectScaffoldApprovalError(
                 "live Plane project creation requires explicit approval"
             )
+        # Plane silently drops `states`/`labels` on this endpoint; per-resource
+        # POSTs after create are the source of truth (see _ensure_project_states).
         body = {
             "name": request.name,
             "identifier": request.slug,
-            "states": list(request.states),
-            "labels": list(request.labels),
         }
         data = await self.transport.post(f"/workspaces/{self.workspace_slug}/projects/", body)
         return ScaffoldProject(
             id=str(data.get("id") or data.get("project_id") or ""),
             slug=str(data.get("identifier") or data.get("slug") or request.slug),
             name=str(data.get("name") or request.name),
+        )
+
+    async def get_project(self, project_id: str) -> ScaffoldProject:
+        data = await self.transport.get(f"/workspaces/{self.workspace_slug}/projects/{project_id}/")
+        if not isinstance(data, dict):
+            raise ProjectScaffoldError(f"unexpected Plane response for project {project_id}")
+        return ScaffoldProject(
+            id=str(data.get("id") or project_id),
+            slug=str(data.get("identifier") or data.get("slug") or ""),
+            name=str(data.get("name") or ""),
         )
 
     async def list_project_states(self, project_id: str) -> tuple[TrackerResource, ...]:
@@ -150,6 +163,34 @@ class PlaneProjectScaffoldTracker:
     async def list_project_labels(self, project_id: str) -> tuple[TrackerResource, ...]:
         data = await self.transport.get(f"/workspaces/{self.workspace_slug}/projects/{project_id}/labels/")
         return _resources_from_response(data)
+
+    async def create_project_state(self, project_id: str, name: str) -> TrackerResource:
+        if not self.approve_live_mutation:
+            raise ProjectScaffoldApprovalError(
+                "live Plane state creation requires explicit approval"
+            )
+        data = await self.transport.post(
+            f"/workspaces/{self.workspace_slug}/projects/{project_id}/states/",
+            {"name": name},
+        )
+        return TrackerResource(
+            name=str(data.get("name") or name),
+            uuid=str(data.get("id") or data.get("uuid") or ""),
+        )
+
+    async def create_project_label(self, project_id: str, name: str) -> TrackerResource:
+        if not self.approve_live_mutation:
+            raise ProjectScaffoldApprovalError(
+                "live Plane label creation requires explicit approval"
+            )
+        data = await self.transport.post(
+            f"/workspaces/{self.workspace_slug}/projects/{project_id}/labels/",
+            {"name": name},
+        )
+        return TrackerResource(
+            name=str(data.get("name") or name),
+            uuid=str(data.get("id") or data.get("uuid") or ""),
+        )
 
 
 class MockProjectScaffoldTracker:
@@ -168,6 +209,9 @@ class MockProjectScaffoldTracker:
             name=request.name,
         )
 
+    async def get_project(self, project_id: str) -> ScaffoldProject:
+        return ScaffoldProject(id=project_id, slug="mock-slug", name="Mock Project")
+
     async def list_project_states(self, project_id: str) -> tuple[TrackerResource, ...]:
         return tuple(
             TrackerResource(name=name, uuid=f"mock-state-{name.lower().replace(' ', '-')}-{self._seq}")
@@ -178,6 +222,18 @@ class MockProjectScaffoldTracker:
         return tuple(
             TrackerResource(name=name, uuid=f"mock-label-{name.replace(':', '-')}-{self._seq}")
             for name in STANDARD_PROJECT_LABELS
+        )
+
+    async def create_project_state(self, project_id: str, name: str) -> TrackerResource:
+        return TrackerResource(
+            name=name,
+            uuid=f"mock-state-{name.lower().replace(' ', '-')}-{self._seq}",
+        )
+
+    async def create_project_label(self, project_id: str, name: str) -> TrackerResource:
+        return TrackerResource(
+            name=name,
+            uuid=f"mock-label-{name.replace(':', '-')}-{self._seq}",
         )
 
 
@@ -197,13 +253,27 @@ async def scaffold_project(
     workflow_stub: str = WORKFLOW_STUB,
     workflow_output_path: Path | None = None,
     workflow_allow_overwrite: bool = False,
+    existing_project_id: str | None = None,
 ) -> ProjectScaffoldResult:
-    """Create a mock/live-gated Plane project and append its binding."""
+    """Create a mock/live-gated Plane project and append its binding.
+
+    When ``existing_project_id`` is given, the project create step is skipped
+    and the existing project is fetched + verified against ``project_slug``.
+    The state/label fill loop runs in either case (idempotent).
+    """
 
     request = ScaffoldProjectRequest(name=project_name, slug=project_slug)
-    project = await tracker.create_project(request)
-    states = await tracker.list_project_states(project.id)
-    labels = await tracker.list_project_labels(project.id)
+    if existing_project_id is None:
+        project = await tracker.create_project(request)
+    else:
+        project = await tracker.get_project(existing_project_id)
+        if project.slug != project_slug:
+            raise ProjectScaffoldError(
+                f"existing project identifier {project.slug!r} does not match "
+                f"--slug {project_slug!r}"
+            )
+    states = await _ensure_project_states(tracker, project.id)
+    labels = await _ensure_project_labels(tracker, project.id)
     binding = _binding_entry(
         project=project,
         repo_path=repo_path,
@@ -230,11 +300,39 @@ async def scaffold_project(
     )
 
 
+async def _ensure_project_states(
+    tracker: ProjectScaffoldTracker, project_id: str
+) -> tuple[TrackerResource, ...]:
+    existing = await tracker.list_project_states(project_id)
+    existing_names = {r.name for r in existing}
+    for name in STANDARD_PROJECT_STATES:
+        if name not in existing_names:
+            await tracker.create_project_state(project_id, name)
+    return await tracker.list_project_states(project_id)
+
+
+async def _ensure_project_labels(
+    tracker: ProjectScaffoldTracker, project_id: str
+) -> tuple[TrackerResource, ...]:
+    existing = await tracker.list_project_labels(project_id)
+    existing_names = {r.name for r in existing}
+    for name in STANDARD_PROJECT_LABELS:
+        if name not in existing_names:
+            await tracker.create_project_label(project_id, name)
+    return await tracker.list_project_labels(project_id)
+
+
 def validate_project_slug(slug: str) -> None:
     """Validate a Plane project identifier slug."""
-    if not _SLUG_RE.match(slug) or len(slug) > _SLUG_MAX_LEN:
+    if len(slug) > _SLUG_MAX_LEN:
         raise ProjectScaffoldError(
-            f"invalid slug {slug!r}: must be lowercase alphanumeric with hyphens, max {_SLUG_MAX_LEN} chars"
+            f"invalid slug {slug!r}: must be ≤{_SLUG_MAX_LEN} characters "
+            f"(Plane identifier limit); got {len(slug)} chars"
+        )
+    if not _SLUG_RE.match(slug):
+        raise ProjectScaffoldError(
+            f"invalid slug {slug!r}: must match [a-z0-9-]+ "
+            f"(lowercase alphanumeric with hyphens)"
         )
 
 
@@ -383,6 +481,11 @@ def _build_parser():
     p.add_argument("--landing-mode", default="local", choices=["local", "remote"])
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--approve-live-mutation", action="store_true")
+    p.add_argument(
+        "--existing-project-id",
+        default=None,
+        help="Resume scaffold against an existing Plane project (skip create_project; fill states/labels)",
+    )
     return p
 
 
@@ -401,6 +504,9 @@ async def _main(argv: "list[str] | None" = None) -> int:
 
     if args.dry_run and args.approve_live_mutation:
         print("error: --dry-run and --approve-live-mutation are mutually exclusive")
+        return 1
+    if args.dry_run and args.existing_project_id:
+        print("error: --dry-run and --existing-project-id are mutually exclusive")
         return 1
 
     validate_project_slug(args.slug)
@@ -474,6 +580,7 @@ async def _main(argv: "list[str] | None" = None) -> int:
             default_agent=args.default_agent,
             approval_enabled=args.approval_enabled,
             landing_mode=args.landing_mode,
+            existing_project_id=args.existing_project_id,
         )
     finally:
         await transport.aclose()
