@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 from tracker_contract import (
@@ -35,6 +37,14 @@ class PlanePollingAuthError(RuntimeError):
 
 class PlanePollingSchemaError(RuntimeError):
     """Raised when Plane returns an unexpected issue shape."""
+
+
+class PlaneRateLimitError(RuntimeError):
+    """Raised when Plane asks this binding to cool down before retrying."""
+
+    def __init__(self, message: str, *, retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
 
 
 class PlaneContractError(RuntimeError):
@@ -113,6 +123,8 @@ class TrackerAdapter(Protocol):
 
     contract: TrackerContract
 
+    def issue_labels(self, issue: dict[str, Any]) -> tuple[str, ...]: ...
+    def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool: ...
     def labels_contain_role(self, labels: tuple[str, ...] | list[str], role: TrackerRole) -> bool: ...
     async def list_candidates(self) -> list[CandidateIssue]: ...
     async def list_issues_by_state(
@@ -231,6 +243,16 @@ class PlaneTrackerAdapter:
             return False
         return label == binding.name or label == (self.resolved_label_ids.get(binding.name) or binding.uuid)
 
+    def issue_labels(self, issue: dict[str, Any]) -> tuple[str, ...]:
+        """Return labels normalized through this binding's Tracker Contract."""
+
+        return _extract_labels(issue, label_ids=self.contract.label_ids)
+
+    def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool:
+        """Return whether a raw tracker issue currently satisfies a state role."""
+
+        return _is_state(issue, self, state)
+
     def labels_contain_role(self, labels: tuple[str, ...] | list[str], role: TrackerRole) -> bool:
         return any(self.label_matches_role(label, role) for label in labels)
 
@@ -294,7 +316,7 @@ class PlaneTrackerAdapter:
             pages += 1
             items = _page_items(response)
             for issue in items:
-                if _is_state(issue, self, state_role):
+                if self.issue_is_state(issue, state_role):
                     issues.append(issue)
             cursor = _next_cursor(response)
             if not cursor:
@@ -323,15 +345,14 @@ class PlaneTrackerAdapter:
                 items = _page_items(response)
                 if not items:
                     return candidates
-                label_ids = self.contract.label_ids if self.contract else None
                 for issue in items:
-                    labels = _extract_labels(issue, label_ids=label_ids)
+                    labels = self.issue_labels(issue)
                     if self.labels_contain_role(labels, TrackerRole.SCHEDULED):
                         continue
-                    if not _is_state(issue, self, TrackerRole.STATE_TODO):
+                    if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
                         mixed_state_seen = True
                         continue
-                    candidates.append(_candidate_from_issue(issue, label_ids=label_ids))
+                    candidates.append(_candidate_from_issue(issue, label_ids=self.contract.label_ids))
                 cursor = _next_cursor(response)
                 if not cursor:
                     return candidates
@@ -470,6 +491,12 @@ class HttpxPlaneTransport:
         if response.status_code in {401, 403}:
             LOGGER.error("Plane authentication failed with status %s", response.status_code)
             raise PlanePollingAuthError(f"Plane authentication failed: {response.status_code}")
+        if response.status_code == 429:
+            retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
+            raise PlaneRateLimitError(
+                "Plane rate limited this binding",
+                retry_after_s=retry_after_s,
+            )
         response.raise_for_status()
         data = response.json()
         if isinstance(data, list):
@@ -578,7 +605,26 @@ def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    text = value.strip()
+    try:
+        return max(0.0, float(text))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at.astimezone(UTC) - datetime.now(UTC)).total_seconds())
+
+
 def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, PlaneRateLimitError):
+        return False
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True
     return exc.__class__.__module__.startswith("httpx") and exc.__class__.__name__ in {

@@ -207,8 +207,8 @@ async def test_run_tick_continues_when_blocked_reconciler_raises(tmp_path: Path,
         repo_dirty=lambda path: False,
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["i1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["i1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 @pytest.mark.asyncio
@@ -231,9 +231,9 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert seen == ["older"]
-    assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     completion_comment = transport.comments["older"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
 
@@ -281,8 +281,8 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(tmp_path: Path
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Jellyfin: OK" not in completion_comment
@@ -304,7 +304,7 @@ async def test_run_tick_omits_secret_bearing_stdout(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "fake-plane-key-for-tests" not in completion_comment
     assert "***REDACTED***" not in completion_comment
@@ -329,16 +329,16 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(tmp_path: Path)
         auto_commit=lambda path, *, issue_identifier, issue_name, issue_id, plan_path=None: "abc1234",
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     completion_comment = [c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]][0]
     assert "Updated config.yaml" not in completion_comment["comment_html"]
-    assert "abc1234" in completion_comment["comment_html"]
+    assert "abc1234" not in completion_comment["comment_html"]
     assert "docs/file.md | 2 ++" in completion_comment["comment_html"]
 
 
 @pytest.mark.asyncio
-async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: Path) -> None:
-    """Dirty repo + clean exit + no marker: auto-commit and transition Done (not Review)."""
+async def test_run_tick_dirty_after_clean_exit_moves_to_review_without_auto_commit(tmp_path: Path) -> None:
+    """Dirty repo + clean exit + no marker: move to Review without auto-commit."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     seen_commit_kwargs: dict[str, str | None] = {}
@@ -363,26 +363,27 @@ async def test_run_tick_dirty_after_clean_exit_auto_commits_and_done(tmp_path: P
         auto_commit=fake_commit,
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
-    assert any("deadbee" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert not any("deadbee" in c["comment_html"] for c in transport.comments["issue-1"])
     assert any("docs/file.md | 2 ++" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert seen_commit_kwargs["issue_id"] == "issue-1"
+    assert seen_commit_kwargs == {}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("state", "reason"),
+    ("state", "reason", "expected_state"),
     [
-        (PlaneState.DONE, "agent-done"),
-        (PlaneState.IN_REVIEW, "agent-review"),
-        (PlaneState.BLOCKED, "agent-blocked"),
+        (PlaneState.DONE, "agent-review", PlaneState.IN_REVIEW),
+        (PlaneState.IN_REVIEW, "agent-review", PlaneState.IN_REVIEW),
+        (PlaneState.BLOCKED, "agent-blocked", PlaneState.BLOCKED),
     ],
 )
 async def test_run_tick_accepts_explicit_agent_terminal_state(
     tmp_path: Path,
     state: PlaneState,
     reason: str,
+    expected_state: PlaneState,
 ) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
@@ -401,7 +402,7 @@ async def test_run_tick_accepts_explicit_agent_terminal_state(
     )
 
     assert result.reason == reason
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[state.value]
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[expected_state.value]
 
 
 @pytest.mark.asyncio
@@ -496,8 +497,8 @@ async def test_run_tick_strips_ansi_from_stderr_summary(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_tick_dirty_worktree_auto_commits_and_completes(tmp_path: Path) -> None:
-    """Pre-existing dirt no longer blocks; scheduler auto-commits and marks Done."""
+async def test_run_tick_dirty_worktree_moves_to_review_without_auto_commit(tmp_path: Path) -> None:
+    """Pre-existing dirt no longer blocks; scheduler moves to Review without auto-commit."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     seen: list[str] = []
@@ -514,16 +515,16 @@ async def test_run_tick_dirty_worktree_auto_commits_and_completes(tmp_path: Path
         auto_commit=lambda *args, **kwargs: auto_commit_calls.append(True) or "sha",
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert result.dispatched is True
     assert result.issue_id == "issue-1"
     assert seen == ["issue-1"]
-    assert auto_commit_calls == [True]
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert auto_commit_calls == []
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     completion_comment = [
         c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
     ][0]["comment_html"]
-    assert "sha" in completion_comment
+    assert "Symphony auto-committed" not in completion_comment
     assert "preexisting.md | 1 +" in completion_comment
 
 
@@ -559,7 +560,7 @@ async def test_run_tick_dispatches_approval_required_candidates_when_policy_disa
         repo_dirty=lambda path: False,
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert seen == ["issue-1"]
 
 
@@ -968,8 +969,8 @@ async def test_approval_gate_ignores_benign_approval_phrases(tmp_path: Path, std
         repo_dirty=lambda path: False,
     )
 
-    assert result.reason == "agent-marker-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-marker-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 @pytest.mark.asyncio
@@ -988,9 +989,9 @@ async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert result.mode == "build"
-    assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 @pytest.mark.asyncio
@@ -1071,7 +1072,7 @@ async def test_build_mode_removes_stale_plan_label_before_running(tmp_path: Path
     )
 
     labels = _extract_labels(transport.issues["build-1"], label_ids=DEFAULT_CONTRACT.label_ids)
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert result.mode == "build"
     assert PlaneLabel.PLAN.value not in labels
     assert PlaneLabel.BUILD.value in labels
@@ -1140,7 +1141,7 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(tmp_path:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "done output" not in completion_comment
@@ -1184,7 +1185,7 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "done output" not in completion_comment
@@ -1316,7 +1317,7 @@ async def test_run_tick_summary_marker_appears_in_success_comment(tmp_path: Path
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Jellyfin CT106 healthy. HTTP 200, mounts OK." in completion_comment
@@ -1376,7 +1377,8 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     head, sep, _ = completion_comment.partition("\n\n**Timeline**")
     assert sep == "\n\n**Timeline**"
     assert len(head) < 1000
-    assert head.rstrip().endswith("…")
+    summary_head = head.split("\n\n**Run branch:**", 1)[0]
+    assert summary_head.rstrip().endswith("…")
 
 
 @pytest.mark.asyncio
@@ -1455,8 +1457,10 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     # legacy prefix.
     head, sep, tail = completion_comment.partition("\n\n**Timeline**")
     assert sep == "\n\n**Timeline**"
-    assert head.strip() == "**Symphony completed:**"
-    assert "- verdict: agent-clean-done" in tail
+    assert head.strip().startswith("**Symphony completed:**")
+    assert "**Run branch:**" in head
+    assert "Move this issue to Done" in head
+    assert "- verdict: agent-clean-review" in tail
     assert "- code_sha:" in tail
     assert "- claim_to_finish_ms:" in tail
 
@@ -1708,7 +1712,7 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "secret-telegram-token-12345" not in completion_comment
     assert "***REDACTED***" not in completion_comment
@@ -1746,7 +1750,7 @@ async def test_plan_mode_does_not_warn_when_worktree_becomes_dirty(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_marker_done_transitions_to_done(tmp_path: Path) -> None:
+async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = "Health check OK\nSYMPHONY_RESULT: done\n"
@@ -1761,8 +1765,8 @@ async def test_marker_done_transitions_to_done(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-marker-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-marker-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Health check OK" not in completion_comment
@@ -1830,8 +1834,8 @@ async def test_marker_last_occurrence_wins(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-marker-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-marker-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 @pytest.mark.asyncio
@@ -1850,12 +1854,12 @@ async def test_marker_case_insensitive(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-marker-done"
+    assert result.reason == "agent-marker-review"
 
 
 @pytest.mark.asyncio
-async def test_marker_done_with_dirty_repo_auto_commits_and_done(tmp_path: Path) -> None:
-    """Dirty repo + marker done: scheduler auto-commits and honors the verdict."""
+async def test_marker_done_with_dirty_repo_moves_to_review(tmp_path: Path) -> None:
+    """Dirty repo + marker done: scheduler moves to review without auto-commit."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = "Made a small change.\nSYMPHONY_RESULT: done\n"
@@ -1872,14 +1876,15 @@ async def test_marker_done_with_dirty_repo_auto_commits_and_done(tmp_path: Path)
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-marker-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
-    assert any("cafe123" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert result.reason == "agent-marker-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert not any("cafe123" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert any("src/foo.py | 1 +" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
 @pytest.mark.asyncio
-async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path: Path) -> None:
-    """Dirty repo + marker review: auto-commit, post commit, transition In Review."""
+async def test_marker_review_with_dirty_repo_moves_to_in_review(tmp_path: Path) -> None:
+    """Dirty repo + marker review: move In Review without auto-commit."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = "Worth a human look.\nSYMPHONY_RESULT: review\n"
@@ -1897,12 +1902,13 @@ async def test_marker_review_with_dirty_repo_auto_commits_and_in_review(tmp_path
 
     assert result.reason == "agent-marker-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert any("feed999" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert not any("feed999" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert any("src/foo.py | 1 +" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
 @pytest.mark.asyncio
-async def test_auto_commit_failure_completes_with_warning(tmp_path: Path) -> None:
-    """If auto-commit raises, the issue still goes Done with a warning comment."""
+async def test_clean_review_does_not_auto_commit_before_done(tmp_path: Path) -> None:
+    """Clean review path must not auto-commit before operator moves issue Done."""
     from scheduler import AutoCommitFailed
 
     transport = FakeTransport()
@@ -1922,31 +1928,32 @@ async def test_auto_commit_failure_completes_with_warning(tmp_path: Path) -> Non
         auto_commit=failing_commit,
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     completion = [c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]]
     assert completion
     body = completion[0]["comment_html"]
-    assert "Symphony auto-commit failed" in body
-    assert "git commit failed" in body
+    assert "Symphony auto-commit failed" not in body
+    assert "git commit failed" not in body
     assert "src/foo.py | 1 +" in body
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("state", "reason"),
+    ("state", "reason", "expected_state"),
     [
-        (PlaneState.DONE, "agent-done"),
-        (PlaneState.IN_REVIEW, "agent-review"),
-        (PlaneState.BLOCKED, "agent-blocked"),
+        (PlaneState.DONE, "agent-review", PlaneState.IN_REVIEW),
+        (PlaneState.IN_REVIEW, "agent-review", PlaneState.IN_REVIEW),
+        (PlaneState.BLOCKED, "agent-blocked", PlaneState.BLOCKED),
     ],
 )
-async def test_auto_commit_failure_warning_posted_on_agent_self_transition(
+async def test_agent_self_transition_does_not_auto_commit_before_done(
     tmp_path: Path,
     state: PlaneState,
     reason: str,
+    expected_state: PlaneState,
 ) -> None:
-    """When the agent self-transitions, auto-commit failure must still be surfaced as a warning comment."""
+    """Agent self-transition path must not auto-commit before operator Done landing."""
     from scheduler import AutoCommitFailed
 
     transport = FakeTransport()
@@ -1972,15 +1979,12 @@ async def test_auto_commit_failure_warning_posted_on_agent_self_transition(
     )
 
     assert result.reason == reason
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[state.value]
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[expected_state.value]
     warning_comments = [
         c for c in transport.comments["issue-1"]
         if "Symphony auto-commit failed" in c["comment_html"]
     ]
-    assert warning_comments, "expected an auto-commit warning comment on agent self-transition"
-    body = warning_comments[0]["comment_html"]
-    assert "git commit failed" in body
-    assert "src/foo.py | 1 +" in body
+    assert warning_comments == []
 
 
 @pytest.mark.asyncio
@@ -1999,8 +2003,8 @@ async def test_marker_unknown_value_falls_through_to_clean_done(tmp_path: Path) 
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 @pytest.mark.asyncio
@@ -2018,8 +2022,8 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert "Symphony completed" in completion_comment
 
@@ -2163,7 +2167,8 @@ async def test_due_scheduled_ticket_does_not_send_release_notification(tmp_path:
         )
 
     assert result.issue_id == "scheduled"
-    mock_send.assert_not_called()
+    mock_send.assert_called_once()
+    assert "awaiting operator Done landing" in mock_send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -2506,8 +2511,8 @@ async def test_stale_preclaim_schedule_is_ignored_after_agent(tmp_path: Path) ->
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 @pytest.mark.asyncio
@@ -2599,9 +2604,10 @@ async def test_run_tick_uses_run_worktree_and_keeps_branch(tmp_path: Path) -> No
     run_id = _run_id_from_identifier_for_tests("issue-1")
     branch = worktree_branch(run_id)
     wt_path = worktree_path(config, run_id)
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert seen_worktrees == [wt_path]
-    assert not wt_path.exists()
+    assert wt_path.exists()
+    assert (wt_path / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
     assert not (repo / "agent-output.txt").exists()
 
     branches = subprocess.run(
@@ -2612,14 +2618,6 @@ async def test_run_tick_uses_run_worktree_and_keeps_branch(tmp_path: Path) -> No
         check=True,
     )
     assert branch in branches.stdout
-    show = subprocess.run(
-        ["git", "show", f"{branch}:agent-output.txt"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert show.stdout == "done\n"
 
 
 @pytest.mark.asyncio
@@ -2679,7 +2677,7 @@ async def test_plan_to_build_handoff_uses_plan_branch_ref(tmp_path: Path) -> Non
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert build_result.reason == "agent-clean-done"
+    assert build_result.reason == "agent-clean-review"
     assert config.worktrees_root is not None
     assert seen_plan_paths == [config.worktrees_root / f"run-{run_id}" / "plans" / "plan-1.md"]
 
@@ -2747,17 +2745,10 @@ async def test_run_tick_recovers_existing_orphan_worktree_before_dispatch(tmp_pa
         poller=lambda adapter: [_candidate("issue-1")],
     )
 
-    assert result.reason == "agent-clean-done"
+    assert result.reason == "agent-clean-review"
     assert seen_worktrees == [worktree_path_expected]
-    assert not worktree_path_expected.exists()
-    show = subprocess.run(
-        ["git", "show", f"symphony/run-{run_id}:agent-output.txt"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert show.stdout == "done\n"
+    assert worktree_path_expected.exists()
+    assert (worktree_path_expected / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
 
 
 @pytest.mark.asyncio
@@ -2917,7 +2908,7 @@ async def test_run_tick_appends_terminal_timeline_block(tmp_path: Path) -> None:
     assert "- finished_at: 2026-05-04T02:00:00+00:00" in completion_comment
     assert "- claim_to_finish_ms: 0" in completion_comment
     assert "- agent_duration_ms: 1234" in completion_comment
-    assert "- verdict: agent-clean-done" in completion_comment
+    assert "- verdict: agent-clean-review" in completion_comment
     assert "- code_sha: " in completion_comment
 
 
@@ -2976,8 +2967,8 @@ async def test_optional_roles_missing_disable_scheduled_and_approval_paths(tmp_p
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    assert result.reason == "agent-clean-done"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
 
 
 def test_contract_requires_mode_and_state_roles() -> None:
@@ -3296,8 +3287,8 @@ async def test_dispatch_one_overlaps_same_repo_runs_in_isolated_worktrees(tmp_pa
 
     release.set()
     results = await asyncio.gather(*tasks)
-    assert [result.reason for result in results] == ["agent-clean-done", "agent-clean-done"]
-    assert all(not path.exists() for path in seen_worktrees)
+    assert [result.reason for result in results] == ["agent-clean-review", "agent-clean-review"]
+    assert all(path.exists() for path in seen_worktrees)
 
 
 @pytest.mark.asyncio
@@ -3332,7 +3323,7 @@ async def test_dispatch_one_does_not_duplicate_in_flight_issue(tmp_path: Path) -
     assert calls == ["issue-1"]
     release.set()
     results = await asyncio.gather(*tasks)
-    assert sorted(result.reason for result in results) == ["agent-clean-done", "no-candidates"]
+    assert sorted(result.reason for result in results) == ["agent-clean-review", "no-candidates"]
     assert calls == ["issue-1"]
 
 
@@ -3387,7 +3378,7 @@ async def test_scheduled_release_reserved_before_side_effects(tmp_path: Path, mo
     assert release_calls == 1
     release_continue.set()
     results = await asyncio.gather(*tasks)
-    assert sorted(result.reason for result in results) == ["agent-clean-done", "already-in-flight"]
+    assert sorted(result.reason for result in results) == ["agent-clean-review", "already-in-flight"]
     assert release_calls == 1
 
 
@@ -3619,8 +3610,8 @@ async def test_run_tick_cleans_worktree_on_nonzero_exit(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_tick_cleans_worktree_on_success(tmp_path: Path) -> None:
-    """A successful Run must also clean up its worktree."""
+async def test_run_tick_retains_worktree_on_success(tmp_path: Path) -> None:
+    """A successful Run must retain its worktree for operator review."""
     import subprocess
     from run_worktree import create_worktree
 
@@ -3648,8 +3639,8 @@ async def test_run_tick_cleans_worktree_on_success(tmp_path: Path) -> None:
         repo_dirty=lambda path: False,
     )
 
-    assert result.reason == "agent-clean-done"
-    assert not wt.exists(), "worktree must be removed after success"
+    assert result.reason == "agent-clean-review"
+    assert wt.exists(), "worktree must remain after success for review"
 
 
 # --- Per-binding dispatch state isolation ---
@@ -3811,3 +3802,192 @@ async def test_run_loop_logs_dispatch_exceptions_without_exiting(tmp_path: Path,
         )
 
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_plane_rate_limit_records_per_binding_cooldown(tmp_path: Path, monkeypatch) -> None:
+    from plane_adapter import PlaneRateLimitError
+    from scheduler import _DispatchState, _dispatch_one
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+
+    async def fake_run_tick(*args, **kwargs):
+        raise PlaneRateLimitError("rate limited", retry_after_s=42)
+
+    monkeypatch.setattr(scheduler, "run_tick", fake_run_tick)
+    result = await _dispatch_one(
+        _config(tmp_path),
+        _adapter(FakeTransport()),
+        lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        lambda issue: "prompt",
+        None,
+        False,
+        state,
+    )
+
+    assert result.reason == "plane-rate-limited"
+    assert state.cooldown_until is not None
+    assert state.cooldown_attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_run_tick_clean_exit_moves_to_in_review_and_retains_worktree(tmp_path: Path) -> None:
+    from run_worktree import worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
+        return AgentResult(0, 10, False, stdout="SYMPHONY_SUMMARY: output ready")
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=agent,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    retained = worktree_path(config, run_id)
+    assert result.reason == "agent-clean-review"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert retained.exists()
+    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
+    assert "output ready" in transport.comments["issue-1"][1]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_startup_skips_in_review_worktree(tmp_path: Path) -> None:
+    from run_worktree import create_worktree
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "sequence_id": "issue-1",
+    }
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    retained = create_worktree(config, run_id)
+
+    cleaned = await reconcile_startup(
+        config,
+        _adapter(transport),
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert cleaned == 0
+    assert retained.exists()
+
+
+@pytest.mark.asyncio
+async def test_done_landing_commits_merges_and_deletes_worktree_and_branch(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import create_worktree, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, base_branch="main")
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    wt = create_worktree(config, run_id, base_branch="main")
+    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
+
+    landed = await scheduler.reconcile_done_landing(
+        config,
+        _adapter(transport),
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert landed == 1
+    assert not worktree_path(config, run_id).exists()
+    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
+    assert branches.stdout.strip() == ""
+    assert (repo / "landed.txt").read_text(encoding="utf-8") == "landed\n"
+    assert any("Cleaned run worktree and branch" in c["comment_html"] for c in transport.comments["issue-1"])
+
+
+@pytest.mark.asyncio
+async def test_done_landing_conflict_blocks_and_preserves_evidence(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import create_worktree, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, base_branch="main")
+    (repo / "conflict.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "conflict.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.name=Seed", "-c", "user.email=seed@test", "commit", "-m", "base file"], cwd=repo, check=True)
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    wt = create_worktree(config, run_id, base_branch="HEAD~1")
+    (wt / "conflict.txt").write_text("run\n", encoding="utf-8")
+
+    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
+
+    assert landed == 0
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    assert worktree_path(config, run_id).exists()
+    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
+    assert worktree_branch(run_id) in branches.stdout
+    assert any("Done landing failed" in c["comment_html"] for c in transport.comments["issue-1"])
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_during_review_transition_retains_worktree(tmp_path: Path) -> None:
+    from plane_adapter import PlaneRateLimitError
+    from run_worktree import worktree_path
+
+    class RateLimitOnCompletionCommentTransport(FakeTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.comment_posts = 0
+
+        async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+            if "/comments" in path:
+                self.comment_posts += 1
+                if self.comment_posts == 2:
+                    raise PlaneRateLimitError("rate limited", retry_after_s=30)
+            return await super().post(path, body)
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = RateLimitOnCompletionCommentTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
+        return AgentResult(0, 10, False)
+
+    result = await _dispatch_one(
+        config,
+        _adapter(transport),
+        agent,
+        lambda issue: "prompt",
+        None,
+        False,
+    )
+
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    retained = worktree_path(config, run_id)
+    assert result.reason == "plane-rate-limited"
+    assert retained.exists()
+    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"

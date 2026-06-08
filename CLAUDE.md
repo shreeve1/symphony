@@ -2,6 +2,20 @@
 
 This is the Symphony host-native scheduler source repo. It is live infrastructure: `symphony-host.service` runs `/usr/bin/python3 -m main` from this directory and polls Plane for Todo tickets.
 
+## REQUIRED: Caveman Prose
+
+**Hard rule. Every response, every turn.** Write like a smart caveman. Full technical accuracy stays. Fluff dies.
+
+- **Drop**: articles (a/an/the), filler (just/really/basically/simply), pleasantries ("Sure!", "Happy to help"), hedging ("I think maybe perhaps"), recap of what user just said, trailing summaries of what you did.
+- **Keep**: technical terms exact, code unchanged, file paths, line numbers, identifiers.
+- **Form**: fragments OK. Short clauses. Pattern → `[thing] [action] [reason]. [next step].`
+- **Bad**: "Sure! I'd be happy to help you with that. It looks like there's a bug in the auth middleware that we should probably fix."
+- **Good**: "Bug in auth middleware. Fix:"
+
+**Boundaries** — code, commit messages, PR descriptions, and documentation you author are written in normal prose. Caveman applies to chat output only.
+
+**Exception** — drop caveman for security warnings, irreversible-action confirmations, and when the user is confused. Resume after.
+
 ## Key Paths
 
 - `/home/james/symphony/` — this repo. `bindings.yml` lives at the root; auto-discovered at CWD.
@@ -20,8 +34,9 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 ## Env locations
 
 - `/home/james/symphony-host.env` — secret values (`PLANE_API_KEY`, etc.).
-- `symphony-host.service` `Environment=` — non-secret config (`PLANE_API_URL`, `PLANE_WORKSPACE_SLUG`, `PI_BIN`, `SYMPHONY_PI_PROVIDER`, `SYMPHONY_PI_MODEL`). Inspect with `systemctl show symphony-host.service --property=Environment`.
+- `symphony-host.service` `Environment=` — non-secret config (`PLANE_API_URL`, `PLANE_WORKSPACE_SLUG`, `PI_BIN`, `SYMPHONY_PI_PROVIDER`, `SYMPHONY_PI_MODEL`, `SYMPHONY_LOCK_PATH`, `PYTHONPATH`, `PYTHONUNBUFFERED`). Inspect with `systemctl show symphony-host.service --property=Environment`.
 - `WorkingDirectory=/home/james/symphony` — `bindings.yml` auto-discovered at cwd; `SYMPHONY_BINDINGS_PATH` not required.
+- `SYMPHONY_LOCK_PATH` — optional; if set, `config.py` uses it as the single-instance lock file path. Currently `/run/symphony/symphony.lock` on the unit.
 
 ## Required env vars (bindings mode)
 
@@ -30,11 +45,11 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 - `PLANE_WORKSPACE_SLUG`
 - `PI_BIN`
 
-`PLANE_PROJECT_ID` and `HOMELAB_REPO_PATH` may still be set on the unit — harmless, ignored in bindings mode.
+`PLANE_PROJECT_ID` and `HOMELAB_REPO_PATH` are a legacy single-project fallback (`config.py:289,293`); bindings mode bypasses them. Safe to leave on the unit; not required.
 
 ## Dead config
 
-`Environment=OPENCODE_BIN=...` and `Environment=SYMPHONY_OPENCODE_AGENT=build` on `symphony-host.service` are unreferenced by current code and survive only as drift. Safe to leave; safe to remove at a future unit cleanup.
+`Environment=OPENCODE_BIN=...` and `Environment=SYMPHONY_OPENCODE_AGENT=build` on `symphony-host.service` have zero references in current `.py` source and survive only as drift. Safe to leave; safe to remove at a future unit cleanup.
 
 ## Live bindings
 

@@ -293,3 +293,56 @@ def test_build_binding_runtime_verifier_failure_aborts_before_transport(monkeypa
 
     assert "verify" in calls
     assert "transport" not in calls
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_binding_does_not_block_other_binding(monkeypatch):
+    calls = []
+    closed = []
+
+    class FakeTransport:
+        def __init__(self, name):
+            self.name = name
+
+        async def aclose(self):
+            closed.append(self.name)
+
+    class FakeConfig:
+        bindings = ("limited", "healthy")
+
+    class FakeRuntimeConfig:
+        def __init__(self, name):
+            self.name = name
+            self.homelab_repo_path = Path(f"/tmp/{name}")
+
+    class FakeAdapter:
+        contract = None
+
+    def fake_build_runtime(config, binding):
+        return main.BindingRuntime(
+            name=binding,
+            config=cast(Any, FakeRuntimeConfig(binding)),
+            transport=cast(Any, FakeTransport(binding)),
+            adapter=cast(Any, FakeAdapter()),
+            agent_adapter=cast(Any, f"agent-{binding}"),
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+        return 0
+
+    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
+        calls.append(config.name)
+        if config.name == "healthy":
+            raise StopLoop
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    with pytest.raises(StopLoop):
+        await main.run_bindings_loop(cast(Any, FakeConfig()))
+
+    assert "limited" in calls
+    assert "healthy" in calls
+    assert closed == ["limited", "healthy"]
