@@ -6,3 +6,5 @@ __pycache__/
 plans/
 .bindings.yml.preview
 .WORKFLOW.md.preview
+.pi-lens/
+.rpiv/
