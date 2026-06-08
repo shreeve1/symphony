@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import html
 import inspect
 import logging
 import random
@@ -48,7 +50,7 @@ LOGGER = logging.getLogger(__name__)
 # tests that call run_tick / _dispatch_one directly via
 # _fallback_dispatch_state(). Production path: each run_loop creates a
 # per-binding _DispatchState with its own semaphore.
-_RUN_SEMAPHORE: asyncio.Semaphore = None  # type: ignore[assignment]
+_RUN_SEMAPHORE: asyncio.Semaphore | None = None
 _POLL_INTERVAL_S = 0.0  # retained for _fallback_dispatch_state
 _IN_FLIGHT_ISSUE_IDS: set[str] = set()
 _IN_FLIGHT_LOCK: asyncio.Lock | None = None
@@ -80,6 +82,9 @@ SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
 _PLAN_HANDOFF_MARKER = "Symphony completed plan."
+DIRTY_BASE_APPROVAL_COMMAND = "Symphony-Landing: auto-commit-base"
+DIRTY_BASE_TOKEN_PREFIX = "Dirty-Base-Token:"
+DIRTY_BASE_STATUS_MAX_LINES = 20
 
 
 @dataclass
@@ -395,7 +400,7 @@ def _labels_contain_role(
     role: TrackerRole,
 ) -> bool:
     if hasattr(tracker, "labels_contain_role"):
-        return tracker.labels_contain_role(labels, role)  # type: ignore[union-attr]
+        return cast(TrackerAdapter, tracker).labels_contain_role(labels, role)
     contract = cast(TrackerContract, tracker)
     binding = contract.optional_label_binding(role)
     if binding is None:
@@ -526,6 +531,132 @@ class LandingFailed(RuntimeError):
         self.details = details
 
 
+def _repo_operation_in_progress(repo_path: Path) -> bool:
+    git_dir = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if git_dir.returncode != 0:
+        return True
+    raw_git_dir = Path(git_dir.stdout.strip())
+    resolved_git_dir = raw_git_dir if raw_git_dir.is_absolute() else repo_path / raw_git_dir
+    markers = (
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "REBASE_HEAD",
+        "rebase-merge",
+        "rebase-apply",
+    )
+    return any((resolved_git_dir / marker).exists() for marker in markers)
+
+
+def _dirty_base_snapshot(repo_path: Path) -> tuple[str, str]:
+    status_z = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=repo_path,
+        capture_output=True,
+        text=False,
+        check=False,
+    )
+    if status_z.returncode != 0:
+        raise LandingFailed("could not inspect dirty base checkout", details=status_z.stderr.decode(errors="replace"))
+
+    digest = hashlib.sha256()
+    digest.update(status_z.stdout)
+    for args in (
+        ["diff", "--binary", "--no-ext-diff"],
+        ["diff", "--cached", "--binary", "--no-ext-diff"],
+    ):
+        diff = subprocess.run(
+            ["git", *args],
+            cwd=repo_path,
+            capture_output=True,
+            text=False,
+            check=False,
+        )
+        if diff.returncode != 0:
+            raise LandingFailed("could not inspect dirty base checkout", details=diff.stderr.decode(errors="replace"))
+        digest.update(b"\0".join(arg.encode() for arg in args))
+        digest.update(diff.stdout)
+
+    status_text = subprocess.run(
+        ["git", "status", "--short", "--untracked-files=all"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status_text.returncode != 0:
+        raise LandingFailed("could not inspect dirty base checkout", details=status_text.stderr)
+    for relative_path in sorted(_dirty_paths_from_porcelain_z(status_z.stdout.decode(errors="surrogateescape"))):
+        path = repo_path / relative_path
+        digest.update(f"\0path:{relative_path}\0".encode())
+        if path.is_file():
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        elif path.is_dir():
+            for child in sorted(p for p in path.rglob("*") if p.is_file()):
+                child_relative = child.relative_to(repo_path).as_posix()
+                digest.update(f"\0path:{child_relative}\0".encode())
+                with child.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+
+    lines = status_text.stdout.strip().splitlines()
+    if len(lines) > DIRTY_BASE_STATUS_MAX_LINES:
+        shown = lines[:DIRTY_BASE_STATUS_MAX_LINES]
+        shown.append(f"... {len(lines) - DIRTY_BASE_STATUS_MAX_LINES} more dirty path(s) omitted")
+        summary = "\n".join(shown)
+    else:
+        summary = "\n".join(lines)
+    return digest.hexdigest(), summary or "No dirty paths listed."
+
+
+def _dirty_base_approval_message(summary: str, token: str) -> str:
+    return (
+        "binding base checkout is dirty; Plane approval required before Symphony can land this run."
+        "\n\n**Dirty base summary:**\n```\n"
+        f"{summary}\n"
+        "```\n\nComment this exact approval on the ticket, then move it back to Done:"
+        "\n\n```text\n"
+        f"{DIRTY_BASE_APPROVAL_COMMAND}\n"
+        f"{DIRTY_BASE_TOKEN_PREFIX} {token}\n"
+        "```"
+    )
+
+
+def _plain_comment_text(comment: dict[str, Any]) -> str:
+    raw = str(
+        comment.get("comment_stripped")
+        or comment.get("body")
+        or comment.get("comment_html")
+        or ""
+    )
+    text = re.sub(r"(?i)<br\s*/?>", "\n", raw)
+    text = re.sub(r"(?i)</p\s*>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return html.unescape(text)
+
+
+def _dirty_base_approval_token_from_comments(comments: Sequence[dict[str, Any]]) -> str | None:
+    approved_token: str | None = None
+    token_pattern = re.compile(rf"^\s*{re.escape(DIRTY_BASE_TOKEN_PREFIX)}\s*([0-9a-f]{{64}})\s*$", re.IGNORECASE | re.MULTILINE)
+    command_pattern = re.compile(rf"^\s*{re.escape(DIRTY_BASE_APPROVAL_COMMAND)}\s*$", re.IGNORECASE | re.MULTILINE)
+    for comment in sorted(comments, key=lambda c: str(c.get("created_at") or "")):
+        body = _plain_comment_text(comment)
+        if not command_pattern.search(body):
+            continue
+        match = token_pattern.search(body)
+        if match:
+            approved_token = match.group(1).lower()
+    return approved_token
+
+
 def _landing_issue_identity(issue: dict[str, Any]) -> tuple[str, str, str]:
     issue_id = str(issue["id"])
     identifier = str(issue.get("identifier") or issue.get("sequence_id") or issue_id)
@@ -558,6 +689,11 @@ async def reconcile_done_landing(
         run_id = _run_id_from_identifier(identifier)
         if not _run_branch_exists(config, run_id) and not worktree_path(config, run_id).exists():
             continue
+        approved_dirty_base_token = None
+        if _repo_dirty(config.homelab_repo_path):
+            approved_dirty_base_token = _dirty_base_approval_token_from_comments(
+                await adapter.list_comments(issue_id)
+            )
         try:
             landing_summary = _land_done_issue(
                 config,
@@ -565,6 +701,7 @@ async def reconcile_done_landing(
                 issue_identifier=identifier,
                 issue_name=name,
                 issue_id=issue_id,
+                approved_dirty_base_token=approved_dirty_base_token,
             )
         except LandingFailed as exc:
             message = f"Done landing failed: {exc}"
@@ -594,6 +731,7 @@ def _land_done_issue(
     issue_identifier: str,
     issue_name: str,
     issue_id: str,
+    approved_dirty_base_token: str | None = None,
 ) -> str:
     wt_path = worktree_path(config, run_id)
     branch = worktree_branch(run_id)
@@ -615,8 +753,22 @@ def _land_done_issue(
             remove_worktree(config, run_id)
         return "Symphony Done landing found no run branch changes; cleaned run worktree."
 
+    base_prelanding_sha = None
     if _repo_dirty(config.homelab_repo_path):
-        raise LandingFailed("binding base checkout is dirty; refusing to merge")
+        if _repo_operation_in_progress(config.homelab_repo_path):
+            raise LandingFailed("binding base checkout has a git operation in progress; refusing to merge")
+        token, summary = _dirty_base_snapshot(config.homelab_repo_path)
+        if approved_dirty_base_token != token:
+            raise LandingFailed(_dirty_base_approval_message(summary, token))
+        try:
+            base_prelanding_sha = _auto_commit(
+                config.homelab_repo_path,
+                issue_identifier=issue_identifier,
+                issue_name=f"pre-landing dirty base before {issue_name}".strip(),
+                issue_id=issue_id,
+            )
+        except AutoCommitFailed as exc:
+            raise LandingFailed("could not auto-commit dirty base checkout", details=exc.stderr or str(exc)) from exc
 
     checkout = subprocess.run(
         ["git", "switch", config.base_branch],
@@ -656,6 +808,8 @@ def _land_done_issue(
         raise LandingFailed("could not delete landed run branch", details=str(exc)) from exc
 
     body = f"Symphony landed `{branch}` into `{config.base_branch}`."
+    if base_prelanding_sha is not None:
+        body += f"\n\n**Base pre-landing commit:** `{base_prelanding_sha}`"
     if committed_sha is not None:
         body += f"\n\n**Run commit:** `{committed_sha}`"
     body += f"\n**Landing HEAD:** `{merge_sha.stdout.strip()}`"

@@ -3154,7 +3154,9 @@ def test_init_run_semaphore_resets_semaphore_on_reinit(tmp_path: Path) -> None:
     # Different object after re-init.
     assert sched_mod._RUN_SEMAPHORE is not first
     # Verify cap=3 by checking Semaphore internal _value
-    assert sched_mod._RUN_SEMAPHORE._value == 3
+    sem = sched_mod._RUN_SEMAPHORE
+    assert sem is not None
+    assert sem._value == 3
 
 
 # --- _dispatch_one tests ---
@@ -3228,7 +3230,9 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(tmp_path: Path, monkeypa
     release.set()
     await asyncio.gather(*tasks)
     assert max_entered == 2
-    assert sched_mod._RUN_SEMAPHORE._value == 2
+    sem = sched_mod._RUN_SEMAPHORE
+    assert sem is not None
+    assert sem._value == 2
 
 
 @pytest.mark.asyncio
@@ -3484,7 +3488,9 @@ async def test_dispatch_one_cancel_releases_slot_and_cleans_worktree_and_tmux(
     release.set()
 
     run_id = _run_id_from_identifier_for_tests("issue-1")
-    assert sched_mod._RUN_SEMAPHORE._value == 1
+    sem = sched_mod._RUN_SEMAPHORE
+    assert sem is not None
+    assert sem._value == 1
     assert seen_worktrees and not seen_worktrees[0].exists()
     assert killed_run_ids == [run_id]
 
@@ -3500,16 +3506,18 @@ async def test_semaphore_at_cap_reports_locked(tmp_path: Path) -> None:
     config = _config(tmp_path, run_cap=2)
     init_run_semaphore(config)
 
-    s1 = await sched_mod._RUN_SEMAPHORE.acquire()
-    s2 = await sched_mod._RUN_SEMAPHORE.acquire()
+    sem = sched_mod._RUN_SEMAPHORE
+    assert sem is not None
+    s1 = await sem.acquire()
+    s2 = await sem.acquire()
 
     # Cap fully utilized
-    assert sched_mod._RUN_SEMAPHORE.locked() is True
+    assert sem.locked() is True
 
     # Clean up: release the acquired slots (asyncio Semaphore.acquire
     # returns True, release is called directly on the Semaphore)
-    sched_mod._RUN_SEMAPHORE.release()
-    sched_mod._RUN_SEMAPHORE.release()
+    sem.release()
+    sem.release()
 
 
 @pytest.mark.asyncio
@@ -3520,12 +3528,14 @@ async def test_semaphore_slot_released_on_exit(tmp_path: Path) -> None:
     config = _config(tmp_path, run_cap=1)
     init_run_semaphore(config)
 
-    slot = await sched_mod._RUN_SEMAPHORE.acquire()
-    assert sched_mod._RUN_SEMAPHORE.locked() is True
+    sem = sched_mod._RUN_SEMAPHORE
+    assert sem is not None
+    slot = await sem.acquire()
+    assert sem.locked() is True
     # Release directly on the semaphore (asyncio Semaphore.acquire
     # returns True, not a releasable context manager)
-    sched_mod._RUN_SEMAPHORE.release()
-    assert sched_mod._RUN_SEMAPHORE.locked() is False
+    sem.release()
+    assert sem.locked() is False
 
 
 # --- poll interval constant tests ---
@@ -3947,6 +3957,137 @@ async def test_done_landing_conflict_blocks_and_preserves_evidence(tmp_path: Pat
     branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
     assert worktree_branch(run_id) in branches.stdout
     assert any("Done landing failed" in c["comment_html"] for c in transport.comments["issue-1"])
+
+
+def test_dirty_base_approval_parser_accepts_plane_html_comment() -> None:
+    token = "a" * 64
+    comments = [
+        {
+            "created_at": "2026-05-04T02:00:00+00:00",
+            "comment_html": f"<p>Symphony-Landing: auto-commit-base<br>Dirty-Base-Token: {token}</p>",
+        }
+    ]
+
+    assert scheduler._dirty_base_approval_token_from_comments(comments) == token
+
+
+def test_dirty_base_approval_parser_uses_newest_valid_comment() -> None:
+    old_token = "a" * 64
+    new_token = "b" * 64
+    comments = [
+        {
+            "created_at": "2026-05-04T02:00:00+00:00",
+            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {old_token}",
+        },
+        {
+            "created_at": "2026-05-04T02:05:00+00:00",
+            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {new_token}",
+        },
+    ]
+
+    assert scheduler._dirty_base_approval_token_from_comments(comments) == new_token
+
+
+@pytest.mark.asyncio
+async def test_done_landing_dirty_base_requires_plane_comment_token(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import create_worktree, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, base_branch="main")
+    (repo / "operator-wip.txt").write_text("operator work\n", encoding="utf-8")
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    create_worktree(config, run_id, base_branch="main")
+
+    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
+
+    assert landed == 0
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    assert worktree_path(config, run_id).exists()
+    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
+    assert worktree_branch(run_id) in branches.stdout
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert "Plane approval required" in blocked_comment
+    assert "operator-wip.txt" in blocked_comment
+    assert "Symphony-Landing: auto-commit-base" in blocked_comment
+    assert "Dirty-Base-Token:" in blocked_comment
+
+
+@pytest.mark.asyncio
+async def test_done_landing_plane_comment_approval_auto_commits_dirty_base(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import create_worktree, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, base_branch="main")
+    (repo / "operator-wip.txt").write_text("operator work\n", encoding="utf-8")
+    token, _summary = scheduler._dirty_base_snapshot(repo)
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
+    transport.comments["issue-1"] = [
+        {
+            "created_at": "2026-05-04T02:00:00+00:00",
+            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {token}",
+        }
+    ]
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    wt = create_worktree(config, run_id, base_branch="main")
+    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
+
+    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
+
+    assert landed == 1
+    assert (repo / "operator-wip.txt").read_text(encoding="utf-8") == "operator work\n"
+    assert (repo / "landed.txt").read_text(encoding="utf-8") == "landed\n"
+    assert not worktree_path(config, run_id).exists()
+    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
+    assert branches.stdout.strip() == ""
+    landing_comment = transport.comments["issue-1"][-1]["comment_html"]
+    assert "Base pre-landing commit" in landing_comment
+    assert "Landing HEAD" in landing_comment
+    log = subprocess.run(["git", "log", "--oneline", "-3"], cwd=repo, capture_output=True, text=True, check=True)
+    assert "pre-landing dirty base" in log.stdout
+
+
+@pytest.mark.asyncio
+async def test_done_landing_dirty_base_token_mismatch_blocks(tmp_path: Path) -> None:
+    import subprocess
+    from run_worktree import create_worktree, worktree_branch, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, base_branch="main")
+    (repo / "operator-wip.txt").write_text("operator work\n", encoding="utf-8")
+    token, _summary = scheduler._dirty_base_snapshot(repo)
+    (repo / "operator-wip.txt").write_text("changed after token\n", encoding="utf-8")
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
+    transport.comments["issue-1"] = [
+        {
+            "created_at": "2026-05-04T02:00:00+00:00",
+            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {token}",
+        }
+    ]
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    create_worktree(config, run_id, base_branch="main")
+
+    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
+
+    assert landed == 0
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    assert worktree_path(config, run_id).exists()
+    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
+    assert worktree_branch(run_id) in branches.stdout
+    blocked_comment = transport.comments["issue-1"][-1]["comment_html"]
+    assert "Dirty-Base-Token:" in blocked_comment
+    assert token not in blocked_comment
 
 
 @pytest.mark.asyncio
