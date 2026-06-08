@@ -178,20 +178,20 @@ def test_state_commands_reject_positional_issue_argument():
 
 
 def test_runtime_script_has_no_symphony_imports():
-    source = open("/home/james/plane/symphony/plane_cli.py", encoding="utf-8").read()
+    source = open(Path(__file__).resolve().parent.parent / "plane_cli.py", encoding="utf-8").read()
 
     assert "import symphony" not in source
     assert "from symphony" not in source
 
 
 def test_file_has_python_shebang():
-    source = Path("/home/james/plane/symphony/plane_cli.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "plane_cli.py").read_text(encoding="utf-8")
 
     assert source.startswith("#!/usr/bin/env python3\n")
 
 
 def test_plane_cli_copy_runs_as_path_executable_with_pythonpath(tmp_path: Path):
-    source = Path("/home/james/plane/symphony/plane_cli.py")
+    source = Path(__file__).resolve().parent.parent / "plane_cli.py"
     target = tmp_path / "plane"
     target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     target.chmod(0o700)
