@@ -698,23 +698,21 @@ async def run_tick(
 
     Design retro — worktree-cleanliness gate (Phase 4 #5)
     ----------------------------------------------------
-    Prior versions of Symphony refused to dispatch (and refused to
-    auto-commit) when the homelab worktree was dirty. The gate caused
-    repeated false blocks: any unrelated half-staged edit on aidev would
-    park the entire ticket queue. Commit ``80125f6`` removed the gate
-    and made post-agent auto-commit best-effort: if the commit fails,
-    the ticket still closes Done/In Review/Blocked, but the closing
-    comment carries a ``WARNING: Symphony auto-commit failed`` block
-    naming the error and (when available) a pending diff stat.
+    Prior versions of Symphony refused to dispatch when the shared
+    homelab checkout was dirty. The gate caused repeated false blocks:
+    any unrelated half-staged edit on aidev would park the entire ticket
+    queue.
 
-    Consequence: ``repo_dirty`` is no longer a gating signal. It is
-    threaded in only so the auto-commit path can decide *whether* to
-    run, not whether the ticket may proceed. The historical contract
-    ("dirty worktree → IN_REVIEW transition") has been replaced by a
-    softer contract ("dirty worktree → attempt commit, warn on
-    failure"). Any future change that wants to re-introduce gating
-    must do so via an explicit, named policy rather than by silently
-    coupling worktree state to dispatch eligibility.
+    Current contract: ``repo_dirty`` is no longer a dispatch gate. Agent
+    work happens in an isolated run worktree when the target repo is a
+    Git repository. Successful execute/build runs transition to In Review
+    and retain the run worktree for operator inspection. Dirty run work is
+    committed only during Done-triggered landing, immediately before the
+    run branch is merged into the binding base branch.
+
+    Any future change that wants to re-introduce gating must do so via an
+    explicit, named policy rather than by silently coupling worktree state
+    to dispatch eligibility.
     """
 
     repo_dirty = _repo_dirty if repo_dirty is None else repo_dirty

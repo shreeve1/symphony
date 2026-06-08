@@ -248,7 +248,7 @@ def _delete_run_branch(config: SymphonyConfig, run_id: str) -> None:
         LOGGER.debug("run_branch_already_gone run_id=%s branch=%s", run_id, branch)
         return
     try:
-        _git_checked("branch", "-D", branch, cwd=config.homelab_repo_path)
+        _git_checked("branch", "-d", branch, cwd=config.homelab_repo_path)
     except RuntimeError as exc:
         raise WorktreeError(f"git branch delete failed: {exc}") from exc
     LOGGER.info("run_branch_deleted run_id=%s branch=%s", run_id, branch)
