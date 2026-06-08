@@ -5,6 +5,9 @@ import pytest
 from config import ConfigError, SymphonyConfig, _truthy
 
 
+_NO_BINDINGS_YML = "/nonexistent/symphony-bindings.yml"
+
+
 def _env(**overrides):
     env = {
         "PLANE_API_URL": "http://plane.example.test",
@@ -13,6 +16,7 @@ def _env(**overrides):
         "PLANE_PROJECT_ID": "fake-project-uuid",
         "HOMELAB_REPO_PATH": "/home/james/homelab",
         "PI_BIN": "/usr/local/bin/pi",
+        "SYMPHONY_BINDINGS_PATH": _NO_BINDINGS_YML,
     }
     env.update(overrides)
     return env
@@ -20,7 +24,7 @@ def _env(**overrides):
 
 def test_from_env_lists_all_missing_required_vars():
     with pytest.raises(EnvironmentError) as exc:
-        SymphonyConfig.from_env({})
+        SymphonyConfig.from_env({"SYMPHONY_BINDINGS_PATH": _NO_BINDINGS_YML})
 
     message = str(exc.value)
     assert "PLANE_API_URL" in message

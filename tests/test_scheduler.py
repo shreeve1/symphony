@@ -1500,6 +1500,7 @@ def test_lock_path_defaults_to_homelab_repo():
         "PLANE_PROJECT_ID": "proj",
         "HOMELAB_REPO_PATH": "/tmp/test-repo",
         "PI_BIN": "pi",
+        "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
     }
     config = SymphonyConfig.from_env(env)
     assert config.lock_path == Path("/tmp/test-repo/.symphony.lock")
@@ -1514,6 +1515,7 @@ def test_lock_path_env_override():
         "HOMELAB_REPO_PATH": "/tmp/test-repo",
         "PI_BIN": "pi",
         "SYMPHONY_LOCK_PATH": "/custom/lock.path",
+        "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
     }
     config = SymphonyConfig.from_env(env)
     assert config.lock_path == Path("/custom/lock.path")
@@ -1690,6 +1692,7 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
         "HOMELAB_REPO_PATH": str(tmp_path),
         "PI_BIN": "pi",
         "TELEGRAM_BOT_TOKEN": "secret-telegram-token-12345",
+        "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
     }
     config = SymphonyConfig.from_env(env)
 

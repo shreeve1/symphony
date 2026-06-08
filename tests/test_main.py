@@ -231,6 +231,7 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
             "PLANE_PROJECT_ID": "project",
             "HOMELAB_REPO_PATH": str(tmp_path),
             "PI_BIN": "pi",
+            "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
         }
     )
     binding = config.bindings[0]
@@ -272,6 +273,7 @@ def test_build_binding_runtime_verifier_failure_aborts_before_transport(monkeypa
             "PLANE_PROJECT_ID": "project",
             "HOMELAB_REPO_PATH": str(tmp_path),
             "PI_BIN": "pi",
+            "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
         }
     )
 
