@@ -80,6 +80,52 @@ def test_async_main_passes_configured_bindings_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_bindings_loop_continues_after_startup_reconcile_transient_failure(monkeypatch):
+    calls = []
+    closed = []
+
+    class FakeTransport:
+        async def aclose(self):
+            closed.append("closed")
+
+    class FakeConfig:
+        bindings = ("one",)
+
+    class FakeRuntimeConfig:
+        homelab_repo_path = Path("/tmp/one")
+
+    class FakeAdapter:
+        contract = None
+
+    def fake_build_runtime(config, binding):
+        return main.BindingRuntime(
+            name=binding,
+            config=cast(Any, FakeRuntimeConfig()),
+            transport=cast(Any, FakeTransport()),
+            adapter=cast(Any, FakeAdapter()),
+            agent_adapter=cast(Any, "agent"),
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+        calls.append("reconcile")
+        raise RuntimeError("temporary 429")
+
+    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
+        calls.append("run-loop")
+        raise StopLoop
+
+    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    with pytest.raises(StopLoop):
+        await main.run_bindings_loop(cast(Any, FakeConfig()), notifier=cast(Any, "notifier"))
+
+    assert calls == ["reconcile", "run-loop"]
+    assert closed == ["closed"]
+
+
+@pytest.mark.asyncio
 async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
     calls = []
     closed = []
@@ -152,7 +198,6 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
         raise StopLoop
 
     monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "init_run_semaphore", lambda c: None)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
     monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)

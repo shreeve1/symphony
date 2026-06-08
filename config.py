@@ -326,6 +326,15 @@ def _load_bindings_yml(path: Path, *, workspace_slug: str) -> tuple[ProjectBindi
         if not isinstance(item, dict):
             raise ConfigError(f"{prefix}: expected mapping")
         bindings.append(_binding_from_mapping(item, prefix=prefix, workspace_slug=workspace_slug))
+    seen_project_ids: set[str] = set()
+    for idx, binding in enumerate(bindings):
+        if binding.plane_project_id in seen_project_ids:
+            raise ConfigError(
+                f"bindings[{idx}]: duplicate plane_project_id "
+                f"'{binding.plane_project_id}' — each binding must target a "
+                f"distinct Plane project"
+            )
+        seen_project_ids.add(binding.plane_project_id)
     return tuple(bindings)
 
 

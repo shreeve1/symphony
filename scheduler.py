@@ -41,13 +41,12 @@ from prompt_renderer import render_previous_comments_block
 
 
 LOGGER = logging.getLogger(__name__)
-# Global semaphore capping live Runs. Created per-config in run_loop via
-# init_run_semaphore() so the cap is driven by config.run_cap, not a
-# hard-coded constant. The cap replaces the old per-tick fcntl flock;
-# serial dispatch behaviour at cap=1 is unchanged, mechanism is the
-# live-run semaphore.
+# Global semaphore capping live Runs. Retained for backward compat with
+# tests that call run_tick / _dispatch_one directly via
+# _fallback_dispatch_state(). Production path: each run_loop creates a
+# per-binding _DispatchState with its own semaphore.
 _RUN_SEMAPHORE: asyncio.Semaphore = None  # type: ignore[assignment]
-_POLL_INTERVAL_S = 0.0  # replaced by init_run_semaphore
+_POLL_INTERVAL_S = 0.0  # retained for _fallback_dispatch_state
 _IN_FLIGHT_ISSUE_IDS: set[str] = set()
 _IN_FLIGHT_LOCK: asyncio.Lock | None = None
 CLAIM_PREFIX = "Symphony claimed at "
@@ -73,6 +72,27 @@ SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
 _PLAN_HANDOFF_MARKER = "Symphony completed plan."
+
+
+@dataclass(frozen=True)
+class _DispatchState:
+    """Per-binding dispatch state — isolates concurrency from module globals.
+
+    Created by ``run_loop`` for each binding so that semaphore cap, in-flight
+    tracking, and poll interval are scoped to one project rather than shared
+    across all bindings.  Module-level globals still exist for backward compat
+    with tests that call ``run_tick`` / ``_dispatch_one`` directly.
+
+    **Concurrency multiplication:** each binding gets its own semaphore of size
+    ``run_cap``, so total host-wide concurrent runs is ``run_cap × num_bindings``.
+    Operators must size ``run_cap`` accordingly — the cap is per-project, not
+    per-host.
+    """
+
+    semaphore: asyncio.Semaphore
+    in_flight_ids: set[str]
+    in_flight_lock: asyncio.Lock
+    poll_interval: float
 
 # SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
 # on its own line in stdout to declare an explicit verdict. Last occurrence wins,
@@ -340,7 +360,7 @@ def _resolve_mode(
     return "execute"
 
 
-def _approval_policy_enabled(config: SymphonyConfig) -> bool:
+def _binding_approval_enabled(config: SymphonyConfig) -> bool:
     return bool(config.bindings and config.bindings[0].approval_policy.enabled)
 
 
@@ -470,6 +490,7 @@ async def run_tick(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
     run_blocked_reconciler: bool = True,
+    dispatch_state: _DispatchState | None = None,
 ) -> TickResult:
     """Run one scheduler tick without sleeping forever.
 
@@ -498,11 +519,6 @@ async def run_tick(
     diff_stat = _diff_stat if diff_stat is None else diff_stat
     auto_commit = _auto_commit if auto_commit is None else auto_commit
 
-    # Initialize semaphore lazily on first use so unit tests that call run_tick
-    # directly (without going through init_run_semaphore or run_loop) still work.
-    global _RUN_SEMAPHORE
-    if _RUN_SEMAPHORE is None:
-        _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
     # reconcile_stale_running and reconcile_blocked run every tick, outside
     # the semaphore, so they are not blocked by an in-flight Run.
     await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
@@ -522,7 +538,7 @@ async def run_tick(
     if scheduled is not None:
         if scheduled.reason == "scheduled-release":
             candidate = scheduled.candidate
-            if not await _reserve_specific_candidate(candidate):
+            if not await _reserve_specific_candidate(candidate, dispatch_state=dispatch_state):
                 return TickResult(False, "already-in-flight", candidate.id)
             scheduled_reserved = True
             try:
@@ -541,7 +557,7 @@ async def run_tick(
                         dashboard_url=_du,
                     )
                 finally:
-                    await _release_candidate(candidate.id)
+                    await _release_candidate(candidate.id, dispatch_state=dispatch_state)
                     scheduled_reserved = False
                 return TickResult(False, "scheduled-release-failed", candidate.id)
             candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
@@ -587,14 +603,17 @@ async def run_tick(
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
 
-    approval_policy_enabled = _approval_policy_enabled(config)
+    approval_policy_enabled = _binding_approval_enabled(config)
     if candidate is None:
         candidate = await _reserve_candidate(
             candidates,
             adapter.contract,
             approval_policy_enabled=approval_policy_enabled,
+            dispatch_state=dispatch_state,
         )
-    elif not scheduled_reserved and not await _reserve_specific_candidate(candidate):
+    elif not scheduled_reserved and not await _reserve_specific_candidate(
+        candidate, dispatch_state=dispatch_state,
+    ):
         return TickResult(False, "already-in-flight", candidate.id)
     if candidate is None:
         return TickResult(False, "no-candidates")
@@ -1085,7 +1104,7 @@ async def run_tick(
             kill_tmux_session(run_id)
 
     finally:
-        await _release_candidate(candidate.id)
+        await _release_candidate(candidate.id, dispatch_state=dispatch_state)
 
 
 async def _dispatch_one(
@@ -1095,6 +1114,7 @@ async def _dispatch_one(
     render_prompt: Callable[[CandidateIssue], str],
     notifier: TelegramNotifier | None,
     run_blocked_reconciler: bool,
+    dispatch_state: _DispatchState | None = None,
 ) -> TickResult:
     """Dispatch a single Run to the semaphore-bounded worktree slot.
 
@@ -1102,10 +1122,8 @@ async def _dispatch_one(
     and releases the slot on every exit path. The semaphore slot is held for
     the entire Run duration so the cap correctly blocks new dispatches when full.
     """
-    global _RUN_SEMAPHORE
-    if _RUN_SEMAPHORE is None:
-        _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
-    async with _RUN_SEMAPHORE:
+    state = dispatch_state or _fallback_dispatch_state(config)
+    async with state.semaphore:
         return await run_tick(
             config,
             adapter,
@@ -1113,6 +1131,7 @@ async def _dispatch_one(
             render_prompt=render_prompt,
             notifier=notifier,
             run_blocked_reconciler=run_blocked_reconciler,
+            dispatch_state=state,
         )
 
 
@@ -1270,6 +1289,27 @@ def init_run_semaphore(config: SymphonyConfig) -> None:
     _IN_FLIGHT_LOCK = asyncio.Lock()
 
 
+def _fallback_dispatch_state(config: SymphonyConfig) -> _DispatchState:
+    """Build a _DispatchState from module globals for backward compat.
+
+    Used by tests and legacy callers that invoke _dispatch_one / run_tick
+    without going through run_loop.
+    """
+    global _RUN_SEMAPHORE, _POLL_INTERVAL_S, _IN_FLIGHT_ISSUE_IDS, _IN_FLIGHT_LOCK
+    if _RUN_SEMAPHORE is None:
+        _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
+    if _IN_FLIGHT_LOCK is None:
+        _IN_FLIGHT_LOCK = asyncio.Lock()
+    if _POLL_INTERVAL_S == 0.0:
+        _POLL_INTERVAL_S = config.poll_interval_ms / 1000
+    return _DispatchState(
+        semaphore=_RUN_SEMAPHORE,
+        in_flight_ids=_IN_FLIGHT_ISSUE_IDS,
+        in_flight_lock=_IN_FLIGHT_LOCK,
+        poll_interval=_POLL_INTERVAL_S,
+    )
+
+
 async def run_loop(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -1288,6 +1328,12 @@ async def run_loop(
     """
     next_blocked_reconcile_at = datetime.now(UTC)
     active_tasks: set[asyncio.Task[TickResult]] = set()
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(config.run_cap),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=config.poll_interval_ms / 1000,
+    )
 
     while True:
         now_dt = datetime.now(UTC)
@@ -1296,7 +1342,11 @@ async def run_loop(
         # Reap completed tasks and propagate their log lines.
         done = {t for t in active_tasks if t.done()}
         for task in done:
-            result = task.result()
+            try:
+                result = task.result()
+            except Exception as exc:
+                LOGGER.warning("dispatch_failed error=%s", exc, exc_info=True)
+                continue
             LOGGER.info(
                 "dispatch_completed dispatched=%s reason=%s issue_id=%s",
                 str(result.dispatched).lower(),
@@ -1310,25 +1360,31 @@ async def run_loop(
                 milliseconds=config.blocked_reconciler_interval_ms
             )
 
-        # Dispatch up to (run_cap - active) new runs. Each task acquires the
-        # semaphore and holds it through worktree cleanup so the cap is enforced
-        # regardless of how the Run exits.
+        # Start one probe per poll cycle.  The probe may claim one candidate and
+        # hold a semaphore slot for the whole Run.  Starting run_cap probes at
+        # once duplicates Plane pagination/reconciler work while idle and can
+        # trip Plane 429s; subsequent cycles fill remaining slots while long
+        # Runs are active.
         slots_available = config.run_cap - len(active_tasks)
-        for _ in range(slots_available):
+        if slots_available > 0:
             task = asyncio.create_task(
-                _dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconcile)
+                _dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconcile, state)
             )
             active_tasks.add(task)
 
         if active_tasks:
             done_wait, pending = await asyncio.wait(
                 active_tasks,
-                timeout=_POLL_INTERVAL_S,
+                timeout=state.poll_interval,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             all_idle = bool(done_wait)
             for task in done_wait:
-                result = task.result()
+                try:
+                    result = task.result()
+                except Exception as exc:
+                    LOGGER.warning("dispatch_failed error=%s", exc, exc_info=True)
+                    continue
                 all_idle = all_idle and not result.dispatched
                 LOGGER.info(
                     "dispatch_completed dispatched=%s reason=%s issue_id=%s",
@@ -1338,9 +1394,9 @@ async def run_loop(
                 )
             active_tasks = set(pending)
             if not active_tasks and all_idle:
-                await asyncio.sleep(_POLL_INTERVAL_S)
+                await asyncio.sleep(state.poll_interval)
         else:
-            await asyncio.sleep(_POLL_INTERVAL_S)
+            await asyncio.sleep(state.poll_interval)
 
 
 def _in_flight_lock() -> asyncio.Lock:
@@ -1355,12 +1411,15 @@ async def _reserve_candidate(
     contract: TrackerContract,
     *,
     approval_policy_enabled: bool,
+    dispatch_state: _DispatchState | None = None,
 ) -> CandidateIssue | None:
-    async with _in_flight_lock():
+    lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
+    ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
+    async with lock:
         available = [
             candidate
             for candidate in candidates
-            if candidate.id not in _IN_FLIGHT_ISSUE_IDS
+            if candidate.id not in ids
         ]
         selected = _oldest_candidate(
             available,
@@ -1368,21 +1427,33 @@ async def _reserve_candidate(
             approval_policy_enabled=approval_policy_enabled,
         )
         if selected is not None:
-            _IN_FLIGHT_ISSUE_IDS.add(selected.id)
+            ids.add(selected.id)
         return selected
 
 
-async def _reserve_specific_candidate(candidate: CandidateIssue) -> bool:
-    async with _in_flight_lock():
-        if candidate.id in _IN_FLIGHT_ISSUE_IDS:
+async def _reserve_specific_candidate(
+    candidate: CandidateIssue,
+    *,
+    dispatch_state: _DispatchState | None = None,
+) -> bool:
+    lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
+    ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
+    async with lock:
+        if candidate.id in ids:
             return False
-        _IN_FLIGHT_ISSUE_IDS.add(candidate.id)
+        ids.add(candidate.id)
         return True
 
 
-async def _release_candidate(issue_id: str) -> None:
-    async with _in_flight_lock():
-        _IN_FLIGHT_ISSUE_IDS.discard(issue_id)
+async def _release_candidate(
+    issue_id: str,
+    *,
+    dispatch_state: _DispatchState | None = None,
+) -> None:
+    lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
+    ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
+    async with lock:
+        ids.discard(issue_id)
 
 
 def _oldest_candidate(

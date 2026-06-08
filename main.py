@@ -12,7 +12,7 @@ from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
 from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, TrackerAdapter, build_adapter
-from scheduler import _resolve_mode, init_run_semaphore, reconcile_startup, run_loop
+from scheduler import _resolve_mode, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
 
 from prompt_renderer import IssueData, render_prompt
@@ -78,23 +78,29 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
 async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifier | None = None) -> None:
     """Run the concurrent dispatcher for all bindings.
 
-    Each binding gets its own run_loop with per-binding config (and thus
-    per-binding semaphore cap). Startup reconcile runs for all bindings
-    before the dispatcher loop starts.
+    Each binding gets its own run_loop with a per-binding _DispatchState
+    (semaphore, in-flight set, poll interval). Startup reconcile runs for all
+    bindings before the dispatcher loop starts.
     """
-    # Initialise the global semaphore before any run_loop uses it.
-    init_run_semaphore(config)
-
     runtimes = [_build_binding_runtime(config, binding) for binding in config.bindings]
     try:
         for runtime in runtimes:
             logging.getLogger(__name__).info("reconcile_startup_begin binding=%s", runtime.name)
-            cleaned = await reconcile_startup(runtime.config, runtime.adapter, notifier=notifier)
-            logging.getLogger(__name__).info(
-                "reconcile_startup_done binding=%s cleaned=%d",
-                runtime.name,
-                cleaned,
-            )
+            try:
+                cleaned = await reconcile_startup(runtime.config, runtime.adapter, notifier=notifier)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "reconcile_startup_failed binding=%s error=%s",
+                    runtime.name,
+                    exc,
+                    exc_info=True,
+                )
+            else:
+                logging.getLogger(__name__).info(
+                    "reconcile_startup_done binding=%s cleaned=%d",
+                    runtime.name,
+                    cleaned,
+                )
         # Each binding runs its own concurrent dispatcher loop.
         tasks = [
             run_loop(

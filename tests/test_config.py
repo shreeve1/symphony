@@ -262,6 +262,37 @@ bindings:
         )
 
 
+def test_bindings_yml_rejects_duplicate_project_ids(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: alpha
+    plane_project_id: project-x
+    repo_path: /srv/alpha
+    base_branch: main
+    default_agent: pi
+  - name: beta
+    plane_project_id: project-x
+    repo_path: /srv/beta
+    base_branch: main
+    default_agent: claude
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="duplicate plane_project_id"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
+
+
 # ---- _truthy() N9 dev-review tests ----------------------------------------
 
 

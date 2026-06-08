@@ -14,7 +14,7 @@ import scheduler
 from agent_runner import AgentResult
 from config import ApprovalPolicy, SymphonyConfig
 from plane_poller import CandidateIssue
-from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels, init_run_semaphore, _dispatch_one
+from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels, init_run_semaphore, _dispatch_one, _reserve_candidate, _release_candidate
 from schedule import format_cancellation_comment, format_schedule_comment
 
 from notifier import TelegramNotifier
@@ -3647,3 +3647,164 @@ async def test_run_tick_cleans_worktree_on_success(tmp_path: Path) -> None:
 
     assert result.reason == "agent-clean-done"
     assert not wt.exists(), "worktree must be removed after success"
+
+
+# --- Per-binding dispatch state isolation ---
+
+
+@pytest.mark.asyncio
+async def test_dispatch_state_per_binding_is_isolated(tmp_path: Path) -> None:
+    """Two bindings must get independent semaphores and in-flight sets."""
+    from scheduler import _DispatchState
+
+    state_a = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids={"issue-a"},
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    state_b = _DispatchState(
+        semaphore=asyncio.Semaphore(2),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.02,
+    )
+
+    # Independent semaphores with different caps.
+    assert state_a.semaphore._value == 1
+    assert state_b.semaphore._value == 2
+
+    # Independent in-flight sets.
+    assert "issue-a" in state_a.in_flight_ids
+    assert "issue-a" not in state_b.in_flight_ids
+
+    # Independent poll intervals.
+    assert state_a.poll_interval != state_b.poll_interval
+
+
+@pytest.mark.asyncio
+async def test_reserve_candidate_uses_dispatch_state_in_flight_ids() -> None:
+    """_reserve_candidate must check the dispatch_state's in-flight set, not globals."""
+    from scheduler import _DispatchState
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids={"already-taken"},
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    candidate_taken = _candidate("already-taken")
+    candidate_free = _candidate("free-issue")
+
+    # Reserve from a list containing both taken and free.
+    result = await _reserve_candidate(
+        [candidate_taken, candidate_free],
+        DEFAULT_CONTRACT,
+        approval_policy_enabled=False,
+        dispatch_state=state,
+    )
+    assert result is not None
+    assert result.id == "free-issue"
+    assert "free-issue" in state.in_flight_ids
+
+
+@pytest.mark.asyncio
+async def test_reserve_specific_candidate_uses_dispatch_state() -> None:
+    """_reserve_specific_candidate must check the dispatch_state's in-flight set."""
+    from scheduler import _DispatchState, _reserve_specific_candidate
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids={"already-taken"},
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    candidate_taken = _candidate("already-taken")
+    candidate_free = _candidate("free-issue")
+
+    # Already in-flight → False
+    assert not await _reserve_specific_candidate(candidate_taken, dispatch_state=state)
+    # Not in-flight → True, added to set
+    assert await _reserve_specific_candidate(candidate_free, dispatch_state=state)
+    assert "free-issue" in state.in_flight_ids
+    # Second attempt → False
+    assert not await _reserve_specific_candidate(candidate_free, dispatch_state=state)
+
+
+@pytest.mark.asyncio
+async def test_release_candidate_uses_dispatch_state() -> None:
+    """_release_candidate must release from the dispatch_state's in-flight set."""
+    from scheduler import _DispatchState
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids={"issue-1"},
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    await _release_candidate("issue-1", dispatch_state=state)
+    assert "issue-1" not in state.in_flight_ids
+
+
+@pytest.mark.asyncio
+async def test_run_loop_starts_one_probe_per_poll_cycle(tmp_path: Path, monkeypatch) -> None:
+    """Idle polling must not multiply Plane API reads by run_cap."""
+
+    class StopLoop(Exception):
+        pass
+
+    calls: list[bool] = []
+
+    async def fake_dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconciler, dispatch_state=None):
+        calls.append(run_blocked_reconciler)
+        return scheduler.TickResult(False, "no-candidates")
+
+    async def fake_sleep(seconds):
+        raise StopLoop
+
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        await scheduler.run_loop(
+            _config(tmp_path, run_cap=2, poll_interval_ms=1),
+            _adapter(FakeTransport()),
+            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+        )
+
+    assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_loop_logs_dispatch_exceptions_without_exiting(tmp_path: Path, monkeypatch) -> None:
+    """Transient Plane failures inside a dispatch task must not restart Symphony."""
+
+    class StopLoop(Exception):
+        pass
+
+    calls = 0
+
+    async def fake_dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconciler, dispatch_state=None):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("temporary 429")
+
+    async def fake_sleep(seconds):
+        raise StopLoop
+
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        await scheduler.run_loop(
+            _config(tmp_path, run_cap=1, poll_interval_ms=1),
+            _adapter(FakeTransport()),
+            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+        )
+
+    assert calls == 1

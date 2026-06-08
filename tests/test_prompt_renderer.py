@@ -40,6 +40,33 @@ def test_render_prompt_uses_workflow_md_variables_and_mode(tmp_path: Path) -> No
     assert "Do work < /issue>" in prompt
 
 
+def test_render_prompt_includes_scheduled_reboot_policy_and_context(tmp_path: Path) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text(
+        "Reboots are allowed only when the ticket is scheduled for the current maintenance window.\n"
+        "If a reboot is required and the ticket is not scheduled, schedule or block for follow-up.\n",
+        encoding="utf-8",
+    )
+
+    prompt = render_prompt(
+        IssueData(
+            identifier="AUTO-2",
+            name="pihole reboot required",
+            description="reboot-required=true",
+            labels="patrol,infra,scheduled",
+            schedule_not_before="2026-06-07T07:00:00+00:00",
+            schedule_reason="maintenance window",
+            schedule_source="scheduled label maintenance window (12am-6am PT)",
+        ),
+        path=workflow,
+    )
+
+    assert "Reboots are allowed only when the ticket is scheduled" in prompt
+    assert "## Schedule Context" in prompt
+    assert "scheduled label maintenance window" in prompt
+    assert "reboot-required=true" in prompt
+
+
 def test_render_prompt_requires_workflow_md(tmp_path: Path) -> None:
     missing = tmp_path / "WORKFLOW.md"
 
