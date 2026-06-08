@@ -701,6 +701,7 @@ def test_fractional_seconds_up_to_microseconds_accepted() -> None:
     )
     event = parse_schedule_comment(body)
     assert event is not None
+    assert event.not_before is not None
     assert event.not_before.microsecond == 123456
 
 

@@ -12,7 +12,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape as _html_escape
-from typing import Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
 # schedule.py is colocated with plane_cli.py in the symphony repo. Import
 # format_*_comment helpers so the CLI shares a single grammar with the
@@ -77,8 +77,8 @@ class PlaneCliError(RuntimeError):
 
 class Transport(Protocol):
     def get(self, path: str) -> dict: ...
-    def patch(self, path: str, body: dict[str, str]) -> None: ...
-    def post(self, path: str, body: dict[str, str]) -> None: ...
+    def patch(self, path: str, body: dict[str, Any]) -> None: ...
+    def post(self, path: str, body: dict[str, Any]) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -121,14 +121,14 @@ class UrllibTransport:
     def get(self, path: str) -> dict:
         return self._request("GET", path)
 
-    def patch(self, path: str, body: dict[str, str]) -> None:
+    def patch(self, path: str, body: dict[str, Any]) -> None:
         self._request("PATCH", path, body)
 
-    def post(self, path: str, body: dict[str, str]) -> None:
+    def post(self, path: str, body: dict[str, Any]) -> None:
         self._request("POST", path, body)
 
     def _request(
-        self, method: str, path: str, body: dict[str, str] | None = None
+        self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict:
         data = json.dumps(body).encode("utf-8") if body else None
         request = urllib.request.Request(

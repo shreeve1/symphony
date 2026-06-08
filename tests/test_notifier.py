@@ -63,6 +63,7 @@ def test_from_env_falls_back_to_home_channel():
 def test_from_env_prefers_chat_id_over_home_channel():
     env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat", "TELEGRAM_HOME_CHANNEL": "home"}
     n = TelegramNotifier.from_env(env)
+    assert n is not None
     assert n.chat_id == "chat"
 
 
