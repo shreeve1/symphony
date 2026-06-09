@@ -54,6 +54,7 @@ _RUN_SEMAPHORE: asyncio.Semaphore | None = None
 _POLL_INTERVAL_S = 0.0  # retained for _fallback_dispatch_state
 _IN_FLIGHT_ISSUE_IDS: set[str] = set()
 _IN_FLIGHT_LOCK: asyncio.Lock | None = None
+_PLANE_COOLDOWN_UNTIL: datetime | None = None
 CLAIM_PREFIX = "Symphony claimed at "
 # Resolved once at import time. The ``_claimed_at`` parser at line ~1212 splits
 # the body on CLAIM_PREFIX and takes the first whitespace token after it, so
@@ -118,13 +119,22 @@ def _cooldown_remaining_s(
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> float:
-    if state.cooldown_until is None:
-        return 0.0
-    remaining = (state.cooldown_until - now()).total_seconds()
-    if remaining <= 0:
-        state.cooldown_until = None
-        return 0.0
-    return remaining
+    global _PLANE_COOLDOWN_UNTIL
+    now_dt = now()
+    remaining_values: list[float] = []
+    if state.cooldown_until is not None:
+        state_remaining = (state.cooldown_until - now_dt).total_seconds()
+        if state_remaining <= 0:
+            state.cooldown_until = None
+        else:
+            remaining_values.append(state_remaining)
+    if _PLANE_COOLDOWN_UNTIL is not None:
+        global_remaining = (_PLANE_COOLDOWN_UNTIL - now_dt).total_seconds()
+        if global_remaining <= 0:
+            _PLANE_COOLDOWN_UNTIL = None
+        else:
+            remaining_values.append(global_remaining)
+    return max(remaining_values, default=0.0)
 
 
 def _record_rate_limit(
@@ -134,16 +144,21 @@ def _record_rate_limit(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     jitter: Callable[[], float] = random.random,
 ) -> None:
+    global _PLANE_COOLDOWN_UNTIL
     state.cooldown_attempts += 1
     if exc.retry_after_s is not None:
         delay_s = exc.retry_after_s
+        delay_s += max(1.0, delay_s * RATE_LIMIT_JITTER_FRACTION) * jitter()
     else:
         delay_s = min(
             RATE_LIMIT_MAX_COOLDOWN_S,
             RATE_LIMIT_BASE_COOLDOWN_S * (2 ** max(0, state.cooldown_attempts - 1)),
         )
         delay_s += delay_s * RATE_LIMIT_JITTER_FRACTION * jitter()
-    state.cooldown_until = now() + timedelta(seconds=delay_s)
+    cooldown_until = now() + timedelta(seconds=delay_s)
+    state.cooldown_until = cooldown_until
+    if _PLANE_COOLDOWN_UNTIL is None or cooldown_until > _PLANE_COOLDOWN_UNTIL:
+        _PLANE_COOLDOWN_UNTIL = cooldown_until
     LOGGER.warning(
         "plane_rate_limited cooldown_s=%.3f attempts=%s",
         delay_s,
@@ -152,8 +167,10 @@ def _record_rate_limit(
 
 
 def _clear_rate_limit(state: _DispatchState) -> None:
+    global _PLANE_COOLDOWN_UNTIL
     state.cooldown_until = None
     state.cooldown_attempts = 0
+    _PLANE_COOLDOWN_UNTIL = None
 
 
 # SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
@@ -1862,11 +1879,12 @@ def init_run_semaphore(config: SymphonyConfig) -> None:
     Called once at startup and when the cap changes. Must be called before
     run_loop uses the semaphore.
     """
-    global _RUN_SEMAPHORE, _POLL_INTERVAL_S, _IN_FLIGHT_ISSUE_IDS, _IN_FLIGHT_LOCK
+    global _RUN_SEMAPHORE, _POLL_INTERVAL_S, _IN_FLIGHT_ISSUE_IDS, _IN_FLIGHT_LOCK, _PLANE_COOLDOWN_UNTIL
     _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
     _POLL_INTERVAL_S = config.poll_interval_ms / 1000
     _IN_FLIGHT_ISSUE_IDS = set()
     _IN_FLIGHT_LOCK = asyncio.Lock()
+    _PLANE_COOLDOWN_UNTIL = None
 
 
 def _fallback_dispatch_state(config: SymphonyConfig) -> _DispatchState:

@@ -3930,6 +3930,35 @@ async def test_plane_rate_limit_records_per_binding_cooldown(tmp_path: Path, mon
     assert state.cooldown_attempts == 1
 
 
+def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> None:
+    from plane_adapter import PlaneRateLimitError
+    from scheduler import _DispatchState, _cooldown_remaining_s, _record_rate_limit
+
+    scheduler._PLANE_COOLDOWN_UNTIL = None
+    first = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    second = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    now = datetime(2026, 5, 4, 2, 0, tzinfo=UTC)
+
+    _record_rate_limit(
+        first,
+        PlaneRateLimitError("rate limited", retry_after_s=10),
+        now=lambda: now,
+        jitter=lambda: 0.0,
+    )
+
+    assert _cooldown_remaining_s(second, now=lambda: now) == 10
+
+
 @pytest.mark.asyncio
 async def test_run_tick_clean_exit_moves_to_in_review_and_cleans_conversation_worktree(tmp_path: Path) -> None:
     from run_worktree import worktree_path
