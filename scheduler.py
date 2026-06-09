@@ -1430,7 +1430,7 @@ async def run_tick(
                 return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
 
             reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
-            retain_run_worktree = mode != "conversation" or dirty_after_agent
+            should_retain_after_completion = mode != "conversation" or dirty_after_agent
             worktree_label_added = False
             if mode == "conversation" and not dirty_after_agent:
                 try:
@@ -1439,7 +1439,7 @@ async def run_tick(
                     raise
                 except Exception as exc:
                     LOGGER.warning("has_worktree_label_remove_failed issue_id=%s error=%s", candidate.id, exc)
-            if retain_run_worktree and wt_path is not None:
+            if should_retain_after_completion and wt_path is not None:
                 try:
                     worktree_label_added = await _add_has_worktree_label_if_available(adapter, candidate.id)
                 except PlaneRateLimitError:
@@ -1451,6 +1451,7 @@ async def run_tick(
                 CommentPayload(body=_completion_body(reason_code, worktree_label_added=worktree_label_added)),
             )
             await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+            retain_run_worktree = should_retain_after_completion
             LOGGER.info(
                 "state_transitioned issue_id=%s state=in-review reason=%s",
                 candidate.id,
