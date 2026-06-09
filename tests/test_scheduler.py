@@ -527,6 +527,37 @@ async def test_dirty_conversation_adds_has_worktree_label_when_configured(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_has_worktree_label_without_uuid_does_not_scan_plane_labels(tmp_path: Path) -> None:
+    class NoLabelScanAdapter(PlaneAdapter):
+        async def resolve_label_uuids(self, names=None):
+            raise AssertionError("optional has-worktree label should not scan Plane labels")
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    label_roles = dict(DEFAULT_CONTRACT.label_roles)
+    label_roles[TrackerRole.HAS_WORKTREE] = RoleBinding("has-worktree", "")
+    contract = replace(DEFAULT_CONTRACT, label_roles=label_roles)
+
+    result = await run_tick(
+        _config(repo),
+        NoLabelScanAdapter(contract=contract, transport=transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: True,
+        diff_stat=lambda path: "agent-output.txt | 1 +",
+    )
+
+    assert result.reason == "agent-clean-review"
+    completion_comment = [
+        c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
+    ][0]["comment_html"]
+    assert "Run worktree label" not in completion_comment
+
+
+@pytest.mark.asyncio
 async def test_clean_conversation_removes_stale_has_worktree_label(tmp_path: Path) -> None:
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)

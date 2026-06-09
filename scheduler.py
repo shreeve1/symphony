@@ -851,12 +851,6 @@ async def _has_worktree_label_available(adapter: TrackerAdapter) -> bool:
     binding = adapter.contract.optional_label_binding(TrackerRole.HAS_WORKTREE)
     if binding is None:
         return False
-    resolve_label_uuids = getattr(adapter, "resolve_label_uuids", None)
-    if not binding.uuid and resolve_label_uuids is not None:
-        try:
-            await resolve_label_uuids([binding.name])
-        except ValueError:
-            return False
     resolved_ids = getattr(adapter, "resolved_label_ids", {})
     return bool(binding.uuid or binding.name in resolved_ids)
 
