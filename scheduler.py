@@ -10,7 +10,7 @@ import logging
 import random
 import re
 import subprocess
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Iterator, Sequence, cast
@@ -86,6 +86,7 @@ DIRTY_BASE_APPROVAL_COMMAND = "Symphony-Landing: auto-commit-base"
 DIRTY_BASE_TOKEN_PREFIX = "Dirty-Base-Token:"
 DIRTY_BASE_STATUS_MAX_LINES = 20
 HAS_WORKTREE_LABEL_NAME = "has-worktree"
+INTERRUPTED_RUNNING_REVIEW_GRACE_S = 60.0
 
 
 @dataclass
@@ -109,6 +110,7 @@ class _DispatchState:
     poll_interval: float
     cooldown_until: datetime | None = None
     cooldown_attempts: int = 0
+    pending_review_issue_ids: set[str] = field(default_factory=set)
 
 
 def _cooldown_remaining_s(
@@ -832,9 +834,10 @@ async def _has_worktree_label_available(adapter: TrackerAdapter) -> bool:
     binding = adapter.contract.optional_label_binding(TrackerRole.HAS_WORKTREE)
     if binding is None:
         return False
-    if not binding.uuid and hasattr(adapter, "resolve_label_uuids"):
+    resolve_label_uuids = getattr(adapter, "resolve_label_uuids", None)
+    if not binding.uuid and resolve_label_uuids is not None:
         try:
-            await adapter.resolve_label_uuids([binding.name])  # type: ignore[attr-defined]
+            await resolve_label_uuids([binding.name])
         except ValueError:
             return False
     resolved_ids = getattr(adapter, "resolved_label_ids", {})
@@ -903,11 +906,20 @@ async def run_tick(
     auto_commit = _auto_commit if auto_commit is None else auto_commit
 
     await reconcile_done_landing(config, adapter, now=now, notifier=notifier)
+    if dispatch_state is not None:
+        await reconcile_pending_review(config, adapter, dispatch_state, notifier=notifier)
 
     # reconcile_stale_running and reconcile_blocked run every tick, outside
     # the semaphore, so they are not blocked by an in-flight Run.
     try:
-        await reconcile_stale_running(adapter, config.run_timeout_ms, now=now, notifier=notifier, config=config)
+        await reconcile_stale_running(
+            adapter,
+            config.run_timeout_ms,
+            now=now,
+            notifier=notifier,
+            config=config,
+            dispatch_state=dispatch_state,
+        )
         if config.blocked_reconciler_enabled and run_blocked_reconciler:
             try:
                 await reconcile_blocked(
@@ -1469,6 +1481,16 @@ async def run_tick(
                 dashboard_url=_du,
             )
             return TickResult(True, reason_code, candidate.id, mode=mode)
+        except PlaneRateLimitError:
+            if retain_run_worktree and wt_path is not None and dispatch_state is not None:
+                dispatch_state.pending_review_issue_ids.add(candidate.id)
+                LOGGER.warning(
+                    "post_agent_reconcile_rate_limited_retained issue_id=%s run_id=%s path=%s",
+                    candidate.id,
+                    run_id,
+                    wt_path,
+                )
+            raise
         finally:
             # Guaranteed cleanup: remove worktree and any detached tmux session
             # on every exit path so no orphan is left behind after verdict
@@ -1522,8 +1544,9 @@ async def _retain_stale_running_worktree_for_review(
     config: SymphonyConfig | None,
     *,
     notifier: TelegramNotifier | None = None,
+    stale: bool = True,
 ) -> bool:
-    """Move a stale Running issue to review when its Run Worktree still exists."""
+    """Move a Running issue to review when its Run Worktree still exists."""
 
     if config is None or not _is_git_repo(config.homelab_repo_path):
         return False
@@ -1540,11 +1563,28 @@ async def _retain_stale_running_worktree_for_review(
     except Exception as exc:
         LOGGER.warning("has_worktree_label_failed issue_id=%s error=%s", issue_id, exc)
 
+    if stale:
+        title = "Symphony retained stale Running work for review."
+        detail = (
+            "The claim timed out before Symphony could finish Plane reconciliation, "
+            "but the Run Worktree still exists. Retaining evidence is safer than "
+            "blocking and deleting it."
+        )
+        log_event = "stale_running_retained_for_review"
+        notify_reason = "Stale Running claim retained for operator review"
+    else:
+        title = "Symphony retained interrupted Running work for review."
+        detail = (
+            "Plane rate-limited completion reconciliation or Symphony no longer sees "
+            "an active local Run. The Run Worktree still exists, so Symphony is moving "
+            "the issue to review instead of waiting for claim timeout."
+        )
+        log_event = "pending_running_retained_for_review"
+        notify_reason = "Interrupted Running claim retained for operator review"
+
     body = (
-        "**Symphony retained stale Running work for review.**\n\n"
-        "The claim timed out before Symphony could finish Plane reconciliation, "
-        "but the Run Worktree still exists. Retaining evidence is safer than "
-        "blocking and deleting it.\n\n"
+        f"**{title}**\n\n"
+        f"{detail}\n\n"
         f"**Run branch:** `{worktree_branch(run_id)}`\n"
         f"**Run worktree:** `{wt_path}`\n"
     )
@@ -1554,7 +1594,8 @@ async def _retain_stale_running_worktree_for_review(
     await adapter.add_comment(issue_id, CommentPayload(body=body))
     await adapter.transition_state(issue_id, TrackerRole.STATE_IN_REVIEW)
     LOGGER.info(
-        "stale_running_retained_for_review issue_id=%s run_id=%s path=%s",
+        "%s issue_id=%s run_id=%s path=%s",
+        log_event,
         issue_id,
         run_id,
         wt_path,
@@ -1564,11 +1605,58 @@ async def _retain_stale_running_worktree_for_review(
         notifier,
         issue_name,
         issue_identifier,
-        reason="Stale Running claim retained for operator review",
+        reason=notify_reason,
         issue_url=issue_url,
         dashboard_url=dashboard_url,
     )
     return True
+
+
+async def reconcile_pending_review(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    dispatch_state: _DispatchState,
+    *,
+    notifier: TelegramNotifier | None = None,
+) -> int:
+    """Retry post-agent review transition after Plane rate-limit interruption."""
+
+    if not dispatch_state.pending_review_issue_ids:
+        return 0
+
+    async with dispatch_state.in_flight_lock:
+        in_flight_ids = set(dispatch_state.in_flight_ids)
+
+    reconciled = 0
+    for issue_id in tuple(dispatch_state.pending_review_issue_ids):
+        if issue_id in in_flight_ids:
+            continue
+        issue = await _fetch_issue(adapter, issue_id)
+        if not _is_state(issue, adapter, TrackerRole.STATE_RUNNING):
+            dispatch_state.pending_review_issue_ids.discard(issue_id)
+            continue
+        issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        issue_name = str(issue.get("name") or "")
+        if not worktree_path(config, _run_id_from_identifier(issue_identifier)).exists():
+            LOGGER.warning(
+                "pending_review_worktree_missing issue_id=%s identifier=%s",
+                issue_id,
+                issue_identifier,
+            )
+            dispatch_state.pending_review_issue_ids.discard(issue_id)
+            continue
+        if await _retain_stale_running_worktree_for_review(
+            adapter,
+            issue_id,
+            issue_name,
+            issue_identifier,
+            config,
+            notifier=notifier,
+            stale=False,
+        ):
+            dispatch_state.pending_review_issue_ids.discard(issue_id)
+            reconciled += 1
+    return reconciled
 
 
 async def reconcile_stale_running(
@@ -1578,8 +1666,14 @@ async def reconcile_stale_running(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
     config: SymphonyConfig | None = None,
+    dispatch_state: _DispatchState | None = None,
 ) -> None:
-    """Reconcile Running issues whose durable claim comment is stale."""
+    """Reconcile Running issues whose durable claim comment is stale or interrupted."""
+
+    in_flight_ids: set[str] = set()
+    if dispatch_state is not None:
+        async with dispatch_state.in_flight_lock:
+            in_flight_ids = set(dispatch_state.in_flight_ids)
 
     for issue in await adapter.list_issues_by_state(
         TrackerRole.STATE_RUNNING,
@@ -1590,9 +1684,25 @@ async def reconcile_stale_running(
         claim_time = await _claimed_at(adapter, issue_id)
         if claim_time is None:
             continue
-        if now() - claim_time > timedelta(milliseconds=run_timeout_ms):
-            issue_name = str(issue.get("name", ""))
-            issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        elapsed = now() - claim_time
+        issue_name = str(issue.get("name", ""))
+        issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        if (
+            dispatch_state is not None
+            and issue_id not in in_flight_ids
+            and elapsed > timedelta(seconds=INTERRUPTED_RUNNING_REVIEW_GRACE_S)
+            and await _retain_stale_running_worktree_for_review(
+                adapter,
+                issue_id,
+                issue_name,
+                issue_identifier,
+                config,
+                notifier=notifier,
+                stale=False,
+            )
+        ):
+            continue
+        if elapsed > timedelta(milliseconds=run_timeout_ms):
             if await _retain_stale_running_worktree_for_review(
                 adapter,
                 issue_id,

@@ -4253,6 +4253,117 @@ async def test_rate_limit_during_post_agent_schedule_detection_retains_worktree(
 
 
 @pytest.mark.asyncio
+async def test_post_agent_rate_limit_retries_review_transition(tmp_path: Path) -> None:
+    from plane_adapter import PlaneRateLimitError
+    from run_worktree import worktree_path
+    from scheduler import _DispatchState
+
+    class RateLimitOnFirstPostAgentIssueFetchTransport(FakeTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.issue_reads = 0
+
+        async def get(self, path: str) -> dict[str, Any]:
+            if "/issues/" in path and "/comments" not in path:
+                issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
+                if issue_id:
+                    self.issue_reads += 1
+                    if self.issue_reads == 2:
+                        raise PlaneRateLimitError("rate limited", retry_after_s=30)
+            return await super().get(path)
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    transport = RateLimitOnFirstPostAgentIssueFetchTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
+
+    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+        assert worktree_path is not None
+        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
+        return AgentResult(0, 10, False)
+
+    first = await _dispatch_one(
+        config,
+        _adapter(transport),
+        agent,
+        lambda issue: "prompt",
+        None,
+        False,
+        state,
+    )
+
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    retained = worktree_path(config, run_id)
+    assert first.reason == "plane-rate-limited"
+    assert state.pending_review_issue_ids == {"issue-1"}
+    assert retained.exists()
+
+    second = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: pytest.fail("agent should not rerun"),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [],
+        dispatch_state=state,
+    )
+
+    assert second.reason == "no-candidates"
+    assert state.pending_review_issue_ids == set()
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert any("retained interrupted Running work" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert retained.exists()
+    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
+
+
+@pytest.mark.asyncio
+async def test_running_worktree_without_in_flight_run_moves_to_review_after_grace(tmp_path: Path) -> None:
+    from run_worktree import create_worktree, worktree_path
+    from scheduler import _DispatchState
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.RUNNING.value),
+        "identifier": "issue-1",
+    }
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    create_worktree(config, run_id, base_branch="main")
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: pytest.fail("agent should not rerun"),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [],
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+        dispatch_state=state,
+    )
+
+    assert result.reason == "no-candidates"
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert any("retained interrupted Running work" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert worktree_path(config, run_id).exists()
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_during_review_transition_retains_worktree(tmp_path: Path) -> None:
     from plane_adapter import PlaneRateLimitError
     from run_worktree import worktree_path
