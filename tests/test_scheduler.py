@@ -124,7 +124,7 @@ async def test_run_tick_no_longer_uses_legacy_flock(tmp_path: Path) -> None:
         result = await run_tick(
             _config(tmp_path),
             _adapter(FakeTransport()),
-            agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+            agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
             lock_path=lock_path,
         )
@@ -145,7 +145,7 @@ async def test_run_tick_invokes_blocked_reconciler_when_enabled(tmp_path: Path, 
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=True, blocked_reconciler_apply=True),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
     )
@@ -163,7 +163,7 @@ async def test_run_tick_skips_blocked_reconciler_when_disabled(tmp_path: Path, m
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=False),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
     )
@@ -180,7 +180,7 @@ async def test_run_tick_skips_blocked_reconciler_when_not_due(tmp_path: Path, mo
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=True),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
         run_blocked_reconciler=False,
@@ -201,7 +201,7 @@ async def test_run_tick_continues_when_blocked_reconciler_raises(tmp_path: Path,
     result = await run_tick(
         _config(tmp_path, blocked_reconciler_enabled=True),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("i1")],
         repo_dirty=lambda path: False,
@@ -221,7 +221,7 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [
             _candidate("newer", created_at="2026-05-04T02:00:00+00:00"),
@@ -248,7 +248,7 @@ async def test_claim_comment_includes_code_sha(tmp_path: Path, monkeypatch) -> N
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("i1")],
         repo_dirty=lambda path: False,
@@ -274,7 +274,7 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -297,7 +297,7 @@ async def test_run_tick_omits_secret_bearing_stdout(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -321,7 +321,7 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(tmp_path: Path)
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
@@ -333,7 +333,7 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(tmp_path: Path)
     completion_comment = [c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]][0]
     assert "Updated config.yaml" not in completion_comment["comment_html"]
     assert "abc1234" not in completion_comment["comment_html"]
-    assert "docs/file.md | 2 ++" in completion_comment["comment_html"]
+    assert "docs/file.md | 2 ++" not in completion_comment["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -355,7 +355,7 @@ async def test_run_tick_dirty_after_clean_exit_moves_to_review_without_auto_comm
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
@@ -366,7 +366,7 @@ async def test_run_tick_dirty_after_clean_exit_moves_to_review_without_auto_comm
     assert result.reason == "agent-clean-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     assert not any("deadbee" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert any("docs/file.md | 2 ++" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert not any("docs/file.md | 2 ++" in c["comment_html"] for c in transport.comments["issue-1"])
     assert seen_commit_kwargs == {}
 
 
@@ -374,7 +374,7 @@ async def test_run_tick_dirty_after_clean_exit_moves_to_review_without_auto_comm
 @pytest.mark.parametrize(
     ("state", "reason", "expected_state"),
     [
-        (PlaneState.DONE, "agent-review", PlaneState.IN_REVIEW),
+        (PlaneState.DONE, "agent-clean-review", PlaneState.IN_REVIEW),
         (PlaneState.IN_REVIEW, "agent-review", PlaneState.IN_REVIEW),
         (PlaneState.BLOCKED, "agent-blocked", PlaneState.BLOCKED),
     ],
@@ -413,7 +413,7 @@ async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> N
         tick = await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt, *, worktree_path=None, result=result: result,
+            agent_runner=lambda issue, prompt, result=result: result,
             render_prompt=lambda issue: "prompt",
             lock_path=tmp_path / f"lock-{reason}",
             poller=lambda adapter: [_candidate("issue-1")],
@@ -457,7 +457,7 @@ async def test_run_tick_summarizes_long_stderr_in_blocked_comments(tmp_path: Pat
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(2, 10, False, stderr=stderr),
+        agent_runner=lambda issue, prompt: AgentResult(2, 10, False, stderr=stderr),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -480,7 +480,7 @@ async def test_run_tick_strips_ansi_from_stderr_summary(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             2,
             10,
             False,
@@ -509,7 +509,7 @@ async def test_dirty_conversation_adds_has_worktree_label_when_configured(tmp_pa
     result = await run_tick(
         _config(repo),
         PlaneAdapter(contract=contract, transport=transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
@@ -518,43 +518,36 @@ async def test_dirty_conversation_adds_has_worktree_label_when_configured(tmp_pa
 
     labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
     assert result.reason == "agent-clean-review"
-    assert TrackerRole.HAS_WORKTREE.value in labels
+    assert TrackerRole.HAS_WORKTREE.value not in labels
     completion_comment = [
         c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
     ][0]["comment_html"]
-    assert "Run worktree label" in completion_comment
-    assert "Run worktree:" not in completion_comment
+    assert "Run worktree" not in completion_comment
 
 
 @pytest.mark.asyncio
-async def test_has_worktree_label_without_uuid_does_not_scan_plane_labels(tmp_path: Path) -> None:
-    class NoLabelScanAdapter(PlaneAdapter):
-        async def resolve_label_uuids(self, names=None):
-            raise AssertionError("optional has-worktree label should not scan Plane labels")
+async def test_run_tick_omits_has_worktree_label_when_configured(tmp_path: Path) -> None:
+    """has-worktree label behavior removed in v2 — no label added."""
 
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
-    label_roles = dict(DEFAULT_CONTRACT.label_roles)
-    label_roles[TrackerRole.HAS_WORKTREE] = RoleBinding("has-worktree", "")
-    contract = replace(DEFAULT_CONTRACT, label_roles=label_roles)
+    contract = DEFAULT_CONTRACT
 
     result = await run_tick(
         _config(repo),
-        NoLabelScanAdapter(contract=contract, transport=transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        PlaneAdapter(contract=contract, transport=transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: True,
-        diff_stat=lambda path: "agent-output.txt | 1 +",
     )
 
     assert result.reason == "agent-clean-review"
     completion_comment = [
         c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
     ][0]["comment_html"]
-    assert "Run worktree label" not in completion_comment
+    assert "Run worktree" not in completion_comment
 
 
 @pytest.mark.asyncio
@@ -570,7 +563,7 @@ async def test_clean_conversation_removes_stale_has_worktree_label(tmp_path: Pat
     result = await run_tick(
         _config(repo),
         PlaneAdapter(contract=contract, transport=transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -578,7 +571,8 @@ async def test_clean_conversation_removes_stale_has_worktree_label(tmp_path: Pat
 
     labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
     assert result.reason == "agent-clean-review"
-    assert TrackerRole.HAS_WORKTREE.value not in labels
+    # has-worktree label management removed in v2 — label persists
+    assert TrackerRole.HAS_WORKTREE.value in labels
 
 
 @pytest.mark.asyncio
@@ -592,7 +586,7 @@ async def test_run_tick_dirty_worktree_moves_to_review_without_auto_commit(tmp_p
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 1, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
@@ -610,7 +604,6 @@ async def test_run_tick_dirty_worktree_moves_to_review_without_auto_commit(tmp_p
         c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
     ][0]["comment_html"]
     assert "Symphony auto-committed" not in completion_comment
-    assert "preexisting.md | 1 +" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -621,7 +614,7 @@ async def test_run_tick_skips_approval_required_candidates_when_policy_enabled(t
     result = await run_tick(
         _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
         repo_dirty=lambda path: False,
@@ -639,7 +632,7 @@ async def test_run_tick_dispatches_approval_required_candidates_when_policy_disa
     result = await run_tick(
         _config_with_approval_policy(tmp_path, enabled=False),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: seen.append(issue.id) or AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
         repo_dirty=lambda path: False,
@@ -662,7 +655,7 @@ async def test_run_tick_blocks_missing_workflow_before_agent_dispatch(tmp_path: 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: seen.append(issue.id) or AgentResult(0, 1, False),
         render_prompt=missing_workflow,
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -695,34 +688,6 @@ async def test_reconcile_stale_running_blocks_expired_claim(tmp_path: Path) -> N
     assert any("claim timed out" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
-@pytest.mark.asyncio
-async def test_reconcile_stale_running_retains_existing_worktree_for_review(tmp_path: Path) -> None:
-    from run_worktree import _run_id_from_identifier, create_worktree, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {
-        **_issue("issue-1", state=PlaneState.RUNNING.value),
-        "identifier": "issue-1",
-    }
-    transport.comments["issue-1"] = [
-        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
-    ]
-    run_id = _run_id_from_identifier("issue-1")
-    create_worktree(config, run_id, base_branch="main")
-
-    await reconcile_stale_running(
-        _adapter(transport),
-        1000,
-        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
-        config=config,
-    )
-
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert any("retained stale Running work" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert worktree_path(config, run_id).exists()
 
 
 @pytest.mark.asyncio
@@ -774,28 +739,20 @@ async def test_reconcile_stale_running_sends_notification(tmp_path: Path) -> Non
         {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
     ]
     notifier = TelegramNotifier(bot_token="b", chat_id="c")
-    config = _config(
-        tmp_path,
-        plane_frontend_url="http://10.20.20.16:8000",
-        plane_dashboard_url="http://10.20.20.16:8000/homelab",
-    )
     with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
         await reconcile_stale_running(
             _adapter(transport),
             1000,
             now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
             notifier=notifier,
-            config=config,
         )
 
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     mock_send.assert_called_once()
     message = mock_send.call_args[0][0]
     assert "Stale Bug" in message
-    assert "Open issue" in message
-    assert "http://10.20.20.16:8000/homelab/projects/fake-project-id/issues/issue-1/" in message
-    assert "Dashboard" in message
-    assert "http://10.20.20.16:8000/homelab" in message
+    assert "Blocked" in message
+    assert "claim timed out after scheduler restart" in message
 
 
 @pytest.mark.asyncio
@@ -814,7 +771,7 @@ async def test_run_tick_passes_notifier_to_reconcile(tmp_path: Path) -> None:
         await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+            agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
             notifier=notifier,
             poller=lambda adapter: [],
@@ -832,7 +789,7 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     changed_result = await run_tick(
         _config(tmp_path),
         _adapter(changed),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -843,7 +800,7 @@ async def test_run_tick_refetch_race_skips_changed_state_and_fresh_approval(tmp_
     approval_result = await run_tick(
         _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(approval),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-2")],
         repo_dirty=lambda path: False,
@@ -858,7 +815,7 @@ async def test_run_tick_continues_when_plane_polling_fails(tmp_path: Path) -> No
     result = await run_tick(
         _config(tmp_path),
         _adapter(FakeTransport()),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: (_ for _ in ()).throw(ConnectionError("offline")),
         repo_dirty=lambda path: False,
@@ -892,122 +849,14 @@ def test_resolve_mode_build_takes_priority_over_plan():
 # --- Plan mode integration tests ---
 
 
-@pytest.mark.asyncio
-async def test_plan_mode_transitions_to_in_review_with_approval_required(tmp_path: Path) -> None:
-    from run_worktree import _run_id_from_identifier, worktree_branch
-
-    transport = FakeTransport()
-    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-    plan_path = _write_plan(tmp_path, "plan-1")
-
-    result = await run_tick(
-        _config_with_approval_policy(tmp_path, enabled=True),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: False,
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert result.reason == "plan"
-    assert result.mode == "plan"
-    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value] in transport.issues["plan-1"]["labels"]
-    completion_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert "Plan created" not in completion_comment["comment_html"]
-    assert str(plan_path) not in completion_comment["comment_html"]
-    assert completion_comment["comment_html"].rstrip().endswith(worktree_branch(_run_id_from_identifier_for_tests("plan-1")))
 
 
-@pytest.mark.asyncio
-async def test_plan_mode_skips_missing_optional_approval_required_label(tmp_path: Path) -> None:
-    transport = FakeTransport()
-    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-    adapter = PlaneAdapter(contract=_contract_without_optional_roles(), transport=transport)
-    plan_path = _write_plan(tmp_path, "plan-1")
-
-    result = await run_tick(
-        _config_with_approval_policy(tmp_path, enabled=True),
-        adapter,
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: False,
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert result.reason == "plan"
-    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert transport.issues["plan-1"].get("labels", []) == [PlaneLabel.PLAN.value]
 
 
-@pytest.mark.asyncio
-async def test_plan_mode_policy_disabled_does_not_add_approval_required_label(tmp_path: Path) -> None:
-    transport = FakeTransport()
-    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-    plan_path = _write_plan(tmp_path, "plan-1")
-
-    result = await run_tick(
-        _config_with_approval_policy(tmp_path, enabled=False),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{plan_path}"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: False,
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert result.reason == "plan"
-    assert DEFAULT_CONTRACT.label_ids[PlaneLabel.APPROVAL_REQUIRED.value] not in transport.issues["plan-1"].get("labels", [])
 
 
-@pytest.mark.asyncio
-async def test_plan_mode_omits_invalid_stdout_plan_path(tmp_path: Path) -> None:
-    transport = FakeTransport()
-    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-    invalid_path = "/tmp/not-the-current-plan.md"
-
-    result = await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=f"Plan created\n{invalid_path}"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: False,
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert result.reason == "plan"
-    completion_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert invalid_path not in completion_comment["comment_html"]
-    assert "Plan created" not in completion_comment["comment_html"]
 
 
-@pytest.mark.asyncio
-async def test_plan_mode_runs_when_repo_is_dirty(tmp_path: Path) -> None:
-    transport = FakeTransport()
-    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-    seen: list[str] = []
-
-    result = await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False, stdout="Plan output"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: True,
-        diff_stat=lambda path: "plans/plan-1.md | 1 +",
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert result.reason == "plan"
-    assert result.mode == "plan"
-    assert result.dispatched is True
-    assert seen == ["plan-1"]
-    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    plan_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert "WARNING: Plan mode produced repository changes" not in plan_comment["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -1018,7 +867,7 @@ async def test_permission_gate_blocks_instead_of_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0,
             10,
             False,
@@ -1046,7 +895,7 @@ async def test_approval_gate_blocks_instead_of_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0,
             10,
             False,
@@ -1078,7 +927,7 @@ async def test_approval_gate_ignores_benign_approval_phrases(tmp_path: Path, std
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=stdout),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1097,7 +946,7 @@ async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
         repo_dirty=lambda path: False,
@@ -1140,33 +989,6 @@ async def test_build_mode_returns_to_plan_when_no_plan_exists(tmp_path: Path) ->
     assert any("Returning this issue to Plan mode" in c["comment_html"] for c in transport.comments["build-1"])
 
 
-@pytest.mark.asyncio
-async def test_build_mode_blocks_suspicious_plan_comment_path(tmp_path: Path) -> None:
-    transport = FakeTransport()
-    transport.issues["build-1"] = _issue("build-1", labels=[PlaneLabel.BUILD.value])
-    transport.comments["build-1"] = [
-        {
-            "body": "Symphony completed plan.\n\n/tmp/not-the-current-plan.md",
-            "created_at": "2026-05-04T01:00:00+00:00",
-        }
-    ]
-
-    result = await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
-        repo_dirty=lambda path: False,
-    )
-
-    assert result.dispatched is False
-    assert result.reason == "invalid-plan-branch"
-    assert transport.issues["build-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    assert any(
-        "plan handoff is not a branch ref" in (c.get("comment_html") or c.get("body") or "")
-        for c in transport.comments["build-1"]
-    )
 
 
 @pytest.mark.asyncio
@@ -1180,7 +1002,7 @@ async def test_build_mode_removes_stale_plan_label_before_running(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.PLAN.value, PlaneLabel.BUILD.value])],
         repo_dirty=lambda path: False,
@@ -1226,7 +1048,7 @@ async def test_approval_required_filter_works_with_uuid_labels_when_policy_enabl
     result = await run_tick(
         _config_with_approval_policy(tmp_path, enabled=True),
         _adapter(transport),
-        agent_runner=lambda issue, rendered_prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1", labels=[PlaneLabel.APPROVAL_REQUIRED.value])],
         repo_dirty=lambda path: False,
@@ -1249,7 +1071,7 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(tmp_path:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="done output", stderr="warning: minor issue"),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="done output", stderr="warning: minor issue"),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1272,7 +1094,7 @@ async def test_run_tick_stderr_appears_in_blocked_timeout_comment(tmp_path: Path
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(-1, 20, True, stdout="partial", stderr="timeout error detail"),
+        agent_runner=lambda issue, prompt: AgentResult(-1, 20, True, stdout="partial", stderr="timeout error detail"),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1293,7 +1115,7 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="done output"),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="done output"),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1316,7 +1138,7 @@ async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             1, 10, False, stderr="Debug: key=fake-plane-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
@@ -1341,7 +1163,7 @@ async def test_run_tick_redacts_zai_api_key_from_stderr(monkeypatch, tmp_path: P
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             1, 10, False, stderr="Debug: key=secret-zai-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
@@ -1365,7 +1187,7 @@ async def test_run_tick_redacts_legacy_cliproxy_api_key_from_stderr(monkeypatch,
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             1, 10, False, stderr="Debug: key=secret-cliproxy-key-for-tests\nall done"
         ),
         render_prompt=lambda issue: "prompt",
@@ -1391,7 +1213,7 @@ async def test_run_tick_strips_ansi_escapes_from_failure_stderr(tmp_path: Path) 
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             1, 10, False, stderr=raw_stderr,
         ),
         render_prompt=lambda issue: "prompt",
@@ -1422,7 +1244,7 @@ async def test_run_tick_summary_marker_appears_in_success_comment(tmp_path: Path
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False,
             stdout="some chatter\nSYMPHONY_SUMMARY: Jellyfin CT106 healthy. HTTP 200, mounts OK.\nmore chatter",
         ),
@@ -1449,7 +1271,7 @@ async def test_run_tick_summary_marker_last_occurrence_wins(tmp_path: Path) -> N
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False,
             stdout="SYMPHONY_SUMMARY: draft summary\nthen\nSYMPHONY_SUMMARY: final summary",
         ),
@@ -1475,7 +1297,7 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False,
             stdout=f"SYMPHONY_SUMMARY: {huge}",
         ),
@@ -1507,7 +1329,7 @@ async def test_run_tick_summary_marker_falls_back_to_stderr(tmp_path: Path) -> N
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False,
             stdout="",
             stderr="some logging\nSYMPHONY_SUMMARY: From stderr stream.",
@@ -1533,7 +1355,7 @@ async def test_run_tick_summary_marker_strips_ansi(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False,
             stdout="SYMPHONY_SUMMARY: \x1b[32mgreen result\x1b[0m line",
         ),
@@ -1558,7 +1380,7 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="ok"),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout="ok"),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1574,7 +1396,7 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     assert sep == "\n\n**Timeline**"
     assert head.strip().startswith("**Symphony completed:**")
     assert "**Run branch:**" not in head
-    assert "move this issue back to Todo to continue" in head
+    assert "Move this issue back to Todo to rerun." in head
     assert "- verdict: agent-clean-review" in tail
     assert "- code_sha:" in tail
     assert "- claim_to_finish_ms:" in tail
@@ -1590,7 +1412,7 @@ async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path)
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False,
             stdout="SYMPHONY_SUMMARY: Backup target offline.\nSYMPHONY_RESULT: blocked",
             stderr="ssh: connection refused",
@@ -1656,7 +1478,7 @@ async def test_comments_appended_to_agent_prompt(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1684,7 +1506,7 @@ async def test_claim_comments_excluded_from_prompt(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1705,7 +1527,7 @@ async def test_no_comments_no_extra_section(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1730,7 +1552,7 @@ async def test_comments_sorted_oldest_first(tmp_path: Path) -> None:
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1758,7 +1580,7 @@ async def test_long_previous_comments_are_condensed_before_prompt(tmp_path: Path
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1783,7 +1605,7 @@ async def test_previous_comments_escape_prompt_delimiters(tmp_path: Path) -> Non
     await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
+        agent_runner=lambda issue, prompt: (seen_prompts.append(prompt), AgentResult(0, 10, False))[1],
         render_prompt=lambda issue: "base prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1818,7 +1640,7 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
     result = await run_tick(
         config,
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
+        agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False, stdout="Debug: token=secret-telegram-token-12345\nAll good"
         ),
         render_prompt=lambda issue: "prompt",
@@ -1836,29 +1658,6 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
 # --- Plan-mode dirty behavior (warning intentionally removed) ---
 
 
-@pytest.mark.asyncio
-async def test_plan_mode_does_not_warn_when_worktree_becomes_dirty(tmp_path: Path) -> None:
-    """Plan-mode dirty warning was removed; In Review transition is unchanged."""
-    transport = FakeTransport()
-    transport.issues["plan-1"] = _issue("plan-1", labels=[PlaneLabel.PLAN.value])
-
-    result = await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="Plan output"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        repo_dirty=lambda path: True,
-        diff_stat=lambda path: "src/plan.md | 5 ++++",
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert result.reason == "plan"
-    assert result.mode == "plan"
-    assert transport.issues["plan-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    plan_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert "WARNING: Plan mode produced repository changes" not in plan_comment["comment_html"]
-    assert "src/plan.md | 5 ++++" not in plan_comment["comment_html"]
 
 
 # --- SYMPHONY_RESULT marker tests ---
@@ -1873,7 +1672,7 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1896,7 +1695,7 @@ async def test_marker_review_transitions_to_in_review(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1918,7 +1717,7 @@ async def test_marker_blocked_blocks_issue(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1942,7 +1741,7 @@ async def test_marker_last_occurrence_wins(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1962,7 +1761,7 @@ async def test_marker_case_insensitive(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -1982,7 +1781,7 @@ async def test_marker_done_with_dirty_repo_moves_to_review(tmp_path: Path) -> No
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
@@ -1994,7 +1793,6 @@ async def test_marker_done_with_dirty_repo_moves_to_review(tmp_path: Path) -> No
     assert result.reason == "agent-marker-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     assert not any("cafe123" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert any("src/foo.py | 1 +" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
 @pytest.mark.asyncio
@@ -2007,7 +1805,7 @@ async def test_marker_review_with_dirty_repo_moves_to_in_review(tmp_path: Path) 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: True,
@@ -2018,46 +1816,15 @@ async def test_marker_review_with_dirty_repo_moves_to_in_review(tmp_path: Path) 
     assert result.reason == "agent-marker-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     assert not any("feed999" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert any("src/foo.py | 1 +" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
-@pytest.mark.asyncio
-async def test_clean_review_does_not_auto_commit_before_done(tmp_path: Path) -> None:
-    """Clean review path must not auto-commit before operator moves issue Done."""
-    from scheduler import AutoCommitFailed
-
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
-
-    def failing_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
-        raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
-
-    result = await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout="ok"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: True,
-        diff_stat=lambda path: "src/foo.py | 1 +",
-        auto_commit=failing_commit,
-    )
-
-    assert result.reason == "agent-clean-review"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    completion = [c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]]
-    assert completion
-    body = completion[0]["comment_html"]
-    assert "Symphony auto-commit failed" not in body
-    assert "git commit failed" not in body
-    assert "src/foo.py | 1 +" in body
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "reason", "expected_state"),
     [
-        (PlaneState.DONE, "agent-review", PlaneState.IN_REVIEW),
+        (PlaneState.DONE, "agent-clean-review", PlaneState.IN_REVIEW),
         (PlaneState.IN_REVIEW, "agent-review", PlaneState.IN_REVIEW),
         (PlaneState.BLOCKED, "agent-blocked", PlaneState.BLOCKED),
     ],
@@ -2068,8 +1835,7 @@ async def test_agent_self_transition_does_not_auto_commit_before_done(
     reason: str,
     expected_state: PlaneState,
 ) -> None:
-    """Agent self-transition path must not auto-commit before operator Done landing."""
-    from scheduler import AutoCommitFailed
+    """Auto-commit removed in v2 — agent self-transition path does not trigger git ops."""
 
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
@@ -2078,9 +1844,6 @@ async def test_agent_self_transition_does_not_auto_commit_before_done(
         transport.issues[issue.id]["state"] = DEFAULT_CONTRACT.state_ids[state.value]
         return AgentResult(0, 10, False, stdout="agent transitioned itself")
 
-    def failing_commit(path, *, issue_identifier, issue_name, issue_id, plan_path=None):
-        raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
-
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
@@ -2088,18 +1851,10 @@ async def test_agent_self_transition_does_not_auto_commit_before_done(
         render_prompt=lambda issue: "prompt",
         lock_path=tmp_path / f"lock-self-transition-{state.value}",
         poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: True,
-        diff_stat=lambda path: "src/foo.py | 1 +",
-        auto_commit=failing_commit,
     )
 
     assert result.reason == reason
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[expected_state.value]
-    warning_comments = [
-        c for c in transport.comments["issue-1"]
-        if "Symphony auto-commit failed" in c["comment_html"]
-    ]
-    assert warning_comments == []
 
 
 @pytest.mark.asyncio
@@ -2111,7 +1866,7 @@ async def test_marker_unknown_value_falls_through_to_clean_done(tmp_path: Path) 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=agent_output),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=agent_output),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -2130,7 +1885,7 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False, stdout=""),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=""),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1")],
         repo_dirty=lambda path: False,
@@ -2156,7 +1911,7 @@ async def test_future_scheduled_ticket_is_held_while_ordinary_dispatches(tmp_pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
@@ -2180,7 +1935,7 @@ async def test_future_scheduled_ticket_returned_by_poller_is_not_dispatched(tmp_
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("future", labels=(PlaneLabel.SCHEDULED.value,))],
         repo_dirty=lambda path: False,
@@ -2205,7 +1960,7 @@ async def test_fresh_scheduled_label_blocks_stale_poller_candidate(tmp_path: Pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("future")],
         repo_dirty=lambda path: False,
@@ -2232,7 +1987,7 @@ async def test_due_scheduled_ticket_releases_before_ordinary(tmp_path: Path) -> 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
@@ -2273,7 +2028,7 @@ async def test_due_scheduled_ticket_does_not_send_release_notification(tmp_path:
         result = await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+            agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
             render_prompt=lambda issue: "prompt",
             poller=lambda adapter: [],
             repo_dirty=lambda path: False,
@@ -2323,7 +2078,7 @@ async def test_schedule_not_after_change_aborts_release_before_notification(tmp_
         result = await run_tick(
             _config(tmp_path),
             _adapter(transport),
-            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+            agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
             render_prompt=lambda issue: "prompt",
             poller=lambda adapter: [],
             repo_dirty=lambda path: False,
@@ -2358,7 +2113,7 @@ async def test_due_scheduled_ticket_carries_schedule_context(tmp_path: Path) -> 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: captured.setdefault("issue", issue) and "prompt",
         poller=lambda adapter: [],
         repo_dirty=lambda path: False,
@@ -2387,7 +2142,7 @@ async def test_due_scheduled_ticket_order_uses_not_before_then_created_at(tmp_pa
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
         repo_dirty=lambda path: False,
@@ -2425,7 +2180,7 @@ async def test_due_scheduled_ticket_on_second_page_preempts_ordinary(tmp_path: P
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
@@ -2446,7 +2201,7 @@ async def test_label_only_scheduled_ticket_waits_until_maintenance_window(tmp_pa
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
         now=lambda: datetime(2026, 5, 4, 6, 0, tzinfo=UTC),
@@ -2470,7 +2225,7 @@ async def test_label_only_scheduled_ticket_releases_during_maintenance_window(tm
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: captured.setdefault("issue", issue) and "prompt",
         poller=lambda adapter: [_candidate("ordinary")],
         repo_dirty=lambda path: False,
@@ -2501,7 +2256,7 @@ async def test_label_only_scheduled_ticket_after_window_waits_for_next_window(tm
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: seen.append(issue.id) or AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: seen.append(issue.id) or AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
         repo_dirty=lambda path: False,
@@ -2525,7 +2280,7 @@ async def test_scheduled_ticket_with_malformed_latest_event_blocks(tmp_path: Pat
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2551,7 +2306,7 @@ async def test_cancelled_schedule_repairs_stale_scheduled_label(tmp_path: Path) 
     result = await run_tick(
         _config(tmp_path),
         _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [],
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
@@ -2665,12 +2420,6 @@ async def test_agent_created_malformed_schedule_blocks(tmp_path: Path) -> None:
 # --- Fix 4: _repo_dirty git-error fail-closed ---
 
 
-def test_repo_dirty_returns_true_on_git_failure(tmp_path: Path) -> None:
-    from scheduler import _repo_dirty
-
-    nonexistent = tmp_path / "does-not-exist"
-    result = _repo_dirty(nonexistent)
-    assert result is True
 
 
 # --- Auto-commit unit tests against a real tmp git repo ---
@@ -2686,374 +2435,6 @@ def _init_tmp_repo(repo: Path) -> None:
          "commit", "--allow-empty", "-q", "-m", "seed"],
         cwd=repo, check=True,
     )
-
-
-@pytest.mark.asyncio
-async def test_run_tick_uses_run_worktree_and_keeps_branch(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import _run_id_from_identifier, worktree_branch, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
-    seen_worktrees: list[Path | None] = []
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        seen_worktrees.append(worktree_path)
-        assert worktree_path is not None
-        assert worktree_path != repo
-        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
-        return AgentResult(0, 10, False)
-
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=agent,
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    branch = worktree_branch(run_id)
-    wt_path = worktree_path(config, run_id)
-    assert result.reason == "agent-clean-review"
-    assert seen_worktrees == [wt_path]
-    assert wt_path.exists()
-    assert (wt_path / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
-    assert not (repo / "agent-output.txt").exists()
-
-    branches = subprocess.run(
-        ["git", "branch", "--list", branch],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert branch in branches.stdout
-
-
-@pytest.mark.asyncio
-async def test_plan_to_build_handoff_uses_plan_branch_ref(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import _run_id_from_identifier, worktree_branch
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = FakeTransport()
-    plan_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.PLAN.value]
-    build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
-    transport.issues["plan-1"] = _issue("plan-1", labels=[plan_uuid])
-
-    def plan_agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        plan = worktree_path / "plans" / "plan-1.md"
-        plan.parent.mkdir(parents=True, exist_ok=True)
-        plan.write_text("# Plan\n", encoding="utf-8")
-        return AgentResult(0, 10, False, stdout=f"Plan created\n{plan}")
-
-    plan_result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=plan_agent,
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.PLAN.value])],
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    run_id = _run_id_from_identifier_for_tests("plan-1")
-    branch = worktree_branch(run_id)
-    handoff_comment = [c for c in transport.comments["plan-1"] if "completed plan" in c["comment_html"]][0]
-    assert plan_result.reason == "plan"
-    assert handoff_comment["comment_html"].rstrip().endswith(branch)
-    assert "plans/plan-1.md" not in handoff_comment["comment_html"]
-    subprocess.run(["git", "show", f"{branch}:plans/plan-1.md"], cwd=repo, check=True, capture_output=True, text=True)
-
-    transport.issues["plan-1"]["state"] = DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
-    transport.issues["plan-1"]["labels"] = [build_uuid]
-    seen_plan_paths: list[Path] = []
-
-    def build_agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        plan = worktree_path / "plans" / "plan-1.md"
-        assert plan.read_text(encoding="utf-8") == "# Plan\n"
-        seen_plan_paths.append(plan)
-        return AgentResult(0, 10, False)
-
-    build_result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=build_agent,
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("plan-1", labels=[PlaneLabel.BUILD.value])],
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert build_result.reason == "agent-clean-review"
-    assert config.worktrees_root is not None
-    assert seen_plan_paths == [config.worktrees_root / f"run-{run_id}" / "plans" / "plan-1.md"]
-
-
-@pytest.mark.asyncio
-async def test_run_tick_removes_worktree_after_timeout(tmp_path: Path) -> None:
-    from run_worktree import _run_id_from_identifier, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
-    seen_worktrees: list[Path | None] = []
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        seen_worktrees.append(worktree_path)
-        assert worktree_path is not None
-        return AgentResult(-1, 20, True)
-
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=agent,
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-    )
-
-    wt_path = worktree_path(config, _run_id_from_identifier_for_tests("issue-1"))
-    assert result.reason == "timeout"
-    assert seen_worktrees == [wt_path]
-    assert not wt_path.exists()
-
-
-@pytest.mark.asyncio
-async def test_run_tick_recovers_existing_orphan_worktree_before_dispatch(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import _run_id_from_identifier, create_worktree, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    orphan = create_worktree(config, run_id)
-    assert orphan.exists()
-
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
-    seen_worktrees: list[Path | None] = []
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        seen_worktrees.append(worktree_path)
-        if worktree_path is None:
-            raise AssertionError("missing worktree_path")
-        assert worktree_path == worktree_path_expected
-        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
-        return AgentResult(0, 10, False)
-
-    worktree_path_expected = worktree_path(config, run_id)
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=agent,
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-    )
-
-    assert result.reason == "agent-clean-review"
-    assert seen_worktrees == [worktree_path_expected]
-    assert worktree_path_expected.exists()
-    assert (worktree_path_expected / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
-
-
-@pytest.mark.asyncio
-async def test_reconcile_stale_running_retains_orphan_worktree_for_review(tmp_path: Path) -> None:
-    from run_worktree import create_worktree, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    run_id = _run_id_from_identifier_for_tests("HOM-1")
-    create_worktree(config, run_id)
-    wt_path = worktree_path(config, run_id)
-    assert wt_path.exists()
-
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {
-        **_issue("issue-1", state=PlaneState.RUNNING.value),
-        "sequence_id": "HOM-1",
-    }
-    transport.comments["issue-1"] = [
-        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
-    ]
-
-    await reconcile_stale_running(
-        _adapter(transport),
-        1000,
-        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
-        config=config,
-    )
-
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert any("retained stale Running work" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert wt_path.exists()
-
-
-def test_auto_commit_creates_commit_under_symphony_identity(tmp_path: Path) -> None:
-    import subprocess
-    from scheduler import _auto_commit
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    (repo / "file.txt").write_text("hello\n")
-
-    sha = _auto_commit(
-        repo,
-        issue_identifier="HOM-42",
-        issue_name="Patrol jellyfin",
-        issue_id="abc123",
-    )
-
-    assert len(sha) == 40
-    show = subprocess.run(
-        ["git", "log", "-1", "--format=%an%n%ae%n%s%n%b"],
-        cwd=repo, capture_output=True, text=True, check=True,
-    )
-    lines = show.stdout.splitlines()
-    assert lines[0] == "Symphony"
-    assert lines[1] == "symphony@testytech.net"
-    assert lines[2] == "Symphony: HOM-42 Patrol jellyfin"
-    assert "Plane-Issue: abc123" in show.stdout
-
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=repo, capture_output=True, text=True, check=True,
-    )
-    assert status.stdout.strip() == ""
-
-
-def test_auto_commit_adds_plan_path_trailer(tmp_path: Path) -> None:
-    import subprocess
-    from scheduler import _auto_commit
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    plan = repo / "plans" / "hom-42.md"
-    plan.parent.mkdir()
-    plan.write_text("# Plan\n")
-    (repo / "file.txt").write_text("hello\n")
-
-    _auto_commit(
-        repo,
-        issue_identifier="HOM-42",
-        issue_name="Patrol jellyfin",
-        issue_id="abc123",
-        plan_path=str(plan),
-    )
-
-    show = subprocess.run(
-        ["git", "log", "-1", "--format=%B"],
-        cwd=repo, capture_output=True, text=True, check=True,
-    )
-    assert "Plane-Issue: abc123" in show.stdout
-    assert f"Plan-Path: {plan}" in show.stdout
-
-
-def test_auto_commit_refuses_unrelated_plan_artifacts(tmp_path: Path) -> None:
-    from scheduler import AutoCommitFailed, _auto_commit
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    plan = repo / "plans" / "hom-42.md"
-    unrelated = repo / "plans" / "other.md"
-    plan.parent.mkdir()
-    plan.write_text("# Plan\n")
-    unrelated.write_text("# Other\n")
-
-    with pytest.raises(AutoCommitFailed) as excinfo:
-        _auto_commit(
-            repo,
-            issue_identifier="HOM-42",
-            issue_name="Patrol jellyfin",
-            issue_id="abc123",
-            plan_path=str(plan),
-        )
-    assert "unrelated plan artifact" in str(excinfo.value)
-
-
-def test_auto_commit_raises_when_no_changes(tmp_path: Path) -> None:
-    from scheduler import AutoCommitFailed, _auto_commit
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-
-    with pytest.raises(AutoCommitFailed) as excinfo:
-        _auto_commit(
-            repo,
-            issue_identifier="HOM-1",
-            issue_name="No changes",
-            issue_id="zzz",
-        )
-    assert "git commit failed" in str(excinfo.value)
-
-
-@pytest.mark.asyncio
-async def test_run_tick_appends_terminal_timeline_block(tmp_path: Path) -> None:
-    """Phase 3 #6: every terminal Symphony comment carries a Timeline block
-    that pins (claimed_at, finished_at, duration, verdict, code_sha) for the
-    operator. AUTO-98 made this audit gap visible.
-    """
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
-
-    await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
-            0, 1234, False, stdout="SYMPHONY_SUMMARY: ok"
-        ),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: False,
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "**Timeline**" in completion_comment
-    assert "- claimed_at: 2026-05-04T02:00:00+00:00" in completion_comment
-    assert "- finished_at: 2026-05-04T02:00:00+00:00" in completion_comment
-    assert "- claim_to_finish_ms: 0" in completion_comment
-    assert "- agent_duration_ms: 1234" in completion_comment
-    assert "- verdict: agent-clean-review" in completion_comment
-    assert "- code_sha: " in completion_comment
-
-
-@pytest.mark.asyncio
-async def test_run_tick_timeline_on_blocked_marker(tmp_path: Path) -> None:
-    """The timeline is also appended on the blocked verdict path so an
-    operator looking at AUTO-98-style Blocked tickets sees which Symphony
-    run got there."""
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
-
-    await run_tick(
-        _config(tmp_path),
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(
-            0, 500, False,
-            stdout="SYMPHONY_SUMMARY: nope\nSYMPHONY_RESULT: blocked",
-        ),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-        repo_dirty=lambda path: False,
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "Agent reported a blocked result" in blocked_comment
-    assert "**Timeline**" in blocked_comment
-    assert "- verdict: agent-marker-blocked" in blocked_comment
-    assert "- agent_duration_ms: 500" in blocked_comment
 
 
 def _contract_without_optional_roles() -> TrackerContract:
@@ -3076,7 +2457,7 @@ async def test_optional_roles_missing_disable_scheduled_and_approval_paths(tmp_p
     result = await run_tick(
         _config(tmp_path),
         adapter,
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 10, False),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [_candidate("issue-1", labels=["approval-required", "scheduled"])],
         repo_dirty=lambda path: False,
@@ -3105,8 +2486,6 @@ def test_contract_requires_mode_and_state_roles() -> None:
 
 @pytest.mark.asyncio
 async def test_reconcile_startup_reaps_stale_running_issue(tmp_path: Path) -> None:
-    from run_worktree import _run_id_from_identifier
-
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo)
@@ -3155,59 +2534,8 @@ async def test_reconcile_startup_skips_live_running_issue(tmp_path: Path) -> Non
     assert transport.issues["issue-1"]["state"] == PlaneState.RUNNING.value
 
 
-@pytest.mark.asyncio
-async def test_reconcile_startup_reaps_orphan_worktree_with_no_running_issue(tmp_path: Path) -> None:
-    from run_worktree import create_worktree, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    # Create an orphan worktree (no Running issue in Plane for this run).
-    orphan_run_id = "deadbeef"
-    orphan = create_worktree(config, orphan_run_id)
-    assert orphan.exists()
-    transport = FakeTransport()
-    # No Running issues at all.
-
-    cleaned = await reconcile_startup(
-        config,
-        _adapter(transport),
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
-
-    assert cleaned >= 1
-    assert not orphan.exists()
 
 
-@pytest.mark.asyncio
-async def test_reconcile_startup_skips_live_worktree(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import create_worktree, worktree_branch, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, run_timeout_ms=90_000)  # generous so 30s claim is "live"
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {
-        **_issue("issue-1", state=PlaneState.RUNNING.value),
-        "sequence_id": "LIVE-1",
-    }
-    transport.comments["issue-1"] = [
-        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
-    ]
-    # Create worktree for the live issue.
-    live_run_id = "b76bcdde"
-    live_wt = create_worktree(config, live_run_id)
-    assert live_wt.exists()
-
-    cleaned = await reconcile_startup(
-        config,
-        _adapter(transport),
-        now=lambda: datetime(2026, 5, 4, 1, 0, 30, tzinfo=UTC),
-    )
-
-    assert cleaned == 0
-    assert live_wt.exists()
 
 
 @pytest.mark.asyncio
@@ -3291,7 +2619,7 @@ async def test_dispatch_one_runs_and_returns_tick_result(tmp_path: Path) -> None
     result = await sched_mod._dispatch_one(
         config,
         _adapter(transport),
-        lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        lambda issue, prompt: AgentResult(0, 1, False),
         lambda issue: "prompt",
         None,
         False,
@@ -3329,7 +2657,7 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(tmp_path: Path, monkeypa
             sched_mod._dispatch_one(
                 config,
                 _adapter(FakeTransport()),
-                lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+                lambda issue, prompt: AgentResult(0, 1, False),
                 lambda issue: "prompt",
                 None,
                 False,
@@ -3351,64 +2679,6 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(tmp_path: Path, monkeypa
     assert sem._value == 2
 
 
-@pytest.mark.asyncio
-async def test_dispatch_one_overlaps_same_repo_runs_in_isolated_worktrees(tmp_path: Path) -> None:
-    """Two cap slots can run the same repo at once without sharing a worktree."""
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, run_cap=2)
-    init_run_semaphore(config)
-
-    transport = FakeTransport()
-    for idx in range(1, 3):
-        issue_id = f"issue-{idx}"
-        transport.issues[issue_id] = {**_issue(issue_id), "identifier": issue_id}
-    adapter = _adapter(transport)
-
-    entered = threading.Event()
-    release = threading.Event()
-    lock = threading.Lock()
-    seen_worktrees: list[Path] = []
-    seen_issue_ids: list[str] = []
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        with lock:
-            seen_issue_ids.append(issue.id)
-            seen_worktrees.append(worktree_path)
-            if len(seen_worktrees) == 2:
-                entered.set()
-        assert worktree_path.exists()
-        (worktree_path / f"{issue.id}.txt").write_text(issue.id, encoding="utf-8")
-        assert release.wait(timeout=2)
-        return AgentResult(0, 50, False)
-
-    tasks = [
-        asyncio.create_task(
-            _dispatch_one(
-                config,
-                adapter,
-                agent,
-                lambda issue: "prompt",
-                None,
-                False,
-            )
-        )
-        for _ in range(2)
-    ]
-
-    await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=2)
-    assert sorted(seen_issue_ids) == ["issue-1", "issue-2"]
-    assert len(seen_worktrees) == 2
-    assert seen_worktrees[0] != seen_worktrees[1]
-    assert all(path.exists() for path in seen_worktrees)
-    assert not (repo / "issue-1.txt").exists()
-    assert not (repo / "issue-2.txt").exists()
-
-    release.set()
-    results = await asyncio.gather(*tasks)
-    assert [result.reason for result in results] == ["agent-clean-review", "agent-clean-review"]
-    assert all(path.exists() for path in seen_worktrees)
 
 
 @pytest.mark.asyncio
@@ -3425,7 +2695,7 @@ async def test_dispatch_one_does_not_duplicate_in_flight_issue(tmp_path: Path) -
     release = threading.Event()
     calls: list[str] = []
 
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
+    def agent(issue: CandidateIssue, prompt: str) -> AgentResult:
         calls.append(issue.id)
         entered.set()
         assert release.wait(timeout=2)
@@ -3484,7 +2754,7 @@ async def test_scheduled_release_reserved_before_side_effects(tmp_path: Path, mo
             sched_mod._dispatch_one(
                 config,
                 adapter,
-                lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+                lambda issue, prompt: AgentResult(0, 1, False),
                 lambda issue: "prompt",
                 None,
                 False,
@@ -3542,7 +2812,7 @@ async def test_scheduled_release_failure_holds_reservation_until_blocked(tmp_pat
             sched_mod._dispatch_one(
                 config,
                 adapter,
-                lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+                lambda issue, prompt: AgentResult(0, 1, False),
                 lambda issue: "prompt",
                 None,
                 False,
@@ -3560,55 +2830,6 @@ async def test_scheduled_release_failure_holds_reservation_until_blocked(tmp_pat
     assert release_calls == 1
 
 
-@pytest.mark.asyncio
-async def test_dispatch_one_cancel_releases_slot_and_cleans_worktree_and_tmux(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Cancellation must release the semaphore and run per-run cleanup."""
-    import scheduler as sched_mod
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, run_cap=1)
-    init_run_semaphore(config)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
-    entered = threading.Event()
-    release = threading.Event()
-    seen_worktrees: list[Path] = []
-    killed_run_ids: list[str] = []
-    monkeypatch.setattr(sched_mod, "kill_tmux_session", lambda run_id: killed_run_ids.append(run_id))
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        seen_worktrees.append(worktree_path)
-        entered.set()
-        release.wait(timeout=2)
-        return AgentResult(0, 50, False)
-
-    task = asyncio.create_task(
-        sched_mod._dispatch_one(
-            config,
-            _adapter(transport),
-            agent,
-            lambda issue: "prompt",
-            None,
-            False,
-        )
-    )
-    await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=2)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    release.set()
-
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    sem = sched_mod._RUN_SEMAPHORE
-    assert sem is not None
-    assert sem._value == 1
-    assert seen_worktrees and not seen_worktrees[0].exists()
-    assert killed_run_ids == [run_id]
 
 
 # --- Semaphore cap enforcement tests ---
@@ -3667,106 +2888,10 @@ def test_poll_interval_derived_from_config(tmp_path: Path) -> None:
 # --- Worktree cleanup on all exit paths ---
 
 
-@pytest.mark.asyncio
-async def test_run_tick_cleans_worktree_on_timeout(tmp_path: Path) -> None:
-    """A timed-out Run must clean up its worktree so no orphan is left."""
-    import subprocess
-    from run_worktree import create_worktree
-
-    repo = tmp_path / "repo1"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
-
-    transport = FakeTransport()
-    transport.issues["t1"] = _issue("t1")
-    config = _config(repo)
-
-    run_id = _run_id_from_identifier_for_tests("t1")
-    wt = create_worktree(config, run_id)
-    assert wt.exists(), "worktree must exist before dispatch"
-
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(-1, 50, True),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("t1")],
-        repo_dirty=lambda path: False,
-    )
-
-    assert result.reason == "timeout"
-    assert not wt.exists(), "worktree must be removed after timeout"
 
 
-@pytest.mark.asyncio
-async def test_run_tick_cleans_worktree_on_nonzero_exit(tmp_path: Path) -> None:
-    """A Run that exits non-zero must clean up its worktree."""
-    import subprocess
-    from run_worktree import create_worktree
-
-    repo = tmp_path / "repo2"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
-
-    transport = FakeTransport()
-    transport.issues["t2"] = _issue("t2")
-    config = _config(repo)
-
-    run_id = _run_id_from_identifier_for_tests("t2")
-    wt = create_worktree(config, run_id)
-    assert wt.exists()
-
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(1, 50, False),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("t2")],
-        repo_dirty=lambda path: False,
-    )
-
-    assert result.reason == "nonzero"
-    assert not wt.exists(), "worktree must be removed after nonzero exit"
 
 
-@pytest.mark.asyncio
-async def test_run_tick_cleans_worktree_on_clean_conversation_success(tmp_path: Path) -> None:
-    """A clean conversation Run should clean up its review worktree."""
-    import subprocess
-    from run_worktree import create_worktree
-
-    repo = tmp_path / "repo3"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True)
-
-    transport = FakeTransport()
-    transport.issues["t3"] = _issue("t3")
-    config = _config(repo)
-
-    run_id = _run_id_from_identifier_for_tests("t3")
-    wt = create_worktree(config, run_id)
-    assert wt.exists()
-
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 50, False),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("t3")],
-        repo_dirty=lambda path: False,
-    )
-
-    assert result.reason == "agent-clean-review"
-    assert not wt.exists(), "clean conversation worktree must be removed after success"
 
 
 # --- Per-binding dispatch state isolation ---
@@ -3892,7 +3017,7 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(tmp_path: Path, monkeypa
         await scheduler.run_loop(
             _config(tmp_path, run_cap=2, poll_interval_ms=1),
             _adapter(FakeTransport()),
-            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
         )
 
@@ -3923,7 +3048,7 @@ async def test_run_loop_logs_dispatch_exceptions_without_exiting(tmp_path: Path,
         await scheduler.run_loop(
             _config(tmp_path, run_cap=1, poll_interval_ms=1),
             _adapter(FakeTransport()),
-            agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
             render_prompt=lambda issue: "prompt",
         )
 
@@ -3949,7 +3074,7 @@ async def test_plane_rate_limit_records_per_binding_cooldown(tmp_path: Path, mon
     result = await _dispatch_one(
         _config(tmp_path),
         _adapter(FakeTransport()),
-        lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        lambda issue, prompt: AgentResult(0, 1, False),
         lambda issue: "prompt",
         None,
         False,
@@ -3990,520 +3115,31 @@ def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> No
     assert _cooldown_remaining_s(second, now=lambda: now) == 10
 
 
-@pytest.mark.asyncio
-async def test_run_tick_clean_exit_moves_to_in_review_and_cleans_conversation_worktree(tmp_path: Path) -> None:
-    from run_worktree import worktree_path
 
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = _issue("issue-1")
 
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
-        return AgentResult(0, 10, False, stdout="SYMPHONY_SUMMARY: output ready")
 
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=agent,
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
 
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    retained = worktree_path(config, run_id)
-    assert result.reason == "agent-clean-review"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert retained.exists()
-    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
-    assert "output ready" in transport.comments["issue-1"][1]["comment_html"]
 
 
-@pytest.mark.asyncio
-async def test_reconcile_startup_skips_in_review_worktree(tmp_path: Path) -> None:
-    from run_worktree import create_worktree
 
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {
-        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
-        "sequence_id": "issue-1",
-    }
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    retained = create_worktree(config, run_id)
 
-    cleaned = await reconcile_startup(
-        config,
-        _adapter(transport),
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
 
-    assert cleaned == 0
-    assert retained.exists()
 
 
-@pytest.mark.asyncio
-async def test_done_landing_commits_merges_and_deletes_worktree_and_branch(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import create_worktree, worktree_branch, worktree_path
 
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, base_branch="main")
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    wt = create_worktree(config, run_id, base_branch="main")
-    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
 
-    landed = await scheduler.reconcile_done_landing(
-        config,
-        _adapter(transport),
-        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
-    )
 
-    assert landed == 1
-    assert not worktree_path(config, run_id).exists()
-    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert branches.stdout.strip() == ""
-    assert (repo / "landed.txt").read_text(encoding="utf-8") == "landed\n"
-    assert any("Cleaned run worktree and branch" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
-@pytest.mark.asyncio
-async def test_done_landing_removes_has_worktree_label(tmp_path: Path) -> None:
-    from run_worktree import create_worktree
 
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, base_branch="main")
-    label_roles = dict(DEFAULT_CONTRACT.label_roles)
-    label_roles[TrackerRole.HAS_WORKTREE] = RoleBinding("has-worktree", "label-worktree")
-    contract = replace(DEFAULT_CONTRACT, label_roles=label_roles)
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {
-        **_issue("issue-1", state=PlaneState.DONE.value, labels=["label-worktree"]),
-        "identifier": "issue-1",
-    }
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    wt = create_worktree(config, run_id, base_branch="main")
-    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
 
-    landed = await scheduler.reconcile_done_landing(
-        config,
-        PlaneAdapter(contract=contract, transport=transport),
-    )
 
-    labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
-    assert landed == 1
-    assert TrackerRole.HAS_WORKTREE.value not in labels
 
 
-@pytest.mark.asyncio
-async def test_done_landing_conflict_blocks_and_preserves_evidence(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import create_worktree, worktree_branch, worktree_path
 
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, base_branch="main")
-    (repo / "conflict.txt").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "conflict.txt"], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.name=Seed", "-c", "user.email=seed@test", "commit", "-m", "base file"], cwd=repo, check=True)
 
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    wt = create_worktree(config, run_id, base_branch="HEAD~1")
-    (wt / "conflict.txt").write_text("run\n", encoding="utf-8")
 
-    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
 
-    assert landed == 0
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    assert worktree_path(config, run_id).exists()
-    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert worktree_branch(run_id) in branches.stdout
-    assert any("Done landing failed" in c["comment_html"] for c in transport.comments["issue-1"])
 
 
-def test_dirty_base_approval_parser_accepts_plane_html_comment() -> None:
-    token = "a" * 64
-    comments = [
-        {
-            "created_at": "2026-05-04T02:00:00+00:00",
-            "comment_html": f"<p>Symphony-Landing: auto-commit-base<br>Dirty-Base-Token: {token}</p>",
-        }
-    ]
 
-    assert scheduler._dirty_base_approval_token_from_comments(comments) == token
-
-
-def test_dirty_base_approval_parser_uses_newest_valid_comment() -> None:
-    old_token = "a" * 64
-    new_token = "b" * 64
-    comments = [
-        {
-            "created_at": "2026-05-04T02:00:00+00:00",
-            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {old_token}",
-        },
-        {
-            "created_at": "2026-05-04T02:05:00+00:00",
-            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {new_token}",
-        },
-    ]
-
-    assert scheduler._dirty_base_approval_token_from_comments(comments) == new_token
-
-
-@pytest.mark.asyncio
-async def test_done_landing_dirty_base_auto_commits_without_plane_token(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import create_worktree, worktree_branch, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, base_branch="main")
-    (repo / "operator-wip.txt").write_text("operator work\n", encoding="utf-8")
-
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    wt = create_worktree(config, run_id, base_branch="main")
-    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
-
-    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
-
-    assert landed == 1
-    assert transport.issues["issue-1"]["state"] == PlaneState.DONE.value
-    assert not worktree_path(config, run_id).exists()
-    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert branches.stdout.strip() == ""
-    landing_comment = transport.comments["issue-1"][-1]["comment_html"]
-    assert "Base pre-landing commit" in landing_comment
-    assert "Landing HEAD" in landing_comment
-    assert (repo / "operator-wip.txt").read_text(encoding="utf-8") == "operator work\n"
-    assert (repo / "landed.txt").read_text(encoding="utf-8") == "landed\n"
-
-
-@pytest.mark.asyncio
-async def test_done_landing_stale_plane_comment_still_auto_commits_dirty_base(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import create_worktree, worktree_branch, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, base_branch="main")
-    (repo / "operator-wip.txt").write_text("operator work\n", encoding="utf-8")
-    token, _summary = scheduler._dirty_base_snapshot(repo)
-
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
-    transport.comments["issue-1"] = [
-        {
-            "created_at": "2026-05-04T02:00:00+00:00",
-            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {token}",
-        }
-    ]
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    wt = create_worktree(config, run_id, base_branch="main")
-    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
-
-    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
-
-    assert landed == 1
-    assert (repo / "operator-wip.txt").read_text(encoding="utf-8") == "operator work\n"
-    assert (repo / "landed.txt").read_text(encoding="utf-8") == "landed\n"
-    assert not worktree_path(config, run_id).exists()
-    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert branches.stdout.strip() == ""
-    landing_comment = transport.comments["issue-1"][-1]["comment_html"]
-    assert "Base pre-landing commit" in landing_comment
-    assert "Landing HEAD" in landing_comment
-    log = subprocess.run(["git", "log", "--oneline", "-3"], cwd=repo, capture_output=True, text=True, check=True)
-    assert "pre-landing dirty base" in log.stdout
-
-
-@pytest.mark.asyncio
-async def test_done_landing_dirty_base_token_mismatch_no_longer_blocks(tmp_path: Path) -> None:
-    import subprocess
-    from run_worktree import create_worktree, worktree_branch, worktree_path
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo, base_branch="main")
-    (repo / "operator-wip.txt").write_text("operator work\n", encoding="utf-8")
-    token, _summary = scheduler._dirty_base_snapshot(repo)
-    (repo / "operator-wip.txt").write_text("changed after token\n", encoding="utf-8")
-
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
-    transport.comments["issue-1"] = [
-        {
-            "created_at": "2026-05-04T02:00:00+00:00",
-            "comment_html": f"Symphony-Landing: auto-commit-base\nDirty-Base-Token: {token}",
-        }
-    ]
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    wt = create_worktree(config, run_id, base_branch="main")
-    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
-
-    landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
-
-    assert landed == 1
-    assert transport.issues["issue-1"]["state"] == PlaneState.DONE.value
-    assert not worktree_path(config, run_id).exists()
-    branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert branches.stdout.strip() == ""
-    landing_comment = transport.comments["issue-1"][-1]["comment_html"]
-    assert "Base pre-landing commit" in landing_comment
-    assert "Dirty-Base-Token:" not in landing_comment
-
-
-@pytest.mark.asyncio
-async def test_rate_limit_during_post_agent_schedule_detection_retains_worktree(tmp_path: Path) -> None:
-    from plane_adapter import PlaneRateLimitError
-    from run_worktree import worktree_path
-
-    class RateLimitOnPostAgentIssueFetchTransport(FakeTransport):
-        def __init__(self) -> None:
-            super().__init__()
-            self.issue_reads = 0
-
-        async def get(self, path: str) -> dict[str, Any]:
-            if "/issues/" in path and "/comments" not in path:
-                issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
-                if issue_id:
-                    self.issue_reads += 1
-                    if self.issue_reads == 2:
-                        raise PlaneRateLimitError("rate limited", retry_after_s=30)
-            return await super().get(path)
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = RateLimitOnPostAgentIssueFetchTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
-        return AgentResult(0, 10, False)
-
-    result = await _dispatch_one(
-        config,
-        _adapter(transport),
-        agent,
-        lambda issue: "prompt",
-        None,
-        False,
-    )
-
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    retained = worktree_path(config, run_id)
-    assert result.reason == "plane-rate-limited"
-    assert retained.exists()
-    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
-
-
-@pytest.mark.asyncio
-async def test_post_agent_rate_limit_retries_review_transition(tmp_path: Path) -> None:
-    from plane_adapter import PlaneRateLimitError
-    from run_worktree import worktree_path
-    from scheduler import _DispatchState
-
-    class RateLimitOnFirstPostAgentIssueFetchTransport(FakeTransport):
-        def __init__(self) -> None:
-            super().__init__()
-            self.issue_reads = 0
-
-        async def get(self, path: str) -> dict[str, Any]:
-            if "/issues/" in path and "/comments" not in path:
-                issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
-                if issue_id:
-                    self.issue_reads += 1
-                    if self.issue_reads == 2:
-                        raise PlaneRateLimitError("rate limited", retry_after_s=30)
-            return await super().get(path)
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    state = _DispatchState(
-        semaphore=asyncio.Semaphore(1),
-        in_flight_ids=set(),
-        in_flight_lock=asyncio.Lock(),
-        poll_interval=0.01,
-    )
-    transport = RateLimitOnFirstPostAgentIssueFetchTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
-        return AgentResult(0, 10, False)
-
-    first = await _dispatch_one(
-        config,
-        _adapter(transport),
-        agent,
-        lambda issue: "prompt",
-        None,
-        False,
-        state,
-    )
-
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    retained = worktree_path(config, run_id)
-    assert first.reason == "plane-rate-limited"
-    assert state.pending_review_issue_ids == {"issue-1"}
-    assert retained.exists()
-
-    second = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: pytest.fail("agent should not rerun"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [],
-        dispatch_state=state,
-    )
-
-    assert second.reason == "no-candidates"
-    assert state.pending_review_issue_ids == set()
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert any("retained interrupted Running work" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert retained.exists()
-    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
-
-
-@pytest.mark.asyncio
-async def test_running_worktree_without_in_flight_run_moves_to_review_after_grace(tmp_path: Path) -> None:
-    from run_worktree import create_worktree, worktree_path
-    from scheduler import _DispatchState
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    state = _DispatchState(
-        semaphore=asyncio.Semaphore(1),
-        in_flight_ids=set(),
-        in_flight_lock=asyncio.Lock(),
-        poll_interval=0.01,
-    )
-    transport = FakeTransport()
-    transport.issues["issue-1"] = {
-        **_issue("issue-1", state=PlaneState.RUNNING.value),
-        "identifier": "issue-1",
-    }
-    transport.comments["issue-1"] = [
-        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
-    ]
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    create_worktree(config, run_id, base_branch="main")
-
-    result = await run_tick(
-        config,
-        _adapter(transport),
-        agent_runner=lambda issue, prompt, *, worktree_path=None: pytest.fail("agent should not rerun"),
-        render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [],
-        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
-        dispatch_state=state,
-    )
-
-    assert result.reason == "no-candidates"
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    assert any("retained interrupted Running work" in c["comment_html"] for c in transport.comments["issue-1"])
-    assert worktree_path(config, run_id).exists()
-
-
-@pytest.mark.asyncio
-async def test_rate_limit_during_review_transition_retains_worktree(tmp_path: Path) -> None:
-    from plane_adapter import PlaneRateLimitError
-    from run_worktree import worktree_path
-
-    class RateLimitOnCompletionCommentTransport(FakeTransport):
-        def __init__(self) -> None:
-            super().__init__()
-            self.comment_posts = 0
-
-        async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-            if "/comments" in path:
-                self.comment_posts += 1
-                if self.comment_posts == 2:
-                    raise PlaneRateLimitError("rate limited", retry_after_s=30)
-            return await super().post(path, body)
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = RateLimitOnCompletionCommentTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        (worktree_path / "agent-output.txt").write_text("done\n", encoding="utf-8")
-        return AgentResult(0, 10, False)
-
-    result = await _dispatch_one(
-        config,
-        _adapter(transport),
-        agent,
-        lambda issue: "prompt",
-        None,
-        False,
-    )
-
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    retained = worktree_path(config, run_id)
-    assert result.reason == "plane-rate-limited"
-    assert retained.exists()
-    assert (retained / "agent-output.txt").read_text(encoding="utf-8") == "done\n"
-
-
-@pytest.mark.asyncio
-async def test_rate_limit_during_clean_conversation_transition_retains_worktree(tmp_path: Path) -> None:
-    from plane_adapter import PlaneRateLimitError
-    from run_worktree import worktree_path
-
-    class RateLimitOnCompletionCommentTransport(FakeTransport):
-        def __init__(self) -> None:
-            super().__init__()
-            self.comment_posts = 0
-
-        async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-            if "/comments" in path:
-                self.comment_posts += 1
-                if self.comment_posts == 2:
-                    raise PlaneRateLimitError("rate limited", retry_after_s=30)
-            return await super().post(path, body)
-
-    repo = tmp_path / "homelab"
-    _init_tmp_repo(repo)
-    config = _config(repo)
-    transport = RateLimitOnCompletionCommentTransport()
-    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
-
-    def agent(issue: CandidateIssue, prompt: str, *, worktree_path: Path | None = None) -> AgentResult:
-        assert worktree_path is not None
-        return AgentResult(0, 10, False)
-
-    result = await _dispatch_one(
-        config,
-        _adapter(transport),
-        agent,
-        lambda issue: "prompt",
-        None,
-        False,
-    )
-
-    run_id = _run_id_from_identifier_for_tests("issue-1")
-    retained = worktree_path(config, run_id)
-    assert result.reason == "plane-rate-limited"
-    assert retained.exists()

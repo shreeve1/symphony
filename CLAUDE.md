@@ -25,6 +25,11 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 - `/home/james/homelab/` and `/home/james/trading/crypto-trading-agents` — repos Symphony agents inspect and modify (per `bindings.yml`).
 - `/home/james/homelab/docs/runbooks/automation/symphony.md` — project runbook.
 
+## Git Remote
+
+- Remote: `git@github-personal:shreeve1/symphony.git`
+- Always use `github-personal` SSH host alias — default `github.com` key authenticates as `shreeve1/SSH` (wrong account). `github-personal` uses `~/.ssh/id_ed25519_github_personal` and authenticates as `shreeve1`.
+
 ## Safety
 
 - Treat as live infrastructure.
@@ -128,3 +133,78 @@ journalctl -u symphony-host.service --since=5m --no-pager -n 100
 - `symphony-binding-smoke` — file a low-risk smoke ticket, watch one Run.
 - `symphony-plane-recover` — archive / state-fill for half-built projects.
 - `symphony-onboard-project` — umbrella that chains the above.
+
+## LLM Wiki
+
+This project uses `wiki/` as an LLM-maintained knowledge base for Symphony scheduler internals, runbook content, decisions, and operational patterns. Citation style is inline: `[source: path/to/file.md#section]`. **Auto-promotion is enabled** — the agent self-promotes candidates after lint passes; James gate is off.
+
+### Directories
+
+- `wiki/raw/` — immutable source material; read, never rewrite.
+- `wiki/raw/sessions/` — curated session captures created by `/wiki-update` when conversation evidence needs citation.
+- `wiki/candidates/` — transient holding for generated pages awaiting lint and auto-promotion.
+- `wiki/sources/` — promoted source summaries.
+- `wiki/entities/` — promoted entity pages (services, bindings, agents, projects).
+- `wiki/concepts/` — promoted concept pages (dispatch loop, reconcile lifecycle, etc.).
+- `wiki/analyses/` — promoted query outputs and syntheses.
+- `wiki/raw/assets/` — source attachments clipped with raw material.
+- `wiki/assets/` — generated or wiki-native images and attachments.
+
+### Required Files
+
+- Read `wiki/index.md` first when answering wiki-backed questions.
+- Use `wiki/ROUTING.md` after `wiki/index.md` to narrow large searches.
+- Append every ingest, query, lint, promotion, and discard to `wiki/log.md`.
+- Track important factual claims in `wiki/CLAIMS.md` with inline citations.
+
+### Wiki-First Project Search
+
+For any Symphony-specific question, investigation, design task, bug hunt, or code search that requires project context, check the wiki first.
+
+1. Read `wiki/index.md` before searching broadly.
+2. Use `wiki/ROUTING.md` to identify relevant promoted pages, candidates, and claim entries.
+3. Read relevant wiki pages and `wiki/CLAIMS.md` entries before using general repository search.
+4. If the wiki does not contain enough information, search the codebase, docs (`CONTEXT.md`, `~/homelab/docs/runbooks/automation/symphony.md`), or external sources as needed.
+5. When non-wiki search reveals durable project knowledge, propose ingesting the source into `wiki/raw/`, creating a `wiki/candidates/` page (auto-promoted after lint), or updating an existing promoted page with a cited change.
+6. If external or codebase search was needed to answer a wiki-backed question, mention the wiki gap and the ingest or update path taken in the final answer.
+
+### Session Update Workflow
+
+Use `/wiki-update` during or after meaningful sessions to capture durable decisions, verified facts, root causes, follow-ups, and reusable context. Create curated raw session captures under `wiki/raw/sessions/` when conversation evidence is needed. Do not archive full transcripts, secrets from `/home/james/symphony-host.env`, private material, or raw pasted user content without explicit approval. New session-derived knowledge transits `wiki/candidates/`, gets linted, then auto-promotes; updates to `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md`, and `wiki/log.md` are required.
+
+### Ingest Workflow
+
+1. Place new source under `wiki/raw/` (copy or symlink for in-tree files; preserve original path in citation).
+2. Summarize the source with citations to the raw path.
+3. Discuss key takeaways with James when the source is substantial, ambiguous, or likely to touch multiple pages.
+4. Extract entities, concepts, contradictions, and atomic claims.
+5. Create page in `wiki/candidates/`.
+6. Run lint checks against the candidate (broken links, citation drift, duplicate concepts).
+7. Auto-promote to the appropriate directory (`sources/`, `entities/`, `concepts/`, `analyses/`), set `status: promoted`, update timestamps.
+8. Update `wiki/index.md`, `wiki/ROUTING.md`, and `wiki/CLAIMS.md`.
+9. Append an entry to `wiki/log.md`.
+
+### Query Workflow
+
+1. Read `wiki/index.md` to identify relevant promoted pages and candidates.
+2. Use `wiki/ROUTING.md` to narrow branches when the index is too broad.
+3. Read only the relevant promoted pages and claim entries.
+4. Answer with inline citations (`[source: wiki/concepts/page.md]` or `[source: wiki/raw/file.md#section]`).
+5. If the answer produces durable synthesis, save as `wiki/candidates/<slug>.md`, lint, auto-promote to `wiki/analyses/`.
+
+### Promotion Workflow
+
+Auto-promotion: agent self-promotes after lint. No James gate.
+
+1. Lint the candidate page for citations, confidence, and duplicates.
+2. Move it to `sources/`, `entities/`, `concepts/`, or `analyses/`.
+3. Set `status: promoted` and update timestamps.
+4. Update `index.md`, `ROUTING.md`, `CLAIMS.md`, and `log.md`.
+
+### Discard Workflow
+
+When a candidate is rejected during lint, remove its candidate index row, candidate-only routes, and candidate claim page references before deleting the candidate file. Append a discard entry to `wiki/log.md`.
+
+### Lint Workflow
+
+Check broken wikilinks, orphan pages, duplicate concepts, uncited claims, stale claims, claim content drift against cited sources, contradictions, missing concept pages, data gaps, stale candidate references, and missing index/routing entries. Report findings before making broad changes.

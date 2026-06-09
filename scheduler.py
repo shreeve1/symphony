@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import html
 import inspect
 import logging
 import random
 import re
-import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Iterator, Sequence, cast
+from typing import Any, Callable, Sequence, cast
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
@@ -25,19 +22,7 @@ from notifier import (
     format_blocked_message,
     format_review_message,
 )
-from run_worktree import (
-    _delete_run_branch,
-    _run_branch_exists,
-    create_worktree,
-    kill_tmux_session,
-    list_worktrees,
-    remove_worktree,
-    remove_worktree_if_exists,
-    _run_id_from_identifier,
-    _run_id_from_worktree_path,
-    worktree_branch,
-    worktree_path,
-)
+
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
 from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
@@ -74,20 +59,14 @@ SCHEDULED_RELEASE_MAX_PAGES_PER_TICK = 3
 RATE_LIMIT_BASE_COOLDOWN_S = 30.0
 RATE_LIMIT_MAX_COOLDOWN_S = 300.0
 RATE_LIMIT_JITTER_FRACTION = 0.2
-DONE_LANDING_PAGE_SIZE = 50
-DONE_LANDING_MAX_PAGES_PER_TICK = 3
+
 SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
 SCHEDULED_LABEL_WINDOW_START_HOUR = 0
 SCHEDULED_LABEL_WINDOW_END_HOUR = 6
 SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
-_PLAN_HANDOFF_MARKER = "Symphony completed plan."
-DIRTY_BASE_APPROVAL_COMMAND = "Symphony-Landing: auto-commit-base"
-DIRTY_BASE_TOKEN_PREFIX = "Dirty-Base-Token:"
-DIRTY_BASE_STATUS_MAX_LINES = 20
-HAS_WORKTREE_LABEL_NAME = "has-worktree"
-INTERRUPTED_RUNNING_REVIEW_GRACE_S = 60.0
+
 
 
 @dataclass
@@ -493,388 +472,6 @@ def _validated_fallback_plan_path(repo_path: Path, issue: CandidateIssue) -> Pat
         return None
 
 
-def _validate_plan_branch_ref(repo_path: Path, raw_ref: str) -> str:
-    ref = raw_ref.strip()
-    if not ref or ref.startswith("/") or ref.startswith("-") or re.search(r"\s", ref):
-        raise ValueError("plan handoff is not a branch ref")
-    check = subprocess.run(
-        ["git", "check-ref-format", "--branch", ref],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if check.returncode != 0:
-        raise ValueError("plan handoff is not a valid branch ref")
-    exists = subprocess.run(
-        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{ref}"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if exists.returncode != 0:
-        raise ValueError("plan handoff branch ref does not exist")
-    return ref
-
-
-def _plan_path_from_comments(repo_path: Path, issue: CandidateIssue, comments: list[str]) -> tuple[str | None, str | None]:
-    for body in comments:
-        if _PLAN_HANDOFF_MARKER not in body:
-            continue
-        final_line = _final_non_empty_line(body)
-        if not final_line:
-            continue
-        try:
-            return _validate_plan_branch_ref(repo_path, final_line), None
-        except ValueError as exc:
-            return None, str(exc)
-    return None, None
-
-
-def _is_git_repo(path: Path) -> bool:
-    result = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip() == "true"
-
-
-class LandingFailed(RuntimeError):
-    """Raised when Done-triggered landing cannot complete safely."""
-
-    def __init__(self, message: str, *, details: str = "") -> None:
-        super().__init__(message)
-        self.details = details
-
-
-def _repo_operation_in_progress(repo_path: Path) -> bool:
-    git_dir = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if git_dir.returncode != 0:
-        return True
-    raw_git_dir = Path(git_dir.stdout.strip())
-    resolved_git_dir = raw_git_dir if raw_git_dir.is_absolute() else repo_path / raw_git_dir
-    markers = (
-        "MERGE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        "REBASE_HEAD",
-        "rebase-merge",
-        "rebase-apply",
-    )
-    return any((resolved_git_dir / marker).exists() for marker in markers)
-
-
-def _dirty_base_snapshot(repo_path: Path) -> tuple[str, str]:
-    status_z = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        cwd=repo_path,
-        capture_output=True,
-        text=False,
-        check=False,
-    )
-    if status_z.returncode != 0:
-        raise LandingFailed("could not inspect dirty base checkout", details=status_z.stderr.decode(errors="replace"))
-
-    digest = hashlib.sha256()
-    digest.update(status_z.stdout)
-    for args in (
-        ["diff", "--binary", "--no-ext-diff"],
-        ["diff", "--cached", "--binary", "--no-ext-diff"],
-    ):
-        diff = subprocess.run(
-            ["git", *args],
-            cwd=repo_path,
-            capture_output=True,
-            text=False,
-            check=False,
-        )
-        if diff.returncode != 0:
-            raise LandingFailed("could not inspect dirty base checkout", details=diff.stderr.decode(errors="replace"))
-        digest.update(b"\0".join(arg.encode() for arg in args))
-        digest.update(diff.stdout)
-
-    status_text = subprocess.run(
-        ["git", "status", "--short", "--untracked-files=all"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if status_text.returncode != 0:
-        raise LandingFailed("could not inspect dirty base checkout", details=status_text.stderr)
-    for relative_path in sorted(_dirty_paths_from_porcelain_z(status_z.stdout.decode(errors="surrogateescape"))):
-        path = repo_path / relative_path
-        digest.update(f"\0path:{relative_path}\0".encode())
-        if path.is_file():
-            with path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-        elif path.is_dir():
-            for child in sorted(p for p in path.rglob("*") if p.is_file()):
-                child_relative = child.relative_to(repo_path).as_posix()
-                digest.update(f"\0path:{child_relative}\0".encode())
-                with child.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-
-    lines = status_text.stdout.strip().splitlines()
-    if len(lines) > DIRTY_BASE_STATUS_MAX_LINES:
-        shown = lines[:DIRTY_BASE_STATUS_MAX_LINES]
-        shown.append(f"... {len(lines) - DIRTY_BASE_STATUS_MAX_LINES} more dirty path(s) omitted")
-        summary = "\n".join(shown)
-    else:
-        summary = "\n".join(lines)
-    return digest.hexdigest(), summary or "No dirty paths listed."
-
-
-def _dirty_base_approval_message(summary: str, token: str) -> str:
-    return (
-        "binding base checkout is dirty; Plane approval required before Symphony can land this run."
-        "\n\n**Dirty base summary:**\n```\n"
-        f"{summary}\n"
-        "```\n\nComment this exact approval on the ticket, then move it back to Done:"
-        "\n\n```text\n"
-        f"{DIRTY_BASE_APPROVAL_COMMAND}\n"
-        f"{DIRTY_BASE_TOKEN_PREFIX} {token}\n"
-        "```"
-    )
-
-
-def _plain_comment_text(comment: dict[str, Any]) -> str:
-    raw = str(
-        comment.get("comment_stripped")
-        or comment.get("body")
-        or comment.get("comment_html")
-        or ""
-    )
-    text = re.sub(r"(?i)<br\s*/?>", "\n", raw)
-    text = re.sub(r"(?i)</p\s*>", "\n", text)
-    text = re.sub(r"<[^>]+>", "", text)
-    return html.unescape(text)
-
-
-def _dirty_base_approval_token_from_comments(comments: Sequence[dict[str, Any]]) -> str | None:
-    approved_token: str | None = None
-    token_pattern = re.compile(rf"^\s*{re.escape(DIRTY_BASE_TOKEN_PREFIX)}\s*([0-9a-f]{{64}})\s*$", re.IGNORECASE | re.MULTILINE)
-    command_pattern = re.compile(rf"^\s*{re.escape(DIRTY_BASE_APPROVAL_COMMAND)}\s*$", re.IGNORECASE | re.MULTILINE)
-    for comment in sorted(comments, key=lambda c: str(c.get("created_at") or "")):
-        body = _plain_comment_text(comment)
-        if not command_pattern.search(body):
-            continue
-        match = token_pattern.search(body)
-        if match:
-            approved_token = match.group(1).lower()
-    return approved_token
-
-
-def _landing_issue_identity(issue: dict[str, Any]) -> tuple[str, str, str]:
-    issue_id = str(issue["id"])
-    identifier = str(issue.get("identifier") or issue.get("sequence_id") or issue_id)
-    name = str(issue.get("name") or "")
-    return issue_id, identifier, name
-
-
-async def reconcile_done_landing(
-    config: SymphonyConfig,
-    adapter: TrackerAdapter,
-    *,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
-    notifier: TelegramNotifier | None = None,
-) -> int:
-    del now
-    if config.bindings[0].landing_policy.mode != "local":
-        LOGGER.info("done_landing_skipped mode=%s", config.bindings[0].landing_policy.mode)
-        return 0
-    if not _is_git_repo(config.homelab_repo_path):
-        return 0
-
-    landed = 0
-    issues = await adapter.list_issues_by_state(
-        TrackerRole.STATE_DONE,
-        per_page=DONE_LANDING_PAGE_SIZE,
-        max_pages=DONE_LANDING_MAX_PAGES_PER_TICK,
-    )
-    for issue in issues:
-        issue_id, identifier, name = _landing_issue_identity(issue)
-        run_id = _run_id_from_identifier(identifier)
-        if not _run_branch_exists(config, run_id) and not worktree_path(config, run_id).exists():
-            continue
-        try:
-            landing_summary = _land_done_issue(
-                config,
-                run_id,
-                issue_identifier=identifier,
-                issue_name=name,
-                issue_id=issue_id,
-            )
-        except LandingFailed as exc:
-            message = f"Done landing failed: {exc}"
-            if exc.details:
-                message += f"\n\n{_format_stderr_summary(exc.details)}"
-            issue_url, dashboard_url = _build_urls(config, issue_id)
-            await _block_issue(
-                adapter,
-                issue_id,
-                message,
-                issue_name=name,
-                issue_identifier=identifier,
-                notifier=notifier,
-                issue_url=issue_url,
-                dashboard_url=dashboard_url,
-            )
-            continue
-        try:
-            await _remove_has_worktree_label_if_available(adapter, issue_id)
-        except Exception as exc:
-            LOGGER.warning("has_worktree_label_remove_failed issue_id=%s error=%s", issue_id, exc)
-        await adapter.add_comment(issue_id, CommentPayload(body=landing_summary))
-        landed += 1
-    return landed
-
-
-def _land_done_issue(
-    config: SymphonyConfig,
-    run_id: str,
-    *,
-    issue_identifier: str,
-    issue_name: str,
-    issue_id: str,
-    approved_dirty_base_token: str | None = None,
-) -> str:
-    wt_path = worktree_path(config, run_id)
-    branch = worktree_branch(run_id)
-    if wt_path.exists() and _repo_dirty(wt_path):
-        try:
-            committed_sha = _auto_commit(
-                wt_path,
-                issue_identifier=issue_identifier,
-                issue_name=issue_name,
-                issue_id=issue_id,
-            )
-        except AutoCommitFailed as exc:
-            raise LandingFailed("could not commit dirty run work", details=exc.stderr) from exc
-    else:
-        committed_sha = None
-
-    if not _run_branch_exists(config, run_id):
-        if wt_path.exists():
-            remove_worktree(config, run_id)
-        return "Symphony Done landing found no run branch changes; cleaned run worktree."
-
-    base_prelanding_sha = None
-    if _repo_dirty(config.homelab_repo_path):
-        if _repo_operation_in_progress(config.homelab_repo_path):
-            raise LandingFailed("binding base checkout has a git operation in progress; refusing to merge")
-        try:
-            base_prelanding_sha = _auto_commit(
-                config.homelab_repo_path,
-                issue_identifier=issue_identifier,
-                issue_name=f"pre-landing dirty base before {issue_name}".strip(),
-                issue_id=issue_id,
-            )
-        except AutoCommitFailed as exc:
-            raise LandingFailed("could not auto-commit dirty base checkout", details=exc.stderr or str(exc)) from exc
-
-    checkout = subprocess.run(
-        ["git", "switch", config.base_branch],
-        cwd=config.homelab_repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if checkout.returncode != 0:
-        raise LandingFailed("could not switch to binding base branch", details=checkout.stderr)
-
-    merge = subprocess.run(
-        ["git", "merge", "--no-ff", "--no-edit", branch],
-        cwd=config.homelab_repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if merge.returncode != 0:
-        subprocess.run(["git", "merge", "--abort"], cwd=config.homelab_repo_path, check=False)
-        raise LandingFailed("merge conflict while landing run branch", details=merge.stderr or merge.stdout)
-
-    merge_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=config.homelab_repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if merge_sha.returncode != 0:
-        raise LandingFailed("could not read landed commit", details=merge_sha.stderr)
-
-    remove_worktree_if_exists(config, run_id)
-    try:
-        _delete_run_branch(config, run_id)
-    except Exception as exc:
-        raise LandingFailed("could not delete landed run branch", details=str(exc)) from exc
-
-    body = f"Symphony landed `{branch}` into `{config.base_branch}`."
-    if base_prelanding_sha is not None:
-        body += f"\n\n**Base pre-landing commit:** `{base_prelanding_sha}`"
-    if committed_sha is not None:
-        body += f"\n\n**Run commit:** `{committed_sha}`"
-    body += f"\n**Landing HEAD:** `{merge_sha.stdout.strip()}`"
-    body += "\n\nCleaned run worktree and branch."
-    return body
-
-
-def _invoke_agent_runner(
-    agent_runner: Callable[..., AgentResult],
-    candidate: CandidateIssue,
-    prompt: str,
-    *,
-    worktree_path: Path | None,
-) -> AgentResult:
-    try:
-        return agent_runner(candidate, prompt, worktree_path=worktree_path)
-    except TypeError as exc:
-        if "worktree_path" not in str(exc):
-            raise
-        return agent_runner(candidate, prompt)
-
-
-async def _has_worktree_label_available(adapter: TrackerAdapter) -> bool:
-    binding = adapter.contract.optional_label_binding(TrackerRole.HAS_WORKTREE)
-    if binding is None:
-        return False
-    resolved_ids = getattr(adapter, "resolved_label_ids", {})
-    return bool(binding.uuid or binding.name in resolved_ids)
-
-
-async def _add_has_worktree_label_if_available(
-    adapter: TrackerAdapter,
-    issue_id: str,
-) -> bool:
-    if not await _has_worktree_label_available(adapter):
-        return False
-    await adapter.add_labels(issue_id, [TrackerRole.HAS_WORKTREE])
-    return True
-
-
-async def _remove_has_worktree_label_if_available(
-    adapter: TrackerAdapter,
-    issue_id: str,
-) -> bool:
-    if not await _has_worktree_label_available(adapter):
-        return False
-    await adapter.remove_labels(issue_id, [TrackerRole.HAS_WORKTREE])
-    return True
-
-
 async def run_tick(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -891,47 +488,22 @@ async def run_tick(
     run_blocked_reconciler: bool = True,
     dispatch_state: _DispatchState | None = None,
 ) -> TickResult:
-    """Run one scheduler tick without sleeping forever.
+    """Run one scheduler tick without sleeping forever."""
 
-    Design retro — worktree-cleanliness gate (Phase 4 #5)
-    ----------------------------------------------------
-    Prior versions of Symphony refused to dispatch when the shared
-    homelab checkout was dirty. The gate caused repeated false blocks:
-    any unrelated half-staged edit on aidev would park the entire ticket
-    queue.
+    is_coding = len(config.bindings) > 0 and config.bindings[0].binding_type == "coding"
 
-    Current contract: ``repo_dirty`` is no longer a dispatch gate. Agent
-    work happens in an isolated run worktree when the target repo is a
-    Git repository. Successful execute/build runs transition to In Review
-    and retain the run worktree for operator inspection. Dirty run work is
-    committed only during Done-triggered landing, immediately before the
-    run branch is merged into the binding base branch.
-
-    Any future change that wants to re-introduce gating must do so via an
-    explicit, named policy rather than by silently coupling worktree state
-    to dispatch eligibility.
-    """
-
-    repo_dirty = _repo_dirty if repo_dirty is None else repo_dirty
-    diff_stat = _diff_stat if diff_stat is None else diff_stat
-    auto_commit = _auto_commit if auto_commit is None else auto_commit
-
-    await reconcile_done_landing(config, adapter, now=now, notifier=notifier)
     if dispatch_state is not None:
         await reconcile_pending_review(config, adapter, dispatch_state, notifier=notifier)
 
-    # reconcile_stale_running and reconcile_blocked run every tick, outside
-    # the semaphore, so they are not blocked by an in-flight Run.
     try:
         await reconcile_stale_running(
             adapter,
             config.run_timeout_ms,
             now=now,
             notifier=notifier,
-            config=config,
             dispatch_state=dispatch_state,
         )
-        if config.blocked_reconciler_enabled and run_blocked_reconciler:
+        if config.blocked_reconciler_enabled and not is_coding and run_blocked_reconciler:
             try:
                 await reconcile_blocked(
                     adapter,
@@ -945,7 +517,7 @@ async def run_tick(
                     "blocked_reconcile_failed error=%s", exc, exc_info=True
                 )
         scheduled_reserved = False
-        scheduled = await _select_scheduled_candidate(adapter, now=now)
+        scheduled = None if is_coding else await _select_scheduled_candidate(adapter, now=now)
     except PlaneRateLimitError:
         raise
     if scheduled is not None:
@@ -1022,7 +594,7 @@ async def run_tick(
     if dispatch_state is not None:
         _clear_rate_limit(dispatch_state)
 
-    approval_policy_enabled = _binding_approval_enabled(config)
+    approval_policy_enabled = _binding_approval_enabled(config) and not is_coding
     if candidate is None:
         candidate = await _reserve_candidate(
             candidates,
@@ -1054,9 +626,7 @@ async def run_tick(
         if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
             return TickResult(False, "scheduled-held", candidate.id)
 
-        plan_path: Path | None = None
-        plan_branch_ref: str | None = None
-        if mode == "build":
+        if mode == "build" and not is_coding:
             if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
                 try:
                     await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
@@ -1069,26 +639,8 @@ async def run_tick(
                     )
                     return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
 
-            comment_bodies = await _fetch_issue_comment_bodies(adapter, candidate.id)
-            plan_branch_ref, plan_branch_error = _plan_path_from_comments(
-                config.homelab_repo_path, candidate, comment_bodies
-            )
-            if plan_branch_error:
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    f"Build could not start: {plan_branch_error}.",
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(False, "invalid-plan-branch", candidate.id, mode=mode)
-            if plan_branch_ref is None:
-                plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
-            if plan_branch_ref is None and plan_path is None:
+            plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
+            if plan_path is None:
                 try:
                     await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
                     await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
@@ -1138,49 +690,7 @@ async def run_tick(
             )
             return TickResult(False, "workflow-missing", candidate.id, mode=mode)
 
-        run_id = _run_id_from_identifier(candidate.identifier)
-        wt_path: Path | None = None
-        run_repo = config.homelab_repo_path
-        retain_run_worktree = False
         try:
-            if _is_git_repo(config.homelab_repo_path):
-                remove_worktree_if_exists(config, run_id)
-                wt_path = create_worktree(config, run_id, base_branch=plan_branch_ref or config.base_branch)
-                run_repo = wt_path
-                LOGGER.info(
-                    "run_worktree_created issue_id=%s run_id=%s path=%s",
-                    candidate.id, run_id, wt_path,
-                )
-
-            if mode == "build" and plan_branch_ref is not None:
-                try:
-                    plan_path = _validate_issue_plan_path(
-                        run_repo,
-                        candidate,
-                        str(_expected_plan_path(run_repo, candidate)),
-                    )
-                except ValueError as exc:
-                    _iu, _du = _build_urls(config, candidate.id)
-                    await _block_issue(
-                        adapter,
-                        candidate.id,
-                        f"Build could not start: plan handoff branch `{plan_branch_ref}` did not contain a readable plan file: {exc}.",
-                        issue_name=candidate.name,
-                        issue_identifier=candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(False, "invalid-plan-branch-plan", candidate.id, mode=mode)
-
-            # repo_dirty / diff_stat / auto_commit operate in the run worktree
-            # when one exists, so commits land on the run branch, never the
-            # shared checkout.
-            _wt: Path = run_repo
-            _repo_dirty_wt = lambda: repo_dirty(_wt)
-            _diff_stat_wt = lambda: diff_stat(_wt)
-            _auto_commit_wt: Callable[..., str] = lambda *a, **kw: auto_commit(_wt, *a, **kw)
-
             await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
             claim_time = now().isoformat()
             await adapter.add_comment(
@@ -1193,13 +703,7 @@ async def run_tick(
             secrets = _collect_secrets(config)
 
             try:
-                result = await asyncio.to_thread(
-                    _invoke_agent_runner,
-                    candidate=candidate,
-                    prompt=prompt,
-                    agent_runner=agent_runner,
-                    worktree_path=wt_path,
-                )
+                result = await asyncio.to_thread(agent_runner, candidate, prompt)
             except Exception as exc:
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
@@ -1252,26 +756,21 @@ async def run_tick(
                 return TickResult(True, "nonzero", candidate.id, mode=mode)
 
             stdout, stderr = _format_report(result, secrets)
-            # From this point, the agent clean-exited. Preserve the run worktree
-            # before any post-agent Plane reads/writes can rate-limit, so a
-            # transient tracker failure cannot destroy review/landing evidence.
-            retain_run_worktree = wt_path is not None
 
-            scheduled_after_agent = await _detect_agent_schedule(
-                adapter,
-                candidate,
-                claim_dt=claim_dt,
-                stdout=stdout,
-                stderr=stderr,
-                notifier=notifier,
-                config=config,
-            )
-            if scheduled_after_agent is not None:
-                retain_run_worktree = False
-                return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
+            if not is_coding:
+                scheduled_after_agent = await _detect_agent_schedule(
+                    adapter,
+                    candidate,
+                    claim_dt=claim_dt,
+                    stdout=stdout,
+                    stderr=stderr,
+                    notifier=notifier,
+                    config=config,
+                )
+                if scheduled_after_agent is not None:
+                    return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
             if _hit_permission_gate(stdout, stderr):
-                retain_run_worktree = False
                 msg = "Agent could not complete because required tool access was denied."
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
@@ -1289,7 +788,6 @@ async def run_tick(
                 return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
             if _hit_approval_gate(stdout, stderr):
-                retain_run_worktree = False
                 msg = "Agent could not complete because operator approval is required."
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
@@ -1306,119 +804,18 @@ async def run_tick(
                 )
                 return TickResult(True, "approval-gate", candidate.id, mode=mode)
 
-            if mode == "plan":
-                retain_run_worktree = False
-                plan_report_path = _final_non_empty_line(stdout) if stdout else None
-                if plan_report_path and plan_report_path.startswith("/"):
-                    try:
-                        plan_report_path = str(
-                            _validate_issue_plan_path(
-                                _wt,
-                                candidate,
-                                plan_report_path,
-                            )
-                        )
-                    except ValueError:
-                        plan_report_path = None
-                else:
-                    plan_report_path = None
-
-                if plan_report_path and wt_path is not None and _repo_dirty_wt():
-                    try:
-                        _auto_commit_wt(
-                            issue_identifier=candidate.identifier,
-                            issue_name=candidate.name,
-                            issue_id=candidate.id,
-                            plan_path=plan_report_path,
-                        )
-                    except AutoCommitFailed as exc:
-                        _iu, _du = _build_urls(config, candidate.id)
-                        await _block_issue(
-                            adapter,
-                            candidate.id,
-                            f"Plan mode could not commit the handoff artifact to `{worktree_branch(run_id)}`: {exc}",
-                            issue_name=candidate.name,
-                            issue_identifier=candidate.identifier,
-                            notifier=notifier,
-                            issue_url=_iu,
-                            dashboard_url=_du,
-                        )
-                        return TickResult(True, "plan-commit-failed", candidate.id, mode=mode)
-
-                plan_summary = _extract_summary(result, secrets)
-                body = _PLAN_HANDOFF_MARKER
-                if plan_summary:
-                    body += f" {plan_summary}"
-                body += f"\n\n{worktree_branch(run_id)}"
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(body=body),
-                )
-                if approval_policy_enabled and adapter.contract.optional_label_binding(TrackerRole.APPROVAL_REQUIRED) is not None:
-                    await adapter.add_labels(
-                        candidate.id, [TrackerRole.APPROVAL_REQUIRED]
-                    )
-                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
-                LOGGER.info("state_transitioned issue_id=%s state=in-review mode=plan", candidate.id)
-                _iu, _du = _build_urls(config, candidate.id)
-                await _notify_review(
-                    notifier, candidate.name, candidate.identifier,
-                    reason="Plan mode completed, awaiting approval",
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "plan", candidate.id, mode=mode)
-
-            dirty_after_agent = _repo_dirty_wt()
-            dirty_stat = _diff_stat_wt() if dirty_after_agent else None
-
-            after_agent = await _fetch_issue(adapter, candidate.id)
-            if _is_state(after_agent, adapter, TrackerRole.STATE_DONE):
-                retain_run_worktree = True
-                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
-                after_agent = await _fetch_issue(adapter, candidate.id)
-            if _is_state(after_agent, adapter, TrackerRole.STATE_IN_REVIEW):
-                retain_run_worktree = True
-                return TickResult(True, "agent-review", candidate.id, mode=mode)
-            if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
-                retain_run_worktree = False
-                return TickResult(True, "agent-blocked", candidate.id, mode=mode)
-
             verdict = _parse_result_marker(stdout)
             summary = _extract_summary(result, secrets)
 
-            def _completion_body(verdict_label: str, *, worktree_label_added: bool) -> str:
-                if mode == "conversation":
-                    if summary:
-                        body = f"**Symphony completed:** {summary}"
-                    else:
-                        body = "**Symphony completed:** Agent finished without a summary."
-                    if dirty_after_agent:
-                        body += f"\n\n**Run branch:** `{worktree_branch(run_id)}`"
-                        if worktree_label_added:
-                            body += f"\n**Run worktree label:** `{HAS_WORKTREE_LABEL_NAME}`"
-                        if dirty_stat and dirty_stat != "No diff stat available":
-                            body += f"\n\n**Pending diff stat:**\n```\n{dirty_stat}\n```"
-                        body += "\n\nMove this issue to Done to land the retained work, or move it back to Todo to keep talking."
-                    else:
-                        body += "\n\nReply with a Plane comment and move this issue back to Todo to continue. Add the `plan` label when you want Symphony to create a plan."
-                    body += "\n\n" + _format_timeline(
-                        claim_dt, now,
-                        duration_ms=result.duration_ms,
-                        verdict=verdict_label,
-                    )
-                    return body
-
+            def _completion_body(verdict_label: str) -> str:
                 if summary:
                     body = f"**Symphony completed:** {summary}"
                 else:
-                    body = "**Symphony completed:**"
-                body += f"\n\n**Run branch:** `{worktree_branch(run_id)}`"
-                if worktree_label_added:
-                    body += f"\n**Run worktree label:** `{HAS_WORKTREE_LABEL_NAME}`"
-                if dirty_stat and dirty_stat != "No diff stat available":
-                    body += f"\n\n**Pending diff stat:**\n```\n{dirty_stat}\n```"
-                body += "\n\nMove this issue to Done to land the work, or move it back to Todo to rerun."
+                    body = "**Symphony completed:** Agent finished without a summary."
+                if is_coding:
+                    body += "\n\nReply in Plane and move this issue back to Todo to continue, or move to Done."
+                else:
+                    body += "\n\nMove this issue back to Todo to rerun."
                 body += "\n\n" + _format_timeline(
                     claim_dt, now,
                     duration_ms=result.duration_ms,
@@ -1427,7 +824,6 @@ async def run_tick(
                 return body
 
             if verdict == "blocked":
-                retain_run_worktree = False
                 if summary:
                     msg = f"Agent reported a blocked result: {summary}"
                 else:
@@ -1452,29 +848,19 @@ async def run_tick(
                 )
                 return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
 
+            if not is_coding:
+                after_agent = await _fetch_issue(adapter, candidate.id)
+                if _is_state(after_agent, adapter, TrackerRole.STATE_IN_REVIEW):
+                    return TickResult(True, "agent-review", candidate.id, mode=mode)
+                if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
+                    return TickResult(True, "agent-blocked", candidate.id, mode=mode)
+
             reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
-            should_retain_after_completion = mode != "conversation" or dirty_after_agent
-            worktree_label_added = False
-            if mode == "conversation" and not dirty_after_agent:
-                try:
-                    await _remove_has_worktree_label_if_available(adapter, candidate.id)
-                except PlaneRateLimitError:
-                    raise
-                except Exception as exc:
-                    LOGGER.warning("has_worktree_label_remove_failed issue_id=%s error=%s", candidate.id, exc)
-            if should_retain_after_completion and wt_path is not None:
-                try:
-                    worktree_label_added = await _add_has_worktree_label_if_available(adapter, candidate.id)
-                except PlaneRateLimitError:
-                    raise
-                except Exception as exc:
-                    LOGGER.warning("has_worktree_label_failed issue_id=%s error=%s", candidate.id, exc)
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=_completion_body(reason_code, worktree_label_added=worktree_label_added)),
+                CommentPayload(body=_completion_body(reason_code)),
             )
             await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
-            retain_run_worktree = should_retain_after_completion
             LOGGER.info(
                 "state_transitioned issue_id=%s state=in-review reason=%s",
                 candidate.id,
@@ -1486,30 +872,17 @@ async def run_tick(
                 reason=(
                     "Conversation response ready"
                     if mode == "conversation"
-                    else "Agent completed, awaiting operator Done landing"
+                    else "Agent completed, awaiting review"
                 ),
                 issue_url=_iu,
                 dashboard_url=_du,
             )
             return TickResult(True, reason_code, candidate.id, mode=mode)
-        except PlaneRateLimitError:
-            if retain_run_worktree and wt_path is not None and dispatch_state is not None:
-                dispatch_state.pending_review_issue_ids.add(candidate.id)
-                LOGGER.warning(
-                    "post_agent_reconcile_rate_limited_retained issue_id=%s run_id=%s path=%s",
-                    candidate.id,
-                    run_id,
-                    wt_path,
-                )
-            raise
-        finally:
-            # Guaranteed cleanup: remove worktree and any detached tmux session
-            # on every exit path so no orphan is left behind after verdict
-            # reconciliation, crash, timeout, or task cancellation.
-            if wt_path is not None and not retain_run_worktree:
-                remove_worktree_if_exists(config, run_id)
-            kill_tmux_session(run_id)
 
+        except Exception:
+            raise
+    except Exception:
+        raise
     finally:
         await _release_candidate(candidate.id, dispatch_state=dispatch_state)
 
@@ -1523,9 +896,9 @@ async def _dispatch_one(
     run_blocked_reconciler: bool,
     dispatch_state: _DispatchState | None = None,
 ) -> TickResult:
-    """Dispatch a single Run to the semaphore-bounded worktree slot.
+    """Dispatch a single Run to the semaphore-bounded slot.
 
-    Acquires the semaphore, runs the full tick logic with worktree lifecycle,
+    Acquires the semaphore, runs the full tick logic,
     and releases the slot on every exit path. The semaphore slot is held for
     the entire Run duration so the cap correctly blocks new dispatches when full.
     """
@@ -1545,82 +918,6 @@ async def _dispatch_one(
             _record_rate_limit(state, exc)
             return TickResult(False, "plane-rate-limited")
         return result
-
-
-async def _retain_stale_running_worktree_for_review(
-    adapter: TrackerAdapter,
-    issue_id: str,
-    issue_name: str,
-    issue_identifier: str,
-    config: SymphonyConfig | None,
-    *,
-    notifier: TelegramNotifier | None = None,
-    stale: bool = True,
-) -> bool:
-    """Move a Running issue to review when its Run Worktree still exists."""
-
-    if config is None or not _is_git_repo(config.homelab_repo_path):
-        return False
-    run_id = _run_id_from_identifier(issue_identifier)
-    wt_path = worktree_path(config, run_id)
-    if not wt_path.exists():
-        return False
-
-    worktree_label_added = False
-    try:
-        worktree_label_added = await _add_has_worktree_label_if_available(adapter, issue_id)
-    except PlaneRateLimitError:
-        raise
-    except Exception as exc:
-        LOGGER.warning("has_worktree_label_failed issue_id=%s error=%s", issue_id, exc)
-
-    if stale:
-        title = "Symphony retained stale Running work for review."
-        detail = (
-            "The claim timed out before Symphony could finish Plane reconciliation, "
-            "but the Run Worktree still exists. Retaining evidence is safer than "
-            "blocking and deleting it."
-        )
-        log_event = "stale_running_retained_for_review"
-        notify_reason = "Stale Running claim retained for operator review"
-    else:
-        title = "Symphony retained interrupted Running work for review."
-        detail = (
-            "Plane rate-limited completion reconciliation or Symphony no longer sees "
-            "an active local Run. The Run Worktree still exists, so Symphony is moving "
-            "the issue to review instead of waiting for claim timeout."
-        )
-        log_event = "pending_running_retained_for_review"
-        notify_reason = "Interrupted Running claim retained for operator review"
-
-    body = (
-        f"**{title}**\n\n"
-        f"{detail}\n\n"
-        f"**Run branch:** `{worktree_branch(run_id)}`\n"
-        f"**Run worktree:** `{wt_path}`\n"
-    )
-    if worktree_label_added:
-        body += f"**Run worktree label:** `{HAS_WORKTREE_LABEL_NAME}`\n"
-    body += "\nMove this issue to Done to land the retained work, or move it back to Todo to rerun."
-    await adapter.add_comment(issue_id, CommentPayload(body=body))
-    await adapter.transition_state(issue_id, TrackerRole.STATE_IN_REVIEW)
-    LOGGER.info(
-        "%s issue_id=%s run_id=%s path=%s",
-        log_event,
-        issue_id,
-        run_id,
-        wt_path,
-    )
-    issue_url, dashboard_url = _build_urls(config, issue_id)
-    await _notify_review(
-        notifier,
-        issue_name,
-        issue_identifier,
-        reason=notify_reason,
-        issue_url=issue_url,
-        dashboard_url=dashboard_url,
-    )
-    return True
 
 
 async def reconcile_pending_review(
@@ -1647,26 +944,14 @@ async def reconcile_pending_review(
             dispatch_state.pending_review_issue_ids.discard(issue_id)
             continue
         issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
-        issue_name = str(issue.get("name") or "")
-        if not worktree_path(config, _run_id_from_identifier(issue_identifier)).exists():
-            LOGGER.warning(
-                "pending_review_worktree_missing issue_id=%s identifier=%s",
-                issue_id,
-                issue_identifier,
-            )
-            dispatch_state.pending_review_issue_ids.discard(issue_id)
-            continue
-        if await _retain_stale_running_worktree_for_review(
-            adapter,
+        await adapter.transition_state(issue_id, TrackerRole.STATE_IN_REVIEW)
+        LOGGER.info(
+            "pending_review_reconciled issue_id=%s identifier=%s",
             issue_id,
-            issue_name,
             issue_identifier,
-            config,
-            notifier=notifier,
-            stale=False,
-        ):
-            dispatch_state.pending_review_issue_ids.discard(issue_id)
-            reconciled += 1
+        )
+        dispatch_state.pending_review_issue_ids.discard(issue_id)
+        reconciled += 1
     return reconciled
 
 
@@ -1686,6 +971,8 @@ async def reconcile_stale_running(
         async with dispatch_state.in_flight_lock:
             in_flight_ids = set(dispatch_state.in_flight_ids)
 
+    interrupted_grace = timedelta(seconds=60)
+    timeout_delta = timedelta(milliseconds=run_timeout_ms)
     for issue in await adapter.list_issues_by_state(
         TrackerRole.STATE_RUNNING,
         per_page=SCHEDULED_RELEASE_PAGE_SIZE,
@@ -1698,41 +985,22 @@ async def reconcile_stale_running(
         elapsed = now() - claim_time
         issue_name = str(issue.get("name", ""))
         issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
-        if (
-            dispatch_state is not None
-            and issue_id not in in_flight_ids
-            and elapsed > timedelta(seconds=INTERRUPTED_RUNNING_REVIEW_GRACE_S)
-            and await _retain_stale_running_worktree_for_review(
-                adapter,
-                issue_id,
-                issue_name,
-                issue_identifier,
-                config,
-                notifier=notifier,
-                stale=False,
-            )
-        ):
-            continue
-        if elapsed > timedelta(milliseconds=run_timeout_ms):
-            if await _retain_stale_running_worktree_for_review(
-                adapter,
-                issue_id,
-                issue_name,
-                issue_identifier,
-                config,
-                notifier=notifier,
-            ):
-                continue
-            issue_url, dashboard_url = _build_urls(config, issue_id)
+        if elapsed > timeout_delta:
             await _block_issue(
-                adapter, issue_id, "Symphony claim timed out after scheduler restart",
-                issue_name=issue_name, issue_identifier=issue_identifier,
+                adapter,
+                issue_id,
+                "Symphony claim timed out after scheduler restart",
+                issue_name=issue_name,
+                issue_identifier=issue_identifier,
                 notifier=notifier,
-                issue_url=issue_url,
-                dashboard_url=dashboard_url,
             )
-            if config is not None and _is_git_repo(config.homelab_repo_path):
-                remove_worktree_if_exists(config, _run_id_from_identifier(issue_identifier))
+            continue
+        if issue_id not in in_flight_ids and elapsed > interrupted_grace:
+            await adapter.transition_state(issue_id, TrackerRole.STATE_IN_REVIEW)
+            LOGGER.info(
+                "state_transitioned issue_id=%s state=in-review reason=stale-running",
+                issue_id,
+            )
 
 
 async def reconcile_startup(
@@ -1742,20 +1010,13 @@ async def reconcile_startup(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
 ) -> int:
-    """Reconcile startup state: clean orphaned worktrees, stale tmux sessions,
-    and Plane issues stuck in Running.
+    """Reconcile startup state: recover Plane issues stuck in Running.
 
     Returns the number of items cleaned up. Runs before the main tick loop so
     the scheduler starts clean after a restart.
     """
     cleaned = 0
-    if not _is_git_repo(config.homelab_repo_path):
-        LOGGER.debug("reconcile_startup_skipped not_a_git_repo")
-        return cleaned
 
-    # Build the set of run_ids that have a live Plane issue in Running state
-    # with a non-stale claim comment. Only these are considered "live".
-    live_run_ids: set[str] = set()
     stale_running_issues: list[dict[str, Any]] = []
     for issue in await adapter.list_issues_by_state(
         TrackerRole.STATE_RUNNING,
@@ -1764,35 +1025,17 @@ async def reconcile_startup(
     ):
         issue_id = str(issue["id"])
         identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
-        run_id = _run_id_from_identifier(identifier)
         claim_time = await _claimed_at(adapter, issue_id)
         if claim_time is not None and (now() - claim_time) <= timedelta(milliseconds=config.run_timeout_ms):
-            live_run_ids.add(run_id)
-        else:
-            stale_running_issues.append({
-                "id": issue_id,
-                "identifier": identifier,
-                "name": issue.get("name", ""),
-                "run_id": run_id,
-                "claim_time": claim_time,
-            })
-
-    # Reap stale Running issues first. If a claimed Run still has a worktree,
-    # retain it for review instead of deleting evidence after a post-agent
-    # Plane outage/rate-limit window.
-    for issue in stale_running_issues:
-        if issue["claim_time"] is not None and await _retain_stale_running_worktree_for_review(
-            adapter,
-            str(issue["id"]),
-            str(issue["name"]),
-            str(issue["identifier"]),
-            config,
-            notifier=notifier,
-        ):
-            kill_tmux_session(issue["run_id"])
-            cleaned += 1
             continue
+        stale_running_issues.append({
+            "id": issue_id,
+            "identifier": identifier,
+            "name": issue.get("name", ""),
+            "claim_time": claim_time,
+        })
 
+    for issue in stale_running_issues:
         issue_url, dashboard_url = _build_urls(config, issue["id"])
         if issue["claim_time"] is None:
             message = "Symphony claim missing after scheduler restart"
@@ -1812,56 +1055,11 @@ async def reconcile_startup(
             issue_url=issue_url,
             dashboard_url=dashboard_url,
         )
-        remove_worktree_if_exists(config, issue["run_id"])
-        kill_tmux_session(issue["run_id"])
         cleaned += 1
         LOGGER.info(
-            "reconcile_startup_reaped_issue issue_id=%s run_id=%s",
-            issue["id"], issue["run_id"],
+            "reconcile_startup_reaped_issue issue_id=%s",
+            issue["id"],
         )
-
-    retained_run_ids: set[str] = set()
-    for state_role in (TrackerRole.STATE_IN_REVIEW, TrackerRole.STATE_DONE):
-        for issue in await adapter.list_issues_by_state(
-            state_role,
-            per_page=SCHEDULED_RELEASE_PAGE_SIZE,
-            max_pages=SCHEDULED_RELEASE_MAX_PAGES_PER_TICK,
-        ):
-            identifier = str(issue.get("identifier") or issue.get("sequence_id") or issue.get("id") or "")
-            if identifier:
-                retained_run_ids.add(_run_id_from_identifier(identifier))
-
-    # Reap orphaned worktrees: worktrees whose run_id has no live Plane issue.
-    for wt_path, branch in list_worktrees(config.homelab_repo_path):
-        run_id = _run_id_from_worktree_path(config.homelab_repo_path, wt_path)
-        if run_id is None:
-            continue
-        if run_id in live_run_ids or run_id in retained_run_ids:
-            continue
-        # Not live: this worktree is an orphan. Remove it.
-        try:
-            remove_worktree(config, run_id)
-            LOGGER.info(
-                "reconcile_startup_reaped_worktree run_id=%s path=%s branch=%s",
-                run_id, wt_path, branch,
-            )
-        except Exception as exc:
-            LOGGER.warning(
-                "reconcile_startup_worktree_remove_failed run_id=%s path=%s error=%s",
-                run_id, wt_path, exc,
-            )
-        kill_tmux_session(run_id)
-        cleaned += 1
-
-    # Reap orphaned tmux sessions: sessions whose run_id has no live Plane issue
-    # and no worktree. Sessions that still have a worktree are handled above.
-    # Also skip sessions with live attached clients (handled by kill_tmux_session).
-    for worktree_wt_path, _ in list_worktrees(config.homelab_repo_path):
-        existing_run_id = _run_id_from_worktree_path(config.homelab_repo_path, worktree_wt_path)
-        if existing_run_id is not None:
-            live_run_ids.discard(existing_run_id)
-    for run_id in live_run_ids:
-        kill_tmux_session(run_id)
 
     LOGGER.info("reconcile_startup_completed cleaned=%d", cleaned)
     return cleaned
@@ -1913,7 +1111,7 @@ async def run_loop(
     """Run the concurrent dispatcher forever, sleeping between dispatches.
 
     The dispatcher launches up to run_cap Runs concurrently as async tasks.
-    Each task holds its semaphore slot until the Run's worktree cleanup completes
+    Each task holds its semaphore slot until the Run completes
     (on all exit paths — verdict, crash, timeout).
     Per-tick single-run serialization is removed; the semaphore cap is the only
     concurrency governor.
@@ -2461,167 +1659,4 @@ def _extract_labels(
     return tuple(names)
 
 
-def _repo_dirty(repo_path: Path) -> bool:
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        LOGGER.warning("git_status_error repo=%s error=%s", repo_path, exc)
-        return True
-    if result.returncode != 0:
-        LOGGER.warning(
-            "git_status_failed repo=%s returncode=%s stderr=%s",
-            repo_path, result.returncode, result.stderr.strip(),
-        )
-        return True
-    return bool(result.stdout.strip())
 
-
-def _diff_stat(repo_path: Path) -> str:
-    result = subprocess.run(
-        ["git", "diff", "--stat"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.stdout.strip() or "No diff stat available"
-
-
-# Symphony bot identity used for auto-commits when an agent leaves the
-# homelab worktree dirty. See _auto_commit below.
-_SYMPHONY_GIT_NAME = "Symphony"
-_SYMPHONY_GIT_EMAIL = "symphony@testytech.net"
-
-
-class AutoCommitFailed(RuntimeError):
-    """Raised when the scheduler cannot auto-commit dirty changes."""
-
-    def __init__(self, message: str, *, stderr: str = "") -> None:
-        super().__init__(message)
-        self.stderr = stderr
-
-
-def _auto_commit(
-    repo_path: Path,
-    *,
-    issue_identifier: str,
-    issue_name: str,
-    issue_id: str,
-    plan_path: str | None = None,
-) -> str:
-    """Stage and commit dirty changes under the Symphony bot identity.
-
-    Returns the resulting commit SHA. Raises AutoCommitFailed if any git
-    invocation fails. No push is performed.
-    """
-
-    git_env = ["-c", f"user.name={_SYMPHONY_GIT_NAME}",
-               "-c", f"user.email={_SYMPHONY_GIT_EMAIL}"]
-
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if status.returncode != 0:
-        raise AutoCommitFailed(
-            f"git status failed (exit {status.returncode})",
-            stderr=status.stderr.strip(),
-        )
-
-    paths = _dirty_paths_from_porcelain_z(status.stdout)
-    if not paths:
-        raise AutoCommitFailed("git commit failed (exit 1)", stderr="nothing to commit")
-
-    if plan_path:
-        allowed_plan_paths = _allowed_plan_artifact_paths(repo_path, Path(plan_path))
-        for path in paths:
-            if path.startswith("plans/") and path not in allowed_plan_paths:
-                raise AutoCommitFailed(
-                    f"refusing to auto-commit unrelated plan artifact: {path}"
-                )
-
-    add = subprocess.run(
-        ["git", *git_env, "add", "--", *paths],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if add.returncode != 0:
-        raise AutoCommitFailed(
-            f"git add failed (exit {add.returncode})",
-            stderr=add.stderr.strip(),
-        )
-
-    title = f"Symphony: {issue_identifier} {issue_name}".strip()
-    trailer = f"Plane-Issue: {issue_id}"
-    message_args = ["-m", title, "-m", trailer]
-    if plan_path:
-        message_args.extend(["-m", f"Plan-Path: {plan_path}"])
-    commit = subprocess.run(
-        ["git", *git_env, "commit", *message_args],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if commit.returncode != 0:
-        raise AutoCommitFailed(
-            f"git commit failed (exit {commit.returncode})",
-            stderr=commit.stderr.strip() or commit.stdout.strip(),
-        )
-
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if sha.returncode != 0:
-        raise AutoCommitFailed(
-            f"git rev-parse HEAD failed (exit {sha.returncode})",
-            stderr=sha.stderr.strip(),
-        )
-    return sha.stdout.strip()
-
-
-def _dirty_paths_from_porcelain_z(output: str) -> list[str]:
-    entries = output.split("\0")
-    paths: list[str] = []
-    index = 0
-    while index < len(entries):
-        entry = entries[index]
-        index += 1
-        if not entry:
-            continue
-        status = entry[:2]
-        path = entry[3:]
-        if status[0] in {"R", "C"} or status[1] in {"R", "C"}:
-            if index < len(entries) and entries[index]:
-                path = entries[index]
-                index += 1
-        if path:
-            paths.append(path)
-    return paths
-
-
-def _allowed_plan_artifact_paths(repo_path: Path, plan_path: Path) -> set[str]:
-    resolved_plan = plan_path.resolve()
-    resolved_state = _state_path_for_plan(resolved_plan).resolve()
-    allowed: set[str] = set()
-    for path in (resolved_plan, resolved_state):
-        try:
-            allowed.add(path.relative_to(repo_path.resolve()).as_posix())
-        except ValueError:
-            continue
-    return allowed

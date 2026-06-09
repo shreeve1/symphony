@@ -19,9 +19,10 @@ class StopLoop(Exception):
 def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_render(issue_data, *, path):
+    def fake_render(issue_data, *, path, binding_type="infra"):
         captured["issue"] = issue_data
         captured["path"] = path
+        captured["binding_type"] = binding_type
         return "rendered prompt"
 
     monkeypatch.setattr(main, "render_prompt", fake_render)
@@ -93,6 +94,10 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
 
     class FakeRuntimeConfig:
         homelab_repo_path = Path("/tmp/one")
+
+        @property
+        def bindings(self):
+            return (type("Binding", (), {"binding_type": "infra"})(),)
 
     class FakeAdapter:
         contract = None
@@ -166,6 +171,10 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
 
         def __eq__(self, other):
             return other == f"config-{self.name}"
+
+        @property
+        def bindings(self):
+            return (type("Binding", (), {"binding_type": "infra"})(),)
 
     def fake_build_runtime(config, binding):
         return main.BindingRuntime(
@@ -314,6 +323,10 @@ async def test_rate_limited_binding_does_not_block_other_binding(monkeypatch):
         def __init__(self, name):
             self.name = name
             self.homelab_repo_path = Path(f"/tmp/{name}")
+
+        @property
+        def bindings(self):
+            return (type("Binding", (), {"binding_type": "infra"})(),)
 
     class FakeAdapter:
         contract = None

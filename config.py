@@ -67,6 +67,7 @@ class ProjectBinding:
     base_branch: str
     tracker_contract: TrackerContract
     default_agent: str = "pi"
+    binding_type: str = "infra"
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
 
@@ -358,12 +359,16 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
         workspace_slug=workspace_slug,
         plane_project_id=plane_project_id,
     )
+    binding_type = str(raw.get("type", "infra") or "infra")
+    if binding_type not in {"infra", "coding"}:
+        raise ConfigError(f"{prefix}.type: must be 'infra' or 'coding', got '{binding_type}'")
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),
         plane_project_id=plane_project_id,
         repo_path=repo_path,
         base_branch=base_branch,
         default_agent=default_agent,
+        binding_type=binding_type,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import agent_runner as agent_runner_module
-from agent_runner import AgentResult, AgentRunnerError, ClaudeAgentAdapter, PiAgentAdapter, RoutingAgentAdapter, run_agent, verify_pi_support
+from agent_runner import AgentResult, AgentRunnerError, PiAgentAdapter, RoutingAgentAdapter, run_agent, verify_pi_support
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
 
@@ -165,87 +165,27 @@ def test_verify_pi_support_wraps_probe_timeout(tmp_path: Path) -> None:
 def test_pi_agent_adapter_delegates_to_pi_runner(monkeypatch, tmp_path: Path) -> None:
     calls = {}
 
-    def fake_run_agent(config, issue, rendered_prompt, *, worktree_path=None):
-        calls["args"] = (config, issue, rendered_prompt, worktree_path)
+    def fake_run_agent(config, issue, rendered_prompt):
+        calls["args"] = (config, issue, rendered_prompt)
         return "agent-result"
 
     monkeypatch.setattr(agent_runner_module, "run_agent", fake_run_agent)
     config = _config(tmp_path)
     issue = _issue()
-    worktree = tmp_path / "worktree"
 
-    result = PiAgentAdapter(config)(issue, "rendered prompt", worktree_path=worktree)
+    result = PiAgentAdapter(config)(issue, "rendered prompt")
 
     assert result == "agent-result"
-    assert calls["args"] == (config, issue, "rendered prompt", worktree)
+    assert calls["args"] == (config, issue, "rendered prompt")
 
 
-def test_claude_agent_adapter_drives_tmux_and_scrapes_before_marker(tmp_path: Path) -> None:
-    calls: list[tuple[list[str], str | None]] = []
-    marker = "SYMPHONY_DONE_nonce-1"
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs.get("input")))
-        if "capture-pane" in command:
-            return Completed(stdout=f"hello\nSYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: shipped\n{marker}\nignored")
-        return Completed(stdout="")
-
-    result = ClaudeAgentAdapter(
-        _config(tmp_path),
-        run_func=fake_run,
-        clock=iter([1.0, 1.2]).__next__,
-        nonce_factory=lambda: "nonce-1",
-    )(_issue(), "rendered prompt", worktree_path=tmp_path / "worktree")
-
-    assert result.exit_code == 0
-    assert result.timed_out is False
-    assert result.stdout == "hello\nSYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: shipped"
-    assert marker not in result.stdout
-    commands = [call[0] for call in calls]
-    assert commands[0][:3] == ["tmux", "-L", "symphony-run-5bca2dc3"]
-    assert commands[0][-7:] == ["new-session", "-d", "-s", "symphony-5bca2dc3", "-c", str(tmp_path / "worktree"), "claude"]
-    assert ["tmux", "-L", "symphony-run-5bca2dc3", "paste-buffer", "-t", "symphony-5bca2dc3:0.0"] in commands
-    assert ["tmux", "-L", "symphony-run-5bca2dc3", "send-keys", "-t", "symphony-5bca2dc3:0.0", "Enter"] in commands
-    assert ["tmux", "-L", "symphony-run-5bca2dc3", "kill-session", "-t", "symphony-5bca2dc3"] in commands
-    load_call = next(call for call in calls if "load-buffer" in call[0])
-    assert load_call[1] is not None
-    assert "rendered prompt" in load_call[1]
-    assert marker in load_call[1]
 
 
-def test_claude_agent_adapter_timeout_kills_session(tmp_path: Path) -> None:
-    calls: list[list[str]] = []
-
-    def fake_run(command, **kwargs):
-        calls.append(command)
-        if "capture-pane" in command:
-            return Completed(stdout="still working")
-        return Completed(stdout="")
-
-    result = ClaudeAgentAdapter(
-        _config(tmp_path),
-        run_func=fake_run,
-        clock=iter([0.0, 2.0, 2.1]).__next__,
-        sleep=lambda _: None,
-        nonce_factory=lambda: "nonce-2",
-    )(_issue(), "rendered prompt")
-
-    assert result.timed_out is True
-    assert result.exit_code == -1
-    assert result.stdout == "still working"
-    assert "timed out" in result.stderr
-    assert ["tmux", "-L", "symphony-run-5bca2dc3", "kill-session", "-t", "symphony-5bca2dc3"] in calls
-
-
-def test_routing_agent_adapter_selects_default_and_issue_override(tmp_path: Path) -> None:
+def test_routing_agent_adapter_routes_to_pi(tmp_path: Path) -> None:
     seen: list[str] = []
 
-    def pi(issue, prompt, *, worktree_path=None):
+    def pi_adapter_fn(issue, prompt):
         seen.append("pi")
-        return AgentResult(0, 1, False)
-
-    def claude(issue, prompt, *, worktree_path=None):
-        seen.append("claude")
         return AgentResult(0, 1, False)
 
     binding = ProjectBinding(
@@ -254,14 +194,12 @@ def test_routing_agent_adapter_selects_default_and_issue_override(tmp_path: Path
         repo_path=tmp_path,
         base_branch="main",
         tracker_contract=_config(tmp_path).bindings[0].tracker_contract,
-        default_agent="claude",
     )
-    router = RoutingAgentAdapter(binding, pi_adapter=pi, claude_adapter=claude)
+    router = RoutingAgentAdapter(binding, pi_adapter=pi_adapter_fn)
 
     router(_issue(), "prompt")
-    router(CandidateIssue("2", "AUTO-2", "Two", "", ("agent:pi",), "2026-05-04T00:00:00Z"), "prompt")
 
-    assert seen == ["claude", "pi"]
+    assert seen == ["pi"]
 
 
 def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> None:

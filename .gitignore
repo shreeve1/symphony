@@ -8,3 +8,7 @@ plans/
 .WORKFLOW.md.preview
 .pi-lens/
 .rpiv/
+.kanban/archive/issues
+artifacts/
+docs/adr
+CONTEXT.md

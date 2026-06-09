@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_runner import AgentAdapter, ClaudeAgentAdapter, PiAgentAdapter, RoutingAgentAdapter, verify_pi_support
+from agent_runner import AgentAdapter, PiAgentAdapter, RoutingAgentAdapter, verify_pi_support
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
@@ -29,8 +29,10 @@ class BindingRuntime:
 
 def _render_candidate_prompt(
     issue,
+    *,
     contract: TrackerContract | None = None,
     repo_path: Path | None = None,
+    binding_type: str = "infra",
 ) -> str:
     workflow_path = (repo_path or Path.cwd()) / "WORKFLOW.md"
     return render_prompt(
@@ -48,6 +50,7 @@ def _render_candidate_prompt(
             schedule_late=getattr(issue, "schedule_late", ""),
         ),
         path=workflow_path,
+        binding_type=binding_type,
     )
 
 
@@ -70,7 +73,6 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
         agent_adapter=RoutingAgentAdapter(
             binding=binding,
             pi_adapter=PiAgentAdapter(binding_config),
-            claude_adapter=ClaudeAgentAdapter(binding_config),
         ),
     )
 
@@ -108,8 +110,8 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
                 runtime.adapter,
                 agent_runner=runtime.agent_adapter,
                 render_prompt=(
-                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path:
-                    _render_candidate_prompt(issue, contract, repo_path)
+                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path, bt=runtime.config.bindings[0].binding_type:
+                    _render_candidate_prompt(issue, contract=contract, repo_path=repo_path, binding_type=bt)
                 ),
                 notifier=notifier,
             )
