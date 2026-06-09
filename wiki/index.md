@@ -1,0 +1,53 @@
+# Wiki Index
+
+## Sources
+
+| Page | Summary | Sources | Updated |
+|------|---------|---------|---------|
+| [sources/symphony-context.md](sources/symphony-context.md) | Summary of `CONTEXT.md` — Symphony's canonical domain glossary | `wiki/raw/symphony-context.md`, `CONTEXT.md` | 2026-06-09 |
+| [sources/runbook-symphony.md](sources/runbook-symphony.md) | Summary of the homelab Symphony Automation Runbook | `wiki/raw/runbook-symphony.md`, `~/homelab/docs/runbooks/automation/symphony.md` | 2026-06-09 |
+| [sources/symphony-host-service-unit.md](sources/symphony-host-service-unit.md) | Live systemd unit snapshot — env block, dead OpenCode drift, secrets-via-env-file convention | `wiki/raw/symphony-host.service` | 2026-06-09 |
+
+## Entities
+
+| Page | Summary | Sources | Updated |
+|------|---------|---------|---------|
+| [entities/binding-homelab.md](entities/binding-homelab.md) | homelab Project Binding — full Role set, original Symphony target | `wiki/raw/bindings.yml` | 2026-06-09 |
+| [entities/binding-trading.md](entities/binding-trading.md) | trading Project Binding — leaner Role set, multi-project demonstrator | `wiki/raw/bindings.yml` | 2026-06-09 |
+| [entities/workflow-homelab.md](entities/workflow-homelab.md) | homelab `WORKFLOW.md` — medium-risk autonomy, plan/build/execute, excluded services, completion contract | `wiki/raw/workflow-homelab.md` | 2026-06-09 |
+| [entities/workflow-trading.md](entities/workflow-trading.md) | trading `WORKFLOW.md` — Trading Safety Boundary, secrets-never-read, sandbox-only-by-default | `wiki/raw/workflow-trading.md` | 2026-06-09 |
+
+## Concepts
+
+| Page | Summary | Sources | Updated |
+|------|---------|---------|---------|
+| [concepts/symphony-engine.md](concepts/symphony-engine.md) | Engine model — core loop, Bindings, Mode, Agent, Workflow, Tracker abstraction, Run lifecycle, Landing | `wiki/raw/symphony-context.md` | 2026-06-09 |
+| [concepts/symphony-operations.md](concepts/symphony-operations.md) | Operational model — service, restart ritual, scheduling, blocked reconciler, Telegram, failure pointers | `wiki/raw/runbook-symphony.md`, CLAUDE.md | 2026-06-09 |
+| [concepts/tracker-contract.md](concepts/tracker-contract.md) | Tracker Contract — engine Roles, required/optional, data shape, resolvers | `wiki/raw/tracker_contract.py`, `wiki/raw/adr-0004-tracker-contract.md` | 2026-06-09 |
+| [concepts/scheduler-loop.md](concepts/scheduler-loop.md) | `scheduler.py` — constants, semaphore concurrency, rate-limit cooldown, dirty-base approval, top-level coroutines | `scheduler.py` | 2026-06-09 |
+| [concepts/agent-runner-and-worktree.md](concepts/agent-runner-and-worktree.md) | `AgentResult`, `AgentAdapter`, `verify_pi_support`, `PiAgentAdapter`/`ClaudeAgentAdapter`/`RoutingAgentAdapter`, deterministic `run_id` naming, worktree lifecycle | `agent_runner.py`, `run_worktree.py` | 2026-06-09 |
+| [concepts/prompt-renderer.md](concepts/prompt-renderer.md) | `prompt_renderer.py` — variable set, untrusted-block escaping, schedule context, conversation Mode divergence | `prompt_renderer.py` | 2026-06-09 |
+| [concepts/schedule-comment-grammar.md](concepts/schedule-comment-grammar.md) | `Symphony-Schedule:` / `Symphony-Schedule-Cancelled:` grammar, hard invariants, sort precedence, HTML normalisation | `schedule.py` | 2026-06-09 |
+| [concepts/blocked-reconciler-implementation.md](concepts/blocked-reconciler-implementation.md) | `blocked_reconciler.py` — caps, regexes, `ReconcileRule` shape, default rule, skip conditions, log markers | `blocked_reconciler.py` | 2026-06-09 |
+
+## Analyses
+
+| Page | Summary | Sources | Updated |
+|------|---------|---------|---------|
+| [analyses/adr-0001-claude-tmux.md](analyses/adr-0001-claude-tmux.md) | ADR-0001 — Dispatch Claude through tmux send-keys, not print mode | `wiki/raw/adr-0001-claude-tmux.md` | 2026-06-09 |
+| [analyses/adr-0002-generalize-symphony.md](analyses/adr-0002-generalize-symphony.md) | ADR-0002 — Generalize Symphony behind adapter seams | `wiki/raw/adr-0002-generalize-symphony.md` | 2026-06-09 |
+| [analyses/adr-0003-worktree-per-run.md](analyses/adr-0003-worktree-per-run.md) | ADR-0003 — Worktree-per-run with global concurrency cap | `wiki/raw/adr-0003-worktree-per-run.md` | 2026-06-09 |
+| [analyses/adr-0004-tracker-contract.md](analyses/adr-0004-tracker-contract.md) | ADR-0004 — Role-based per-binding Tracker Contract | `wiki/raw/adr-0004-tracker-contract.md` | 2026-06-09 |
+| [analyses/symphony-plan-history.md](analyses/symphony-plan-history.md) | Five plans under `plans/` — landed status, key decisions, open follow-ups | 5 plan raw files | 2026-06-09 |
+| [analyses/brainstorm-pi-swap.md](analyses/brainstorm-pi-swap.md) | Pi-executor-swap brainstorm — rejected designs, silent-failure rationale, locked-decisions table | `wiki/raw/brainstorm-pi-swap.md` | 2026-06-09 |
+| [analyses/pi-swap-review-specs.md](analyses/pi-swap-review-specs.md) | 4 reviewer PRD artifacts — multi-round audit discipline against the pi-swap plan | 4 spec PRD files | 2026-06-09 |
+| [analyses/symphony-skills-index.md](analyses/symphony-skills-index.md) | 8 `symphony-*` Claude Code skills — lifecycle map and per-skill summary | 8 SKILL.md files | 2026-06-09 |
+| [analyses/symphony-tests-index.md](analyses/symphony-tests-index.md) | 14 test files, 435 tests — coverage map and validation contract | `tests/*.py` | 2026-06-09 |
+| [analyses/trading-smoke-rate-limit-debugging.md](analyses/trading-smoke-rate-limit-debugging.md) | Trading smoke debugging — post-agent Plane 429 recovery, shared cooldown, optional-label scan fix, conversation-mode landing-proof gap | session capture, `scheduler.py`, `prompt_renderer.py` | 2026-06-09 |
+
+## Candidate Review Queue
+
+Candidate rows are discoverability aids only; do not treat them as promoted knowledge. This project uses **auto-promotion** — candidates transit this queue briefly during ingest and are promoted by the agent after lint.
+
+| Candidate | Summary | Sources | Created | Status |
+|-----------|---------|---------|---------|--------|

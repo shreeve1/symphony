@@ -1,0 +1,104 @@
+bindings:
+- name: homelab
+  plane_project_id: cff68c17-bff6-452f-89b3-9b570613cfaa
+  repo_path: /home/james/homelab
+  base_branch: main
+  default_agent: pi
+  approval:
+    enabled: false
+  landing:
+    mode: local
+  tracker_contract:
+    workspace_slug: homelab
+    project_slug: automations
+    project_id: cff68c17-bff6-452f-89b3-9b570613cfaa
+    state_roles:
+      state:todo:
+        name: Todo
+        uuid: ecdab56c-3d58-4da4-bed0-90f0c665deeb
+      state:running:
+        name: Running
+        uuid: 6d96e0cb-90f5-4581-807c-a7c9a976b422
+      state:in-review:
+        name: In Review
+        uuid: ea1ccd3d-82d3-4dd4-8226-192941e8e4c0
+      state:blocked:
+        name: Blocked
+        uuid: 4b226b00-1e1c-46aa-bbd3-b1e04ad6fc1f
+      state:done:
+        name: Done
+        uuid: ef9d22b5-c69c-4707-8ba3-e3db244f2a84
+    label_roles:
+      approval-required:
+        name: approval-required
+        uuid: e7480a55-5ab6-417b-a74a-f436ffcf1db7
+      mode:plan:
+        name: plan
+        uuid: 5a022793-c712-4565-ab70-0183fe04c557
+      mode:build:
+        name: build
+        uuid: 4ffc7ef9-9159-455c-b3f9-b3a447157aef
+      approved:
+        name: approved
+        uuid: 67839626-ca7f-4c02-a5e0-12e56a35d909
+      scheduled:
+        name: scheduled
+        uuid: 9ac7586e-8745-4c22-8a9d-aa83652bee3e
+      has-worktree:
+        name: has-worktree
+    extra_label_ids:
+      patrol: 74f5ab2e-a567-4f8b-8dcf-0908c7ea9ceb
+      security: 618c2146-78d0-4955-a651-bd0c7ad5712e
+      infra: 95635e31-ed47-4a2e-96ab-555e43242fa1
+      network: cb36e80d-9cea-4935-b9a6-29d3c4d7d90f
+      media: a683fbd6-a83a-439f-9e01-123a7088c04d
+      storage: cf3e9144-3925-41f0-ac62-3cb7aa3ac480
+      docker: c1d39f14-19e0-434a-a183-90bd28ae2875
+    users:
+    - homelab_user: james
+      plane_uuid: 0423d289-e898-43a1-8aaf-b66010dc85ac
+      plane_display_name: James
+      role: admin
+- name: trading
+  plane_project_id: 201a3995-c738-4f5a-acbe-7608f302301e
+  repo_path: /home/james/trading/crypto-trading-agents
+  base_branch: main
+  default_agent: pi
+  approval:
+    enabled: false
+  landing:
+    mode: local
+  tracker_contract:
+    project_slug: trading
+    project_id: 201a3995-c738-4f5a-acbe-7608f302301e
+    state_roles:
+      state:todo:
+        name: Todo
+        uuid: 9f67c662-45c0-4d04-b1c2-7b1e1996d868
+      state:in-review:
+        name: In Review
+        uuid: 6e939873-c8e2-441d-a2c6-cc2e5624c89c
+      state:running:
+        name: Running
+        uuid: 63cdba03-fd48-4331-b093-a9ea756d0512
+      state:blocked:
+        name: Blocked
+        uuid: fdc408d4-bf6a-4a97-b934-fcc8c819dbfb
+      state:done:
+        name: Done
+        uuid: d3419e46-b00e-4eec-ac5b-f6b927e2c7a6
+    label_roles:
+      mode:plan:
+        name: plan
+        uuid: 8041d267-1e1e-4b8e-988e-b035f1a6ea37
+      mode:build:
+        name: build
+        uuid: 1e8b7d18-94dd-48c9-b273-bf781f2de01b
+      approval-required:
+        name: approval-required
+        uuid: 0d492a5f-4d6f-4937-90ca-909cf7f185b7
+      has-worktree:
+        name: has-worktree
+    extra_label_ids:
+      agent:claude: 2a969e9f-69e2-47a3-a6d0-1c9349fd62c1
+      agent:pi: 784b2719-39ed-4ce9-9f8e-f07224b33df1

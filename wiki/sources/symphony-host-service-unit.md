@@ -1,0 +1,82 @@
+---
+title: symphony-host.service (live systemd unit snapshot)
+type: source-summary
+status: promoted
+created: 2026-06-09
+updated: 2026-06-09
+sources:
+  - wiki/raw/symphony-host.service
+  - /etc/systemd/system/symphony-host.service
+confidence: high
+tags: [systemd, service, unit, environment, opencode-drift, lock-path]
+---
+
+# Source Summary — `symphony-host.service`
+
+Live snapshot of the unit file on `aidev` as of 2026-06-09. Path: `/etc/systemd/system/symphony-host.service`. 30 lines.
+
+## Sections
+
+### `[Unit]`
+
+- `Description=Host-native Plane Symphony scheduler`
+- `OnFailure=telegram-alert@%n.service` — failure-alert template fires on unit failure.
+- `After=network-online.target` + `Wants=network-online.target` — waits for network.
+
+### `[Service]`
+
+- `Type=simple`
+- `User=james`, `Group=james`
+- `WorkingDirectory=/home/james/symphony` — `bindings.yml` auto-discovered at CWD per CLAUDE.md.
+- `EnvironmentFile=/home/james/symphony-host.env` — secrets bag (mode `0600`).
+- `ExecStart=/usr/bin/python3 -m main`
+- `Restart=on-failure`, `RestartSec=10`
+- `NoNewPrivileges=yes`, `PrivateTmp=yes`
+- `RuntimeDirectory=symphony`, `RuntimeDirectoryMode=0750` — creates `/run/symphony/` owned by service user.
+
+### `[Install]`
+
+- `WantedBy=multi-user.target`
+
+## `Environment=` block (non-secret config)
+
+| Var | Value | Notes |
+|---|---|---|
+| `HOME` | `/home/james` | |
+| `PYTHONUNBUFFERED` | `1` | structured log flushing |
+| `PYTHONPATH` | `/home/james/symphony:/home/james/homelab/automation/homelab-stack/src` | homelab-stack still on path for compat |
+| `OPENCODE_BIN` | `/home/james/.opencode/bin/opencode` | **DEAD** — pi-executor-swap landed; zero references in current `.py` source per CLAUDE.md |
+| `SYMPHONY_LOCK_PATH` | `/run/symphony/symphony.lock` | overrides `config.py` default |
+| `SYMPHONY_OPENCODE_AGENT` | `build` | **DEAD** — same as `OPENCODE_BIN` |
+| `PLANE_API_URL` | `http://127.0.0.1:8000` | local Plane stack |
+| `PLANE_WORKSPACE_SLUG` | `homelab` | only one workspace exists; all Bindings share it per CONTEXT.md |
+
+[source: wiki/raw/symphony-host.service#13-20]
+
+## What's NOT in the unit file
+
+Secrets and runtime executor config live in `/home/james/symphony-host.env` and are loaded via `EnvironmentFile=`. Per CLAUDE.md "Required env vars (bindings mode)":
+
+- `PLANE_API_KEY` — secret, must come from env file
+- `PI_BIN` — required for executor dispatch
+- `SYMPHONY_PI_PROVIDER` + `SYMPHONY_PI_MODEL` — non-secret but live in env file
+- `ZAI_API_KEY` — pi's per-provider key (per brainstorm)
+- Telegram tokens (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` / `TELEGRAM_HOME_CHANNEL`)
+- Optional: `SYMPHONY_BLOCKED_RECONCILER_ENABLED|APPLY|INTERVAL_MS`, `PI_OFFLINE`, `PI_CODING_AGENT_SESSION_DIR`
+
+`PLANE_PROJECT_ID` and `HOMELAB_REPO_PATH` are legacy single-project fallbacks per CLAUDE.md; bindings mode bypasses them.
+
+## Notable drift
+
+- `OPENCODE_BIN` and `SYMPHONY_OPENCODE_AGENT` survive on the unit despite the pi-executor swap (commit `8af5dab`). Documented in CLAUDE.md "Dead config" section. Safe to leave; safe to remove at a future unit cleanup.
+- The brainstorm calls out that the swap requires removing these and adding `PI_BIN`, `SYMPHONY_PI_PROVIDER`, `SYMPHONY_PI_MODEL`, `PI_OFFLINE`, `PI_CODING_AGENT_SESSION_DIR` (the latter three optional). The `Environment=` block here did not get the additions — they live in the env file instead.
+
+## Restart safety
+
+Per CLAUDE.md restart ritual: ask James → `sudo systemctl restart` → verify `symphony_started`, `reconcile_startup_*`, `dispatch_completed` log lines within ~35s. Use the `symphony-restart` skill rather than manual fallback.
+
+## Related
+
+- [Symphony operations](../concepts/symphony-operations.md)
+- [Runbook source](runbook-symphony.md)
+- [Plan history — pi-executor-swap](../analyses/symphony-plan-history.md)

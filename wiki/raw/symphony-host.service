@@ -1,0 +1,30 @@
+[Unit]
+Description=Host-native Plane Symphony scheduler
+OnFailure=telegram-alert@%n.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=james
+Group=james
+WorkingDirectory=/home/james/symphony
+EnvironmentFile=/home/james/symphony-host.env
+Environment=HOME=/home/james
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/james/symphony:/home/james/homelab/automation/homelab-stack/src
+Environment=OPENCODE_BIN=/home/james/.opencode/bin/opencode
+Environment=SYMPHONY_LOCK_PATH=/run/symphony/symphony.lock
+Environment=SYMPHONY_OPENCODE_AGENT=build
+Environment=PLANE_API_URL=http://127.0.0.1:8000
+Environment=PLANE_WORKSPACE_SLUG=homelab
+RuntimeDirectory=symphony
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/python3 -m main
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
