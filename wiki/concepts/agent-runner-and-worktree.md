@@ -1,5 +1,5 @@
 ---
-title: Agent runner + Run Worktree
+title: Agent runner + Run Worktree (pre-thin-engine)
 type: concept
 status: promoted
 created: 2026-06-09
@@ -8,10 +8,12 @@ sources:
   - agent_runner.py
   - run_worktree.py
 confidence: high
-tags: [agent-adapter, pi, claude, tmux, worktree, naming-scheme, verify_pi_support, ANSI]
+tags: [agent-adapter, pi, claude, tmux, worktree, naming-scheme, verify_pi_support, ANSI, historical]
 ---
 
-# Agent runner + Run Worktree
+> **⚠️ Historical — pre-thin-engine.** This page documents `run_worktree.py`, `ClaudeAgentAdapter`, and worktree-per-run dispatch, all of which were removed in thin engine v2 (commit `e73e924`). The running code no longer matches this description. See [thin-engine-v2](thin-engine-v2.md) for current behavior.
+
+# Agent runner + Run Worktree (pre-thin-engine)
 
 `agent_runner.py` (412 LOC) implements the Agent Adapter seam from [ADR-0002](../analyses/adr-0002-generalize-symphony.md) and the tmux dispatch from [ADR-0001](../analyses/adr-0001-claude-tmux.md). `run_worktree.py` (368 LOC) implements the worktree-per-run isolation from [ADR-0003](../analyses/adr-0003-worktree-per-run.md). Combined here because the deterministic `run_id` naming scheme bridges them.
 

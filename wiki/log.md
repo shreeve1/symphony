@@ -72,3 +72,10 @@ Append entries with this format:
 - Inputs: current debugging session; `scheduler.py`; `tests/test_scheduler.py`; `prompt_renderer.py`; `wiki/raw/workflow-trading.md`; journal evidence for trading smoke issues `6fbfd86a-36b2-4548-9b41-2a80fb66506c` and `0ab7f64c-3ad4-468d-8c2e-4d408c35f076`; commits `a269e32`, `fbff782`, `c4944be`.
 - Outputs: `wiki/raw/sessions/2026-06-09-trading-smoke-rate-limit.md`; `wiki/analyses/trading-smoke-rate-limit-debugging.md`; updates to `wiki/concepts/scheduler-loop.md`, `wiki/concepts/prompt-renderer.md`, `wiki/entities/workflow-trading.md`, `wiki/CLAIMS.md` (C-0050..C-0053), `wiki/index.md`, `wiki/ROUTING.md`, and `wiki/log.md`.
 - Notes: Captured root causes and fixes for post-agent Plane 429 recovery, shared Plane cooldown, optional-label scan pressure, and the remaining dirty-worktree proof blocker: unlabeled issues render as conversation mode and should not edit files. No secrets, `.env` contents, or full transcript stored.
+
+## [2026-06-09] session-update | thin engine E2E test + service restart
+
+- Actor: agent (Pi, wiki-update skill, SessionUpdate workflow)
+- Inputs: current session; `agent_runner.py`; `scheduler.py`; `config.py`; `main.py`; journalctl evidence for smoke issue `b0b79316`; commit `e73e924`; `symphony-host.service` unit config.
+- Outputs: `wiki/raw/sessions/2026-06-09-thin-engine-e2e-test.md`; `wiki/candidates/analysis-thin-engine-e2e-test.md`; `wiki/candidates/concept-thin-engine-v2.md`; CLAIMS.md updates (C-0007, C-0009, C-0016, C-0018, C-0019, C-0020, C-0040, C-0041, C-0042, C-0044 — supersession/historical notes); `wiki/index.md` (2 candidate rows); `wiki/ROUTING.md` (Thin Engine + Service Restart branches); `wiki/log.md` (this entry).
+- Notes: Thin engine E2E smoke test verified full dispatch lifecycle. Root cause for worktree behavior was code drift (service never restarted after thin engine commit). Service restarted successfully. Stale worktree cleaned. Promoted concept page `agent-runner-and-worktree.md` substantially stale — new candidate supersedes it. 10 claims annotated with thin-engine context. No secrets stored.

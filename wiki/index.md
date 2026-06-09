@@ -25,7 +25,8 @@
 | [concepts/symphony-operations.md](concepts/symphony-operations.md) | Operational model — service, restart ritual, scheduling, blocked reconciler, Telegram, failure pointers | `wiki/raw/runbook-symphony.md`, CLAUDE.md | 2026-06-09 |
 | [concepts/tracker-contract.md](concepts/tracker-contract.md) | Tracker Contract — engine Roles, required/optional, data shape, resolvers | `wiki/raw/tracker_contract.py`, `wiki/raw/adr-0004-tracker-contract.md` | 2026-06-09 |
 | [concepts/scheduler-loop.md](concepts/scheduler-loop.md) | `scheduler.py` — constants, semaphore concurrency, rate-limit cooldown, dirty-base approval, top-level coroutines | `scheduler.py` | 2026-06-09 |
-| [concepts/agent-runner-and-worktree.md](concepts/agent-runner-and-worktree.md) | `AgentResult`, `AgentAdapter`, `verify_pi_support`, `PiAgentAdapter`/`ClaudeAgentAdapter`/`RoutingAgentAdapter`, deterministic `run_id` naming, worktree lifecycle | `agent_runner.py`, `run_worktree.py` | 2026-06-09 |
+| [concepts/agent-runner-and-worktree.md](concepts/agent-runner-and-worktree.md) | Pre-thin-engine — `run_worktree.py`, `ClaudeAgentAdapter`, worktree lifecycle. Superseded by `concepts/thin-engine-v2.md` for coding bindings. | `agent_runner.py`, `run_worktree.py` | 2026-06-09 |
+| [concepts/thin-engine-v2.md](concepts/thin-engine-v2.md) | Thin engine v2 — no worktrees, PiAgentAdapter only, coding vs infra binding differences, provider/model config | `agent_runner.py`, `scheduler.py`, `config.py`, `main.py` | 2026-06-09 |
 | [concepts/prompt-renderer.md](concepts/prompt-renderer.md) | `prompt_renderer.py` — variable set, untrusted-block escaping, schedule context, conversation Mode divergence | `prompt_renderer.py` | 2026-06-09 |
 | [concepts/schedule-comment-grammar.md](concepts/schedule-comment-grammar.md) | `Symphony-Schedule:` / `Symphony-Schedule-Cancelled:` grammar, hard invariants, sort precedence, HTML normalisation | `schedule.py` | 2026-06-09 |
 | [concepts/blocked-reconciler-implementation.md](concepts/blocked-reconciler-implementation.md) | `blocked_reconciler.py` — caps, regexes, `ReconcileRule` shape, default rule, skip conditions, log markers | `blocked_reconciler.py` | 2026-06-09 |
@@ -35,6 +36,7 @@
 | Page | Summary | Sources | Updated |
 |------|---------|---------|---------|
 | [analyses/adr-0001-claude-tmux.md](analyses/adr-0001-claude-tmux.md) | ADR-0001 — Dispatch Claude through tmux send-keys, not print mode | `wiki/raw/adr-0001-claude-tmux.md` | 2026-06-09 |
+| [analyses/thin-engine-e2e-test.md](analyses/thin-engine-e2e-test.md) | Thin engine E2E smoke test — dispatch lifecycle, code drift root cause, provider/model config, stale worktree cleanup | `wiki/raw/sessions/2026-06-09-thin-engine-e2e-test.md` | 2026-06-09 |
 | [analyses/adr-0002-generalize-symphony.md](analyses/adr-0002-generalize-symphony.md) | ADR-0002 — Generalize Symphony behind adapter seams | `wiki/raw/adr-0002-generalize-symphony.md` | 2026-06-09 |
 | [analyses/adr-0003-worktree-per-run.md](analyses/adr-0003-worktree-per-run.md) | ADR-0003 — Worktree-per-run with global concurrency cap | `wiki/raw/adr-0003-worktree-per-run.md` | 2026-06-09 |
 | [analyses/adr-0004-tracker-contract.md](analyses/adr-0004-tracker-contract.md) | ADR-0004 — Role-based per-binding Tracker Contract | `wiki/raw/adr-0004-tracker-contract.md` | 2026-06-09 |
@@ -51,3 +53,6 @@ Candidate rows are discoverability aids only; do not treat them as promoted know
 
 | Candidate | Summary | Sources | Created | Status |
 |-----------|---------|---------|---------|--------|
+_(empty — all candidates promoted or discarded)_
+| [candidates/analysis-thin-engine-e2e-test.md](candidates/analysis-thin-engine-e2e-test.md) | Thin engine E2E smoke test — dispatch verified, code drift root cause (service ran old code), provider/model confirmed, stale worktree cleanup | `wiki/raw/sessions/2026-06-09-thin-engine-e2e-test.md`, journalctl, systemctl | 2026-06-09 | candidate |
+| [candidates/concept-thin-engine-v2.md](candidates/concept-thin-engine-v2.md) | Thin engine v2 — run_worktree.py and ClaudeAgentAdapter deleted, PiAgentAdapter only, no worktree for coding bindings, is_coding gate changes | `agent_runner.py`, `scheduler.py`, `config.py`, `main.py` | 2026-06-09 | candidate |

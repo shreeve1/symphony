@@ -49,8 +49,18 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Executor / Agent
 
-- Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/symphony-plan-history.md`, `analyses/brainstorm-pi-swap.md`, `concepts/symphony-engine.md`, `concepts/agent-runner-and-worktree.md`
-- Keywords: pi, pi-coding-agent, --print, --no-session, --provider, --model, glm-5.1, zai, claude, tmux, send-keys, load-buffer, paste-buffer, capture-pane, Done Marker, SYMPHONY_RESULT, SYMPHONY_SUMMARY, dev-review-claude, CLIPROXY_API_KEY, OpenCode (retired), verify_pi_support, silent-failure guardrail, PiAgentAdapter, ClaudeAgentAdapter, RoutingAgentAdapter, ZAI_API_KEY
+- Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/symphony-plan-history.md`, `analyses/brainstorm-pi-swap.md`, `concepts/symphony-engine.md`, `concepts/agent-runner-and-worktree.md`, `concepts/thin-engine-v2.md`, `analyses/thin-engine-e2e-test.md`
+- Keywords: pi, pi-coding-agent, --print, --no-session, --provider, --model, glm-5.1, zai, openai-codex, gpt-5.5, claude, tmux, send-keys, Done Marker, SYMPHONY_RESULT, SYMPHONY_SUMMARY, verify_pi_support, silent-failure guardrail, PiAgentAdapter, RoutingAgentAdapter, ZAI_API_KEY, thin-engine, coding-binding, no-worktree
+
+## Thin Engine
+
+- Pages: `concepts/thin-engine-v2.md`, `analyses/thin-engine-e2e-test.md`, `concepts/scheduler-loop.md`, `wiki/raw/sessions/2026-06-09-thin-engine-e2e-test.md`
+- Keywords: thin engine, v2, e73e924, coding binding, is_coding, worktree removed, claude paused, pi only, run_worktree deleted, smoke test, code drift, provider drift, agent runs in repo
+
+## Service Restart & Deployment
+
+- Pages: `analyses/thin-engine-e2e-test.md`, `sources/symphony-host-service-unit.md`, `concepts/symphony-operations.md`
+- Keywords: restart ritual, code_sha, pre-sanity, git log HEAD drift, systemctl restart, service verification, stale worktree, git worktree remove
 
 ## Decisions
 
