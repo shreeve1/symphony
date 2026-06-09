@@ -1,9 +1,0 @@
-# Generalize Symphony behind adapter seams, rather than adopt an existing orchestrator
-
-To move from single-repo infra management to a general multi-project coding-agent orchestrator, we evaluated adopting an off-the-shelf platform (sortie, Composio Agent Orchestrator, Warren/overstory, Code Conductor, GitHub Agent HQ) versus generalizing the Symphony engine we already run.
-
-We chose to **keep and generalize Symphony**, introducing two explicit seams — a **Tracker Adapter** (isolating Plane) and an **Agent Adapter** (isolating pi vs claude dispatch) — and to **borrow proven conventions** from the closest prior art (sortie's per-repo `WORKFLOW.md` front-matter-plus-template shape and its tracker/agent adapter-interface boundaries) rather than its code.
-
-The decisive constraint is that every mature platform assumes the coding agent runs **headless** (`claude -p`, stdio, NDJSON). This account is losing usable headless Claude and is forced into tmux send-keys (see ADR-0001). Adopting any platform would therefore still require writing a custom tmux agent adapter — the hardest, most unusual part — on top of also writing a Plane tracker adapter and giving up working Python (sortie is Go). The two things that make this setup ours (Plane, pi) are unsupported or niche everywhere: only the now-archived overstory line ever ran pi, and no platform speaks Plane. Net: adopting reimplements nearly everything to gain nearly nothing.
-
-That sortie independently converged on Symphony's exact architecture (poll-by-label → render per-issue template → isolated workspace → dispatch → reconcile state) is treated as validation of the design, not a reason to switch. The adapter seams are the long-term hedge: if Plane or pi is ever abandoned, we swap one adapter instead of rewriting the engine. We stay on self-hosted Plane now for privacy over the local infra repo, accepting that no ecosystem tooling will ever target Plane.
