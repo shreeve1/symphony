@@ -497,6 +497,60 @@ async def test_run_tick_strips_ansi_from_stderr_summary(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dirty_conversation_adds_has_worktree_label_when_configured(tmp_path: Path) -> None:
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    label_roles = dict(DEFAULT_CONTRACT.label_roles)
+    label_roles[TrackerRole.HAS_WORKTREE] = RoleBinding("has-worktree", "label-worktree")
+    contract = replace(DEFAULT_CONTRACT, label_roles=label_roles)
+
+    result = await run_tick(
+        _config(repo),
+        PlaneAdapter(contract=contract, transport=transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: True,
+        diff_stat=lambda path: "preexisting.md | 1 +",
+    )
+
+    labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
+    assert result.reason == "agent-clean-review"
+    assert TrackerRole.HAS_WORKTREE.value in labels
+    completion_comment = [
+        c for c in transport.comments["issue-1"] if "Symphony completed" in c["comment_html"]
+    ][0]["comment_html"]
+    assert "Run worktree label" in completion_comment
+    assert "Run worktree:" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_clean_conversation_removes_stale_has_worktree_label(tmp_path: Path) -> None:
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    label_roles = dict(DEFAULT_CONTRACT.label_roles)
+    label_roles[TrackerRole.HAS_WORKTREE] = RoleBinding("has-worktree", "label-worktree")
+    contract = replace(DEFAULT_CONTRACT, label_roles=label_roles)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", labels=["label-worktree"])
+
+    result = await run_tick(
+        _config(repo),
+        PlaneAdapter(contract=contract, transport=transport),
+        agent_runner=lambda issue, prompt, *, worktree_path=None: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
+    assert result.reason == "agent-clean-review"
+    assert TrackerRole.HAS_WORKTREE.value not in labels
+
+
+@pytest.mark.asyncio
 async def test_run_tick_dirty_worktree_moves_to_review_without_auto_commit(tmp_path: Path) -> None:
     """Pre-existing dirt no longer blocks; scheduler moves to Review without auto-commit."""
     transport = FakeTransport()
@@ -765,9 +819,9 @@ def test_resolve_mode_build_label():
     assert _resolve_mode((PlaneLabel.BUILD.value,)) == "build"
 
 
-def test_resolve_mode_execute_default():
-    assert _resolve_mode(()) == "execute"
-    assert _resolve_mode((PlaneLabel.MEDIA.value,)) == "execute"
+def test_resolve_mode_conversation_default():
+    assert _resolve_mode(()) == "conversation"
+    assert _resolve_mode((PlaneLabel.MEDIA.value,)) == "conversation"
 
 
 def test_resolve_mode_build_takes_priority_over_plan():
@@ -1378,7 +1432,7 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     assert sep == "\n\n**Timeline**"
     assert len(head) < 1000
     summary_head = head.split("\n\n**Run branch:**", 1)[0]
-    assert summary_head.rstrip().endswith("…")
+    assert "…" in summary_head
 
 
 @pytest.mark.asyncio
@@ -1458,8 +1512,8 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     head, sep, tail = completion_comment.partition("\n\n**Timeline**")
     assert sep == "\n\n**Timeline**"
     assert head.strip().startswith("**Symphony completed:**")
-    assert "**Run branch:**" in head
-    assert "Move this issue to Done" in head
+    assert "**Run branch:**" not in head
+    assert "move this issue back to Todo to continue" in head
     assert "- verdict: agent-clean-review" in tail
     assert "- code_sha:" in tail
     assert "- claim_to_finish_ms:" in tail
@@ -2168,7 +2222,7 @@ async def test_due_scheduled_ticket_does_not_send_release_notification(tmp_path:
 
     assert result.issue_id == "scheduled"
     mock_send.assert_called_once()
-    assert "awaiting operator Done landing" in mock_send.call_args.args[0]
+    assert "Conversation response ready" in mock_send.call_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -3620,8 +3674,8 @@ async def test_run_tick_cleans_worktree_on_nonzero_exit(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_tick_retains_worktree_on_success(tmp_path: Path) -> None:
-    """A successful Run must retain its worktree for operator review."""
+async def test_run_tick_cleans_worktree_on_clean_conversation_success(tmp_path: Path) -> None:
+    """A clean conversation Run should clean up its review worktree."""
     import subprocess
     from run_worktree import create_worktree
 
@@ -3650,7 +3704,7 @@ async def test_run_tick_retains_worktree_on_success(tmp_path: Path) -> None:
     )
 
     assert result.reason == "agent-clean-review"
-    assert wt.exists(), "worktree must remain after success for review"
+    assert not wt.exists(), "clean conversation worktree must be removed after success"
 
 
 # --- Per-binding dispatch state isolation ---
@@ -3846,7 +3900,7 @@ async def test_plane_rate_limit_records_per_binding_cooldown(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
-async def test_run_tick_clean_exit_moves_to_in_review_and_retains_worktree(tmp_path: Path) -> None:
+async def test_run_tick_clean_exit_moves_to_in_review_and_cleans_conversation_worktree(tmp_path: Path) -> None:
     from run_worktree import worktree_path
 
     repo = tmp_path / "homelab"
@@ -3932,6 +3986,35 @@ async def test_done_landing_commits_merges_and_deletes_worktree_and_branch(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_done_landing_removes_has_worktree_label(tmp_path: Path) -> None:
+    from run_worktree import create_worktree
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, base_branch="main")
+    label_roles = dict(DEFAULT_CONTRACT.label_roles)
+    label_roles[TrackerRole.HAS_WORKTREE] = RoleBinding("has-worktree", "label-worktree")
+    contract = replace(DEFAULT_CONTRACT, label_roles=label_roles)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.DONE.value, labels=["label-worktree"]),
+        "identifier": "issue-1",
+    }
+    run_id = _run_id_from_identifier_for_tests("issue-1")
+    wt = create_worktree(config, run_id, base_branch="main")
+    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
+
+    landed = await scheduler.reconcile_done_landing(
+        config,
+        PlaneAdapter(contract=contract, transport=transport),
+    )
+
+    labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
+    assert landed == 1
+    assert TrackerRole.HAS_WORKTREE.value not in labels
+
+
+@pytest.mark.asyncio
 async def test_done_landing_conflict_blocks_and_preserves_evidence(tmp_path: Path) -> None:
     import subprocess
     from run_worktree import create_worktree, worktree_branch, worktree_path
@@ -3989,7 +4072,7 @@ def test_dirty_base_approval_parser_uses_newest_valid_comment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_done_landing_dirty_base_requires_plane_comment_token(tmp_path: Path) -> None:
+async def test_done_landing_dirty_base_auto_commits_without_plane_token(tmp_path: Path) -> None:
     import subprocess
     from run_worktree import create_worktree, worktree_branch, worktree_path
 
@@ -4001,24 +4084,25 @@ async def test_done_landing_dirty_base_requires_plane_comment_token(tmp_path: Pa
     transport = FakeTransport()
     transport.issues["issue-1"] = {**_issue("issue-1", state=PlaneState.DONE.value), "identifier": "issue-1"}
     run_id = _run_id_from_identifier_for_tests("issue-1")
-    create_worktree(config, run_id, base_branch="main")
+    wt = create_worktree(config, run_id, base_branch="main")
+    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
 
     landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
 
-    assert landed == 0
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    assert worktree_path(config, run_id).exists()
+    assert landed == 1
+    assert transport.issues["issue-1"]["state"] == PlaneState.DONE.value
+    assert not worktree_path(config, run_id).exists()
     branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert worktree_branch(run_id) in branches.stdout
-    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Plane approval required" in blocked_comment
-    assert "operator-wip.txt" in blocked_comment
-    assert "Symphony-Landing: auto-commit-base" in blocked_comment
-    assert "Dirty-Base-Token:" in blocked_comment
+    assert branches.stdout.strip() == ""
+    landing_comment = transport.comments["issue-1"][-1]["comment_html"]
+    assert "Base pre-landing commit" in landing_comment
+    assert "Landing HEAD" in landing_comment
+    assert (repo / "operator-wip.txt").read_text(encoding="utf-8") == "operator work\n"
+    assert (repo / "landed.txt").read_text(encoding="utf-8") == "landed\n"
 
 
 @pytest.mark.asyncio
-async def test_done_landing_plane_comment_approval_auto_commits_dirty_base(tmp_path: Path) -> None:
+async def test_done_landing_stale_plane_comment_still_auto_commits_dirty_base(tmp_path: Path) -> None:
     import subprocess
     from run_worktree import create_worktree, worktree_branch, worktree_path
 
@@ -4056,7 +4140,7 @@ async def test_done_landing_plane_comment_approval_auto_commits_dirty_base(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_done_landing_dirty_base_token_mismatch_blocks(tmp_path: Path) -> None:
+async def test_done_landing_dirty_base_token_mismatch_no_longer_blocks(tmp_path: Path) -> None:
     import subprocess
     from run_worktree import create_worktree, worktree_branch, worktree_path
 
@@ -4076,18 +4160,19 @@ async def test_done_landing_dirty_base_token_mismatch_blocks(tmp_path: Path) -> 
         }
     ]
     run_id = _run_id_from_identifier_for_tests("issue-1")
-    create_worktree(config, run_id, base_branch="main")
+    wt = create_worktree(config, run_id, base_branch="main")
+    (wt / "landed.txt").write_text("landed\n", encoding="utf-8")
 
     landed = await scheduler.reconcile_done_landing(config, _adapter(transport))
 
-    assert landed == 0
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    assert worktree_path(config, run_id).exists()
+    assert landed == 1
+    assert transport.issues["issue-1"]["state"] == PlaneState.DONE.value
+    assert not worktree_path(config, run_id).exists()
     branches = subprocess.run(["git", "branch", "--list", worktree_branch(run_id)], cwd=repo, capture_output=True, text=True, check=True)
-    assert worktree_branch(run_id) in branches.stdout
-    blocked_comment = transport.comments["issue-1"][-1]["comment_html"]
-    assert "Dirty-Base-Token:" in blocked_comment
-    assert token not in blocked_comment
+    assert branches.stdout.strip() == ""
+    landing_comment = transport.comments["issue-1"][-1]["comment_html"]
+    assert "Base pre-landing commit" in landing_comment
+    assert "Dirty-Base-Token:" not in landing_comment
 
 
 @pytest.mark.asyncio

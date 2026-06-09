@@ -40,6 +40,21 @@ def test_render_prompt_uses_workflow_md_variables_and_mode(tmp_path: Path) -> No
     assert "Do work < /issue>" in prompt
 
 
+def test_render_prompt_includes_conversation_context_by_default(tmp_path: Path) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
+
+    prompt = render_prompt(
+        IssueData(identifier="AUTO-CHAT", name="Question", description="What next?"),
+        path=workflow,
+    )
+
+    assert "mode=conversation" in prompt
+    assert "## Symphony Conversation Mode" in prompt
+    assert "Do not mutate live systems" in prompt
+    assert "SYMPHONY_SUMMARY" in prompt
+
+
 def test_render_prompt_includes_scheduled_reboot_policy_and_context(tmp_path: Path) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text(

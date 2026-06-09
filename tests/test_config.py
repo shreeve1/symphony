@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from config import ConfigError, SymphonyConfig, _truthy
+from plane_adapter import InMemoryTransport, build_adapter
+from tracker_contract import TrackerRole
 
 
 _NO_BINDINGS_YML = "/nonexistent/symphony-bindings.yml"
@@ -212,6 +214,28 @@ def test_binding_resolves_agent_label_override():
     assert binding.resolve_agent(()) == "pi"
     assert binding.resolve_agent(("agent:claude",)) == "claude"
     assert binding.resolve_agent(("agent:pi",)) == "pi"
+
+
+def test_repository_bindings_allow_blank_optional_has_worktree_uuid():
+    bindings_path = Path(__file__).resolve().parents[1] / "bindings.yml"
+
+    config = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+    assert len(config.bindings) >= 1
+    for binding in config.bindings:
+        role = binding.tracker_contract.optional_label_binding(TrackerRole.HAS_WORKTREE)
+        assert role is not None
+        assert role.name == "has-worktree"
+        adapter = build_adapter(InMemoryTransport(), contract=binding.tracker_contract)
+        assert adapter.contract is binding.tracker_contract
 
 
 def test_bindings_yml_missing_required_field_names_field(tmp_path: Path):

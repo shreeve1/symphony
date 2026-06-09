@@ -27,6 +27,7 @@ STANDARD_PROJECT_LABELS: tuple[str, ...] = (
     "plan",
     "build",
     "approval-required",
+    "has-worktree",
     "agent:claude",
     "agent:pi",
 )
@@ -42,6 +43,7 @@ _LABEL_ROLE_BY_NAME: dict[str, TrackerRole] = {
     "plan": TrackerRole.MODE_PLAN,
     "build": TrackerRole.MODE_BUILD,
     "approval-required": TrackerRole.APPROVAL_REQUIRED,
+    "has-worktree": TrackerRole.HAS_WORKTREE,
 }
 _EXTRA_LABEL_NAMES: tuple[str, ...] = ("agent:claude", "agent:pi")
 
@@ -54,7 +56,7 @@ schedule context. Keep repo-specific policy here; Symphony only renders it.
 
 ## Modes
 
-- execute: Routine implementation or operations work.
+- conversation: Default read-only prompt/response turn.
 - plan: Produce a reviewable plan artifact; do not change production code.
 - build: Implement an approved plan.
 

@@ -17,6 +17,7 @@ class TrackerRole(str, Enum):
     APPROVAL_REQUIRED = "approval-required"
     APPROVED = "approved"
     SCHEDULED = "scheduled"
+    HAS_WORKTREE = "has-worktree"
     STATE_TODO = "state:todo"
     STATE_IN_REVIEW = "state:in-review"
     STATE_RUNNING = "state:running"
@@ -70,6 +71,7 @@ class PlaneLabel(str, Enum):
     BUILD = "build"
     APPROVED = "approved"
     SCHEDULED = "scheduled"
+    HAS_WORKTREE = "has-worktree"
 
 
 STATE_TO_ROLE: dict[PlaneState, TrackerRole] = {
@@ -86,6 +88,7 @@ LABEL_TO_ROLE: dict[PlaneLabel, TrackerRole] = {
     PlaneLabel.APPROVAL_REQUIRED: TrackerRole.APPROVAL_REQUIRED,
     PlaneLabel.APPROVED: TrackerRole.APPROVED,
     PlaneLabel.SCHEDULED: TrackerRole.SCHEDULED,
+    PlaneLabel.HAS_WORKTREE: TrackerRole.HAS_WORKTREE,
 }
 
 ROLE_TO_COMPAT_LABEL: dict[TrackerRole, PlaneLabel] = {
@@ -275,6 +278,7 @@ DEFAULT_CONTRACT = TrackerContract(
         TrackerRole.MODE_BUILD: RoleBinding("build", "4ffc7ef9-9159-455c-b3f9-b3a447157aef"),
         TrackerRole.APPROVED: RoleBinding("approved", "67839626-ca7f-4c02-a5e0-12e56a35d909"),
         TrackerRole.SCHEDULED: RoleBinding("scheduled", "9ac7586e-8745-4c22-8a9d-aa83652bee3e"),
+        TrackerRole.HAS_WORKTREE: RoleBinding("has-worktree"),
     },
     extra_label_ids={
         "patrol": "74f5ab2e-a567-4f8b-8dcf-0908c7ea9ceb",

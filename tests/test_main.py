@@ -47,7 +47,7 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     assert captured["issue"].name == "Check proxy"
     assert captured["issue"].description == "Verify proxy container"
     assert captured["issue"].labels == "media, maintenance"
-    assert captured["issue"].mode == "execute"
+    assert captured["issue"].mode == "conversation"
     assert captured["path"] == tmp_path / "WORKFLOW.md"
     assert captured["issue"].schedule_not_before == "2026-05-08T20:00:00+00:00"
     assert captured["issue"].schedule_not_after == "2026-05-08T22:00:00+00:00"

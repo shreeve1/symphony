@@ -85,6 +85,7 @@ _PLAN_HANDOFF_MARKER = "Symphony completed plan."
 DIRTY_BASE_APPROVAL_COMMAND = "Symphony-Landing: auto-commit-base"
 DIRTY_BASE_TOKEN_PREFIX = "Dirty-Base-Token:"
 DIRTY_BASE_STATUS_MAX_LINES = 20
+HAS_WORKTREE_LABEL_NAME = "has-worktree"
 
 
 @dataclass
@@ -419,7 +420,7 @@ def _resolve_mode(
         return "build"
     if _labels_contain_role(labels, tracker, TrackerRole.MODE_PLAN):
         return "plan"
-    return "execute"
+    return "conversation"
 
 
 def _binding_approval_enabled(config: SymphonyConfig) -> bool:
@@ -689,11 +690,6 @@ async def reconcile_done_landing(
         run_id = _run_id_from_identifier(identifier)
         if not _run_branch_exists(config, run_id) and not worktree_path(config, run_id).exists():
             continue
-        approved_dirty_base_token = None
-        if _repo_dirty(config.homelab_repo_path):
-            approved_dirty_base_token = _dirty_base_approval_token_from_comments(
-                await adapter.list_comments(issue_id)
-            )
         try:
             landing_summary = _land_done_issue(
                 config,
@@ -701,7 +697,6 @@ async def reconcile_done_landing(
                 issue_identifier=identifier,
                 issue_name=name,
                 issue_id=issue_id,
-                approved_dirty_base_token=approved_dirty_base_token,
             )
         except LandingFailed as exc:
             message = f"Done landing failed: {exc}"
@@ -719,6 +714,10 @@ async def reconcile_done_landing(
                 dashboard_url=dashboard_url,
             )
             continue
+        try:
+            await _remove_has_worktree_label_if_available(adapter, issue_id)
+        except Exception as exc:
+            LOGGER.warning("has_worktree_label_remove_failed issue_id=%s error=%s", issue_id, exc)
         await adapter.add_comment(issue_id, CommentPayload(body=landing_summary))
         landed += 1
     return landed
@@ -757,9 +756,6 @@ def _land_done_issue(
     if _repo_dirty(config.homelab_repo_path):
         if _repo_operation_in_progress(config.homelab_repo_path):
             raise LandingFailed("binding base checkout has a git operation in progress; refusing to merge")
-        token, summary = _dirty_base_snapshot(config.homelab_repo_path)
-        if approved_dirty_base_token != token:
-            raise LandingFailed(_dirty_base_approval_message(summary, token))
         try:
             base_prelanding_sha = _auto_commit(
                 config.homelab_repo_path,
@@ -830,6 +826,39 @@ def _invoke_agent_runner(
         if "worktree_path" not in str(exc):
             raise
         return agent_runner(candidate, prompt)
+
+
+async def _has_worktree_label_available(adapter: TrackerAdapter) -> bool:
+    binding = adapter.contract.optional_label_binding(TrackerRole.HAS_WORKTREE)
+    if binding is None:
+        return False
+    if not binding.uuid and hasattr(adapter, "resolve_label_uuids"):
+        try:
+            await adapter.resolve_label_uuids([binding.name])  # type: ignore[attr-defined]
+        except ValueError:
+            return False
+    resolved_ids = getattr(adapter, "resolved_label_ids", {})
+    return bool(binding.uuid or binding.name in resolved_ids)
+
+
+async def _add_has_worktree_label_if_available(
+    adapter: TrackerAdapter,
+    issue_id: str,
+) -> bool:
+    if not await _has_worktree_label_available(adapter):
+        return False
+    await adapter.add_labels(issue_id, [TrackerRole.HAS_WORKTREE])
+    return True
+
+
+async def _remove_has_worktree_label_if_available(
+    adapter: TrackerAdapter,
+    issue_id: str,
+) -> bool:
+    if not await _has_worktree_label_available(adapter):
+        return False
+    await adapter.remove_labels(issue_id, [TrackerRole.HAS_WORKTREE])
+    return True
 
 
 async def run_tick(
@@ -1335,14 +1364,35 @@ async def run_tick(
             verdict = _parse_result_marker(stdout)
             summary = _extract_summary(result, secrets)
 
-            def _completion_body(verdict_label: str) -> str:
+            def _completion_body(verdict_label: str, *, worktree_label_added: bool) -> str:
+                if mode == "conversation":
+                    if summary:
+                        body = f"**Symphony completed:** {summary}"
+                    else:
+                        body = "**Symphony completed:** Agent finished without a summary."
+                    if dirty_after_agent:
+                        body += f"\n\n**Run branch:** `{worktree_branch(run_id)}`"
+                        if worktree_label_added:
+                            body += f"\n**Run worktree label:** `{HAS_WORKTREE_LABEL_NAME}`"
+                        if dirty_stat and dirty_stat != "No diff stat available":
+                            body += f"\n\n**Pending diff stat:**\n```\n{dirty_stat}\n```"
+                        body += "\n\nMove this issue to Done to land the retained work, or move it back to Todo to keep talking."
+                    else:
+                        body += "\n\nReply with a Plane comment and move this issue back to Todo to continue. Add the `plan` label when you want Symphony to create a plan."
+                    body += "\n\n" + _format_timeline(
+                        claim_dt, now,
+                        duration_ms=result.duration_ms,
+                        verdict=verdict_label,
+                    )
+                    return body
+
                 if summary:
                     body = f"**Symphony completed:** {summary}"
                 else:
                     body = "**Symphony completed:**"
                 body += f"\n\n**Run branch:** `{worktree_branch(run_id)}`"
-                if wt_path is not None:
-                    body += f"\n**Run worktree:** `{wt_path}`"
+                if worktree_label_added:
+                    body += f"\n**Run worktree label:** `{HAS_WORKTREE_LABEL_NAME}`"
                 if dirty_stat and dirty_stat != "No diff stat available":
                     body += f"\n\n**Pending diff stat:**\n```\n{dirty_stat}\n```"
                 body += "\n\nMove this issue to Done to land the work, or move it back to Todo to rerun."
@@ -1380,10 +1430,25 @@ async def run_tick(
                 return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
 
             reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
-            retain_run_worktree = True
+            retain_run_worktree = mode != "conversation" or dirty_after_agent
+            worktree_label_added = False
+            if mode == "conversation" and not dirty_after_agent:
+                try:
+                    await _remove_has_worktree_label_if_available(adapter, candidate.id)
+                except PlaneRateLimitError:
+                    raise
+                except Exception as exc:
+                    LOGGER.warning("has_worktree_label_remove_failed issue_id=%s error=%s", candidate.id, exc)
+            if retain_run_worktree and wt_path is not None:
+                try:
+                    worktree_label_added = await _add_has_worktree_label_if_available(adapter, candidate.id)
+                except PlaneRateLimitError:
+                    raise
+                except Exception as exc:
+                    LOGGER.warning("has_worktree_label_failed issue_id=%s error=%s", candidate.id, exc)
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=_completion_body(reason_code)),
+                CommentPayload(body=_completion_body(reason_code, worktree_label_added=worktree_label_added)),
             )
             await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
             LOGGER.info(
@@ -1394,7 +1459,11 @@ async def run_tick(
             _iu, _du = _build_urls(config, candidate.id)
             await _notify_review(
                 notifier, candidate.name, candidate.identifier,
-                reason="Agent completed, awaiting operator Done landing",
+                reason=(
+                    "Conversation response ready"
+                    if mode == "conversation"
+                    else "Agent completed, awaiting operator Done landing"
+                ),
                 issue_url=_iu,
                 dashboard_url=_du,
             )

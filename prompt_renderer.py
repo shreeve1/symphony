@@ -24,7 +24,7 @@ class IssueData:
     name: str = ""
     description: str = ""
     labels: str = ""
-    mode: str = "execute"
+    mode: str = "conversation"
     schedule_not_before: str = ""
     schedule_not_after: str = ""
     schedule_reason: str = ""
@@ -138,6 +138,25 @@ def _render_schedule_context(issue: IssueData) -> str:
     return "\n".join(lines)
 
 
+def _render_conversation_context(issue: IssueData) -> str:
+    if issue.mode != "conversation":
+        return ""
+    return "\n".join(
+        [
+            "## Symphony Conversation Mode",
+            "This run is a conversation turn, not implementation, landing, or plan/build execution.",
+            "- Read the issue and previous comments as prompt context.",
+            "- Do not mutate live systems, edit files, create commits, restart services, or change Plane state.",
+            "- Answer with a concise summary or ask the exact next question needed.",
+            "- Emit `SYMPHONY_SUMMARY: <answer or question>` on stdout.",
+            "- Emit `SYMPHONY_RESULT: review` on stdout when finished.",
+            "- Do not call `plane done`, `plane review`, or `plane blocked` unless a real safety blocker prevents even answering.",
+            "- To request a plan, tell the operator to add the `plan` label and move the issue to Todo.",
+            "- To continue the conversation, tell the operator to reply in Plane and move the issue to Todo.",
+        ]
+    )
+
+
 def render_prompt(issue: IssueData, *, path: Path) -> str:
     _cfg, body = load_workflow(path)
     rendered = _substitute(body, issue)
@@ -145,6 +164,10 @@ def render_prompt(issue: IssueData, *, path: Path) -> str:
     schedule_context = _render_schedule_context(issue)
     if schedule_context:
         rendered = f"{rendered}\n\n{schedule_context}"
+
+    conversation_context = _render_conversation_context(issue)
+    if conversation_context:
+        rendered = f"{rendered}\n\n{conversation_context}"
 
     issue_block = (
         f"<issue>\n"

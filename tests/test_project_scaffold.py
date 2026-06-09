@@ -117,9 +117,10 @@ async def test_project_scaffold_mock_creates_template_binding_and_workflow(tmp_p
     assert binding.tracker_contract.state_roles[TrackerRole.STATE_TODO].uuid == "state-0"
     assert binding.tracker_contract.label_roles[TrackerRole.MODE_PLAN].uuid == "label-0"
     assert binding.tracker_contract.label_roles[TrackerRole.APPROVAL_REQUIRED].uuid == "label-2"
+    assert binding.tracker_contract.label_roles[TrackerRole.HAS_WORKTREE].uuid == "label-3"
     assert binding.tracker_contract.extra_label_ids == {
-        "agent:claude": "label-3",
-        "agent:pi": "label-4",
+        "agent:claude": "label-4",
+        "agent:pi": "label-5",
     }
 
 

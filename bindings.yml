@@ -44,6 +44,8 @@ bindings:
       scheduled:
         name: scheduled
         uuid: 9ac7586e-8745-4c22-8a9d-aa83652bee3e
+      has-worktree:
+        name: has-worktree
     extra_label_ids:
       patrol: 74f5ab2e-a567-4f8b-8dcf-0908c7ea9ceb
       security: 618c2146-78d0-4955-a651-bd0c7ad5712e
@@ -95,6 +97,8 @@ bindings:
       approval-required:
         name: approval-required
         uuid: 0d492a5f-4d6f-4937-90ca-909cf7f185b7
+      has-worktree:
+        name: has-worktree
     extra_label_ids:
       agent:claude: 2a969e9f-69e2-47a3-a6d0-1c9349fd62c1
       agent:pi: 784b2719-39ed-4ce9-9f8e-f07224b33df1
