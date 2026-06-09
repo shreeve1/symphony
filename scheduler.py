@@ -1513,6 +1513,63 @@ async def _dispatch_one(
         return result
 
 
+async def _retain_stale_running_worktree_for_review(
+    adapter: TrackerAdapter,
+    issue_id: str,
+    issue_name: str,
+    issue_identifier: str,
+    config: SymphonyConfig | None,
+    *,
+    notifier: TelegramNotifier | None = None,
+) -> bool:
+    """Move a stale Running issue to review when its Run Worktree still exists."""
+
+    if config is None or not _is_git_repo(config.homelab_repo_path):
+        return False
+    run_id = _run_id_from_identifier(issue_identifier)
+    wt_path = worktree_path(config, run_id)
+    if not wt_path.exists():
+        return False
+
+    worktree_label_added = False
+    try:
+        worktree_label_added = await _add_has_worktree_label_if_available(adapter, issue_id)
+    except PlaneRateLimitError:
+        raise
+    except Exception as exc:
+        LOGGER.warning("has_worktree_label_failed issue_id=%s error=%s", issue_id, exc)
+
+    body = (
+        "**Symphony retained stale Running work for review.**\n\n"
+        "The claim timed out before Symphony could finish Plane reconciliation, "
+        "but the Run Worktree still exists. Retaining evidence is safer than "
+        "blocking and deleting it.\n\n"
+        f"**Run branch:** `{worktree_branch(run_id)}`\n"
+        f"**Run worktree:** `{wt_path}`\n"
+    )
+    if worktree_label_added:
+        body += f"**Run worktree label:** `{HAS_WORKTREE_LABEL_NAME}`\n"
+    body += "\nMove this issue to Done to land the retained work, or move it back to Todo to rerun."
+    await adapter.add_comment(issue_id, CommentPayload(body=body))
+    await adapter.transition_state(issue_id, TrackerRole.STATE_IN_REVIEW)
+    LOGGER.info(
+        "stale_running_retained_for_review issue_id=%s run_id=%s path=%s",
+        issue_id,
+        run_id,
+        wt_path,
+    )
+    issue_url, dashboard_url = _build_urls(config, issue_id)
+    await _notify_review(
+        notifier,
+        issue_name,
+        issue_identifier,
+        reason="Stale Running claim retained for operator review",
+        issue_url=issue_url,
+        dashboard_url=dashboard_url,
+    )
+    return True
+
+
 async def reconcile_stale_running(
     adapter: TrackerAdapter,
     run_timeout_ms: int,
@@ -1521,7 +1578,7 @@ async def reconcile_stale_running(
     notifier: TelegramNotifier | None = None,
     config: SymphonyConfig | None = None,
 ) -> None:
-    """Block Running issues whose durable claim comment is stale."""
+    """Reconcile Running issues whose durable claim comment is stale."""
 
     for issue in await adapter.list_issues_by_state(
         TrackerRole.STATE_RUNNING,
@@ -1535,6 +1592,15 @@ async def reconcile_stale_running(
         if now() - claim_time > timedelta(milliseconds=run_timeout_ms):
             issue_name = str(issue.get("name", ""))
             issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+            if await _retain_stale_running_worktree_for_review(
+                adapter,
+                issue_id,
+                issue_name,
+                issue_identifier,
+                config,
+                notifier=notifier,
+            ):
+                continue
             issue_url, dashboard_url = _build_urls(config, issue_id)
             await _block_issue(
                 adapter, issue_id, "Symphony claim timed out after scheduler restart",
@@ -1589,8 +1655,22 @@ async def reconcile_startup(
                 "claim_time": claim_time,
             })
 
-    # Reap stale Running issues first (transition to Blocked, then clean worktree).
+    # Reap stale Running issues first. If a claimed Run still has a worktree,
+    # retain it for review instead of deleting evidence after a post-agent
+    # Plane outage/rate-limit window.
     for issue in stale_running_issues:
+        if issue["claim_time"] is not None and await _retain_stale_running_worktree_for_review(
+            adapter,
+            str(issue["id"]),
+            str(issue["name"]),
+            str(issue["identifier"]),
+            config,
+            notifier=notifier,
+        ):
+            kill_tmux_session(issue["run_id"])
+            cleaned += 1
+            continue
+
         issue_url, dashboard_url = _build_urls(config, issue["id"])
         if issue["claim_time"] is None:
             message = "Symphony claim missing after scheduler restart"

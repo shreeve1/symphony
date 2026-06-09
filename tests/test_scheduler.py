@@ -665,6 +665,36 @@ async def test_reconcile_stale_running_blocks_expired_claim(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_reconcile_stale_running_retains_existing_worktree_for_review(tmp_path: Path) -> None:
+    from run_worktree import _run_id_from_identifier, create_worktree, worktree_path
+
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.RUNNING.value),
+        "identifier": "issue-1",
+    }
+    transport.comments["issue-1"] = [
+        {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
+    ]
+    run_id = _run_id_from_identifier("issue-1")
+    create_worktree(config, run_id, base_branch="main")
+
+    await reconcile_stale_running(
+        _adapter(transport),
+        1000,
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+        config=config,
+    )
+
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert any("retained stale Running work" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert worktree_path(config, run_id).exists()
+
+
+@pytest.mark.asyncio
 async def test_reconcile_uses_newest_claim_comment(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
@@ -2806,8 +2836,8 @@ async def test_run_tick_recovers_existing_orphan_worktree_before_dispatch(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_reconcile_stale_running_removes_orphan_worktree(tmp_path: Path) -> None:
-    from run_worktree import _run_id_from_identifier, create_worktree, worktree_path
+async def test_reconcile_stale_running_retains_orphan_worktree_for_review(tmp_path: Path) -> None:
+    from run_worktree import create_worktree, worktree_path
 
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
@@ -2833,8 +2863,9 @@ async def test_reconcile_stale_running_removes_orphan_worktree(tmp_path: Path) -
         config=config,
     )
 
-    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    assert not wt_path.exists()
+    assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    assert any("retained stale Running work" in c["comment_html"] for c in transport.comments["issue-1"])
+    assert wt_path.exists()
 
 
 def test_auto_commit_creates_commit_under_symphony_identity(tmp_path: Path) -> None:
