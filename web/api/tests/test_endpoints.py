@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
@@ -62,3 +63,23 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         cwd=Path(__file__).resolve().parents[3],
         env=env,
     )
+
+
+def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:
+    # Regression: FastAPI runs the sync get_connection dependency and the sync
+    # endpoint in different anyio threadpool threads. Without
+    # check_same_thread=False on the SQLite connection, concurrent requests hit
+    # "SQLite objects created in a thread can only be used in that same thread"
+    # and return 500. Fire many requests in parallel so the threadpool spreads
+    # them across worker threads and the cross-thread path is exercised.
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        def fetch_bindings(_: int) -> int:
+            return client.get("/api/bindings").status_code
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            statuses = list(pool.map(fetch_bindings, range(64)))
+
+    assert statuses == [200] * 64

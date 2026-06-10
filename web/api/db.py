@@ -29,7 +29,12 @@ def database_url() -> str:
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or resolve_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    # check_same_thread=False: FastAPI runs the sync get_connection dependency
+    # and the sync endpoint in different anyio threadpool threads, so a
+    # per-request connection is legitimately created in one thread and used in
+    # another. The connection is never shared *concurrently* (one request,
+    # sequential yield->endpoint->close), so disabling the guard is safe here.
+    connection = sqlite3.connect(path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
