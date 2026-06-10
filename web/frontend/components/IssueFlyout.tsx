@@ -187,50 +187,6 @@ function ChipText({
   );
 }
 
-function ChipNumber({
-  label,
-  field,
-  value,
-  onPatch,
-}: {
-  label: string;
-  field: keyof IssuePatch;
-  value: number | null;
-  onPatch: OnPatch;
-}) {
-  const serverDraft = value == null ? "" : String(value);
-  const [draft, setDraft] = useDraft(serverDraft);
-  const commit = () => {
-    const trimmed = draft.trim();
-    // Digits-only: parseInt would silently truncate "3.9" or "12abc".
-    if (trimmed !== "" && !/^\d+$/.test(trimmed)) {
-      setDraft(serverDraft);
-      return;
-    }
-    const next = trimmed === "" ? null : Number.parseInt(trimmed, 10);
-    if (next !== null && next < 1) {
-      setDraft(serverDraft); // the backend would 422; reject locally instead
-      return;
-    }
-    if (next !== value) onPatch({ [field]: next });
-  };
-  return (
-    <ChipShell label={label}>
-      <input
-        data-testid={`edit-${field}`}
-        value={draft}
-        placeholder="—"
-        inputMode="numeric"
-        size={Math.max(4, draft.length)}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        className="bg-transparent font-medium outline-none"
-      />
-    </ChipShell>
-  );
-}
-
 function ChipToggle({
   label,
   field,
@@ -257,7 +213,6 @@ function ChipToggle({
   );
 }
 
-const PRIORITIES = ["low", "med", "high", "urgent"] as const;
 const EFFORTS = ["minimal", "low", "medium", "high"] as const;
 const STATE_KEYS = STATES.map((s) => s.key);
 
@@ -276,10 +231,8 @@ function MetadataChips({
       <ChipSelect label="skill" field="preferred_skill" value={issue.preferred_skill} options={skillNames} allowEmpty onPatch={onPatch} />
       <ChipText label="agent" field="preferred_agent" value={issue.preferred_agent} onPatch={onPatch} />
       <ChipText label="model" field="preferred_model" value={issue.preferred_model} onPatch={onPatch} />
-      <ChipSelect label="priority" field="priority" value={issue.priority} options={PRIORITIES} allowEmpty onPatch={onPatch} />
       <ChipSelect label="effort" field="reasoning_effort" value={issue.reasoning_effort} options={EFFORTS} onPatch={onPatch} />
       <ChipToggle label="worktree" field="worktree_active" value={issue.worktree_active} onPatch={onPatch} />
-      <ChipNumber label="max s" field="max_duration_seconds" value={issue.max_duration_seconds} onPatch={onPatch} />
       <ChipText label="base" field="base_branch" value={issue.base_branch} onPatch={onPatch} />
     </div>
   );

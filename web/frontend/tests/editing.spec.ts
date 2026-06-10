@@ -37,14 +37,6 @@ test("typed column and comments edits persist across reload", async ({
   await state.selectOption(nextState);
   await patched;
 
-  // priority chip (select)
-  const priority = page.getByTestId("edit-priority");
-  const nextPriority =
-    (await priority.inputValue()) === "urgent" ? "med" : "urgent";
-  patched = waitForPatch(page);
-  await priority.selectOption(nextPriority);
-  await patched;
-
   // preferred_skill chip (select fed by the seeded skill catalog)
   const skill = page.getByTestId("edit-preferred_skill");
   const nextSkill = (await skill.inputValue()) === "tdd" ? "code-review" : "tdd";
@@ -75,7 +67,6 @@ test("typed column and comments edits persist across reload", async ({
   await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
   await expect(page.getByTestId("edit-state")).toHaveValue(nextState);
-  await expect(page.getByTestId("edit-priority")).toHaveValue(nextPriority);
   await expect(page.getByTestId("edit-preferred_skill")).toHaveValue(nextSkill);
   await expect(page.getByTestId("edit-worktree_active")).toHaveAttribute(
     "aria-pressed",

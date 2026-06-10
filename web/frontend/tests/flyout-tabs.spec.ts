@@ -10,9 +10,10 @@ test("flyout switches between Comments and Context tabs", async ({
   await cards.first().click();
   await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
-  // All nine metadata chips render (#013 added effort, max s, base).
+  // All seven metadata chips render (#013 added effort and base; priority and
+  // max s were dropped from the flyout by operator request).
   const chips = page.getByTestId("metadata-chips").locator("> span");
-  await expect(chips).toHaveCount(9);
+  await expect(chips).toHaveCount(7);
 
   // Comments tab is selected by default; #013 renders the blob in an editor
   // textarea, so assert on its value rather than rendered text.
