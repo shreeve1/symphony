@@ -1,6 +1,6 @@
 # Podium web stack
 
-Podium is Symphony's native operator console. Issue `012a` adds the backend API only.
+Podium is Symphony's native operator console. Issue `012a` adds the backend API; `012b` adds the frontend shell under `web/frontend/`.
 
 ## API dev loop
 
@@ -78,6 +78,33 @@ For a custom database:
 rm -f "$PODIUM_DB_PATH"
 cd /home/james/symphony
 alembic upgrade head
+```
+
+## Frontend dev loop
+
+The frontend (Next.js App Router) lives under `web/frontend/` and listens on
+`127.0.0.1:8091`. It proxies `/api/*` to the backend on `127.0.0.1:8090` via a
+Next rewrite, so start the API first (see *API dev loop* above).
+
+```bash
+cd web/frontend
+pnpm install
+pnpm dev          # next dev -H 127.0.0.1 -p 8091
+```
+
+Then open http://localhost:8091/. Override the backend origin with
+`PODIUM_API_ORIGIN` if it is not on `127.0.0.1:8090`.
+
+## Frontend e2e tests
+
+Playwright spins up both servers itself (`uv run uvicorn` on 8090 and
+`pnpm dev` on 8091), so no servers need to be running first. Browser binaries
+must be installed once:
+
+```bash
+cd web/frontend
+pnpm exec playwright install chromium
+pnpm test:e2e
 ```
 
 ## Tests
