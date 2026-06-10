@@ -17,9 +17,10 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
   const skill = page.getByTestId("new-issue-skill");
   await expect(skill.locator("option").nth(1)).toBeAttached();
   await skill.selectOption({ index: 1 });
-  // Optional flyout-parity fields flow through to the created row.
+  // Optional flyout-parity fields flow through to the created row. Agent
+  // options load from /api/bindings/homelab/options; selectOption waits.
   await page.getByTestId("new-issue-effort").selectOption("low");
-  await page.getByTestId("new-issue-agent").fill("pi");
+  await page.getByTestId("new-issue-agent").selectOption("pi");
 
   const created = page.waitForResponse(
     (res) =>

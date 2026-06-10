@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -167,6 +168,58 @@ def list_binding_issues(
         (name,),
     ).fetchall()
     return [_row(row) for row in rows]
+
+
+# Agents mirror the scheduler's validation set (config.py `_validate_agent`).
+# Models are a curated placeholder until a real catalog exists — the column
+# stays free text server-side, so the list only shapes the UI dropdown.
+KNOWN_AGENTS = ["pi", "claude"]
+KNOWN_MODELS = [
+    "glm-5.1:high",
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+]
+
+
+@app.get("/api/bindings/{name}/options")
+def binding_issue_options(
+    name: str,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, list[str]]:
+    """Dropdown choices for the new-issue form: static agent/model lists plus
+    the live local branches of the binding's repo."""
+    _get_binding_or_404(connection, name)
+    return {
+        "agents": KNOWN_AGENTS,
+        "models": KNOWN_MODELS,
+        "branches": _branches_for(name),
+    }
+
+
+def _branches_for(name: str) -> list[str]:
+    """Local branch names from the binding's repo_path in bindings.yml. Any
+    failure (missing yml, no repo_path, not a git repo) degrades to an empty
+    list — the form falls back to its server-default placeholder."""
+    try:
+        bindings = _load_bindings(BINDINGS_PATH)
+    except (OSError, yaml.YAMLError):
+        return []
+    repo_path = next(
+        (b.get("repo_path") for b in bindings if b.get("name") == name), None
+    )
+    if not repo_path:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "for-each-ref", "refs/heads",
+             "--format=%(refname:short)"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return sorted(line for line in result.stdout.splitlines() if line)
 
 
 @app.post("/api/bindings/{name}/issues", status_code=201)

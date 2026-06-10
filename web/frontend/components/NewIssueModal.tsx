@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   createIssue,
+  fetchIssueOptions,
   fetchSkills,
   type Issue,
   type IssueCreate,
@@ -82,6 +83,43 @@ export function NewIssueButton({ binding }: { binding: string }) {
   );
 }
 
+// One labelled dropdown in the form grid. The empty option ("—" plus a hint
+// of what the server will default to) means "omit from the POST".
+function FieldSelect({
+  label,
+  testid,
+  value,
+  onChange,
+  options,
+  emptyHint,
+}: {
+  label: string;
+  testid: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly string[];
+  emptyHint?: string;
+}) {
+  return (
+    <label className="block flex-1 space-y-1">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <select
+        data-testid={testid}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full cursor-pointer rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+      >
+        <option value="">{emptyHint ? `— (${emptyHint})` : "—"}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function NewIssueModal({
   binding,
   onClose,
@@ -102,6 +140,11 @@ function NewIssueModal({
   const create = useCreateIssue(binding);
   // Same catalog feed as the flyout chip: free-text skill would 422 on the FK.
   const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
+  // Agent/model/branch dropdown choices (branches read live from the repo).
+  const options = useQuery({
+    queryKey: ["issue-options", binding],
+    queryFn: () => fetchIssueOptions(binding),
+  });
 
   useEffect(() => titleRef.current?.focus(), []);
 
@@ -180,87 +223,51 @@ function NewIssueModal({
           </label>
 
           <div className="flex gap-3">
-            <label className="block flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Skill
-              </span>
-              <select
-                data-testid="new-issue-skill"
-                value={skill}
-                onChange={(e) => setSkill(e.target.value)}
-                className="w-full cursor-pointer rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
-              >
-                <option value="">—</option>
-                {(skills.data ?? []).map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Effort
-              </span>
-              <select
-                data-testid="new-issue-effort"
-                value={effort}
-                onChange={(e) => setEffort(e.target.value)}
-                className="w-full cursor-pointer rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
-              >
-                <option value="">— (high)</option>
-                {EFFORTS.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <FieldSelect
+              label="Skill"
+              testid="new-issue-skill"
+              value={skill}
+              onChange={setSkill}
+              options={(skills.data ?? []).map((s) => s.name)}
+            />
+            <FieldSelect
+              label="Effort"
+              testid="new-issue-effort"
+              value={effort}
+              onChange={setEffort}
+              options={EFFORTS}
+              emptyHint="high"
+            />
           </div>
 
           <div className="flex gap-3">
-            <label className="block flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Agent
-              </span>
-              <input
-                data-testid="new-issue-agent"
-                value={agent}
-                placeholder="binding default"
-                onChange={(e) => setAgent(e.target.value)}
-                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-              />
-            </label>
-
-            <label className="block flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Model
-              </span>
-              <input
-                data-testid="new-issue-model"
-                value={model}
-                placeholder="provider default"
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-              />
-            </label>
+            <FieldSelect
+              label="Agent"
+              testid="new-issue-agent"
+              value={agent}
+              onChange={setAgent}
+              options={options.data?.agents ?? []}
+              emptyHint="binding default"
+            />
+            <FieldSelect
+              label="Model"
+              testid="new-issue-model"
+              value={model}
+              onChange={setModel}
+              options={options.data?.models ?? []}
+              emptyHint="provider default"
+            />
           </div>
 
           <div className="flex gap-3">
-            <label className="block flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Base branch
-              </span>
-              <input
-                data-testid="new-issue-base"
-                value={base}
-                placeholder="bindings.yml default"
-                onChange={(e) => setBase(e.target.value)}
-                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-              />
-            </label>
-
+            <FieldSelect
+              label="Base branch"
+              testid="new-issue-base"
+              value={base}
+              onChange={setBase}
+              options={options.data?.branches ?? []}
+              emptyHint="bindings.yml default"
+            />
             <label className="flex flex-1 items-end gap-2 pb-1.5">
               <input
                 type="checkbox"

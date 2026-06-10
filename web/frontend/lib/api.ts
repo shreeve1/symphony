@@ -88,6 +88,15 @@ export interface IssueCreate {
   base_branch?: string;
 }
 
+// Dropdown choices for the new-issue form. agents/models are static
+// server-side lists; branches are the live local branches of the binding's
+// repo (empty when unavailable).
+export interface IssueOptions {
+  agents: string[];
+  models: string[];
+  branches: string[];
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
@@ -102,6 +111,9 @@ export const fetchSkills = () => getJSON<Skill[]>("/api/skills");
 
 export const fetchBindingIssues = (name: string) =>
   getJSON<Issue[]>(`/api/bindings/${encodeURIComponent(name)}/issues`);
+
+export const fetchIssueOptions = (name: string) =>
+  getJSON<IssueOptions>(`/api/bindings/${encodeURIComponent(name)}/options`);
 
 export const fetchIssue = (id: number) =>
   getJSON<IssueDetail>(`/api/issues/${id}`);

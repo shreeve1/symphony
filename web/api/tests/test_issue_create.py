@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from collections.abc import Iterator
 from importlib import import_module
 from typing import Any, cast
@@ -155,6 +157,57 @@ FAILURE_CASES = [
     ({"title": "ok", "base_branch": 7}, 422),
     ({"title": "ok", "flavor": "grape"}, 400),  # unknown field
 ]
+
+
+def test_options_returns_agents_models_and_branches(
+    client: TestClient, monkeypatch, tmp_path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "main"], check=True)
+    (repo / "f").write_text("x")
+    env = {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "init"],
+        check=True,
+        env={**os.environ, **env},
+    )
+    subprocess.run(["git", "-C", str(repo), "branch", "develop"], check=True)
+
+    custom = tmp_path / "bindings.yml"
+    custom.write_text(
+        f"bindings:\n  - name: trading\n    repo_path: {repo}\n"
+    )
+    monkeypatch.setattr(main, "BINDINGS_PATH", custom)
+
+    response = client.get("/api/bindings/trading/options")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agents"] == ["pi", "claude"]
+    assert "claude-fable-5" in body["models"]
+    assert body["branches"] == ["develop", "main"]
+
+
+def test_options_unknown_binding_returns_404(client: TestClient) -> None:
+    assert client.get("/api/bindings/no-such-binding/options").status_code == 404
+
+
+def test_options_branches_degrade_to_empty_on_bad_repo(
+    client: TestClient, monkeypatch, tmp_path
+) -> None:
+    # repo_path that exists but is not a git repo: branches must be [] not 500.
+    custom = tmp_path / "bindings.yml"
+    custom.write_text(
+        f"bindings:\n  - name: trading\n    repo_path: {tmp_path}\n"
+    )
+    monkeypatch.setattr(main, "BINDINGS_PATH", custom)
+    response = client.get("/api/bindings/trading/options")
+    assert response.status_code == 200
+    assert response.json()["branches"] == []
 
 
 @pytest.mark.parametrize(("body", "expected_status"), FAILURE_CASES)
