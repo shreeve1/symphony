@@ -73,6 +73,18 @@ export interface IssuePatch {
   context_md?: string;
 }
 
+// New-issue payload (#014). state/reasoning_effort/base_branch are server-set;
+// sending them gets a 400.
+export interface IssueCreate {
+  title: string;
+  description?: string;
+  priority?: string;
+  preferred_skill?: string;
+  preferred_agent?: string;
+  preferred_model?: string;
+  worktree_active?: boolean;
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
@@ -93,6 +105,22 @@ export const fetchIssue = (id: number) =>
 
 export const fetchIssueRuns = (id: number) =>
   getJSON<Run[]>(`/api/issues/${id}/runs`);
+
+export async function createIssue(
+  binding: string,
+  body: IssueCreate,
+): Promise<IssueDetail> {
+  const path = `/api/bindings/${encodeURIComponent(binding)}/issues`;
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`POST ${path} -> ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<IssueDetail>;
+}
 
 export async function patchIssue(
   id: number,

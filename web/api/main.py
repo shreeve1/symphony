@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 try:
     from .db import connect, get_connection
     from .schema import INITIAL_REVISION, SCHEMA_SQL
-    from .seed import seed_if_empty
+    from .seed import BINDINGS_PATH, _load_bindings, seed_if_empty
 except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
     _db = import_module("db")
     _schema = import_module("schema")
@@ -21,6 +21,8 @@ except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
     get_connection = _db.get_connection
     INITIAL_REVISION = _schema.INITIAL_REVISION
     SCHEMA_SQL = _schema.SCHEMA_SQL
+    BINDINGS_PATH = _seed.BINDINGS_PATH
+    _load_bindings = _seed._load_bindings
     seed_if_empty = _seed.seed_if_empty
 
 
@@ -73,6 +75,22 @@ class IssuePatch(BaseModel):
     base_branch: str | None = None
     comments_md: str | None = None
     context_md: str | None = None
+
+
+class IssueCreate(BaseModel):
+    """New-issue payload (#014). state/reasoning_effort/base_branch are
+    server-set, so they are not fields here — extra="forbid" rejects them (and
+    any other unknown key) with HTTP 400."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    description: str | None = None
+    priority: Literal["low", "med", "high", "urgent"] | None = None
+    preferred_skill: str | None = None
+    preferred_agent: str | None = None
+    preferred_model: str | None = None
+    worktree_active: bool = False
 
 
 # Fields whose column is conceptually NOT NULL for an operator edit: explicit
@@ -146,6 +164,65 @@ def list_binding_issues(
     return [_row(row) for row in rows]
 
 
+@app.post("/api/bindings/{name}/issues", status_code=201)
+def create_binding_issue(
+    name: str,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    _get_binding_or_404(connection, name)
+
+    # Same hand-validation split as PATCH: unknown fields (e.g. a client trying
+    # to pre-set `state`) are 400, invalid values are 422.
+    try:
+        issue = IssueCreate.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+    if issue.preferred_skill is not None:
+        _require_known_skill(connection, issue.preferred_skill)
+
+    now = datetime.now(UTC).isoformat()
+    cursor = connection.execute(
+        """
+        INSERT INTO issue(
+          binding_name, title, description, state, priority, preferred_agent,
+          preferred_model, preferred_skill, reasoning_effort, worktree_active,
+          base_branch, comments_md, context_md, created_at, updated_at
+        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, 'high', ?, ?, '', '', ?, ?)
+        """,
+        (
+            name,
+            issue.title,
+            issue.description,
+            issue.priority,
+            issue.preferred_agent,
+            issue.preferred_model,
+            issue.preferred_skill,
+            issue.worktree_active,
+            _base_branch_for(name),
+            now,
+            now,
+        ),
+    )
+    connection.commit()
+    row = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return _row(row)
+
+
+def _base_branch_for(name: str) -> str:
+    """New-issue base_branch default comes from bindings.yml (#014 spec); the
+    binding table doesn't store it."""
+    for binding in _load_bindings(BINDINGS_PATH):
+        if binding.get("name") == name:
+            return str(binding.get("base_branch") or "main")
+    return "main"
+
+
 @app.get("/api/issues/{issue_id}")
 def get_issue(
     issue_id: int,
@@ -195,14 +272,7 @@ def patch_issue(
         )
 
     if fields.get("preferred_skill") is not None:
-        known = connection.execute(
-            "SELECT name FROM skill WHERE name = ?", (fields["preferred_skill"],)
-        ).fetchone()
-        if known is None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"unknown preferred_skill: {fields['preferred_skill']}",
-            )
+        _require_known_skill(connection, fields["preferred_skill"])
 
     # No-op guard: an empty body or a patch echoing stored values must not bump
     # updated_at — the board orders by it, so a blind bump reorders cards.
@@ -253,6 +323,16 @@ def list_issue_runs(
         (issue_id,),
     ).fetchall()
     return [_row(row) for row in rows]
+
+
+def _require_known_skill(connection: sqlite3.Connection, skill_name: str) -> None:
+    known = connection.execute(
+        "SELECT name FROM skill WHERE name = ?", (skill_name,)
+    ).fetchone()
+    if known is None:
+        raise HTTPException(
+            status_code=422, detail=f"unknown preferred_skill: {skill_name}"
+        )
 
 
 def _get_binding_or_404(connection: sqlite3.Connection, name: str) -> None:
