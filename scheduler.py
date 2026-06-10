@@ -91,6 +91,7 @@ class _DispatchState:
     cooldown_until: datetime | None = None
     cooldown_attempts: int = 0
     pending_review_issue_ids: set[str] = field(default_factory=set)
+    pending_completion_bodies: dict[str, str] = field(default_factory=dict)
 
 
 def _cooldown_remaining_s(
@@ -291,31 +292,25 @@ def _format_timeline(
 ) -> str:
     """Render the terminal-state timeline appended to every closing comment.
 
-    Symphony tickets currently lack a single human-readable summary of when
-    the agent claimed the issue, when it released it, how long it ran, and
-    what verdict carried it across. AUTO-98 made this gap visible: a Blocked
-    ticket with no audit trail of which Symphony run reached the failure.
-
-    The block is intentionally compact — three lines — and uses ISO-8601 UTC
-    timestamps so log/diff tooling can correlate against
-    ``Symphony claimed at <ts> code_sha=<sha>`` claim comments without
+    Compact one-line format using ISO-8601 UTC timestamps so log/diff tooling
+    can correlate against ``Symphony claimed at <ts>`` claim comments without
     parsing prose.
     """
     finished_dt = now()
     delta_ms = int((finished_dt - claim_dt).total_seconds() * 1000)
     if duration_ms is not None and duration_ms > 0:
-        agent_line = f"- agent_duration_ms: {duration_ms}"
+        agent_part = f"agent: {duration_ms}ms"
     else:
-        agent_line = "- agent_duration_ms: (not measured)"
-    return (
-        "**Timeline**\n"
-        f"- claimed_at: {claim_dt.isoformat()}\n"
-        f"- finished_at: {finished_dt.isoformat()}\n"
-        f"- claim_to_finish_ms: {delta_ms}\n"
-        f"{agent_line}\n"
-        f"- verdict: {verdict}\n"
-        f"- code_sha: {_CODE_SHA}"
-    )
+        agent_part = "agent: unmeasured"
+    parts = [
+        f"claimed: {claim_dt.isoformat()}",
+        f"finished: {finished_dt.isoformat()}",
+        agent_part,
+        f"total: {delta_ms}ms",
+        f"verdict: {verdict}",
+        f"sha: {_CODE_SHA}",
+    ]
+    return "**Timeline** — " + " | ".join(parts)
 
 
 def _format_stderr_summary(stderr: str) -> str:
@@ -695,7 +690,7 @@ async def run_tick(
             claim_time = now().isoformat()
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=f"{CLAIM_PREFIX}{claim_time} code_sha={_CODE_SHA}"),
+                CommentPayload(body=f"{CLAIM_PREFIX}{claim_time}"),
             )
             claim_dt = datetime.fromisoformat(claim_time)
             LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
@@ -812,10 +807,6 @@ async def run_tick(
                     body = f"**Symphony completed:** {summary}"
                 else:
                     body = "**Symphony completed:** Agent finished without a summary."
-                if is_coding:
-                    body += "\n\nReply in Plane and move this issue back to Todo to continue, or move to Done."
-                else:
-                    body += "\n\nMove this issue back to Todo to rerun."
                 body += "\n\n" + _format_timeline(
                     claim_dt, now,
                     duration_ms=result.duration_ms,
@@ -856,11 +847,33 @@ async def run_tick(
                     return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
             reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
-            await adapter.add_comment(
-                candidate.id,
-                CommentPayload(body=_completion_body(reason_code)),
-            )
-            await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+            completion_body = _completion_body(reason_code)
+            try:
+                await adapter.add_comment(
+                    candidate.id,
+                    CommentPayload(body=completion_body),
+                )
+            except PlaneRateLimitError:
+                if dispatch_state is not None:
+                    dispatch_state.pending_review_issue_ids.add(candidate.id)
+                    dispatch_state.pending_completion_bodies[candidate.id] = completion_body
+                    LOGGER.info(
+                        "pending_review_queued issue_id=%s reason=%s (post-agent comment rate-limited)",
+                        candidate.id,
+                        reason_code,
+                    )
+                raise
+            try:
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+            except PlaneRateLimitError:
+                if dispatch_state is not None:
+                    dispatch_state.pending_review_issue_ids.add(candidate.id)
+                    LOGGER.info(
+                        "pending_review_queued issue_id=%s reason=%s (post-agent transition rate-limited)",
+                        candidate.id,
+                        reason_code,
+                    )
+                raise
             LOGGER.info(
                 "state_transitioned issue_id=%s state=in-review reason=%s",
                 candidate.id,
@@ -942,8 +955,16 @@ async def reconcile_pending_review(
         issue = await _fetch_issue(adapter, issue_id)
         if not _is_state(issue, adapter, TrackerRole.STATE_RUNNING):
             dispatch_state.pending_review_issue_ids.discard(issue_id)
+            dispatch_state.pending_completion_bodies.pop(issue_id, None)
             continue
         issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        comment_body = dispatch_state.pending_completion_bodies.get(issue_id)
+        if comment_body:
+            try:
+                await adapter.add_comment(issue_id, CommentPayload(body=comment_body))
+                dispatch_state.pending_completion_bodies.pop(issue_id, None)
+            except PlaneRateLimitError:
+                raise
         await adapter.transition_state(issue_id, TrackerRole.STATE_IN_REVIEW)
         LOGGER.info(
             "pending_review_reconciled issue_id=%s identifier=%s",

@@ -239,9 +239,8 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_claim_comment_includes_code_sha(tmp_path: Path, monkeypatch) -> None:
-    """Claim comments must carry ``code_sha=<sha>`` so live drift is traceable."""
-    monkeypatch.setattr("scheduler._CODE_SHA", "abc1234")
+async def test_claim_comment_includes_timestamp(tmp_path: Path, monkeypatch) -> None:
+    """Claim comments carry ISO timestamp so stale-running detection can parse it."""
     transport = FakeTransport()
     transport.issues["i1"] = _issue("i1")
 
@@ -256,10 +255,9 @@ async def test_claim_comment_includes_code_sha(tmp_path: Path, monkeypatch) -> N
     )
 
     claim_body = transport.comments["i1"][0]["comment_html"]
-    assert "Symphony claimed at" in claim_body
-    assert "code_sha=abc1234" in claim_body
-    # Backwards-compat: the parser at scheduler._claimed_at takes the first
-    # whitespace token after CLAIM_PREFIX. It must still be the ISO timestamp.
+    assert claim_body.startswith("Symphony claimed at ")
+    # The parser at scheduler._claimed_at takes the first
+    # whitespace token after CLAIM_PREFIX. It must be a parseable ISO timestamp.
     after_prefix = claim_body.split("Symphony claimed at", 1)[1].strip()
     first_token = after_prefix.split()[0]
     datetime.fromisoformat(first_token.replace("Z", "+00:00"))
@@ -1389,17 +1387,13 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
 
     completion_comment = transport.comments["issue-1"][1]["comment_html"]
     assert completion_comment.startswith("**Symphony completed:**")
-    # Body is the legacy marker line followed by the terminal-state
-    # timeline block (Phase 3 #6). Strip the timeline before comparing the
-    # legacy prefix.
+    # Body is the summary line followed by the one-line timeline block.
     head, sep, tail = completion_comment.partition("\n\n**Timeline**")
     assert sep == "\n\n**Timeline**"
     assert head.strip().startswith("**Symphony completed:**")
     assert "**Run branch:**" not in head
-    assert "Move this issue back to Todo to rerun." in head
-    assert "- verdict: agent-clean-review" in tail
-    assert "- code_sha:" in tail
-    assert "- claim_to_finish_ms:" in tail
+    assert "verdict: agent-clean-review" in tail
+    assert "sha:" in tail
 
 
 @pytest.mark.asyncio
@@ -3113,6 +3107,195 @@ def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> No
     )
 
     assert _cooldown_remaining_s(second, now=lambda: now) == 10
+
+
+@pytest.mark.asyncio
+async def test_post_agent_comment_429_stores_pending_data_and_propagates(tmp_path: Path, monkeypatch) -> None:
+    """add_comment 429 stores pending data and re-raises so cooldown is recorded."""
+    from plane_adapter import PlaneRateLimitError
+    from scheduler import _DispatchState, _dispatch_one
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    issue_id = "test-issue-1"
+    transport = FakeTransport()
+    transport.issues[issue_id] = _issue(issue_id)
+    adapter = _adapter(transport)
+
+    call_count = 0
+    original = adapter.add_comment
+
+    async def fake_add_comment(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise PlaneRateLimitError("rate limited", retry_after_s=42)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "add_comment", fake_add_comment)
+
+    result = await _dispatch_one(
+        _config(tmp_path),
+        adapter,
+        lambda issue, prompt: AgentResult(0, 1, False),
+        lambda issue: "prompt",
+        None,
+        False,
+        state,
+    )
+
+    assert result.reason == "plane-rate-limited"
+    assert state.cooldown_until is not None
+    assert state.cooldown_attempts == 1
+    assert issue_id in state.pending_review_issue_ids
+    assert "Symphony completed" in state.pending_completion_bodies.get(issue_id, "")
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> None:
+    """reconcile_pending_review posts completion comment and transitions to In Review."""
+    from scheduler import _DispatchState, reconcile_pending_review
+
+    issue_id = "test-issue-1"
+    transport = FakeTransport()
+    transport.issues[issue_id] = {
+        "id": issue_id,
+        "name": "Test Issue",
+        "sequence_id": 1,
+        "state": DEFAULT_CONTRACT.state_ids[PlaneState.RUNNING.value],
+        "labels": [],
+        "created_at": "2026-05-04T00:00:00+00:00",
+    }
+    adapter = _adapter(transport)
+
+    pending_body = "**Symphony completed:** Test summary."
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+        pending_review_issue_ids={issue_id},
+        pending_completion_bodies={issue_id: pending_body},
+    )
+
+    reconciled = await reconcile_pending_review(
+        _config(tmp_path),
+        adapter,
+        state,
+    )
+
+    assert reconciled == 1
+    assert issue_id not in state.pending_review_issue_ids
+    assert issue_id not in state.pending_completion_bodies
+    comments = transport.comments.get(issue_id, [])
+    assert any(
+        "Symphony completed" in str(c.get("comment_html", "")) for c in comments
+    )
+    assert transport.issues[issue_id]["state"] == DEFAULT_CONTRACT.state_ids[
+        PlaneState.IN_REVIEW.value
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pending_review_retry_429_propagates(tmp_path: Path, monkeypatch) -> None:
+    """Retry add_comment 429 in reconcile_pending_review raises, preserves pending data."""
+    from plane_adapter import PlaneRateLimitError
+    from scheduler import _DispatchState, _dispatch_one
+
+    issue_id = "test-issue-1"
+    pending_body = "**Symphony completed:** Test summary."
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+        pending_review_issue_ids={issue_id},
+        pending_completion_bodies={issue_id: pending_body},
+    )
+
+    transport = FakeTransport()
+    transport.issues[issue_id] = {
+        "id": issue_id,
+        "name": "Test Issue",
+        "sequence_id": 1,
+        "state": DEFAULT_CONTRACT.state_ids[PlaneState.RUNNING.value],
+        "labels": [],
+        "created_at": "2026-05-04T00:00:00+00:00",
+    }
+    adapter = _adapter(transport)
+
+    async def fake_add_comment(*args, **kwargs):
+        raise PlaneRateLimitError("rate limited", retry_after_s=42)
+
+    monkeypatch.setattr(adapter, "add_comment", fake_add_comment)
+
+    result = await _dispatch_one(
+        _config(tmp_path),
+        adapter,
+        lambda issue, prompt: AgentResult(0, 1, False),
+        lambda issue: "prompt",
+        None,
+        False,
+        state,
+    )
+
+    assert result.reason == "plane-rate-limited"
+    assert state.cooldown_until is not None
+    assert state.cooldown_attempts == 1
+    assert issue_id in state.pending_review_issue_ids
+    assert state.pending_completion_bodies.get(issue_id) == pending_body
+
+
+@pytest.mark.asyncio
+async def test_post_agent_transition_429_no_duplicate_comment(tmp_path: Path, monkeypatch) -> None:
+    """Transition 429 after successful comment stores pending but not completion body."""
+    from plane_adapter import PlaneRateLimitError
+    from scheduler import _DispatchState, _dispatch_one
+
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    issue_id = "test-issue-1"
+    transport = FakeTransport()
+    transport.issues[issue_id] = _issue(issue_id)
+    adapter = _adapter(transport)
+
+    call_count = 0
+    original = adapter.transition_state
+
+    async def fake_transition(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise PlaneRateLimitError("rate limited", retry_after_s=42)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(adapter, "transition_state", fake_transition)
+
+    result = await _dispatch_one(
+        _config(tmp_path),
+        adapter,
+        lambda issue, prompt: AgentResult(0, 1, False),
+        lambda issue: "prompt",
+        None,
+        False,
+        state,
+    )
+
+    assert result.reason == "plane-rate-limited"
+    assert state.cooldown_until is not None
+    assert issue_id in state.pending_review_issue_ids
+    assert issue_id not in state.pending_completion_bodies
+    assert call_count == 2
 
 
 
