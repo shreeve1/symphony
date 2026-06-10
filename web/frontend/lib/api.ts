@@ -49,6 +49,23 @@ export interface Run {
   ended_at: string | null;
 }
 
+// Operator-editable fields (#013). Subset semantics: send only changed keys.
+export interface IssuePatch {
+  title?: string;
+  description?: string | null;
+  state?: string;
+  priority?: string | null;
+  preferred_agent?: string | null;
+  preferred_model?: string | null;
+  preferred_skill?: string | null;
+  reasoning_effort?: string;
+  worktree_active?: boolean;
+  max_duration_seconds?: number | null;
+  base_branch?: string | null;
+  comments_md?: string;
+  context_md?: string;
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
@@ -67,3 +84,18 @@ export const fetchIssue = (id: number) =>
 
 export const fetchIssueRuns = (id: number) =>
   getJSON<Run[]>(`/api/issues/${id}/runs`);
+
+export async function patchIssue(
+  id: number,
+  patch: IssuePatch,
+): Promise<IssueDetail> {
+  const res = await fetch(`/api/issues/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error(`PATCH /api/issues/${id} -> ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<IssueDetail>;
+}

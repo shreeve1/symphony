@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 try:
     from .db import connect, get_connection
@@ -49,6 +51,40 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             "INSERT INTO alembic_version(version_num) VALUES (?)", (INITIAL_REVISION,)
         )
     connection.commit()
+
+
+class IssuePatch(BaseModel):
+    """Operator-editable issue fields (#013). Every field is optional; only the
+    keys present in the request body are written. extra="forbid" turns unknown
+    keys into validation errors, which the endpoint maps to HTTP 400."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+    state: Literal["todo", "in_review", "running", "blocked", "done"] | None = None
+    priority: Literal["low", "med", "high", "urgent"] | None = None
+    preferred_agent: str | None = None
+    preferred_model: str | None = None
+    preferred_skill: str | None = None
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    worktree_active: bool | None = None
+    max_duration_seconds: int | None = Field(default=None, ge=1)
+    base_branch: str | None = None
+    comments_md: str | None = None
+    context_md: str | None = None
+
+
+# Fields whose column is conceptually NOT NULL for an operator edit: explicit
+# null in the body is rejected rather than written through.
+NON_NULLABLE_FIELDS = (
+    "title",
+    "state",
+    "reasoning_effort",
+    "worktree_active",
+    "comments_md",
+    "context_md",
+)
 
 
 def _row(row: sqlite3.Row) -> dict[str, Any]:
@@ -116,6 +152,71 @@ def get_issue(
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
     return _row(row)
+
+
+@app.patch("/api/issues/{issue_id}")
+def patch_issue(
+    issue_id: int,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    _get_issue_or_404(connection, issue_id)
+
+    # Validate by hand instead of typing the parameter as IssuePatch: the spec
+    # distinguishes unknown fields (400) from invalid values (422), and FastAPI
+    # would flatten both into 422.
+    try:
+        patch = IssuePatch.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+    fields = patch.model_dump(exclude_unset=True)
+    nulled = [name for name in NON_NULLABLE_FIELDS if name in fields and fields[name] is None]
+    if nulled:
+        raise HTTPException(
+            status_code=422, detail=f"fields cannot be null: {', '.join(nulled)}"
+        )
+
+    if fields.get("preferred_skill") is not None:
+        known = connection.execute(
+            "SELECT name FROM skill WHERE name = ?", (fields["preferred_skill"],)
+        ).fetchone()
+        if known is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown preferred_skill: {fields['preferred_skill']}",
+            )
+
+    fields["updated_at"] = _next_updated_at(connection, issue_id)
+    assignments = ", ".join(f"{name} = ?" for name in fields)
+    connection.execute(
+        f"UPDATE issue SET {assignments} WHERE id = ?",
+        (*fields.values(), issue_id),
+    )
+    connection.commit()
+
+    row = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    return _row(row)
+
+
+def _next_updated_at(connection: sqlite3.Connection, issue_id: int) -> str:
+    """Server-side updated_at bump, strictly greater than the stored value even
+    when two PATCHes land within clock resolution."""
+    previous = connection.execute(
+        "SELECT updated_at FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()[0]
+    now = datetime.now(UTC)
+    if previous:
+        previous_dt = datetime.fromisoformat(previous)
+        if previous_dt.tzinfo is None:
+            previous_dt = previous_dt.replace(tzinfo=UTC)
+        if now <= previous_dt:
+            now = previous_dt + timedelta(microseconds=1)
+    return now.isoformat()
 
 
 @app.get("/api/issues/{issue_id}/runs")

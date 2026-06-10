@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { fetchIssue, fetchIssueRuns, type IssueDetail } from "@/lib/api";
+import {
+  fetchIssue,
+  fetchIssueRuns,
+  patchIssue,
+  type IssueDetail,
+  type IssuePatch,
+} from "@/lib/api";
+import { STATES } from "@/lib/issues";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunHistoryList } from "@/components/RunHistoryList";
@@ -53,24 +60,259 @@ function useFlyoutWidth() {
   return { width, startDrag };
 }
 
-function Chip({ label, value }: { label: string; value: React.ReactNode }) {
+// Optimistic PATCH (#013): the flyout cache updates immediately, rolls back on
+// a 4xx, and both the detail and the board list refetch once the write settles.
+function usePatchIssue(issue: IssueDetail | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: IssuePatch) => patchIssue(issue!.id, patch),
+    onMutate: async (patch) => {
+      const key = ["issue", issue!.id];
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<IssueDetail>(key);
+      queryClient.setQueryData<IssueDetail>(
+        key,
+        (old) => old && { ...old, ...patch },
+      );
+      return { previous };
+    },
+    onError: (_error, _patch, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["issue", issue!.id], context.previous);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["issue", issue!.id] });
+      queryClient.invalidateQueries({ queryKey: ["issues", issue!.binding_name] });
+    },
+  });
+}
+
+// Local draft that resyncs when the server value changes (refetch, rollback,
+// switching issues) but never clobbers in-progress typing while it is stable.
+function useDraft(value: string) {
+  const [draft, setDraft] = useState(value);
+  const synced = useRef(value);
+  useEffect(() => {
+    if (value !== synced.current) {
+      synced.current = value;
+      setDraft(value);
+    }
+  }, [value]);
+  return [draft, setDraft] as const;
+}
+
+type OnPatch = (patch: IssuePatch) => void;
+
+function ChipShell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value ?? "—"}</span>
+      {children}
     </span>
   );
 }
 
-function MetadataChips({ issue }: { issue: IssueDetail }) {
+function ChipSelect({
+  label,
+  field,
+  value,
+  options,
+  allowEmpty = false,
+  onPatch,
+}: {
+  label: string;
+  field: keyof IssuePatch;
+  value: string | null;
+  options: readonly string[];
+  allowEmpty?: boolean;
+  onPatch: OnPatch;
+}) {
+  return (
+    <ChipShell label={label}>
+      <select
+        data-testid={`edit-${field}`}
+        value={value ?? ""}
+        onChange={(e) =>
+          onPatch({ [field]: e.target.value === "" ? null : e.target.value })
+        }
+        className="cursor-pointer bg-transparent font-medium outline-none"
+      >
+        {allowEmpty && <option value="">—</option>}
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </ChipShell>
+  );
+}
+
+function ChipText({
+  label,
+  field,
+  value,
+  onPatch,
+}: {
+  label: string;
+  field: keyof IssuePatch;
+  value: string | null;
+  onPatch: OnPatch;
+}) {
+  const [draft, setDraft] = useDraft(value ?? "");
+  const commit = () => {
+    const next = draft.trim() === "" ? null : draft.trim();
+    if (next !== (value ?? null)) onPatch({ [field]: next });
+  };
+  return (
+    <ChipShell label={label}>
+      <input
+        data-testid={`edit-${field}`}
+        value={draft}
+        placeholder="—"
+        size={Math.max(4, draft.length)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        className="bg-transparent font-medium outline-none"
+      />
+    </ChipShell>
+  );
+}
+
+function ChipNumber({
+  label,
+  field,
+  value,
+  onPatch,
+}: {
+  label: string;
+  field: keyof IssuePatch;
+  value: number | null;
+  onPatch: OnPatch;
+}) {
+  const serverDraft = value == null ? "" : String(value);
+  const [draft, setDraft] = useDraft(serverDraft);
+  const commit = () => {
+    const trimmed = draft.trim();
+    const next = trimmed === "" ? null : Number.parseInt(trimmed, 10);
+    if (next !== null && (!Number.isFinite(next) || next < 1)) {
+      setDraft(serverDraft); // the backend would 422; reject locally instead
+      return;
+    }
+    if (next !== value) onPatch({ [field]: next });
+  };
+  return (
+    <ChipShell label={label}>
+      <input
+        data-testid={`edit-${field}`}
+        value={draft}
+        placeholder="—"
+        inputMode="numeric"
+        size={Math.max(4, draft.length)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        className="bg-transparent font-medium outline-none"
+      />
+    </ChipShell>
+  );
+}
+
+function ChipToggle({
+  label,
+  field,
+  value,
+  onPatch,
+}: {
+  label: string;
+  field: keyof IssuePatch;
+  value: boolean;
+  onPatch: OnPatch;
+}) {
+  return (
+    <ChipShell label={label}>
+      <button
+        type="button"
+        data-testid={`edit-${field}`}
+        aria-pressed={value}
+        onClick={() => onPatch({ [field]: !value })}
+        className="font-medium"
+      >
+        {value ? "active" : "off"}
+      </button>
+    </ChipShell>
+  );
+}
+
+const PRIORITIES = ["low", "med", "high", "urgent"] as const;
+const EFFORTS = ["minimal", "low", "medium", "high"] as const;
+const STATE_KEYS = STATES.map((s) => s.key);
+
+function MetadataChips({ issue, onPatch }: { issue: IssueDetail; onPatch: OnPatch }) {
   return (
     <div className="flex flex-wrap gap-1.5" data-testid="metadata-chips">
-      <Chip label="state" value={issue.state} />
-      <Chip label="skill" value={issue.preferred_skill} />
-      <Chip label="agent" value={issue.preferred_agent} />
-      <Chip label="model" value={issue.preferred_model} />
-      <Chip label="priority" value={issue.priority} />
-      <Chip label="worktree" value={issue.worktree_active ? "active" : "off"} />
+      <ChipSelect label="state" field="state" value={issue.state} options={STATE_KEYS} onPatch={onPatch} />
+      <ChipText label="skill" field="preferred_skill" value={issue.preferred_skill} onPatch={onPatch} />
+      <ChipText label="agent" field="preferred_agent" value={issue.preferred_agent} onPatch={onPatch} />
+      <ChipText label="model" field="preferred_model" value={issue.preferred_model} onPatch={onPatch} />
+      <ChipSelect label="priority" field="priority" value={issue.priority} options={PRIORITIES} allowEmpty onPatch={onPatch} />
+      <ChipSelect label="effort" field="reasoning_effort" value={issue.reasoning_effort} options={EFFORTS} onPatch={onPatch} />
+      <ChipToggle label="worktree" field="worktree_active" value={issue.worktree_active} onPatch={onPatch} />
+      <ChipNumber label="max s" field="max_duration_seconds" value={issue.max_duration_seconds} onPatch={onPatch} />
+      <ChipText label="base" field="base_branch" value={issue.base_branch} onPatch={onPatch} />
+    </div>
+  );
+}
+
+// Markdown blob editor: plain textarea committing on blur, with a side-by-side
+// preview pane on toggle (no live render, per the #013 spec).
+function MarkdownEditor({
+  value,
+  field,
+  onPatch,
+}: {
+  value: string;
+  field: "comments_md" | "context_md";
+  onPatch: OnPatch;
+}) {
+  const [draft, setDraft] = useDraft(value);
+  const [preview, setPreview] = useState(false);
+  const commit = () => {
+    if (draft !== value) onPatch({ [field]: draft });
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          data-testid={`preview-${field}`}
+          aria-pressed={preview}
+          onClick={() => setPreview((p) => !p)}
+          className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Preview
+        </button>
+      </div>
+      <div className="flex gap-3">
+        <textarea
+          data-testid={`edit-${field}`}
+          value={draft}
+          rows={10}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          className="min-h-40 flex-1 rounded-md border bg-transparent p-2 font-mono text-xs outline-none"
+        />
+        {preview && (
+          <div
+            data-testid={`preview-pane-${field}`}
+            className="min-h-40 flex-1 overflow-y-auto rounded-md border p-2"
+          >
+            <Markdown source={draft} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -99,6 +341,8 @@ export function IssueFlyout({
     queryFn: () => fetchIssueRuns(issueId as number),
     enabled: issueId != null,
   });
+  const patch = usePatchIssue(detail.data);
+  const onPatch: OnPatch = patch.mutate;
 
   // Reset to Comments each time a different issue opens.
   useEffect(() => setTab("comments"), [issueId]);
@@ -172,7 +416,7 @@ export function IssueFlyout({
                 </div>
               )}
 
-              <MetadataChips issue={issue} />
+              <MetadataChips issue={issue} onPatch={onPatch} />
 
               <div>
                 <div className="flex gap-1 border-b" role="tablist" aria-label="Issue detail">
@@ -204,8 +448,13 @@ export function IssueFlyout({
                   className="pt-3"
                   data-testid={`tabpanel-${tab}`}
                 >
-                  <Markdown
-                    source={tab === "comments" ? issue.comments_md : issue.context_md}
+                  {/* key resets the draft when switching tabs or issues, so an
+                      uncommitted comments draft can't bleed into context. */}
+                  <MarkdownEditor
+                    key={`${issue.id}-${tab}`}
+                    field={tab === "comments" ? "comments_md" : "context_md"}
+                    value={tab === "comments" ? issue.comments_md : issue.context_md}
+                    onPatch={onPatch}
                   />
                 </div>
               </div>
