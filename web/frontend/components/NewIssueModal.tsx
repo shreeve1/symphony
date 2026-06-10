@@ -10,7 +10,7 @@ import {
   type IssueCreate,
 } from "@/lib/api";
 
-const PRIORITIES = ["low", "med", "high", "urgent"] as const;
+const EFFORTS = ["minimal", "low", "medium", "high"] as const;
 
 // Optimistic create (#014): prepend a temp card to the board cache on submit,
 // swap it for the canonical server row on success, roll back on error, and
@@ -32,13 +32,13 @@ function useCreateIssue(binding: string) {
         description: body.description ?? null,
         state: "todo",
         priority: body.priority ?? null,
-        preferred_agent: null,
-        preferred_model: null,
+        preferred_agent: body.preferred_agent ?? null,
+        preferred_model: body.preferred_model ?? null,
         preferred_skill: body.preferred_skill ?? null,
-        reasoning_effort: "high",
-        worktree_active: false,
+        reasoning_effort: body.reasoning_effort ?? "high",
+        worktree_active: body.worktree_active ?? false,
         max_duration_seconds: null,
-        base_branch: null,
+        base_branch: body.base_branch ?? null,
         created_at: null,
         updated_at: null,
         latest_run_id: null,
@@ -91,8 +91,12 @@ function NewIssueModal({
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState("");
   const [skill, setSkill] = useState("");
+  const [agent, setAgent] = useState("");
+  const [model, setModel] = useState("");
+  const [effort, setEffort] = useState("");
+  const [worktree, setWorktree] = useState(false);
+  const [base, setBase] = useState("");
   const titleRef = useRef<HTMLInputElement | null>(null);
 
   const create = useCreateIssue(binding);
@@ -115,12 +119,17 @@ function NewIssueModal({
     // closes on success: on failure the temp card silently rolls back, so the
     // still-open modal (typed values intact + error line) is the only place
     // the operator learns the create didn't land.
+    // Only send what the operator set; omitted keys take server defaults.
     create.mutate(
       {
         title: trimmed,
         ...(description.trim() && { description: description.trim() }),
-        ...(priority && { priority }),
         ...(skill && { preferred_skill: skill }),
+        ...(agent.trim() && { preferred_agent: agent.trim() }),
+        ...(model.trim() && { preferred_model: model.trim() }),
+        ...(effort && { reasoning_effort: effort }),
+        ...(worktree && { worktree_active: true }),
+        ...(base.trim() && { base_branch: base.trim() }),
       },
       { onSuccess: onClose },
     );
@@ -173,25 +182,6 @@ function NewIssueModal({
           <div className="flex gap-3">
             <label className="block flex-1 space-y-1">
               <span className="text-xs font-medium text-muted-foreground">
-                Priority
-              </span>
-              <select
-                data-testid="new-issue-priority"
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                className="w-full cursor-pointer rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
-              >
-                <option value="">—</option>
-                {PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block flex-1 space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">
                 Skill
               </span>
               <select
@@ -207,6 +197,81 @@ function NewIssueModal({
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label className="block flex-1 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                Effort
+              </span>
+              <select
+                data-testid="new-issue-effort"
+                value={effort}
+                onChange={(e) => setEffort(e.target.value)}
+                className="w-full cursor-pointer rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
+              >
+                <option value="">— (high)</option>
+                {EFFORTS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="flex gap-3">
+            <label className="block flex-1 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                Agent
+              </span>
+              <input
+                data-testid="new-issue-agent"
+                value={agent}
+                placeholder="binding default"
+                onChange={(e) => setAgent(e.target.value)}
+                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+              />
+            </label>
+
+            <label className="block flex-1 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                Model
+              </span>
+              <input
+                data-testid="new-issue-model"
+                value={model}
+                placeholder="provider default"
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+              />
+            </label>
+          </div>
+
+          <div className="flex gap-3">
+            <label className="block flex-1 space-y-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                Base branch
+              </span>
+              <input
+                data-testid="new-issue-base"
+                value={base}
+                placeholder="bindings.yml default"
+                onChange={(e) => setBase(e.target.value)}
+                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+              />
+            </label>
+
+            <label className="flex flex-1 items-end gap-2 pb-1.5">
+              <input
+                type="checkbox"
+                data-testid="new-issue-worktree"
+                checked={worktree}
+                onChange={(e) => setWorktree(e.target.checked)}
+                className="size-4 cursor-pointer"
+              />
+              <span className="text-xs font-medium text-muted-foreground">
+                Worktree
+              </span>
             </label>
           </div>
 

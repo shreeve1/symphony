@@ -73,8 +73,9 @@ export interface IssuePatch {
   context_md?: string;
 }
 
-// New-issue payload (#014). state/reasoning_effort/base_branch are server-set;
-// sending them gets a 400.
+// New-issue payload (#014). state is server-set ('todo'); sending it gets a
+// 400. Omitted reasoning_effort/worktree_active/base_branch fall back to
+// server defaults (high / false / bindings.yml).
 export interface IssueCreate {
   title: string;
   description?: string;
@@ -82,7 +83,9 @@ export interface IssueCreate {
   preferred_skill?: string;
   preferred_agent?: string;
   preferred_model?: string;
+  reasoning_effort?: string;
   worktree_active?: boolean;
+  base_branch?: string;
 }
 
 async function getJSON<T>(path: string): Promise<T> {

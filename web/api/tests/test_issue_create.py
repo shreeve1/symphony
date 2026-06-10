@@ -53,7 +53,9 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
             "preferred_skill": "tdd",
             "preferred_agent": "claude",
             "preferred_model": "claude-fable-5",
+            "reasoning_effort": "low",
             "worktree_active": True,
+            "base_branch": "develop",
         },
     )
     assert response.status_code == 201
@@ -63,7 +65,10 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
     assert body["preferred_skill"] == "tdd"
     assert body["preferred_agent"] == "claude"
     assert body["preferred_model"] == "claude-fable-5"
+    assert body["reasoning_effort"] == "low"
     assert body["worktree_active"] is True
+    # Explicit base_branch wins over the bindings.yml default.
+    assert body["base_branch"] == "develop"
 
 
 def test_created_issue_appears_in_binding_list(client: TestClient) -> None:
@@ -145,8 +150,9 @@ FAILURE_CASES = [
     ({"title": "ok", "preferred_agent": 42}, 422),
     ({"title": "ok", "preferred_model": []}, 422),
     ({"title": "ok", "worktree_active": "maybe"}, 422),
-    ({"title": "ok", "reasoning_effort": "high"}, 400),  # server-set field
-    ({"title": "ok", "base_branch": "develop"}, 400),  # server-set field
+    ({"title": "ok", "reasoning_effort": "max"}, 422),
+    ({"title": "ok", "reasoning_effort": None}, 422),
+    ({"title": "ok", "base_branch": 7}, 422),
     ({"title": "ok", "flavor": "grape"}, 400),  # unknown field
 ]
 

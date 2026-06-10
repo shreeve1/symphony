@@ -17,6 +17,9 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
   const skill = page.getByTestId("new-issue-skill");
   await expect(skill.locator("option").nth(1)).toBeAttached();
   await skill.selectOption({ index: 1 });
+  // Optional flyout-parity fields flow through to the created row.
+  await page.getByTestId("new-issue-effort").selectOption("low");
+  await page.getByTestId("new-issue-agent").fill("pi");
 
   const created = page.waitForResponse(
     (res) =>
@@ -35,9 +38,13 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
   await expect(todoCard).toBeVisible();
   await created;
 
-  // Reload: the card persisted through SQLite.
+  // Reload: the card persisted through SQLite, optional fields included.
   await page.reload();
   await expect(todoCard).toBeVisible();
+  await todoCard.click();
+  await expect(page.getByTestId("issue-flyout")).toBeVisible();
+  await expect(page.getByTestId("edit-reasoning_effort")).toHaveValue("low");
+  await expect(page.getByTestId("edit-preferred_agent")).toHaveValue("pi");
 
   expectCleanConsole(problems);
 });

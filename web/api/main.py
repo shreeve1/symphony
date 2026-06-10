@@ -79,10 +79,11 @@ class IssuePatch(BaseModel):
 
 
 class IssueCreate(BaseModel):
-    """New-issue payload (#014). state/reasoning_effort/base_branch are
-    exclusively server-set, so they are not fields here — extra="forbid"
-    rejects them (and any other unknown key) with HTTP 400. worktree_active is
-    different: server-defaulted to false but client-settable."""
+    """New-issue payload (#014). state is exclusively server-set ('todo'), so
+    it is not a field here — extra="forbid" rejects it (and any other unknown
+    key) with HTTP 400. Everything else is optional: reasoning_effort and
+    worktree_active are server-defaulted but client-settable, and a null
+    base_branch falls back to the binding's bindings.yml entry."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,7 +93,9 @@ class IssueCreate(BaseModel):
     preferred_skill: str | None = None
     preferred_agent: str | None = None
     preferred_model: str | None = None
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] = "high"
     worktree_active: bool = False
+    base_branch: str | None = None
 
 
 # Fields whose column is conceptually NOT NULL for an operator edit: explicit
@@ -193,7 +196,7 @@ def create_binding_issue(
           binding_name, title, description, state, priority, preferred_agent,
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
           base_branch, comments_md, context_md, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, 'high', ?, ?, '', '', ?, ?)
+        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
         """,
         (
             name,
@@ -203,8 +206,9 @@ def create_binding_issue(
             issue.preferred_agent,
             issue.preferred_model,
             issue.preferred_skill,
+            issue.reasoning_effort,
             issue.worktree_active,
-            _base_branch_for(name),
+            issue.base_branch or _base_branch_for(name),
             now,
             now,
         ),
