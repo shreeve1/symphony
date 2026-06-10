@@ -114,6 +114,16 @@ def list_bindings(
     return [_row(row) for row in rows]
 
 
+@app.get("/api/skills")
+def list_skills(
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        "SELECT name, description, source FROM skill ORDER BY name"
+    ).fetchall()
+    return [_row(row) for row in rows]
+
+
 @app.get("/api/bindings/{name}/issues")
 def list_binding_issues(
     name: str,
@@ -160,7 +170,12 @@ def patch_issue(
     body: dict[str, Any],
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict[str, Any]:
-    _get_issue_or_404(connection, issue_id)
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
 
     # Validate by hand instead of typing the parameter as IssuePatch: the spec
     # distinguishes unknown fields (400) from invalid values (422), and FastAPI
@@ -189,11 +204,17 @@ def patch_issue(
                 detail=f"unknown preferred_skill: {fields['preferred_skill']}",
             )
 
-    fields["updated_at"] = _next_updated_at(connection, issue_id)
-    assignments = ", ".join(f"{name} = ?" for name in fields)
+    # No-op guard: an empty body or a patch echoing stored values must not bump
+    # updated_at — the board orders by it, so a blind bump reorders cards.
+    changed = {name: value for name, value in fields.items() if current[name] != value}
+    if not changed:
+        return current
+
+    changed["updated_at"] = _next_updated_at(current["updated_at"])
+    assignments = ", ".join(f"{name} = ?" for name in changed)
     connection.execute(
         f"UPDATE issue SET {assignments} WHERE id = ?",
-        (*fields.values(), issue_id),
+        (*changed.values(), issue_id),
     )
     connection.commit()
 
@@ -203,12 +224,9 @@ def patch_issue(
     return _row(row)
 
 
-def _next_updated_at(connection: sqlite3.Connection, issue_id: int) -> str:
+def _next_updated_at(previous: str | None) -> str:
     """Server-side updated_at bump, strictly greater than the stored value even
     when two PATCHes land within clock resolution."""
-    previous = connection.execute(
-        "SELECT updated_at FROM issue WHERE id = ?", (issue_id,)
-    ).fetchone()[0]
     now = datetime.now(UTC)
     if previous:
         previous_dt = datetime.fromisoformat(previous)

@@ -131,3 +131,28 @@ def test_patch_updated_at_increases_monotonically(
 def test_patch_missing_issue_returns_404(client: TestClient) -> None:
     response = client.patch("/api/issues/999999", json={"state": "done"})
     assert response.status_code == 404
+
+
+def test_patch_noop_does_not_bump_updated_at(
+    client: TestClient, issue_id: int
+) -> None:
+    before = client.get(f"/api/issues/{issue_id}").json()
+
+    # Empty body: nothing to write, row returned unchanged.
+    empty = client.patch(f"/api/issues/{issue_id}", json={})
+    assert empty.status_code == 200
+    assert empty.json() == before
+
+    # Echoing the stored value: also a no-op.
+    echo = client.patch(f"/api/issues/{issue_id}", json={"state": before["state"]})
+    assert echo.status_code == 200
+    assert echo.json()["updated_at"] == before["updated_at"]
+
+
+def test_list_skills_returns_seeded_catalog(client: TestClient) -> None:
+    response = client.get("/api/skills")
+    assert response.status_code == 200
+    skills = response.json()
+    names = [skill["name"] for skill in skills]
+    assert names == sorted(names)
+    assert {"tdd", "code-review", "blueprint"}.issubset(set(names))

@@ -45,12 +45,11 @@ test("typed column and comments edits persist across reload", async ({
   await priority.selectOption(nextPriority);
   await patched;
 
-  // preferred_skill chip (text, commits on blur)
+  // preferred_skill chip (select fed by the seeded skill catalog)
   const skill = page.getByTestId("edit-preferred_skill");
   const nextSkill = (await skill.inputValue()) === "tdd" ? "code-review" : "tdd";
-  await skill.fill(nextSkill);
   patched = waitForPatch(page);
-  await skill.blur();
+  await skill.selectOption(nextSkill);
   await patched;
 
   // worktree toggle

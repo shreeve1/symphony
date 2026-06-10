@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchIssue,
   fetchIssueRuns,
+  fetchSkills,
   patchIssue,
   type IssueDetail,
   type IssuePatch,
@@ -139,6 +140,11 @@ function ChipSelect({
         className="cursor-pointer bg-transparent font-medium outline-none"
       >
         {allowEmpty && <option value="">—</option>}
+        {/* Keep the current value selectable even when it's missing from
+            options (e.g. skill catalog still loading, or a stale name). */}
+        {value != null && !options.includes(value) && (
+          <option value={value}>{value}</option>
+        )}
         {options.map((option) => (
           <option key={option} value={option}>
             {option}
@@ -196,8 +202,13 @@ function ChipNumber({
   const [draft, setDraft] = useDraft(serverDraft);
   const commit = () => {
     const trimmed = draft.trim();
+    // Digits-only: parseInt would silently truncate "3.9" or "12abc".
+    if (trimmed !== "" && !/^\d+$/.test(trimmed)) {
+      setDraft(serverDraft);
+      return;
+    }
     const next = trimmed === "" ? null : Number.parseInt(trimmed, 10);
-    if (next !== null && (!Number.isFinite(next) || next < 1)) {
+    if (next !== null && next < 1) {
       setDraft(serverDraft); // the backend would 422; reject locally instead
       return;
     }
@@ -250,11 +261,19 @@ const PRIORITIES = ["low", "med", "high", "urgent"] as const;
 const EFFORTS = ["minimal", "low", "medium", "high"] as const;
 const STATE_KEYS = STATES.map((s) => s.key);
 
-function MetadataChips({ issue, onPatch }: { issue: IssueDetail; onPatch: OnPatch }) {
+function MetadataChips({
+  issue,
+  skillNames,
+  onPatch,
+}: {
+  issue: IssueDetail;
+  skillNames: readonly string[];
+  onPatch: OnPatch;
+}) {
   return (
     <div className="flex flex-wrap gap-1.5" data-testid="metadata-chips">
       <ChipSelect label="state" field="state" value={issue.state} options={STATE_KEYS} onPatch={onPatch} />
-      <ChipText label="skill" field="preferred_skill" value={issue.preferred_skill} onPatch={onPatch} />
+      <ChipSelect label="skill" field="preferred_skill" value={issue.preferred_skill} options={skillNames} allowEmpty onPatch={onPatch} />
       <ChipText label="agent" field="preferred_agent" value={issue.preferred_agent} onPatch={onPatch} />
       <ChipText label="model" field="preferred_model" value={issue.preferred_model} onPatch={onPatch} />
       <ChipSelect label="priority" field="priority" value={issue.priority} options={PRIORITIES} allowEmpty onPatch={onPatch} />
@@ -343,6 +362,10 @@ export function IssueFlyout({
   });
   const patch = usePatchIssue(detail.data);
   const onPatch: OnPatch = patch.mutate;
+  // Skill catalog feeds the preferred_skill picker; free text would 422
+  // against the FK and silently roll back.
+  const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
+  const skillNames = (skills.data ?? []).map((s) => s.name);
 
   // Reset to Comments each time a different issue opens.
   useEffect(() => setTab("comments"), [issueId]);
@@ -416,7 +439,7 @@ export function IssueFlyout({
                 </div>
               )}
 
-              <MetadataChips issue={issue} onPatch={onPatch} />
+              <MetadataChips issue={issue} skillNames={skillNames} onPatch={onPatch} />
 
               <div>
                 <div className="flex gap-1 border-b" role="tablist" aria-label="Issue detail">

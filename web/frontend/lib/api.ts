@@ -49,6 +49,13 @@ export interface Run {
   ended_at: string | null;
 }
 
+// Placeholder skill catalog row (real catalog ships in #015).
+export interface Skill {
+  name: string;
+  description: string | null;
+  source: string | null;
+}
+
 // Operator-editable fields (#013). Subset semantics: send only changed keys.
 export interface IssuePatch {
   title?: string;
@@ -75,6 +82,8 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 export const fetchBindings = () => getJSON<Binding[]>("/api/bindings");
+
+export const fetchSkills = () => getJSON<Skill[]>("/api/skills");
 
 export const fetchBindingIssues = (name: string) =>
   getJSON<Issue[]>(`/api/bindings/${encodeURIComponent(name)}/issues`);
