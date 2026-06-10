@@ -2,12 +2,14 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .env
+podium.db
 *.env
 plans/
 .bindings.yml.preview
 .WORKFLOW.md.preview
 .pi-lens/
 .rpiv/
+.kanban/
 .kanban/archive/issues
 artifacts/
 docs/adr
