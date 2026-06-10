@@ -46,6 +46,7 @@
 | [analyses/symphony-skills-index.md](analyses/symphony-skills-index.md) | 8 `symphony-*` Claude Code skills — lifecycle map and per-skill summary | 8 SKILL.md files | 2026-06-09 |
 | [analyses/symphony-tests-index.md](analyses/symphony-tests-index.md) | 14 test files, 435 tests — coverage map and validation contract | `tests/*.py` | 2026-06-09 |
 | [analyses/trading-smoke-rate-limit-debugging.md](analyses/trading-smoke-rate-limit-debugging.md) | Trading smoke debugging — post-agent Plane 429 recovery, shared cooldown, optional-label scan fix, conversation-mode landing-proof gap | session capture, `scheduler.py`, `prompt_renderer.py` | 2026-06-09 |
+| [analyses/podium-014-new-issue-flow.md](analyses/podium-014-new-issue-flow.md) | Podium #014 — POST issues endpoint contract, INSERT OR IGNORE seeding pivot, /options dropdown endpoint, optimistic modal UX, cross-slice constraints for #015/#020 | `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `web/api/main.py`, `web/api/seed.py` | 2026-06-10 |
 
 ## Candidate Review Queue
 
@@ -54,5 +55,3 @@ Candidate rows are discoverability aids only; do not treat them as promoted know
 | Candidate | Summary | Sources | Created | Status |
 |-----------|---------|---------|---------|--------|
 _(empty — all candidates promoted or discarded)_
-| [candidates/analysis-thin-engine-e2e-test.md](candidates/analysis-thin-engine-e2e-test.md) | Thin engine E2E smoke test — dispatch verified, code drift root cause (service ran old code), provider/model confirmed, stale worktree cleanup | `wiki/raw/sessions/2026-06-09-thin-engine-e2e-test.md`, journalctl, systemctl | 2026-06-09 | candidate |
-| [candidates/concept-thin-engine-v2.md](candidates/concept-thin-engine-v2.md) | Thin engine v2 — run_worktree.py and ClaudeAgentAdapter deleted, PiAgentAdapter only, no worktree for coding bindings, is_coding gate changes | `agent_runner.py`, `scheduler.py`, `config.py`, `main.py` | 2026-06-09 | candidate |

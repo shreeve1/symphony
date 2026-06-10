@@ -77,6 +77,11 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 - Pages: `analyses/symphony-skills-index.md`
 - Keywords: symphony-project-scaffold, symphony-workflow-author, symphony-restart, symphony-bindings-status, symphony-binding-smoke, symphony-plane-recover, symphony-onboard-project, symphony-troubleshooter, typed-slug confirmation, dry-run preview, umbrella skill
 
+## Podium Web UI
+
+- Pages: `analyses/podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-09-ui-brainstorm-handoff.md`
+- Keywords: podium, web ui, kanban board, new issue, POST issues, IssueCreate, options endpoint, KNOWN_AGENTS, KNOWN_MODELS, branches dropdown, optimistic update, temp card, NewIssueModal, IssueFlyout, metadata chips, skill seeding, INSERT OR IGNORE, /diagnose, podium.db, PODIUM_DB_PATH, uvicorn 8090, next dev 8091, playwright e2e, persistent dev DB, FieldSelect, base_branch fallback
+
 ## Tests
 
 - Pages: `analyses/symphony-tests-index.md`
