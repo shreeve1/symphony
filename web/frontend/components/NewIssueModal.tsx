@@ -14,7 +14,9 @@ const PRIORITIES = ["low", "med", "high", "urgent"] as const;
 
 // Optimistic create (#014): prepend a temp card to the board cache on submit,
 // swap it for the canonical server row on success, roll back on error, and
-// refetch once the write settles.
+// refetch once the write settles. The canonical row is the full detail shape
+// (a superset of Issue), so the list cache transiently holds one wider row
+// until the settle-refetch trims it — harmless, extra fields are ignored.
 function useCreateIssue(binding: string) {
   const queryClient = useQueryClient();
   const key = ["issues", binding];
@@ -108,15 +110,20 @@ function NewIssueModal({
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = title.trim();
-    if (!trimmed) return;
-    // Spec: POST, close immediately, let the optimistic card carry the UI.
-    create.mutate({
-      title: trimmed,
-      ...(description.trim() && { description: description.trim() }),
-      ...(priority && { priority }),
-      ...(skill && { preferred_skill: skill }),
-    });
-    onClose();
+    if (!trimmed || create.isPending) return;
+    // The optimistic card carries the board UI immediately, but the modal only
+    // closes on success: on failure the temp card silently rolls back, so the
+    // still-open modal (typed values intact + error line) is the only place
+    // the operator learns the create didn't land.
+    create.mutate(
+      {
+        title: trimmed,
+        ...(description.trim() && { description: description.trim() }),
+        ...(priority && { priority }),
+        ...(skill && { preferred_skill: skill }),
+      },
+      { onSuccess: onClose },
+    );
   };
 
   return (
@@ -203,6 +210,12 @@ function NewIssueModal({
             </label>
           </div>
 
+          {create.isError && (
+            <p data-testid="new-issue-error" className="text-xs text-red-500">
+              Failed to create issue — check the API and try again.
+            </p>
+          )}
+
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
@@ -214,7 +227,7 @@ function NewIssueModal({
             <button
               type="submit"
               data-testid="new-issue-submit"
-              disabled={!title.trim()}
+              disabled={!title.trim() || create.isPending}
               className="rounded-md border bg-foreground px-3 py-1.5 text-sm font-medium text-background transition disabled:opacity-40"
             >
               Create

@@ -26,7 +26,7 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
   );
   await page.getByTestId("new-issue-submit").click();
 
-  // Modal closes immediately; the optimistic card lands in the Todo column.
+  // Modal closes once the POST succeeds; the optimistic card lands in Todo.
   await expect(page.getByTestId("new-issue-modal")).toBeHidden();
   const todoCard = page
     .getByTestId("column-todo")
@@ -40,4 +40,43 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
   await expect(todoCard).toBeVisible();
 
   expectCleanConsole(problems);
+});
+
+test("create failure rolls back the card and keeps the modal open", async ({
+  page,
+  problems,
+}) => {
+  const title = `e2e doomed issue ${Date.now()}`;
+
+  await page.goto("/homelab");
+  await page.route("**/api/bindings/homelab/issues", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    // Delay the failure so the optimistic card is observable first.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "stubbed failure" }),
+    });
+  });
+
+  await page.getByTestId("new-issue-button").click();
+  await page.getByTestId("new-issue-title").fill(title);
+  await page.getByTestId("new-issue-submit").click();
+
+  // Optimistic card appears immediately…
+  const doomedCard = page
+    .getByTestId("column-todo")
+    .getByTestId("issue-card")
+    .filter({ hasText: title });
+  await expect(doomedCard).toBeVisible();
+
+  // …then rolls back when the 422 lands; the modal stays open with the typed
+  // title intact and an error line, so nothing is silently lost.
+  await expect(doomedCard).toHaveCount(0);
+  await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+  await expect(page.getByTestId("new-issue-error")).toBeVisible();
+  await expect(page.getByTestId("new-issue-title")).toHaveValue(title);
+
+  expectCleanConsole(problems, { ignore: [/422/] });
 });

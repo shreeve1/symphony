@@ -107,6 +107,14 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
+The suite runs against the persistent dev database and deliberately writes to
+it: the editing spec mutates the two `/homelab` seed issues, and the new-issue
+spec appends one fresh Todo card to `/homelab` per run. Accumulated e2e cards
+are harmless; use *Reset local DB* above if the board gets noisy. Seed skills
+(including `/diagnose`, added in #014) are inserted at API startup only, so a
+long-lived dev server needs a restart before new seed rows show up in the
+skill dropdowns.
+
 ## Tests
 
 ```bash

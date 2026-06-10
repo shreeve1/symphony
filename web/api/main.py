@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any, Literal
 
+import yaml
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -79,8 +80,9 @@ class IssuePatch(BaseModel):
 
 class IssueCreate(BaseModel):
     """New-issue payload (#014). state/reasoning_effort/base_branch are
-    server-set, so they are not fields here — extra="forbid" rejects them (and
-    any other unknown key) with HTTP 400."""
+    exclusively server-set, so they are not fields here — extra="forbid"
+    rejects them (and any other unknown key) with HTTP 400. worktree_active is
+    different: server-defaulted to false but client-settable."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -216,8 +218,14 @@ def create_binding_issue(
 
 def _base_branch_for(name: str) -> str:
     """New-issue base_branch default comes from bindings.yml (#014 spec); the
-    binding table doesn't store it."""
-    for binding in _load_bindings(BINDINGS_PATH):
+    binding table doesn't store it. A missing or malformed file (or a binding
+    present in the DB but absent from the yml) must not turn creation into a
+    500 — fall back to 'main'."""
+    try:
+        bindings = _load_bindings(BINDINGS_PATH)
+    except (OSError, yaml.YAMLError):
+        return "main"
+    for binding in bindings:
         if binding.get("name") == name:
             return str(binding.get("base_branch") or "main")
     return "main"

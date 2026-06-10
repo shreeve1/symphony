@@ -88,6 +88,42 @@ def test_create_unknown_binding_returns_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_create_unknown_binding_beats_body_validation(client: TestClient) -> None:
+    # Pins the precedence: binding existence is checked before the body is
+    # validated (consistent with PATCH's resource-lookup-first ordering), so
+    # an invalid body against an unknown binding is 404, not 400/422.
+    response = client.post(
+        "/api/bindings/no-such-binding/issues",
+        json={"title": "smoke", "state": "done"},
+    )
+    assert response.status_code == 404
+
+
+def test_create_base_branch_follows_bindings_yml(
+    client: TestClient, monkeypatch, tmp_path
+) -> None:
+    custom = tmp_path / "bindings.yml"
+    custom.write_text("bindings:\n  - name: trading\n    base_branch: develop\n")
+    monkeypatch.setattr(main, "BINDINGS_PATH", custom)
+    response = client.post("/api/bindings/trading/issues", json={"title": "branched"})
+    assert response.status_code == 201
+    assert response.json()["base_branch"] == "develop"
+
+
+@pytest.mark.parametrize("content", [None, ": not [ yaml"])
+def test_create_falls_back_to_main_when_bindings_yml_unreadable(
+    client: TestClient, monkeypatch, tmp_path, content: str | None
+) -> None:
+    # None = file missing entirely; string = malformed YAML. Neither may 500.
+    broken = tmp_path / "bindings.yml"
+    if content is not None:
+        broken.write_text(content)
+    monkeypatch.setattr(main, "BINDINGS_PATH", broken)
+    response = client.post("/api/bindings/trading/issues", json={"title": "fallback"})
+    assert response.status_code == 201
+    assert response.json()["base_branch"] == "main"
+
+
 def test_create_with_state_field_returns_400(client: TestClient) -> None:
     response = client.post(
         "/api/bindings/trading/issues", json={"title": "smoke", "state": "done"}
