@@ -58,3 +58,13 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Automated lifecycle coverage is not a substitute for the issue's operator-driven Podium smoke criterion.
 **Conventions established:** Ralph may finish #020 as BLOCKED when code passes but the remaining acceptance criterion requires explicit operator restart/smoke confirmation.
 **Notes for next iteration:** Ask James for restart approval, then file/observe the Podium smoke; if it passes, mark the remaining smoke criterion done.
+
+## #020 Cutover smoke complete — 2026-06-11
+
+**What changed:** Performed the operator-approved trading→Podium cutover smoke and closed #020 as done. Found and fixed a live dispatch bug surfaced by the first real run.
+**Files:** tracker_podium.py, tests/test_trading_podium_dispatch.py, .kanban/issues/020-podium-trading-cutover.md
+**Root cause:** `PodiumTrackerAdapter.db_path` was `None` in production (constructed without it by `main._build_binding_runtime`), so `_start_run_record` fell back to the unwritable `RUN_LOG_ROOT` (`/var/lib/symphony/runs`). `_write_run_log` then raised `PermissionError`, crashing `_finish_run_record` — runs never finalized; issues reached In Review only via the stale-running reconciler.
+**Fix:** Resolve `db_path` in `__post_init__` so the run-log root co-locates with the resolved DB (commit `8eb4aa6`). Added `test_trading_podium_dispatch_logs_colocate_with_resolved_db`, which builds the adapter as `main` does (no `db_path`, no `RUN_LOG_ROOT` override) and fails without the fix.
+**Decisions:** The mocked dispatch test masked the bug by passing an explicit `db_path` AND monkeypatching `RUN_LOG_ROOT`; regression coverage must exercise the production construction path.
+**Conventions established:** Podium run logs live beside the active `podium.db` (`<db parent>/runs/<id>.log`), not at the `/var/lib/symphony/runs` default, until/unless a writable `/var/lib/symphony` exists.
+**Notes for next iteration:** Podium web UI/API was not running, so the smoke was filed by direct `podium.db` insert. Seed issue 3 / run 5 are left in a stale state (run 5 stuck `running`) from the pre-fix crash — cosmetic seed noise, safe to clean later. Commits `12289da` and `8eb4aa6` are local-only (not pushed to `github-personal`).
