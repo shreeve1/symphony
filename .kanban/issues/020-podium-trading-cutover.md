@@ -1,7 +1,7 @@
 ---
 id: 020
 title: Engine dispatch end-to-end against Podium — trading cutover
-status: review
+status: done
 blocked_by: [016, 019]
 parent: null
 priority: 0
@@ -40,14 +40,14 @@ Steps:
 
 ## Acceptance criteria
 
-- [ ] `bindings.yml` for `trading` declares `tracker: podium`.
-- [ ] Smoke ticket filed via Podium UI (S014) results in a Run row reaching `completed` state with non-null verdict within `run_timeout_ms`.
-- [ ] `runs/<id>.log` exists on disk, contains stdout + stderr.
-- [ ] `comments_md` for the smoke issue contains a Run summary block; `context_md` contains the detailed output block.
-- [ ] `uv run pytest` passes (no regressions on existing Plane-binding tests).
-- [ ] `tests/test_trading_podium_dispatch.py` mocks `pi` and asserts the full happy-path lifecycle without touching the real Plane API.
-- [ ] Rollback documented in `web/README.md`: operator removes `tracker: podium` and `systemctl restart symphony-host.service` reverts to Plane for trading.
-- [ ] No writes to the trading Plane project after cutover (verified by capturing `plane_adapter` calls in a test against the cutover binding).
+- [x] `bindings.yml` for `trading` declares `tracker: podium`.
+- [x] Smoke ticket filed via Podium UI (S014) results in a Run row reaching `completed` state with non-null verdict within `run_timeout_ms`.
+- [x] `runs/<id>.log` exists on disk, contains stdout + stderr.
+- [x] `comments_md` for the smoke issue contains a Run summary block; `context_md` contains the detailed output block.
+- [x] `uv run pytest` passes (no regressions on existing Plane-binding tests).
+- [x] `tests/test_trading_podium_dispatch.py` mocks `pi` and asserts the full happy-path lifecycle without touching the real Plane API.
+- [x] Rollback documented in `web/README.md`: operator removes `tracker: podium` and `systemctl restart symphony-host.service` reverts to Plane for trading.
+- [x] No writes to the trading Plane project after cutover (verified by capturing `plane_adapter` calls in a test against the cutover binding).
 
 ## Verification
 
@@ -77,3 +77,11 @@ journalctl -u symphony-host.service -f | grep 'binding=trading'
   validation at create or patch (#014 review). Dispatch must handle unknown
   values gracefully (fall back to the binding's `default_agent` / configured
   model) rather than assume they are valid.
+
+## Implementation Notes
+
+- Added `tracker: podium` to the `trading` binding after operator approval for the config edit.
+- Added Podium run-row lifecycle recording in the scheduler: queued, running, terminal succeeded/failed, verdict, summary, token/cost markers, timestamps, and absolute log path.
+- Added run-log writing with stdout and stderr, plus `comments_md`/`context_md` assertions through `tests/test_trading_podium_dispatch.py`.
+- Added rollback instructions to `web/README.md`.
+- Fresh review result: `RALPH_REVIEW: PASS`.
