@@ -124,3 +124,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** New binding onboarding uses Podium as source of truth; `plane_project_id` remains in generated `bindings.yml` entries only as transitional `ProjectBinding` compatibility. `symphony-plane-recover` remains Plane-retirement-only.
 **Conventions established:** Migrated operational skills must use Podium `/api/bindings`, `/api/bindings/{name}/issues`, and `/api/issues/{issue_id}/runs` paths and must not import `plane_adapter` or call legacy Plane workspace endpoints.
 **Notes for next iteration:** #023c can rely on Podium-oriented skill docs, but external dotfiles/global skill synchronization remains a separate operational propagation step if required.
+
+## #024 scheduler.py:488 defensive hardening — 2026-06-11
+
+**What changed:** Replaced first-binding `binding_type` resolution with explicit `ProjectBinding` plumbing through `main.BindingRuntime`, `run_loop`, `_dispatch_one`, `run_tick`, startup reconciliation, run-log retention, prompt rendering, context compaction, run records, and worktree run fields.
+**Files:** main.py, scheduler.py, tests/test_main.py, tests/test_scheduler.py
+**Decisions:** Kept single-binding fallback only when `SymphonyConfig.bindings` has exactly one binding; multi-binding paths must pass `binding` directly or resolve by `CandidateIssue.binding_name` once issue context exists.
+**Conventions established:** Binding-sensitive scheduler gates should use a `ProjectBinding` argument or `_binding_for_issue(...)`, not `config.bindings[0].binding_type`.
+**Notes for next iteration:** Verification passed with `uv run pytest` (573 passed, 1 skipped); fresh Ralph review passed. First full pytest run hit a transient SQLite busy failure in `tests/test_podium_sqlite_concurrent.py`, and immediate targeted rerun plus full rerun passed.
