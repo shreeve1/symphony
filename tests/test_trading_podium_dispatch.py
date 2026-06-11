@@ -63,8 +63,6 @@ def _seed_db(path: Path) -> int:
 async def test_trading_podium_dispatch_records_run_log_and_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "podium.db"
     issue_id = _seed_db(db_path)
-    run_log_root = tmp_path / "runs"
-    monkeypatch.setattr(scheduler, "RUN_LOG_ROOT", run_log_root)
     (tmp_path / "WORKFLOW.md").write_text("Repo policy. mode={{issue.mode}}", encoding="utf-8")
     config = _config(tmp_path)
     binding = config.bindings[0]

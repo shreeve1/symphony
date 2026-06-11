@@ -8,7 +8,6 @@ from pathlib import Path
 DEFAULT_DB_PATH = Path("/var/lib/symphony/podium.db")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FALLBACK_DB_PATH = REPO_ROOT / "podium.db"
-RUN_LOG_ROOT = Path("/var/lib/symphony/runs")
 
 
 def resolve_db_path() -> Path:
@@ -20,6 +19,17 @@ def resolve_db_path() -> Path:
     if default_parent.exists() and os.access(default_parent, os.W_OK):
         return DEFAULT_DB_PATH
     return FALLBACK_DB_PATH
+
+
+def resolve_run_log_root() -> Path:
+    """Run logs co-locate with the active database.
+
+    Mirrors ``resolve_db_path``'s fallback so the run-log root is never the
+    unwritable ``/var/lib/symphony/runs`` default while the database itself
+    resolved to the repo-root fallback. Resolved lazily so a per-process or
+    per-test ``PODIUM_DB_PATH`` is honored at call time.
+    """
+    return resolve_db_path().parent / "runs"
 
 
 def database_url() -> str:

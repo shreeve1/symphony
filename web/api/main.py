@@ -39,7 +39,7 @@ record_failed_attempt = _auth.record_failed_attempt
 sign_session = _auth.sign_session
 verify_password = _auth.verify_password
 verify_session = _auth.verify_session
-RUN_LOG_ROOT = _db.RUN_LOG_ROOT
+resolve_run_log_root = _db.resolve_run_log_root
 connect = _db.connect
 get_connection = _db.get_connection
 INITIAL_REVISION = _schema.INITIAL_REVISION
@@ -610,7 +610,7 @@ def get_run_log(
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> Response:
     row = _get_run_or_404(connection, run_id)
-    path = Path(row["log_path"] or RUN_LOG_ROOT / f"{run_id}.log")
+    path = Path(row["log_path"] or resolve_run_log_root() / f"{run_id}.log")
     if not path.is_file():
         raise HTTPException(status_code=404, detail="log_not_found")
     return Response(content=_tail_bytes(path), media_type="text/plain")

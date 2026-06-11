@@ -29,7 +29,7 @@ from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, Schedul
 from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
 from prompt_renderer import render_previous_comments_block
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
-from web.api.db import RUN_LOG_ROOT
+from web.api.db import resolve_run_log_root
 
 
 LOGGER = logging.getLogger(__name__)
@@ -436,7 +436,11 @@ async def _start_run_record(
     if not run_id:
         return None, None
     adapter_db_path = getattr(adapter, "db_path", None)
-    run_log_root = Path(adapter_db_path).parent / "runs" if adapter_db_path is not None else RUN_LOG_ROOT
+    run_log_root = (
+        Path(adapter_db_path).parent / "runs"
+        if adapter_db_path is not None
+        else resolve_run_log_root()
+    )
     return run_id, (run_log_root / f"{run_id}.log").resolve()
 
 

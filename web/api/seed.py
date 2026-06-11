@@ -9,9 +9,9 @@ from typing import Any
 import yaml
 
 try:
-    from .db import RUN_LOG_ROOT
+    from .db import resolve_run_log_root
 except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
-    RUN_LOG_ROOT = import_module("db").RUN_LOG_ROOT
+    resolve_run_log_root = import_module("db").resolve_run_log_root
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BINDINGS_PATH = REPO_ROOT / "bindings.yml"
@@ -88,7 +88,7 @@ def seed_if_empty(
             seeded_run_ids.append(int(run_id))
             connection.execute(
                 "UPDATE run SET log_path = ? WHERE id = ?",
-                (str(RUN_LOG_ROOT / f"{run_id}.log"), run_id),
+                (str(resolve_run_log_root() / f"{run_id}.log"), run_id),
             )
             connection.execute(
                 """
