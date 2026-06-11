@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -351,6 +351,125 @@ class PodiumTrackerAdapter:
             self._update_issue_run_projection(connection, row)
             connection.commit()
         return dict(row)
+
+    async def reconcile_orphaned_runs(self, *, reaped_at: str | None = None) -> int:
+        timestamp = reaped_at or _now()
+        summary = f"restart-orphan: reaped at {timestamp}"
+        comment = f"Run reaped on restart at {timestamp}; worktree preserved."
+        with self.connect() as connection:
+            if self.binding_name is not None:
+                rows = connection.execute(
+                    """
+                    SELECT run.*
+                    FROM run
+                    JOIN issue ON issue.id = run.issue_id
+                    WHERE run.state IN ('queued', 'running')
+                      AND issue.binding_name = ?
+                    ORDER BY run.id ASC
+                    """,
+                    (self.binding_name,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT run.*
+                    FROM run
+                    JOIN issue ON issue.id = run.issue_id
+                    WHERE run.state IN ('queued', 'running')
+                    ORDER BY run.id ASC
+                    """
+                ).fetchall()
+            for row in rows:
+                connection.execute(
+                    """
+                    UPDATE run
+                    SET state = 'failed', verdict = 'blocked', summary = ?,
+                        exit_code = COALESCE(exit_code, 1), ended_at = ?
+                    WHERE id = ?
+                    """,
+                    (summary, timestamp, row["id"]),
+                )
+                updated_run = connection.execute(
+                    "SELECT * FROM run WHERE id = ?", (row["id"],)
+                ).fetchone()
+                assert updated_run is not None
+                self._update_issue_run_projection(connection, updated_run)
+                current = connection.execute(
+                    "SELECT comments_md FROM issue WHERE id = ?", (row["issue_id"],)
+                ).fetchone()
+                if current is not None:
+                    existing = str(current["comments_md"] or "").rstrip()
+                    block = _append_block("### Symphony AI Summary", comment)
+                    updated_comments = (
+                        f"{existing}\n\n{block}".strip() if existing else block
+                    )
+                    connection.execute(
+                        """
+                        UPDATE issue
+                        SET state = 'blocked', comments_md = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (updated_comments, timestamp, row["issue_id"]),
+                    )
+            connection.commit()
+        return len(rows)
+
+    async def prune_run_logs(
+        self,
+        *,
+        now: datetime | None = None,
+        max_age_days: int = 90,
+        max_logs_per_issue: int = 100,
+    ) -> int:
+        cutoff = (now or datetime.now(UTC)) - timedelta(days=max_age_days)
+        with self.connect() as connection:
+            if self.binding_name is not None:
+                rows = connection.execute(
+                    """
+                    SELECT run.id, run.issue_id, run.log_path
+                    FROM run
+                    JOIN issue ON issue.id = run.issue_id
+                    WHERE run.log_path IS NOT NULL AND run.log_path != ''
+                      AND issue.binding_name = ?
+                    ORDER BY run.issue_id ASC, run.started_at DESC, run.id DESC
+                    """,
+                    (self.binding_name,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT run.id, run.issue_id, run.log_path
+                    FROM run
+                    JOIN issue ON issue.id = run.issue_id
+                    WHERE run.log_path IS NOT NULL AND run.log_path != ''
+                    ORDER BY run.issue_id ASC, run.started_at DESC, run.id DESC
+                    """
+                ).fetchall()
+            rows_by_issue: dict[Any, list[sqlite3.Row]] = {}
+            for row in rows:
+                rows_by_issue.setdefault(row["issue_id"], []).append(row)
+
+            reaped_run_ids: list[Any] = []
+            for issue_rows in rows_by_issue.values():
+                for index, row in enumerate(issue_rows):
+                    path = Path(str(row["log_path"])).expanduser()
+                    too_many = index >= max_logs_per_issue
+                    too_old = False
+                    if path.is_file():
+                        modified = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+                        too_old = modified < cutoff
+                    if not too_many and not too_old:
+                        continue
+                    if path.is_file():
+                        path.unlink()
+                    reaped_run_ids.append(row["id"])
+
+            for run_id in reaped_run_ids:
+                connection.execute(
+                    "UPDATE run SET log_path = NULL WHERE id = ?", (run_id,)
+                )
+            connection.commit()
+        return len(reaped_run_ids)
 
     def _update_issue_run_projection(
         self, connection: sqlite3.Connection, row: sqlite3.Row

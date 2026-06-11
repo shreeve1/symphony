@@ -71,6 +71,7 @@ SCHEDULED_RELEASE_MAX_PAGES_PER_TICK = 3
 RATE_LIMIT_BASE_COOLDOWN_S = 30.0
 RATE_LIMIT_MAX_COOLDOWN_S = 300.0
 RATE_LIMIT_JITTER_FRACTION = 0.2
+LOG_RETENTION_INTERVAL = timedelta(hours=24)
 
 SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
 SCHEDULED_LABEL_WINDOW_START_HOUR = 0
@@ -1321,6 +1322,44 @@ async def reconcile_pending_review(
     return reconciled
 
 
+async def reconcile_orphaned_runs(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> int:
+    """Reap durable Podium Run rows orphaned by scheduler restart."""
+
+    reconcile = getattr(adapter, "reconcile_orphaned_runs", None)
+    if not callable(reconcile):
+        return 0
+    timestamp = now().isoformat()
+    binding_name = config.bindings[0].name if config.bindings else ""
+    LOGGER.info("run_reconcile_begin binding=%s", binding_name)
+    reaped = int(await _maybe_await(reconcile(reaped_at=timestamp)))
+    LOGGER.info("run_reconcile_done binding=%s reaped=%d", binding_name, reaped)
+    return reaped
+
+
+async def run_log_retention(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> int:
+    """Prune old Podium Run log files while keeping durable Run rows."""
+
+    prune = getattr(adapter, "prune_run_logs", None)
+    if not callable(prune):
+        return 0
+    binding_name = config.bindings[0].name if config.bindings else ""
+    now_dt = now()
+    LOGGER.info("log_retention_begin binding=%s", binding_name)
+    pruned = int(await _maybe_await(prune(now=now_dt)))
+    LOGGER.info("log_retention_done binding=%s pruned=%d", binding_name, pruned)
+    return pruned
+
+
 async def reconcile_stale_running(
     adapter: TrackerAdapter,
     run_timeout_ms: int,
@@ -1384,6 +1423,9 @@ async def reconcile_startup(
     the scheduler starts clean after a restart.
     """
     cleaned = 0
+
+    cleaned += await reconcile_orphaned_runs(config, adapter, now=now)
+    await run_log_retention(config, adapter, now=now)
 
     stale_running_issues: list[dict[str, Any]] = []
     for issue in await adapter.list_issues_by_state(
@@ -1496,6 +1538,7 @@ async def run_loop(
     concurrency governor.
     """
     next_blocked_reconcile_at = datetime.now(UTC)
+    next_log_retention_at = datetime.now(UTC) + LOG_RETENTION_INTERVAL
     active_tasks: set[asyncio.Task[TickResult]] = set()
     state = _DispatchState(
         semaphore=asyncio.Semaphore(config.run_cap),
@@ -1507,6 +1550,13 @@ async def run_loop(
     while True:
         now_dt = datetime.now(UTC)
         run_blocked_reconcile = now_dt >= next_blocked_reconcile_at
+        if now_dt >= next_log_retention_at:
+            next_log_retention_at = now_dt + LOG_RETENTION_INTERVAL
+            await run_log_retention(
+                config,
+                adapter,
+                now=lambda now_dt=now_dt: now_dt,
+            )
 
         # Reap completed tasks and propagate their log lines.
         done = {t for t in active_tasks if t.done()}
