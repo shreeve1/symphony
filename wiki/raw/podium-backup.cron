@@ -1,0 +1,4 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+17 2 * * * james cd /home/james/symphony && /home/james/symphony/scripts/podium-backup.sh >> /home/james/symphony/runs/podium-backup.log 2>&1

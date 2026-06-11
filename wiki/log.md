@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #023b Podium Alembic baseline + SQLite backup wiring
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #023b implementation; commits `5df8784`, `e633be7`, `849898f`; `tests/test_alembic_baseline.py`; `web/api/migrations/env.py`; `web/api/migrations/README.md`; `scripts/podium-backup.sh`; `/etc/cron.d/podium-backup`; `web/README.md`; `.kanban/issues/023b-podium-alembic-and-backup.md`; `.kanban/progress.md`.
+- Outputs: `wiki/raw/sessions/2026-06-11-podium-023b-alembic-backup.md`; `wiki/raw/podium-backup.cron`; `wiki/analyses/podium-023b-alembic-backup.md`; `wiki/CLAIMS.md` (C-0092..C-0094); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured Alembic/runtime schema parity testing, logger-preserving Alembic config, migration rule docs, cron-based SQLite `.backup` with 14-day retention, restore-drill evidence, and pytest 8.x dev-tooling pin. Verification passed: `uv run pytest` (554 passed, 1 skipped) plus backup file check. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #022 Podium restart Run reconciliation + run-log retention
 
 - Actor: agent (Pi, Ralph + wiki update)
