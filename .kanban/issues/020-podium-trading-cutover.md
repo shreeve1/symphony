@@ -1,7 +1,7 @@
 ---
 id: 020
 title: Engine dispatch end-to-end against Podium — trading cutover
-status: done
+status: blocked
 blocked_by: [016, 019]
 parent: null
 priority: 0
@@ -41,7 +41,7 @@ Steps:
 ## Acceptance criteria
 
 - [x] `bindings.yml` for `trading` declares `tracker: podium`.
-- [x] Smoke ticket filed via Podium UI (S014) results in a Run row reaching `completed` state with non-null verdict within `run_timeout_ms`.
+- [ ] Smoke ticket filed via Podium UI (S014) results in a Run row reaching `completed` state with non-null verdict within `run_timeout_ms`.
 - [x] `runs/<id>.log` exists on disk, contains stdout + stderr.
 - [x] `comments_md` for the smoke issue contains a Run summary block; `context_md` contains the detailed output block.
 - [x] `uv run pytest` passes (no regressions on existing Plane-binding tests).
@@ -84,4 +84,8 @@ journalctl -u symphony-host.service -f | grep 'binding=trading'
 - Added Podium run-row lifecycle recording in the scheduler: queued, running, terminal succeeded/failed, verdict, summary, token/cost markers, timestamps, and absolute log path.
 - Added run-log writing with stdout and stderr, plus `comments_md`/`context_md` assertions through `tests/test_trading_podium_dispatch.py`.
 - Added rollback instructions to `web/README.md`.
-- Fresh review result: `RALPH_REVIEW: PASS`.
+- Fresh review result: `RALPH_REVIEW: PASS` for automated code/test/doc scope.
+
+## Blocker
+
+Implementation and automated verification are complete, but the operator-driven cutover smoke has not been performed in this Ralph session. Before this issue can move to `done`, James must approve the service restart at the moment of action, file a low-risk ticket through Podium, and confirm the live `trading` binding reaches a terminal Run with summary/context/log evidence.

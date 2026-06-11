@@ -50,3 +50,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Terminal Podium Run state uses existing schema values (`succeeded`/`failed`) while the issue remains `in_review`; `latest_verdict` carries `done`/`review`/`blocked`.
 **Conventions established:** Podium run logs are written beside the Podium DB in tests and under `/var/lib/symphony/runs` in production; Pi may emit `SYMPHONY_COST_USD`, `SYMPHONY_INPUT_TOKENS`, and `SYMPHONY_OUTPUT_TOKENS` markers for Run metadata.
 **Notes for next iteration:** Manual service restart and operator smoke remain outside Ralph automation and still require explicit approval at the moment of action.
+
+## #020 Blocker update — 2026-06-11
+
+**What changed:** Reopened #020 as blocked after automated implementation and review because the live operator cutover smoke was not performed in this session.
+**Files:** .kanban/issues/020-podium-trading-cutover.md
+**Decisions:** Automated lifecycle coverage is not a substitute for the issue's operator-driven Podium smoke criterion.
+**Conventions established:** Ralph may finish #020 as BLOCKED when code passes but the remaining acceptance criterion requires explicit operator restart/smoke confirmation.
+**Notes for next iteration:** Ask James for restart approval, then file/observe the Podium smoke; if it passes, mark the remaining smoke criterion done.
