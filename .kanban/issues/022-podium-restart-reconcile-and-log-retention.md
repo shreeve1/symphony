@@ -1,7 +1,7 @@
 ---
 id: 022
 title: Restart-time Run reconciliation + run-log retention
-status: in-progress
+status: review
 blocked_by: [020]
 parent: null
 priority: 0
