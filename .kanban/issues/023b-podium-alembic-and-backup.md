@@ -1,7 +1,7 @@
 ---
 id: 023b
 title: Alembic baseline + SQLite backup wiring
-status: in-progress
+status: review
 blocked_by: [020]
 parent: null
 priority: 0
