@@ -107,3 +107,10 @@ Append entries with this format:
 - Inputs: issue #018 implementation; commit `b8a50f0`; `web/api/auth.py`; `web/api/main.py`; `web/api/tests/test_auth.py`; `web/cli/podium.py`; `web/frontend/components/AppShell.tsx`; `web/frontend/app/login/page.tsx`; `web/frontend/tests/auth.spec.ts`.
 - Outputs: `wiki/analyses/podium-018-auth.md`; `wiki/CLAIMS.md` (C-0073..C-0076); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Captured bcrypt shared-password auth, required env contract, signed `podium_session` cookie, HTTP and WebSocket auth gates, frontend login/logout redirect contract, set-password stdout-only helper, and test-auth convention. No production secrets, no `.env` contents, no transcript.
+
+## [2026-06-11] session-update | Podium #025 prompt renderer Podium path
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #025 implementation; commit `36a7cd4`; `prompt_renderer.py`; `skill_mode_map.py`; `tests/test_prompt_renderer_podium.py`.
+- Outputs: updated `wiki/concepts/prompt-renderer.md`; `wiki/CLAIMS.md` (C-0077..C-0078); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured `tracker_kind="podium"`, direct `comments_md`/`context_md` rendering, non-truncating Podium comments, `skill_mode_map.SKILL_TO_MODE`, and the transitional Skill→Mode bridge. No secrets, no `.env` contents, no transcript.
