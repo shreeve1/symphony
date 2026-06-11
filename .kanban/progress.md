@@ -125,6 +125,14 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Migrated operational skills must use Podium `/api/bindings`, `/api/bindings/{name}/issues`, and `/api/issues/{issue_id}/runs` paths and must not import `plane_adapter` or call legacy Plane workspace endpoints.
 **Notes for next iteration:** #023c can rely on Podium-oriented skill docs, but external dotfiles/global skill synchronization remains a separate operational propagation step if required.
 
+## #023c Homelab cutover to Podium + infra roles — 2026-06-11
+
+**What changed:** Added Podium infra role columns and projection, exposed infra-only approval/schedule chips, cut `homelab` over to `tracker: podium`, ran the live migration/restart, completed a live homelab Podium smoke, updated terminology in `CONTEXT.md`, and documented rollback.
+**Files:** bindings.yml, CONTEXT.md, tracker_podium.py, web/api/schema.py, web/api/migrations/versions/0003_infra_role_columns.py, web/api/main.py, web/frontend/lib/api.ts, web/frontend/components/IssueFlyout.tsx, web/frontend/components/NewIssueModal.tsx, web/README.md, tests/test_tracker_podium_infra.py, tests/test_main.py, web/api/tests/test_endpoints.py, web/api/tests/test_issue_patch.py
+**Decisions:** Both active bindings now use Podium; Plane remains dormant as rollback/ADR-0002 hedge. In unattended mode, the homelab smoke issue was inserted directly into Podium SQLite because UI auth credentials were unavailable to the worker, but the scheduler dispatch still exercised the Podium tracker path end-to-end.
+**Conventions established:** Infra role labels in Podium project through `issue.approval_required`, `issue.approved`, and due `issue.scheduled_for`; frontend infra-only chips are gated by server-projected `binding_type`.
+**Notes for next iteration:** #023d must wait for a soak period before archiving Plane. Stale homelab e2e Todo issues 9–16 were parked as Blocked after cutover to prevent unintended live dispatch; issues 5–8 dispatched successfully during smoke cleanup.
+
 ## #024 scheduler.py:488 defensive hardening — 2026-06-11
 
 **What changed:** Replaced first-binding `binding_type` resolution with explicit `ProjectBinding` plumbing through `main.BindingRuntime`, `run_loop`, `_dispatch_one`, `run_tick`, startup reconciliation, run-log retention, prompt rendering, context compaction, run records, and worktree run fields.
