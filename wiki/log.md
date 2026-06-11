@@ -114,3 +114,10 @@ Append entries with this format:
 - Inputs: issue #025 implementation; commit `36a7cd4`; `prompt_renderer.py`; `skill_mode_map.py`; `tests/test_prompt_renderer_podium.py`.
 - Outputs: updated `wiki/concepts/prompt-renderer.md`; `wiki/CLAIMS.md` (C-0077..C-0078); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Captured `tracker_kind="podium"`, direct `comments_md`/`context_md` rendering, non-truncating Podium comments, `skill_mode_map.SKILL_TO_MODE`, and the transitional Skill→Mode bridge. No secrets, no `.env` contents, no transcript.
+
+## [2026-06-11] session-update | Podium #019 tracker adapter
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #019 implementation; commits `9e84869`, `37c5170`, `1eff632`; `config.py`; `main.py`; `scheduler.py`; `tracker_adapter.py`; `tracker_podium.py`; `web/api/db.py`; `tests/test_tracker_podium.py`; `tests/test_podium_sqlite_concurrent.py`; `tests/test_engine_against_podium.py`.
+- Outputs: updated `wiki/concepts/podium-tracker.md`; `wiki/CLAIMS.md` (C-0079..C-0081); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured `tracker: plane|podium` binding validation, runtime tracker protocol, SQLite Podium adapter, WAL/busy-timeout concurrency posture, no direct `plane_adapter` import in `tracker_podium.py`, and scheduler `stores_context` path for Podium `context_md`. No secrets, no `.env` contents, no transcript.

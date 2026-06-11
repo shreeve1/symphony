@@ -3,15 +3,20 @@ title: Podium Tracker — schema, db resolution, API contract, concurrency
 type: concept
 status: promoted
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-11
 sources:
   - web/api/schema.py
   - web/api/db.py
   - web/api/main.py
   - web/api/seed.py
   - web/api/migrations/versions/0001_initial.py
+  - tracker_podium.py
+  - tracker_adapter.py
+  - config.py
+  - main.py
+  - scheduler.py
 confidence: high
-tags: [podium, sqlite, schema, run-table, issue-state, db-path, patch-contract, check-same-thread, alembic, lan-bind]
+tags: [podium, sqlite, schema, run-table, issue-state, db-path, patch-contract, check-same-thread, alembic, lan-bind, tracker-adapter]
 ---
 
 # Podium Tracker (implementation)
@@ -39,6 +44,16 @@ The startup reaper (ADR-0005) sweeps `run.state IN (queued,running)` → synthet
 [source: web/api/schema.py:6-65]
 
 FK note: only `preferred_skill` is FK-checked; `preferred_agent`/`preferred_model` are free text (no enum/FK) — see C-0058. `PRAGMA foreign_keys = ON` is set per-connection [source: web/api/db.py:39].
+
+## Engine tracker adapter (#019)
+
+`bindings.yml` accepts optional `tracker: plane|podium` on each binding. Missing value defaults to `plane`; unknown values raise `ConfigError` during config load [source: config.py:64-70,376-379]. `main._build_binding_runtime(...)` selects `PodiumTrackerAdapter` when `binding.tracker == "podium"`, otherwise builds the Plane transport/adapter path [source: main.py:76-81].
+
+`tracker_adapter.py` defines the runtime-checkable `TrackerAdapter` Protocol used as the shared engine surface: candidate listing, state transitions, comment/context writes, label no-ops/updates, and run row get/record [source: tracker_adapter.py:13-49]. `tracker_podium.py` implements that surface against SQLite without importing `plane_adapter`; role projection is column-based for coding bindings: state Roles map to `issue.state`, mode Roles derive from `preferred_skill` via `skill_mode_map`, agent role is exposed as `agent:<preferred_agent>`, and approval/approved/scheduled/has-worktree Roles are absent until #023c adds infra columns [source: tracker_podium.py:1-16,57-159].
+
+Podium tracker connections set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, and `PRAGMA foreign_keys = ON`. FastAPI's `web/api/db.py` connect path now sets the same WAL/busy-timeout pragmas, so API and engine writers share the same SQLite concurrency posture [source: tracker_podium.py:95-102, web/api/db.py:37-41].
+
+Scheduler success handling appends the concise completion summary to `comments_md` and, for adapters with `stores_context=True`, appends sanitized stdout/stderr blobs into `context_md` before moving the issue to `in_review` [source: scheduler.py:852-870, tracker_podium.py:69,209-215].
 
 ## DB path resolution chain
 
@@ -76,8 +91,8 @@ Both Podium ports bind localhost in production; external access via Authelia rev
 
 ## Slice → commit map
 
-`ca1b8b7` #012a (schema/endpoints), `6ca9ec1` #012b (review hardening), `276228d` cross-thread fix, `9d930b1` #012c, `ef79c7a` #013 (flyout), `2f28152` #013 review, `a68cccf` #014, `f0de67b` #014 review, `4aab377` flyout chip removal, `a6157f3` modal flyout-parity, `bf7cfd0` options endpoint. `.kanban/` is gitignored — cite code paths + commits primarily, kanban paths secondarily.
+`ca1b8b7` #012a (schema/endpoints), `6ca9ec1` #012b (review hardening), `276228d` cross-thread fix, `9d930b1` #012c, `ef79c7a` #013 (flyout), `2f28152` #013 review, `a68cccf` #014, `f0de67b` #014 review, `4aab377` flyout chip removal, `a6157f3` modal flyout-parity, `bf7cfd0` options endpoint, `9e84869`/`37c5170` #019 Podium tracker adapter. `.kanban/` is gitignored — cite code paths + commits primarily, kanban paths secondarily.
 
 ## Claims
 
-C-0059 .. C-0067 in [CLAIMS.md](../CLAIMS.md).
+C-0059 .. C-0067 and C-0079 .. C-0081 in [CLAIMS.md](../CLAIMS.md).
