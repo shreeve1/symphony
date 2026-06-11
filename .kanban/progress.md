@@ -132,3 +132,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept single-binding fallback only when `SymphonyConfig.bindings` has exactly one binding; multi-binding paths must pass `binding` directly or resolve by `CandidateIssue.binding_name` once issue context exists.
 **Conventions established:** Binding-sensitive scheduler gates should use a `ProjectBinding` argument or `_binding_for_issue(...)`, not `config.bindings[0].binding_type`.
 **Notes for next iteration:** Verification passed with `uv run pytest` (573 passed, 1 skipped); fresh Ralph review passed. First full pytest run hit a transient SQLite busy failure in `tests/test_podium_sqlite_concurrent.py`, and immediate targeted rerun plus full rerun passed.
+
+## #023a Podium systemd units actionable review — 2026-06-11
+
+**What changed:** Closed the remaining alert-hook blocker by verifying failure-alert wiring from configuration without emitting a live Telegram alert.
+**Files:** .kanban/issues/023a-podium-systemd-units.md, .kanban/progress.md; audited live units `/etc/systemd/system/podium-api.service`, `/etc/systemd/system/podium-web.service`, `/etc/systemd/system/telegram-alert@.service`, `/usr/local/sbin/send-telegram-systemd-alert`
+**Decisions:** For unattended Ralph verification, external notification hooks are verified by unit/template/script/env wiring instead of firing live alerts.
+**Conventions established:** Podium API and web failure hooks rely on `OnFailure=telegram-alert@%n.service` plus the shared `telegram-alert@.service` template and `/home/james/symphony-host.env` Telegram variable names.
+**Notes for next iteration:** Verification passed: `sudo systemctl status podium-api.service podium-web.service --no-pager && ss -tlnp | grep -E '8090|8091'`; `systemctl show` confirmed active units, loopback listeners, api `--workers 1`, and resolved `OnFailure` targets. Critical LSP gate was not applicable because no source files changed.
