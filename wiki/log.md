@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #022 Podium restart Run reconciliation + run-log retention
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #022 implementation; commits `3bd8957`, `0667480`, `9686183`; `scheduler.py`; `tracker_podium.py`; `tests/test_run_reconcile.py`; `tests/test_log_retention.py`; `.kanban/issues/022-podium-restart-reconcile-and-log-retention.md`; `.kanban/progress.md`.
+- Outputs: `wiki/analyses/podium-022-run-reconcile-log-retention.md`; `wiki/CLAIMS.md` (C-0089..C-0091); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured landed startup Run reaping, parent-Issue blocked transition, preserved worktrees, run-log retention semantics (90 days or newest 100 per Issue), startup + 24h scheduler wiring, and structured `run_reconcile_*` / `log_retention_*` pairs. Verification passed: `uv run pytest` (552 passed, 1 skipped). No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #021 Podium worktree opt-in + FF-only auto-merge
 
 - Actor: agent (Pi, Ralph + wiki update)
