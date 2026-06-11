@@ -14,6 +14,7 @@ import {
 import { STATES } from "@/lib/issues";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
+import { RunDetailPanel } from "@/components/RunDetailPanel";
 import { RunHistoryList } from "@/components/RunHistoryList";
 
 // Width persistence — the operator's chosen flyout width survives reopen and
@@ -363,6 +364,7 @@ export function IssueFlyout({
 }) {
 	const { width, startDrag } = useFlyoutWidth();
 	const [tab, setTab] = useState<Tab>("comments");
+	const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 	const panelRef = useRef<HTMLElement | null>(null);
 
 	const detail = useQuery({
@@ -383,8 +385,11 @@ export function IssueFlyout({
 	const skillNames = (skills.data ?? []).map((s) => s.name);
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
-	// Reset to Comments each time a different issue opens.
-	useEffect(() => setTab("comments"), [issueId]);
+	// Reset nested flyout state each time a different issue opens.
+	useEffect(() => {
+		setTab("comments");
+		setSelectedRunId(null);
+	}, [issueId]);
 
 	// Escape closes (click-outside is handled by the backdrop).
 	useEffect(() => {
@@ -518,12 +523,21 @@ export function IssueFlyout({
 								{runs.isError ? (
 									<p className="text-xs text-red-500">Failed to load runs.</p>
 								) : (
-									<RunHistoryList runs={runs.data ?? []} />
+									<RunHistoryList
+										runs={runs.data ?? []}
+										onSelectRun={setSelectedRunId}
+									/>
 								)}
 							</div>
 						</div>
 					)}
 				</div>
+				{selectedRunId != null && (
+					<RunDetailPanel
+						runId={selectedRunId}
+						onClose={() => setSelectedRunId(null)}
+					/>
+				)}
 			</aside>
 		</>
 	);

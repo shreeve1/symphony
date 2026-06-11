@@ -37,17 +37,31 @@ export interface IssueDetail extends Issue {
 	context_md: string;
 }
 
-// Run history row. cost_usd exists on the backend but is intentionally not
-// surfaced in Phase 1 (cost visualization dropped per the UI grilling decision).
+// Run history/detail row. cost_usd exists on the backend but is intentionally
+// not rendered (cost visualization dropped per the UI grilling decision).
 export interface Run {
 	id: number;
 	issue_id: number;
-	verdict: string | null;
+	agent: string | null;
+	provider: string | null;
 	model: string | null;
 	state: string;
+	verdict: string | null;
+	summary: string | null;
+	exit_code: number | null;
+	cost_usd: number | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	worktree_path: string | null;
+	branch_name: string | null;
+	base_branch: string | null;
+	log_path: string | null;
+	skill_invoked: string | null;
 	started_at: string | null;
 	ended_at: string | null;
 }
+
+export type RunDetail = Run;
 
 // CLI-refreshed skill catalog row (#015).
 export interface Skill {
@@ -120,6 +134,17 @@ export const fetchIssue = (id: number) =>
 
 export const fetchIssueRuns = (id: number) =>
 	getJSON<Run[]>(`/api/issues/${id}/runs`);
+
+export const fetchRun = (id: number) => getJSON<RunDetail>(`/api/runs/${id}`);
+
+export async function fetchRunLog(id: number): Promise<string | null> {
+	const res = await fetch(`/api/runs/${id}/log`);
+	if (res.status === 404) return null;
+	if (!res.ok) {
+		throw new Error(`GET /api/runs/${id}/log -> ${res.status} ${res.statusText}`);
+	}
+	return res.text();
+}
 
 export async function createIssue(
 	binding: string,

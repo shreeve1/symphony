@@ -5,20 +5,22 @@ import subprocess
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 try:
-    from .db import connect, get_connection
+    from .db import RUN_LOG_ROOT, connect, get_connection
     from .schema import INITIAL_REVISION, SCHEMA_SQL
     from .seed import BINDINGS_PATH, _load_bindings, seed_if_empty
 except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
     _db = import_module("db")
     _schema = import_module("schema")
     _seed = import_module("seed")
+    RUN_LOG_ROOT = _db.RUN_LOG_ROOT
     connect = _db.connect
     get_connection = _db.get_connection
     INITIAL_REVISION = _schema.INITIAL_REVISION
@@ -390,6 +392,35 @@ def list_issue_runs(
     return [_row(row) for row in rows]
 
 
+@app.get("/api/runs/{run_id}")
+def get_run(
+    run_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    row = _get_run_or_404(connection, run_id)
+    return _row(row)
+
+
+@app.get("/api/runs/{run_id}/log")
+def get_run_log(
+    run_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> Response:
+    row = _get_run_or_404(connection, run_id)
+    path = Path(row["log_path"] or RUN_LOG_ROOT / f"{run_id}.log")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="log_not_found")
+    return Response(content=_tail_bytes(path), media_type="text/plain")
+
+
+def _tail_bytes(path: Path, limit: int = 1_048_576) -> bytes:
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        handle.seek(max(0, size - limit))
+        return handle.read()
+
+
 def _require_known_skill(connection: sqlite3.Connection, skill_name: str) -> None:
     known = connection.execute(
         "SELECT name FROM skill WHERE name = ?", (skill_name,)
@@ -414,3 +445,10 @@ def _get_issue_or_404(connection: sqlite3.Connection, issue_id: int) -> None:
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
+
+
+def _get_run_or_404(connection: sqlite3.Connection, run_id: int) -> sqlite3.Row:
+    row = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return row
