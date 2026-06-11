@@ -38,6 +38,15 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         assert len(trading_issues) >= 2
         assert all("latest_verdict" in issue for issue in trading_issues)
         assert all("latest_run_state" in issue for issue in trading_issues)
+        assert all(issue["binding_type"] == "coding" for issue in trading_issues)
+        assert all(issue["approval_required"] is False for issue in trading_issues)
+        assert all(issue["approved"] is False for issue in trading_issues)
+        assert all(issue["scheduled_for"] is None for issue in trading_issues)
+
+        homelab_issues_response = client.get("/api/bindings/homelab/issues")
+        assert homelab_issues_response.status_code == 200
+        homelab_issues = homelab_issues_response.json()
+        assert all(issue["binding_type"] == "infra" for issue in homelab_issues)
 
         issue_id = trading_issues[0]["id"]
         issue_response = client.get(f"/api/issues/{issue_id}")

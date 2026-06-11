@@ -53,18 +53,20 @@ Run log paths stored in the database are absolute and co-located with the active
 
 On the host default path, that resolves to `/var/lib/symphony/runs/`. When the API falls back to `./podium.db`, run logs fall back to `./runs/` too.
 
-## Trading rollback
+## Binding tracker rollback
 
-The `trading` binding is cut over by declaring `tracker: podium` in
-`bindings.yml`. To roll it back to Plane, remove that line from the `trading`
-binding and restart the scheduler after explicit operator approval:
+The `trading` and `homelab` bindings are cut over by declaring
+`tracker: podium` in `bindings.yml`. To roll either binding back to Plane,
+remove that binding's `tracker: podium` line, uncomment its Plane rollback
+`tracker_contract` block if present, and restart the scheduler after explicit
+operator approval:
 
 ```bash
 sudo systemctl restart symphony-host.service
 ```
 
-The Plane tracker contract block remains in `bindings.yml` for this rollback
-path until the later Plane archive slice.
+The commented Plane tracker contract blocks remain in `bindings.yml` for this
+rollback path until the later Plane archive slice.
 
 ## Migrations
 

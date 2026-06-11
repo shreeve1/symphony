@@ -12,6 +12,7 @@ export interface Binding {
 export interface Issue {
 	id: number;
 	binding_name: string;
+	binding_type: string;
 	title: string;
 	description: string | null;
 	state: string;
@@ -21,6 +22,9 @@ export interface Issue {
 	preferred_skill: string | null;
 	reasoning_effort: string | null;
 	worktree_active: boolean;
+	approval_required: boolean;
+	approved: boolean;
+	scheduled_for: string | null;
 	worktree_path: string;
 	worktree_branch: string;
 	max_duration_seconds: number | null;
@@ -83,6 +87,9 @@ export interface IssuePatch {
 	preferred_skill?: string | null;
 	reasoning_effort?: string;
 	worktree_active?: boolean;
+	approval_required?: boolean;
+	approved?: boolean;
+	scheduled_for?: string | null;
 	max_duration_seconds?: number | null;
 	base_branch?: string | null;
 	comments_md?: string;
@@ -101,6 +108,9 @@ export interface IssueCreate {
 	preferred_model?: string;
 	reasoning_effort?: string;
 	worktree_active?: boolean;
+	approval_required?: boolean;
+	approved?: boolean;
+	scheduled_for?: string;
 	base_branch?: string;
 }
 

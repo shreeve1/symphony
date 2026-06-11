@@ -52,6 +52,10 @@ HAPPY_CASES = [
     ("preferred_skill", None),
     ("reasoning_effort", "low"),
     ("worktree_active", True),
+    ("approval_required", True),
+    ("approved", True),
+    ("scheduled_for", "2026-06-12T00:00:00+00:00"),
+    ("scheduled_for", None),
     ("max_duration_seconds", 3600),
     ("max_duration_seconds", None),
     ("base_branch", "develop"),
@@ -73,6 +77,11 @@ FAILURE_CASES = [
     ("preferred_skill", "no-such-skill", 422),
     ("reasoning_effort", "max", 422),
     ("worktree_active", "maybe", 422),
+    ("approval_required", None, 422),
+    ("approval_required", "maybe", 422),
+    ("approved", None, 422),
+    ("approved", "maybe", 422),
+    ("scheduled_for", [], 422),
     ("max_duration_seconds", 0, 422),
     ("max_duration_seconds", "abc", 422),
     ("base_branch", 7, 422),
@@ -121,13 +130,19 @@ def test_patch_unknown_field_returns_400_with_pydantic_error(
 def test_patch_multiple_fields_at_once(client: TestClient, issue_id: int) -> None:
     response = client.patch(
         f"/api/issues/{issue_id}",
-        json={"state": "in_review", "priority": "high", "worktree_active": True},
+        json={
+            "state": "in_review",
+            "priority": "high",
+            "worktree_active": True,
+            "approval_required": True,
+        },
     )
     assert response.status_code == 200
     body = response.json()
     assert body["state"] == "in_review"
     assert body["priority"] == "high"
     assert body["worktree_active"] is True
+    assert body["approval_required"] is True
 
 
 def test_patch_updated_at_increases_monotonically(

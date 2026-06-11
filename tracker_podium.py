@@ -3,13 +3,14 @@
 Podium is the source of truth for coding bindings: issue states project onto
 ``issue.state`` enum values, mode roles project from ``issue.preferred_skill``
 through ``skill_mode_map``, and agent roles project from
-``issue.preferred_agent``. Approval, approved, and scheduled roles are absent
-for coding bindings because Podium has no columns for them yet; infra-binding
-projection is deferred to #023c, where ``approval_required``, ``approved``, and
-``scheduled_for`` columns will be added.
+``issue.preferred_agent``. Infra-binding approval and schedule roles project
+onto ``issue.approval_required``, ``issue.approved``, and due
+``issue.scheduled_for`` values.
 
-Labels are intentionally dropped in Podium. ``add_label`` / ``remove_label``
-and their plural forms are no-ops that return the current issue row.
+Labels are intentionally dropped in Podium except for infra role projection.
+``add_label`` / ``remove_label`` and their plural forms mutate only the
+projected infra columns; other labels remain no-ops that return the current
+issue row.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from tracker_contract import (
     RoleBinding,
     TrackerContract,
     TrackerRole,
+    coerce_label_role,
     coerce_state_role,
 )
 from web.api.db import resolve_db_path
@@ -129,6 +131,22 @@ class PodiumTrackerAdapter:
         preferred_agent = issue.get("preferred_agent")
         if preferred_agent:
             labels.append(f"agent:{preferred_agent}")
+        if issue.get("approval_required"):
+            approval_required = self.contract.optional_label_name_for_role(
+                TrackerRole.APPROVAL_REQUIRED
+            )
+            if approval_required:
+                labels.append(approval_required)
+        if issue.get("approved"):
+            approved = self.contract.optional_label_name_for_role(TrackerRole.APPROVED)
+            if approved:
+                labels.append(approved)
+        if _scheduled_due(issue.get("scheduled_for")):
+            scheduled = self.contract.optional_label_name_for_role(
+                TrackerRole.SCHEDULED
+            )
+            if scheduled:
+                labels.append(scheduled)
         return tuple(labels)
 
     def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool:
@@ -137,13 +155,6 @@ class PodiumTrackerAdapter:
     def labels_contain_role(
         self, labels: tuple[str, ...] | list[str], role: TrackerRole
     ) -> bool:
-        if role in {
-            TrackerRole.APPROVAL_REQUIRED,
-            TrackerRole.APPROVED,
-            TrackerRole.SCHEDULED,
-            TrackerRole.HAS_WORKTREE,
-        }:
-            return False
         binding = self.contract.optional_label_binding(role)
         return bool(binding and binding.name in set(labels))
 
@@ -297,14 +308,8 @@ class PodiumTrackerAdapter:
                 "keep_recent_runs": 3,
             }
         return {
-            "threshold_tokens": int(
-                row["context_compact_threshold_tokens"]
-                or 16_000
-            ),
-            "keep_recent_runs": int(
-                row["context_compact_keep_recent_runs"]
-                or 3
-            ),
+            "threshold_tokens": int(row["context_compact_threshold_tokens"] or 16_000),
+            "keep_recent_runs": int(row["context_compact_keep_recent_runs"] or 3),
         }
 
     async def transition_state(
@@ -321,22 +326,28 @@ class PodiumTrackerAdapter:
     async def add_label(
         self, issue_id: str, label: PlaneLabel | TrackerRole
     ) -> dict[str, Any]:
-        return await self.get_issue(issue_id)
+        return await self.add_labels(issue_id, [label])
 
     async def remove_label(
         self, issue_id: str, label: PlaneLabel | TrackerRole
     ) -> dict[str, Any]:
-        return await self.get_issue(issue_id)
+        return await self.remove_labels(issue_id, [label])
 
     async def add_labels(
         self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
     ) -> dict[str, Any]:
-        return await self.get_issue(issue_id)
+        updates = _infra_role_updates(labels, adding=True)
+        if not updates:
+            return await self.get_issue(issue_id)
+        return await self._update_issue_columns(issue_id, updates)
 
     async def remove_labels(
         self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
     ) -> dict[str, Any]:
-        return await self.get_issue(issue_id)
+        updates = _infra_role_updates(labels, adding=False)
+        if not updates:
+            return await self.get_issue(issue_id)
+        return await self._update_issue_columns(issue_id, updates)
 
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -533,9 +544,28 @@ class PodiumTrackerAdapter:
             ),
         )
 
+    async def _update_issue_columns(
+        self, issue_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        assignments = ", ".join(f"{name} = ?" for name in updates)
+        values = tuple(updates.values())
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT id FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+            if current is None:
+                raise KeyError(f"Podium issue not found: {issue_id}")
+            connection.execute(
+                f"UPDATE issue SET {assignments}, updated_at = ? WHERE id = ?",
+                (*values, _now(), issue_id),
+            )
+            connection.commit()
+        return await self.get_issue(issue_id)
+
     async def _append_issue_field(
         self, issue_id: str, field_name: str, block: str
     ) -> dict[str, Any]:
+
         if field_name == "comments_md":
             return await self._append_comments(issue_id, block)
         if field_name == "context_md":
@@ -596,6 +626,36 @@ _RUN_INSERT_COLUMNS = (
     "ended_at",
 )
 _RUN_UPDATE_COLUMNS = tuple(key for key in _RUN_INSERT_COLUMNS if key != "issue_id")
+
+
+def _infra_role_updates(
+    labels: list[PlaneLabel | TrackerRole], *, adding: bool
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    for label in labels:
+        role = coerce_label_role(label)
+        if role == TrackerRole.APPROVAL_REQUIRED:
+            updates["approval_required"] = adding
+        elif role == TrackerRole.APPROVED:
+            updates["approved"] = adding
+        elif role == TrackerRole.SCHEDULED:
+            updates["scheduled_for"] = _now() if adding else None
+    return updates
+
+
+def _scheduled_due(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    if isinstance(value, datetime):
+        scheduled_for = value
+    else:
+        try:
+            scheduled_for = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    if scheduled_for.tzinfo is None:
+        scheduled_for = scheduled_for.replace(tzinfo=UTC)
+    return scheduled_for.astimezone(UTC) <= datetime.now(UTC)
 
 
 def _append_block(title: str, body: str) -> str:

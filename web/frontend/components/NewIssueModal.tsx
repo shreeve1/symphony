@@ -30,6 +30,7 @@ function useCreateIssue(binding: string) {
 			const temp: Issue = {
 				id: tempId,
 				binding_name: binding,
+				binding_type: binding === "trading" ? "coding" : "infra",
 				title: body.title,
 				description: body.description ?? null,
 				state: "todo",
@@ -39,6 +40,9 @@ function useCreateIssue(binding: string) {
 				preferred_skill: body.preferred_skill ?? null,
 				reasoning_effort: body.reasoning_effort ?? "high",
 				worktree_active: body.worktree_active ?? false,
+				approval_required: body.approval_required ?? false,
+				approved: body.approved ?? false,
+				scheduled_for: body.scheduled_for ?? null,
 				worktree_path: "",
 				worktree_branch: "",
 				max_duration_seconds: null,

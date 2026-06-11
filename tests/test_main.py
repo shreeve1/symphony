@@ -243,6 +243,37 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
     assert closed == ["one", "two"]
 
 
+def test_homelab_podium_binding_builds_without_plane_transport(monkeypatch):
+    calls = {}
+    config = main.SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.test",
+            "PLANE_API_KEY": "key",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "pi",
+        }
+    )
+    binding = next(item for item in config.bindings if item.name == "homelab")
+
+    class ExplodingTransport:
+        def __init__(self, *args):
+            calls["transport"] = args
+            raise AssertionError("homelab Podium binding must not create Plane transport")
+
+    monkeypatch.setattr(main, "HttpxPlaneTransport", ExplodingTransport)
+    monkeypatch.setattr(
+        main, "verify_pi_support", lambda *args: calls.setdefault("verify", args)
+    )
+
+    runtime = main._build_binding_runtime(config, binding)
+
+    assert runtime.name == "homelab"
+    assert runtime.transport is None
+    assert runtime.binding is binding
+    assert "verify" in calls
+    assert "transport" not in calls
+
+
 def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
     calls = {}
     config = main.SymphonyConfig.from_env(

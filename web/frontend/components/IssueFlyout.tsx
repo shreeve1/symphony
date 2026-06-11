@@ -288,6 +288,28 @@ function MetadataChips({
 					value={issue.worktree_active}
 					onPatch={onPatch}
 				/>
+				{issue.binding_type === "infra" && (
+					<>
+						<ChipToggle
+							label="approval"
+							field="approval_required"
+							value={issue.approval_required}
+							onPatch={onPatch}
+						/>
+						<ChipToggle
+							label="approved"
+							field="approved"
+							value={issue.approved}
+							onPatch={onPatch}
+						/>
+						<ChipText
+							label="scheduled"
+							field="scheduled_for"
+							value={issue.scheduled_for}
+							onPatch={onPatch}
+						/>
+					</>
+				)}
 				<ChipText
 					label="base"
 					field="base_branch"

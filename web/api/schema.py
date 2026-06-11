@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0002_context_compaction_settings"
+INITIAL_REVISION = "0003_infra_role_columns"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS issue(
   latest_verdict TEXT CHECK (latest_verdict IS NULL OR latest_verdict IN ('done','review','blocked')),
   latest_run_state TEXT CHECK (latest_run_state IS NULL OR latest_run_state IN ('queued','running','succeeded','failed')),
   last_event_at TIMESTAMP,
+  approval_required BOOLEAN DEFAULT FALSE,
+  approved BOOLEAN DEFAULT FALSE,
+  scheduled_for TIMESTAMP NULL,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 

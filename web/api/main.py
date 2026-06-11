@@ -250,6 +250,9 @@ class IssuePatch(BaseModel):
     preferred_skill: str | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
     worktree_active: bool | None = None
+    approval_required: bool | None = None
+    approved: bool | None = None
+    scheduled_for: str | None = None
     max_duration_seconds: int | None = Field(default=None, ge=1)
     base_branch: str | None = None
     comments_md: str | None = None
@@ -273,6 +276,9 @@ class IssueCreate(BaseModel):
     preferred_model: str | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "high"
     worktree_active: bool = False
+    approval_required: bool = False
+    approved: bool = False
+    scheduled_for: str | None = None
     base_branch: str | None = None
 
 
@@ -283,6 +289,8 @@ NON_NULLABLE_FIELDS = (
     "state",
     "reasoning_effort",
     "worktree_active",
+    "approval_required",
+    "approved",
     "comments_md",
     "context_md",
 )
@@ -290,13 +298,13 @@ NON_NULLABLE_FIELDS = (
 
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
-    for key in ("archived", "worktree_active"):
+    for key in ("archived", "worktree_active", "approval_required", "approved"):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     if "binding_name" in result and "id" in result:
-        result.update(
-            _worktree_metadata(str(result["binding_name"]), str(result["id"]))
-        )
+        binding_name = str(result["binding_name"])
+        result.update(_worktree_metadata(binding_name, str(result["id"])))
+        result["binding_type"] = _binding_type_for(binding_name)
     return result
 
 
@@ -369,6 +377,7 @@ def list_binding_issues(
         SELECT
           id, binding_name, title, description, state, priority, preferred_agent,
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
+          approval_required, approved, scheduled_for,
           max_duration_seconds, base_branch, created_at, updated_at,
           latest_run_id, latest_verdict, latest_run_state, last_event_at
         FROM issue
@@ -467,8 +476,9 @@ async def create_binding_issue(
         INSERT INTO issue(
           binding_name, title, description, state, priority, preferred_agent,
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
-          base_branch, comments_md, context_md, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
+          approval_required, approved, scheduled_for, base_branch, comments_md,
+          context_md, created_at, updated_at
+        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
         """,
         (
             name,
@@ -480,6 +490,9 @@ async def create_binding_issue(
             issue.preferred_skill,
             issue.reasoning_effort,
             issue.worktree_active,
+            issue.approval_required,
+            issue.approved,
+            issue.scheduled_for,
             issue.base_branch or _base_branch_for(name),
             now,
             now,
@@ -494,6 +507,18 @@ async def create_binding_issue(
         {"type": "issue.created", "binding_name": name, "row": result}
     )
     return result
+
+
+def _binding_type_for(name: str) -> str:
+    try:
+        bindings = _load_bindings(BINDINGS_PATH)
+    except (OSError, yaml.YAMLError):
+        return "infra"
+    for binding in bindings:
+        if binding.get("name") == name:
+            binding_type = str(binding.get("type") or "infra")
+            return binding_type if binding_type in {"infra", "coding"} else "infra"
+    return "infra"
 
 
 def _base_branch_for(name: str) -> str:
