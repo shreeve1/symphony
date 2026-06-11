@@ -45,11 +45,13 @@ where `.` is the repository root. For tests or local overrides, set:
 export PODIUM_DB_PATH=/path/to/podium.db
 ```
 
-Run log paths stored in the database are absolute and rooted at:
+Run log paths stored in the database are absolute and co-located with the active database:
 
 ```text
-/var/lib/symphony/runs/
+<active-podium-db-parent>/runs/
 ```
+
+On the host default path, that resolves to `/var/lib/symphony/runs/`. When the API falls back to `./podium.db`, run logs fall back to `./runs/` too.
 
 ## Trading rollback
 
@@ -73,6 +75,13 @@ cd /home/james/symphony
 alembic upgrade head
 ```
 
+Schema changes must ship as new Alembic revisions, never by editing prior revisions. Validate the baseline before merging schema changes:
+
+```bash
+cd /home/james/symphony
+uv run pytest tests/test_alembic_baseline.py
+```
+
 ## Reset local DB
 
 For the repo-root fallback database:
@@ -92,6 +101,31 @@ rm -f "$PODIUM_DB_PATH"
 cd /home/james/symphony
 alembic upgrade head
 ```
+
+## Backup
+
+Podium's single-host SQLite store and run logs are backed up by the host cron job in `/etc/cron.d/podium-backup`. The job runs `scripts/podium-backup.sh` daily as `james`, writes database snapshots to `/backup/podium-YYYY-MM-DD.db`, archives run logs to `/backup/podium-runs-YYYY-MM-DD.tar.gz` when a runs directory exists, and deletes Podium backup artifacts older than 14 days.
+
+The script resolves the active database path through `web.api.db.resolve_db_path()`: `/var/lib/symphony/podium.db` when `/var/lib/symphony/` is writable, otherwise the repo-root fallback `./podium.db`. The single-host posture is intentional for v1: there is no off-host replication, so host loss can still lose both the live database and local backups.
+
+Manual backup drill:
+
+```bash
+cd /home/james/symphony
+scripts/podium-backup.sh
+ls -la /backup/podium-*.db
+```
+
+Restore procedure:
+
+```bash
+sudo systemctl stop podium-api.service podium-web.service
+cp /path/to/restored-podium.db /var/lib/symphony/podium.db
+sudo chown james:james /var/lib/symphony/podium.db
+sudo systemctl start podium-api.service podium-web.service
+```
+
+If Podium is using the repo-root fallback, restore to `/home/james/symphony/podium.db` instead of `/var/lib/symphony/podium.db` and preserve `james:james` ownership.
 
 ## Frontend dev loop
 
