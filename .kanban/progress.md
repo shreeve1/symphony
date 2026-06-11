@@ -108,3 +108,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Used the cron `.backup` path because `rsnapshot` is not installed. The script resolves the active Podium DB path through `web.api.db.resolve_db_path()` so fallback repo DBs and future `/var/lib/symphony/podium.db` deployments use the same backup job.
 **Conventions established:** Schema changes must add a new Alembic revision and keep `SCHEMA_SQL` in sync; verify with `uv run pytest tests/test_alembic_baseline.py`. Podium local backups retain 14 days under `/backup` and do not provide off-host replication.
 **Notes for next iteration:** Existing tests require pytest 8.x/pytest-asyncio 0.x log-capture behavior, so dev dependencies are pinned below pytest 9 until those tests are updated.
+
+## #026 Engine-built context compaction — 2026-06-11
+
+**What changed:** Added engine-owned Podium Issue Context compaction before operator dispatch, plus manual `POST /api/issues/{id}/compact` compaction.
+**Files:** context_compaction.py, scheduler.py, tracker_podium.py, web/api/main.py, web/api/schema.py, web/api/migrations/versions/0002_context_compaction_settings.py, tests/test_context_compaction.py, tests/test_dispatch_compaction.py, web/api/tests/test_context_compaction.py, web/api/tests/test_endpoints.py
+**Decisions:** Compaction uses the configured runtime agent adapter before Run creation, writes back with `replace_context(...)`, and records no Run row for the compaction itself. The active schema revision is now `0002_context_compaction_settings`.
+**Conventions established:** Podium context size control is engine-owned via `binding_settings.context_compact_threshold_tokens` and `context_compact_keep_recent_runs`; compaction output must include `SYMPHONY_COMPACTED_CONTEXT:` and the stored context starts with `<!-- context compacted on ... -->`.
+**Notes for next iteration:** Full verification passed with `uv run pytest` (563 passed, 1 skipped). Fresh review passed. Existing config has no separate `binding.default_model`; compaction uses the configured binding runtime/agent adapter rather than hardcoding Pi.

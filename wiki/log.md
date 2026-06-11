@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #026 Podium Issue Context compaction
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #026 implementation; commits `db4a559`, `c24cd5b`; `context_compaction.py`; `scheduler.py`; `tracker_podium.py`; `web/api/main.py`; `web/api/schema.py`; `web/api/migrations/versions/0002_context_compaction_settings.py`; `tests/test_context_compaction.py`; `tests/test_dispatch_compaction.py`; `web/api/tests/test_context_compaction.py`; `.kanban/issues/026-podium-engine-context-compaction.md`; `.kanban/progress.md`.
+- Outputs: `wiki/analyses/podium-026-context-compaction.md`; `wiki/CLAIMS.md` (C-0095..C-0098, C-0068 supersession note); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured engine-owned context compaction, `binding_settings` threshold/keep settings, pre-Run configured-agent invocation, `replace_context(...)`, no-Run-row invariant, manual compact endpoint, and ADR-0005 zero-schema-impact correction. Verification passed: `uv run pytest` (563 passed, 1 skipped), touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #023b Podium Alembic baseline + SQLite backup wiring
 
 - Actor: agent (Pi, Ralph + wiki update)

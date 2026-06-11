@@ -1,7 +1,7 @@
 ---
 id: 026
 title: Engine-built context compaction (Symphony invokes configured agent)
-status: review
+status: done
 blocked_by: [020]
 updated: 2026-06-11
 actor: ralph
@@ -52,20 +52,24 @@ Settings to add to `binding_settings`:
 
 ## Acceptance criteria
 
-- [ ] `context_compaction.py` exists; `maybe_compact(...)` is unit-tested for: below-threshold (no-op), above-threshold (invokes agent), agent error (raises and does NOT corrupt `context_md`), missing marker in agent output (raises).
-- [ ] Alembic revision adds `context_compact_threshold_tokens` and `context_compact_keep_recent_runs` to `binding_settings`.
-- [ ] Hardcoded `COMPACTION_PROMPT` instructs the agent to (a) summarize Runs older than `keep_recent_runs`, (b) preserve the last N Runs verbatim, (c) preserve operator-edited instruction blocks, (d) emit `SYMPHONY_COMPACTED_CONTEXT:` marker.
-- [ ] Dispatch path calls `maybe_compact` before invoking the operator's agent; covered by `tests/test_dispatch_compaction.py`.
-- [ ] No `run` row created during compaction (assert by row count delta in test).
-- [ ] `POST /api/issues/{id}/compact` triggers the same flow synchronously and returns the new token count.
-- [ ] Marker line `<!-- context compacted on ... -->` rendered at top of compacted `context_md`.
-- [ ] Agent invocation uses `binding.default_agent` / `binding.default_model` (not hardcoded to pi — the configured agent per ADR-0005).
+- [x] `context_compaction.py` exists; `maybe_compact(...)` is unit-tested for: below-threshold (no-op), above-threshold (invokes agent), agent error (raises and does NOT corrupt `context_md`), missing marker in agent output (raises).
+- [x] Alembic revision adds `context_compact_threshold_tokens` and `context_compact_keep_recent_runs` to `binding_settings`.
+- [x] Hardcoded `COMPACTION_PROMPT` instructs the agent to (a) summarize Runs older than `keep_recent_runs`, (b) preserve the last N Runs verbatim, (c) preserve operator-edited instruction blocks, (d) emit `SYMPHONY_COMPACTED_CONTEXT:` marker.
+- [x] Dispatch path calls `maybe_compact` before invoking the operator's agent; covered by `tests/test_dispatch_compaction.py`.
+- [x] No `run` row created during compaction (assert by row count delta in test).
+- [x] `POST /api/issues/{id}/compact` triggers the same flow synchronously and returns the new token count.
+- [x] Marker line `<!-- context compacted on ... -->` rendered at top of compacted `context_md`.
+- [x] Agent invocation uses `binding.default_agent` / `binding.default_model` (not hardcoded to pi — the configured agent per ADR-0005).
 
 ## Verification
 
 ```
 cd /home/james/symphony && uv run pytest
 ```
+
+## Implementation Notes
+
+Implemented engine-owned Podium Issue Context compaction before operator dispatch. Added `context_compaction.py`, a `binding_settings` migration/table, Podium `replace_context(...)` and settings lookup methods, scheduler pre-run compaction, and `POST /api/issues/{id}/compact`. Verification passed with `uv run pytest` (563 passed, 1 skipped), fresh review passed, and touched-file LSP diagnostics reported no errors.
 
 ## Blocked by
 
