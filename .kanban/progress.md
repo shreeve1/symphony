@@ -100,3 +100,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Added `Environment=HOST=127.0.0.1` to the web unit so `pnpm start` binds Next.js to loopback instead of the package script default `0.0.0.0`.
 **Conventions established:** Podium API and web now run as sibling systemd units, separate from `symphony-host.service`, with localhost-only listeners and `OnFailure=telegram-alert@%n.service` wiring.
 **Notes for next iteration:** Issue remains blocked only on the live failure-hook acceptance check because the operator declined killing a Podium process to trigger/observe the alert hook. Rollback command is documented in the issue.
+
+## #023b Alembic baseline + SQLite backup wiring — 2026-06-11
+
+**What changed:** Added Alembic baseline verification, migration rules documentation, active Podium SQLite backup script, host cron wiring, and restore-drill evidence.
+**Files:** pyproject.toml, uv.lock, scripts/podium-backup.sh, tests/test_alembic_baseline.py, web/api/migrations/env.py, web/api/migrations/README.md, web/README.md, /etc/cron.d/podium-backup, /backup/podium-2026-06-11.db
+**Decisions:** Used the cron `.backup` path because `rsnapshot` is not installed. The script resolves the active Podium DB path through `web.api.db.resolve_db_path()` so fallback repo DBs and future `/var/lib/symphony/podium.db` deployments use the same backup job.
+**Conventions established:** Schema changes must add a new Alembic revision and keep `SCHEMA_SQL` in sync; verify with `uv run pytest tests/test_alembic_baseline.py`. Podium local backups retain 14 days under `/backup` and do not provide off-host replication.
+**Notes for next iteration:** Existing tests require pytest 8.x/pytest-asyncio 0.x log-capture behavior, so dev dependencies are pinned below pytest 9 until those tests are updated.
