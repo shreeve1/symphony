@@ -39,7 +39,7 @@ The startup reaper (ADR-0005) sweeps `run.state IN (queued,running)` → synthet
 
 - `binding(name PK, display_name, color, sort_order, archived)` — Binding *is* the Project; no Project table.
 - `skill(name PK, description, source)` — CLI-refreshable catalog.
-- `issue(...)` — operator intent + latest-Run projection. Typed operator levers: `preferred_agent`, `preferred_model`, `preferred_skill` (FK→skill.name), `reasoning_effort` DEFAULT `'high'`, `worktree_active` DEFAULT FALSE, `max_duration_seconds`, `base_branch`. Two blobs: `comments_md` (human↔AI), `context_md` (AI-only). Projection cols: `latest_run_id` (FK→run.id), `latest_verdict`, `latest_run_state`, `last_event_at`.
+- `issue(...)` — operator intent + latest-Run projection. Typed operator levers: `preferred_agent`, `preferred_model`, `preferred_skill` (FK→skill.name), `reasoning_effort` DEFAULT `'high'`, `worktree_active` DEFAULT FALSE, infra role columns `approval_required` DEFAULT FALSE, `approved` DEFAULT FALSE, `scheduled_for` TIMESTAMP NULL, `max_duration_seconds`, `base_branch`. Two blobs: `comments_md` (human↔AI), `context_md` (AI-only). Projection cols: `latest_run_id` (FK→run.id), `latest_verdict`, `latest_run_state`, `last_event_at`.
 - `run(...)` — first-class per-dispatch row: `agent, provider, model, state, verdict, summary, exit_code, cost_usd, input_tokens, output_tokens, worktree_path, branch_name, base_branch, log_path, skill_invoked, started_at, ended_at`. No event-log table v1.
 [source: web/api/schema.py:6-65]
 
@@ -49,7 +49,7 @@ FK note: only `preferred_skill` is FK-checked; `preferred_agent`/`preferred_mode
 
 `bindings.yml` accepts optional `tracker: plane|podium` on each binding. Missing value defaults to `plane`; unknown values raise `ConfigError` during config load [source: config.py:64-70,376-379]. `main._build_binding_runtime(...)` selects `PodiumTrackerAdapter` when `binding.tracker == "podium"`, otherwise builds the Plane transport/adapter path [source: main.py:76-81].
 
-`tracker_adapter.py` defines the runtime-checkable `TrackerAdapter` Protocol used as the shared engine surface: candidate listing, state transitions, comment/context writes, label no-ops/updates, and run row get/record [source: tracker_adapter.py:13-49]. `tracker_podium.py` implements that surface against SQLite without importing `plane_adapter`; role projection is column-based for coding bindings: state Roles map to `issue.state`, mode Roles derive from `preferred_skill` via `skill_mode_map`, agent role is exposed as `agent:<preferred_agent>`, and approval/approved/scheduled/has-worktree Roles are absent until #023c adds infra columns [source: tracker_podium.py:1-16,57-159].
+`tracker_adapter.py` defines the runtime-checkable `TrackerAdapter` Protocol used as the shared engine surface: candidate listing, state transitions, comment/context writes, label no-ops/updates, and run row get/record [source: tracker_adapter.py:13-49]. `tracker_podium.py` implements that surface against SQLite without importing `plane_adapter`; role projection is column-based: state Roles map to `issue.state`, mode Roles derive from `preferred_skill` via `skill_mode_map`, agent role is exposed as `agent:<preferred_agent>`, and infra approval/schedule Roles project through `approval_required`, `approved`, and due `scheduled_for` values [source: tracker_podium.py; wiki/analyses/podium-023c-homelab-cutover.md].
 
 Podium tracker connections set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, and `PRAGMA foreign_keys = ON`. FastAPI's `web/api/db.py` connect path now sets the same WAL/busy-timeout pragmas, so API and engine writers share the same SQLite concurrency posture [source: tracker_podium.py:95-102, web/api/db.py:37-41].
 
@@ -95,4 +95,4 @@ Both Podium ports bind localhost in production; external access via Authelia rev
 
 ## Claims
 
-C-0059 .. C-0067 and C-0079 .. C-0081 in [CLAIMS.md](../CLAIMS.md).
+C-0059 .. C-0067, C-0079 .. C-0081, and C-0104 .. C-0106 in [CLAIMS.md](../CLAIMS.md).

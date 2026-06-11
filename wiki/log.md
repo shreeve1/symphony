@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #023c Podium homelab cutover + infra role projection
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #023c implementation; commits `037d78e`, `89ae1af`, `811e5e8`; `bindings.yml`; `tracker_podium.py`; `web/api/schema.py`; `web/api/migrations/versions/0003_infra_role_columns.py`; `web/api/main.py`; `web/frontend/components/IssueFlyout.tsx`; `web/frontend/components/NewIssueModal.tsx`; `web/README.md`; `CONTEXT.md`; `tests/test_tracker_podium_infra.py`; `tests/test_main.py`; `.kanban/issues/023c-podium-homelab-cutover.md`; `.kanban/progress.md`.
+- Outputs: new `wiki/analyses/podium-023c-homelab-cutover.md`; updated `wiki/concepts/podium-tracker.md`; updated `wiki/analyses/adr-0005-replace-plane-with-podium.md`; updated `wiki/CLAIMS.md` (C-0104..C-0106, C-0080 superseded, C-0083 note); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured homelab now live on Podium, both active bindings on Podium, infra role columns/projection, infra-only UI chips, live migration/restart/smoke evidence, rollback docs, and stale e2e issue parking. Verification passed: `uv run pytest` (586 passed, 1 skipped), `pnpm exec tsc --noEmit`, live `alembic upgrade head`, `symphony-host.service` restart, touched-file LSP diagnostics with no critical errors, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no raw transcript.
+
 ## [2026-06-11] session-update | #023a Podium systemd units actionable review
 
 - Actor: agent (Pi, Ralph actionable review)

@@ -66,7 +66,7 @@ Landed state: #023a installed and enabled `podium-api.service` and `podium-web.s
 
 ## Migration
 
-Fresh stand-up per binding (no data migration): **trading first** (disposable PoC repo), then **homelab** after Podium tuned. Plane archived after both cut over. Clean cutover per binding → brief window per binding where neither tracker is authoritative; acceptable (trading disposable, homelab single-operator) [source: wiki/raw/adr-0005-replace-plane-with-podium.md#5,11].
+Fresh stand-up per binding (no data migration): **trading first** (disposable PoC repo), then **homelab** after Podium tuned. Landed state: both active bindings are now on Podium; #023d remains to archive Plane after a soak period. Clean cutover per binding → brief window per binding where neither tracker is authoritative; accepted as tolerable for single-operator use [source: wiki/raw/adr-0005-replace-plane-with-podium.md#5,11; wiki/analyses/podium-023c-homelab-cutover.md].
 
 ## Rejected alternatives (each with concrete reason)
 
@@ -97,4 +97,4 @@ Two new systemd units; Node + browser toolchain for Playwright screen-level test
 
 ## Claims
 
-C-0059 .. C-0067 and C-0103 in [CLAIMS.md](../CLAIMS.md). Supersession note added to C-0004 (Mode plan/build/execute → Podium drops Mode for Skill).
+C-0059 .. C-0067, C-0103, and C-0104 .. C-0106 in [CLAIMS.md](../CLAIMS.md). Supersession note added to C-0004 (Mode plan/build/execute → Podium drops Mode for Skill), C-0080 (infra projection deferred), and C-0083 (homelab remains on Plane).
