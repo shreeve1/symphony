@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #020 trading→Podium cutover smoke + run-log finalization bug
+
+- Actor: agent (Claude, cutover smoke + wiki update)
+- Inputs: session performing the #020 operator smoke; commits `12289da`, `8eb4aa6`, `eb1a706`; `tracker_podium.py`; `scheduler.py:438-478`; `web/api/db.py:8-22`; `main.py:75-81`; `tests/test_trading_podium_dispatch.py`; live `podium.db` (issue 17 / run 6) and `journalctl` traceback.
+- Outputs: new `wiki/raw/sessions/2026-06-11-podium-020-cutover-smoke.md`; promoted `wiki/analyses/analysis-session-020-cutover-smoke.md`; `wiki/CLAIMS.md` (added C-0082, C-0083; refinement notes on C-0062, C-0067); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured the production-only run-log crash (`adapter.db_path=None` → unwritable `/var/lib/symphony/runs` → `PermissionError` in `_write_run_log`), the `__post_init__` fix, the run-log co-location convention, the masked-test lesson, and the trading-live-on-Podium milestone. Refines (does not supersede) C-0062/C-0067. Follow-up: consider making `RUN_LOG_ROOT` follow `resolve_db_path` fallback (#024). No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-09] setup | Initial wiki scaffold
 
 - Actor: agent (Claude Code, llm-wiki-setup skill)
