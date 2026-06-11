@@ -19,11 +19,12 @@ BINDINGS_PATH = REPO_ROOT / "bindings.yml"
 
 def seed_if_empty(
     connection: sqlite3.Connection, bindings_path: Path = BINDINGS_PATH
-) -> None:
+) -> list[int]:
     binding_count = connection.execute("SELECT COUNT(*) FROM binding").fetchone()[0]
     if binding_count:
-        return
+        return []
 
+    seeded_run_ids: list[int] = []
     bindings = _load_bindings(bindings_path)
     now = datetime.now(UTC).replace(microsecond=0).isoformat()
 
@@ -84,6 +85,7 @@ def seed_if_empty(
             )
             assert run_cursor.lastrowid is not None
             run_id = run_cursor.lastrowid
+            seeded_run_ids.append(int(run_id))
             connection.execute(
                 "UPDATE run SET log_path = ? WHERE id = ?",
                 (str(RUN_LOG_ROOT / f"{run_id}.log"), run_id),
@@ -98,6 +100,7 @@ def seed_if_empty(
             )
 
     connection.commit()
+    return seeded_run_ids
 
 
 def _load_bindings(path: Path) -> list[dict[str, Any]]:

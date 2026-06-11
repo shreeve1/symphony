@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 import sqlite3
 import subprocess
 from contextlib import asynccontextmanager
@@ -9,8 +12,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response, WebSocket
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.websockets import WebSocketDisconnect
+
+logger = logging.getLogger(__name__)
 
 try:
     from .db import RUN_LOG_ROOT, connect, get_connection
@@ -30,18 +36,89 @@ except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
     seed_if_empty = _seed.seed_if_empty
 
 
+class WebSocketHub:
+    """Small in-process fanout hub for Podium's single-worker API."""
+
+    def __init__(self) -> None:
+        self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+
+    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
+        self._subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        self._subscribers.discard(queue)
+
+    async def publish(self, message: dict[str, Any]) -> None:
+        stale: list[asyncio.Queue[dict[str, Any]]] = []
+        for queue in list(self._subscribers):
+            try:
+                queue.put_nowait(message)
+            except asyncio.QueueFull:
+                logger.warning("websocket_queue_full; dropping subscriber")
+                stale.append(queue)
+        for queue in stale:
+            self.unsubscribe(queue)
+
+    async def stream(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        queue = self.subscribe()
+        logger.info("websocket_connected")
+        receive_task: asyncio.Task[str] | None = None
+        send_task: asyncio.Task[dict[str, Any]] | None = None
+        try:
+            while True:
+                receive_task = asyncio.create_task(websocket.receive_text())
+                send_task = asyncio.create_task(queue.get())
+                done, pending = await asyncio.wait(
+                    {receive_task, send_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in pending:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                if receive_task in done:
+                    with contextlib.suppress(WebSocketDisconnect):
+                        receive_task.result()
+                    break
+                if send_task in done:
+                    await websocket.send_json(send_task.result())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            for task in (receive_task, send_task):
+                if task and not task.done():
+                    task.cancel()
+            self.unsubscribe(queue)
+            logger.info("websocket_disconnected")
+
+
+websocket_hub = WebSocketHub()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     connection = connect()
     try:
         ensure_schema(connection)
-        seed_if_empty(connection)
+        seeded_run_ids = seed_if_empty(connection)
+        seeded_runs = _rows_by_id(connection, "run", seeded_run_ids)
     finally:
         connection.close()
+    for row in seeded_runs:
+        await websocket_hub.publish(
+            {"type": "run.updated", "id": row["id"], "row": row}
+        )
     yield
 
 
 app = FastAPI(title="Podium API", lifespan=lifespan)
+
+
+@app.websocket("/api/ws")
+async def websocket_events(websocket: WebSocket) -> None:
+    await websocket_hub.stream(websocket)
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:
@@ -119,6 +196,24 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     return result
+
+
+def _rows_by_id(
+    connection: sqlite3.Connection, table: Literal["issue", "run"], ids: list[int]
+) -> list[dict[str, Any]]:
+    rows: list[sqlite3.Row] = []
+    for row_id in ids:
+        if table == "issue":
+            row = connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (row_id,)
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT * FROM run WHERE id = ?", (row_id,)
+            ).fetchone()
+        if row is not None:
+            rows.append(row)
+    return [_row(row) for row in rows]
 
 
 @app.get("/api/health")
@@ -215,9 +310,18 @@ def _branches_for(name: str) -> list[str]:
         return []
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_path), "for-each-ref", "refs/heads",
-             "--format=%(refname:short)"],
-            capture_output=True, text=True, timeout=5, check=True,
+            [
+                "git",
+                "-C",
+                str(repo_path),
+                "for-each-ref",
+                "refs/heads",
+                "--format=%(refname:short)",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -225,7 +329,7 @@ def _branches_for(name: str) -> list[str]:
 
 
 @app.post("/api/bindings/{name}/issues", status_code=201)
-def create_binding_issue(
+async def create_binding_issue(
     name: str,
     body: dict[str, Any],
     connection: sqlite3.Connection = Depends(get_connection),
@@ -272,7 +376,11 @@ def create_binding_issue(
     row = connection.execute(
         "SELECT * FROM issue WHERE id = ?", (cursor.lastrowid,)
     ).fetchone()
-    return _row(row)
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.created", "binding_name": name, "row": result}
+    )
+    return result
 
 
 def _base_branch_for(name: str) -> str:
@@ -309,7 +417,7 @@ def get_issue(
 
 
 @app.patch("/api/issues/{issue_id}")
-def patch_issue(
+async def patch_issue(
     issue_id: int,
     body: dict[str, Any],
     connection: sqlite3.Connection = Depends(get_connection),
@@ -332,7 +440,9 @@ def patch_issue(
         raise HTTPException(status_code=status, detail=errors) from exc
 
     fields = patch.model_dump(exclude_unset=True)
-    nulled = [name for name in NON_NULLABLE_FIELDS if name in fields and fields[name] is None]
+    nulled = [
+        name for name in NON_NULLABLE_FIELDS if name in fields and fields[name] is None
+    ]
     if nulled:
         raise HTTPException(
             status_code=422, detail=f"fields cannot be null: {', '.join(nulled)}"
@@ -355,10 +465,12 @@ def patch_issue(
     )
     connection.commit()
 
-    row = connection.execute(
-        "SELECT * FROM issue WHERE id = ?", (issue_id,)
-    ).fetchone()
-    return _row(row)
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    return result
 
 
 def _next_updated_at(previous: str | None) -> str:

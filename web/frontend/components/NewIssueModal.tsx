@@ -51,9 +51,15 @@ function useCreateIssue(binding: string) {
 			return { previous, tempId: temp.id };
 		},
 		onSuccess: (row, _body, context) => {
-			queryClient.setQueryData<Issue[]>(key, (old) =>
-				(old ?? []).map((issue) => (issue.id === context.tempId ? row : issue)),
-			);
+			queryClient.setQueryData<Issue[]>(key, (old) => {
+				const replaced = (old ?? []).map((issue) =>
+					issue.id === context.tempId ? row : issue,
+				);
+				return replaced.filter(
+					(issue, index) =>
+						replaced.findIndex((candidate) => candidate.id === issue.id) === index,
+				);
+			});
 		},
 		onError: (_error, _body, context) => {
 			if (context?.previous) queryClient.setQueryData(key, context.previous);
