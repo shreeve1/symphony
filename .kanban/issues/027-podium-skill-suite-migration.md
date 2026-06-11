@@ -1,7 +1,7 @@
 ---
 id: 027
 title: Plane-coupled symphony-* skill suite migration
-status: in-progress
+status: review
 blocked_by: [019]
 parent: null
 priority: 0
