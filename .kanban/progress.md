@@ -84,3 +84,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Worktree metadata is now projected by the backend instead of reconstructed in the frontend. `state=done` merge/block outcome takes precedence over archive messaging when both fields are patched in one request.
 **Conventions established:** Slow git worktree checks/merge/cleanup should run outside the FastAPI event loop via `asyncio.to_thread`; any DB state correction after optimistic PATCH publish must publish the final row too.
 **Notes for next iteration:** Verification passed after review fixes: `uv run pytest` (547 passed, 1 skipped), `pnpm exec tsc --noEmit`, and `pnpm test:e2e` (15 passed).
+
+## #022 Restart-time Run reconciliation + run-log retention — 2026-06-11
+
+**What changed:** Added Podium startup reconciliation for orphaned queued/running Run rows and run-log pruning for old/excess logs.
+**Files:** scheduler.py, tracker_podium.py, tests/test_run_reconcile.py, tests/test_log_retention.py
+**Decisions:** Startup reconciliation marks parent issues Blocked when an orphaned Run is reaped with `verdict='blocked'`; persistent worktrees are preserved for operator inspection.
+**Conventions established:** Podium operational maintenance logs use structured `run_reconcile_begin/done` and `log_retention_begin/done` pairs. Run-log retention keeps DB rows, deletes only log files, and clears `run.log_path`.
+**Notes for next iteration:** Retention runs at startup through `reconcile_startup` and then every 24 hours from `run_loop`; full verification passed with `uv run pytest` (552 passed, 1 skipped).

@@ -1,11 +1,13 @@
 ---
 id: 022
 title: Restart-time Run reconciliation + run-log retention
-status: review
+status: done
 blocked_by: [020]
 parent: null
 priority: 0
 created: 2026-06-10
+updated: 2026-06-11
+actor: ralph
 ---
 
 ## What to build
@@ -32,11 +34,11 @@ Both jobs log structured lines so the existing `journalctl` queries in
 
 ## Acceptance criteria
 
-- [ ] `tests/test_run_reconcile.py`: seed DB with rows in queued/running, start the engine, assert all become failed/blocked with the synthetic summary and an "orphan" comment on each parent issue.
-- [ ] Persistent worktrees (`worktree_active=true`) survive reconciliation (assert path still exists in fixture).
-- [ ] `tests/test_log_retention.py`: create 150 logs across 3 issues with mixed timestamps; run the reaper; assert ≤100 logs per issue, none older than 90 days, `log_path=NULL` on reaped rows.
-- [ ] Reaper invoked once at startup AND scheduled every 24h (test asserts via the existing scheduler hook).
-- [ ] `journalctl -u symphony-host.service | grep -E 'run_reconcile_(begin|done)' && grep -E 'log_retention_(begin|done)'` produces matching pairs.
+- [x] `tests/test_run_reconcile.py`: seed DB with rows in queued/running, start the engine, assert all become failed/blocked with the synthetic summary and an "orphan" comment on each parent issue.
+- [x] Persistent worktrees (`worktree_active=true`) survive reconciliation (assert path still exists in fixture).
+- [x] `tests/test_log_retention.py`: create 150 logs across 3 issues with mixed timestamps; run the reaper; assert ≤100 logs per issue, none older than 90 days, `log_path=NULL` on reaped rows.
+- [x] Reaper invoked once at startup AND scheduled every 24h (test asserts via the existing scheduler hook).
+- [x] `journalctl -u symphony-host.service | grep -E 'run_reconcile_(begin|done)' && grep -E 'log_retention_(begin|done)'` produces matching pairs.
 
 ## Verification
 
@@ -47,3 +49,7 @@ cd /home/james/symphony && uv run pytest
 ## Blocked by
 
 - #020 (engine integration must be live before reconcile semantics matter)
+
+## Implementation Notes
+
+Added Podium startup reconciliation for queued/running Run rows, including failed/blocked synthetic summaries, blocked parent issues, orphan comments, and preserved worktrees. Added run-log retention that removes log files older than 90 days or beyond the newest 100 per issue, then clears `run.log_path`. Wired retention at startup and every 24 hours in `run_loop`, with structured `run_reconcile_*` and `log_retention_*` log pairs.
