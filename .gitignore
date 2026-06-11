@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 .env
 podium.db
+podium.db-shm
+podium.db-wal
+runs/
 *.env
 plans/
 .bindings.yml.preview
