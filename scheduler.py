@@ -165,6 +165,13 @@ def _clear_rate_limit(state: _DispatchState) -> None:
     _PLANE_COOLDOWN_UNTIL = None
 
 
+def _fixed_now(value: datetime) -> Callable[[], datetime]:
+    def now() -> datetime:
+        return value
+
+    return now
+
+
 # SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
 # on its own line in stdout to declare an explicit verdict. Last occurrence wins,
 # case-insensitive. Unknown values fall through to the heuristic.
@@ -1555,7 +1562,7 @@ async def run_loop(
             await run_log_retention(
                 config,
                 adapter,
-                now=lambda now_dt=now_dt: now_dt,
+                now=_fixed_now(now_dt),
             )
 
         # Reap completed tasks and propagate their log lines.
