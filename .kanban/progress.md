@@ -92,3 +92,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Startup reconciliation marks parent issues Blocked when an orphaned Run is reaped with `verdict='blocked'`; persistent worktrees are preserved for operator inspection.
 **Conventions established:** Podium operational maintenance logs use structured `run_reconcile_begin/done` and `log_retention_begin/done` pairs. Run-log retention keeps DB rows, deletes only log files, and clears `run.log_path`.
 **Notes for next iteration:** Retention runs at startup through `reconcile_startup` and then every 24 hours from `run_loop`; full verification passed with `uv run pytest` (552 passed, 1 skipped).
+
+## #023a Podium systemd units — 2026-06-11
+
+**What changed:** Installed and enabled `podium-api.service` and `podium-web.service`, prebuilt the Next.js frontend, moved existing manual Podium listeners off ports 8090/8091 with operator approval, and verified both systemd-managed services are active on loopback.
+**Files:** .kanban/issues/023a-podium-systemd-units.md; live unit files `/etc/systemd/system/podium-api.service`, `/etc/systemd/system/podium-web.service`
+**Decisions:** Added `Environment=HOST=127.0.0.1` to the web unit so `pnpm start` binds Next.js to loopback instead of the package script default `0.0.0.0`.
+**Conventions established:** Podium API and web now run as sibling systemd units, separate from `symphony-host.service`, with localhost-only listeners and `OnFailure=telegram-alert@%n.service` wiring.
+**Notes for next iteration:** Issue remains blocked only on the live failure-hook acceptance check because the operator declined killing a Podium process to trigger/observe the alert hook. Rollback command is documented in the issue.
