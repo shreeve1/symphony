@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 import yaml
 
@@ -68,6 +68,7 @@ class ProjectBinding:
     tracker_contract: TrackerContract
     default_agent: str = "pi"
     binding_type: str = "infra"
+    tracker: Literal["plane", "podium"] = "plane"
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
 
@@ -362,6 +363,10 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
     binding_type = str(raw.get("type", "infra") or "infra")
     if binding_type not in {"infra", "coding"}:
         raise ConfigError(f"{prefix}.type: must be 'infra' or 'coding', got '{binding_type}'")
+    tracker_raw = str(raw.get("tracker", "plane") or "plane")
+    if tracker_raw not in {"plane", "podium"}:
+        raise ConfigError(f"{prefix}.tracker: must be 'plane' or 'podium', got '{tracker_raw}'")
+    tracker: Literal["plane", "podium"] = "podium" if tracker_raw == "podium" else "plane"
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),
         plane_project_id=plane_project_id,
@@ -369,6 +374,7 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
         base_branch=base_branch,
         default_agent=default_agent,
         binding_type=binding_type,
+        tracker=tracker,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),
@@ -476,7 +482,7 @@ def _reject_yaml_secrets(raw: Any, prefix: str) -> None:
     if isinstance(raw, dict):
         for key, value in raw.items():
             key_text = str(key).lower()
-            if key_text in _SECRET_YAML_KEYS or key_text.endswith("_token") or key_text.endswith("_secret"):
+            if key_text in _SECRET_YAML_KEYS or key_text.endswith(("_token", "_secret")):
                 raise ConfigError(f"{prefix}.{key}: secrets must come from env, not bindings.yml")
             _reject_yaml_secrets(value, f"{prefix}.{key}")
     elif isinstance(raw, list):

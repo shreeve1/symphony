@@ -34,8 +34,10 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     # per-request connection is legitimately created in one thread and used in
     # another. The connection is never shared *concurrently* (one request,
     # sequential yield->endpoint->close), so disabling the guard is safe here.
-    connection = sqlite3.connect(path, check_same_thread=False)
+    connection = sqlite3.connect(path, timeout=5.0, check_same_thread=False)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=5000")
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 

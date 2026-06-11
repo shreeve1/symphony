@@ -15,7 +15,6 @@ from typing import Any, Protocol
 
 from tracker_contract import (
     DEFAULT_CONTRACT,
-    PlaneContract,
     PlaneLabel,
     PlaneState,
     TrackerContract,
@@ -64,6 +63,9 @@ class CandidateIssue:
     schedule_reason: str = ""
     schedule_source: str = ""
     schedule_late: str = ""
+    comments_md: str = ""
+    context_md: str = ""
+    preferred_skill: str | None = None
 
 
 def stable_external_id(runbook: str, external_key: str) -> str:
@@ -137,9 +139,15 @@ class TrackerAdapter(Protocol):
     async def get_issue(self, issue_id: str) -> dict[str, Any]: ...
     async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]: ...
     async def add_comment(self, issue_id: str, comment: CommentPayload) -> dict[str, Any]: ...
+    async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]: ...
+    async def append_context(self, issue_id: str, body: str) -> dict[str, Any]: ...
     async def transition_state(self, issue_id: str, state: PlaneState | TrackerRole) -> dict[str, Any]: ...
+    async def add_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]: ...
+    async def remove_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]: ...
     async def add_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]: ...
     async def remove_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]: ...
+    async def get_run(self, run_id: str) -> dict[str, Any] | None: ...
+    async def record_run(self, run_row: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class InMemoryTransport:
@@ -442,10 +450,22 @@ class PlaneTrackerAdapter:
             raise RuntimeError("Transport not configured")
         return await self.transport.post(self._comment_path(issue_id), {"comment_html": comment.render()})
 
+    async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]:
+        return await self.add_comment(issue_id, CommentPayload(body=body))
+
+    async def append_context(self, issue_id: str, body: str) -> dict[str, Any]:
+        return await self.add_comment(issue_id, CommentPayload(body=body))
+
     async def transition_state(self, issue_id: str, state: PlaneState | TrackerRole) -> dict[str, Any]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
         return await self.transport.patch(self._issue_path(issue_id), {"state": self._resolve_state(state)})
+
+    async def add_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]:
+        return await self.add_labels(issue_id, [label])
+
+    async def remove_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]:
+        return await self.remove_labels(issue_id, [label])
 
     async def add_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]:
         if self.transport is None:
@@ -463,6 +483,12 @@ class PlaneTrackerAdapter:
         remove_uuids = {self._resolve_label(label) for label in labels}
         remaining = [label_uuid for label_uuid in list(current.get("labels") or []) if label_uuid not in remove_uuids]
         return await self.transport.patch(self._issue_path(issue_id), {"labels": remaining})
+
+    async def get_run(self, run_id: str) -> dict[str, Any] | None:
+        return None
+
+    async def record_run(self, run_row: dict[str, Any]) -> dict[str, Any]:
+        return dict(run_row)
 
 
 PlaneAdapter = PlaneTrackerAdapter

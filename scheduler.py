@@ -9,8 +9,9 @@ import random
 import re
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Callable, Sequence, cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
@@ -26,8 +27,8 @@ from notifier import (
 from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
 
 from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
-from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from prompt_renderer import render_previous_comments_block
+from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 
 
 LOGGER = logging.getLogger(__name__)
@@ -853,12 +854,20 @@ async def run_tick(
                     candidate.id,
                     CommentPayload(body=completion_body),
                 )
+                if getattr(adapter, "stores_context", False):
+                    context_parts = []
+                    if stdout:
+                        context_parts.append(f"## Agent stdout\n\n```\n{stdout}\n```")
+                    if stderr:
+                        context_parts.append(f"## Agent stderr\n\n```\n{stderr}\n```")
+                    if context_parts:
+                        await adapter.append_context(candidate.id, "\n\n".join(context_parts))
             except PlaneRateLimitError:
                 if dispatch_state is not None:
                     dispatch_state.pending_review_issue_ids.add(candidate.id)
                     dispatch_state.pending_completion_bodies[candidate.id] = completion_body
                     LOGGER.info(
-                        "pending_review_queued issue_id=%s reason=%s (post-agent comment rate-limited)",
+                        "pending_review_queued issue_id=%s reason=%s (post-agent comment/context rate-limited)",
                         candidate.id,
                         reason_code,
                     )
@@ -1165,7 +1174,7 @@ async def run_loop(
                 result.issue_id or "",
             )
         active_tasks -= done
-        cooldown_remaining = _cooldown_remaining_s(state, now=lambda: now_dt)
+        cooldown_remaining = _cooldown_remaining_s(state, now=lambda now_dt=now_dt: now_dt)
 
         if run_blocked_reconcile:
             next_blocked_reconcile_at = now_dt + timedelta(

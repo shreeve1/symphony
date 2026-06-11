@@ -199,13 +199,70 @@ bindings:
     assert [binding.name for binding in config.bindings] == ["homelab", "tools"]
     assert config.bindings[0].approval_policy.enabled is False
     assert config.bindings[0].landing_policy.mode == "local"
+    assert config.bindings[0].tracker == "plane"
     assert config.bindings[1].plane_project_id == "project-b"
     assert config.bindings[1].repo_path == Path("/srv/tools")
     assert config.bindings[1].base_branch == "develop"
     assert config.bindings[1].default_agent == "claude"
     assert config.bindings[1].approval_policy.enabled is True
+    assert config.bindings[1].tracker == "plane"
     assert config.bindings[1].tracker_contract.project_id == "project-b"
     assert config.bindings[1].tracker_contract.project_slug == "tools"
+
+
+def test_bindings_yml_accepts_podium_tracker(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: podium-test
+    plane_project_id: project-a
+    repo_path: /srv/podium
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+    assert config.bindings[0].tracker == "podium"
+
+
+def test_bindings_yml_rejects_unknown_tracker(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: bad
+    plane_project_id: project-a
+    repo_path: /srv/bad
+    base_branch: main
+    default_agent: pi
+    tracker: jira
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="tracker: must be 'plane' or 'podium'"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
 
 
 def test_binding_resolves_agent_label_override():

@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
+from typing import Literal
 
 from agent_runner import AgentAdapter, PiAgentAdapter, RoutingAgentAdapter, verify_pi_support
 from code_version import resolve_code_sha
@@ -14,7 +16,6 @@ from notifier import TelegramNotifier
 from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, TrackerAdapter, build_adapter
 from scheduler import _resolve_mode, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
-
 from prompt_renderer import IssueData, render_prompt
 
 
@@ -22,7 +23,7 @@ from prompt_renderer import IssueData, render_prompt
 class BindingRuntime:
     name: str
     config: SymphonyConfig
-    transport: ClosablePlaneTransport
+    transport: ClosablePlaneTransport | None
     adapter: TrackerAdapter
     agent_adapter: AgentAdapter
 
@@ -33,25 +34,33 @@ def _render_candidate_prompt(
     contract: TrackerContract | None = None,
     repo_path: Path | None = None,
     binding_type: str = "infra",
+    tracker_kind: Literal["plane", "podium"] = "plane",
 ) -> str:
     workflow_path = (repo_path or Path.cwd()) / "WORKFLOW.md"
-    return render_prompt(
-        IssueData(
-            id=issue.id,
-            identifier=issue.identifier,
-            name=issue.name,
-            description=issue.description,
-            labels=", ".join(issue.labels),
-            mode=_resolve_mode(issue.labels, contract) if contract is not None else _resolve_mode(issue.labels),
-            schedule_not_before=getattr(issue, "schedule_not_before", ""),
-            schedule_not_after=getattr(issue, "schedule_not_after", ""),
-            schedule_reason=getattr(issue, "schedule_reason", ""),
-            schedule_source=getattr(issue, "schedule_source", ""),
-            schedule_late=getattr(issue, "schedule_late", ""),
-        ),
-        path=workflow_path,
-        binding_type=binding_type,
+    issue_data = IssueData(
+        id=issue.id,
+        identifier=issue.identifier,
+        name=issue.name,
+        description=issue.description,
+        labels=", ".join(issue.labels),
+        mode=_resolve_mode(issue.labels, contract) if contract is not None else _resolve_mode(issue.labels),
+        schedule_not_before=getattr(issue, "schedule_not_before", ""),
+        schedule_not_after=getattr(issue, "schedule_not_after", ""),
+        schedule_reason=getattr(issue, "schedule_reason", ""),
+        schedule_source=getattr(issue, "schedule_source", ""),
+        schedule_late=getattr(issue, "schedule_late", ""),
+        comments_md=getattr(issue, "comments_md", ""),
+        context_md=getattr(issue, "context_md", ""),
+        preferred_skill=getattr(issue, "preferred_skill", None),
     )
+    if tracker_kind == "podium":
+        return render_prompt(
+            issue_data,
+            path=workflow_path,
+            binding_type=binding_type,
+            tracker_kind="podium",
+        )
+    return render_prompt(issue_data, path=workflow_path, binding_type=binding_type)
 
 
 def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> BindingRuntime:
@@ -63,8 +72,13 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
             binding_config.pi_model,
             binding_config.homelab_repo_path,
         )
-    transport = HttpxPlaneTransport(binding_config.plane_api_url, binding_config.plane_api_key)
-    adapter = build_adapter(transport, contract=binding.tracker_contract)
+    if binding.tracker == "podium":
+        transport = None
+        adapter_cls = import_module("tracker_podium").PodiumTrackerAdapter
+        adapter = adapter_cls(binding_name=binding.name, contract=binding.tracker_contract)
+    else:
+        transport = HttpxPlaneTransport(binding_config.plane_api_url, binding_config.plane_api_key)
+        adapter = build_adapter(transport, contract=binding.tracker_contract)
     return BindingRuntime(
         name=binding.name,
         config=binding_config,
@@ -110,8 +124,14 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
                 runtime.adapter,
                 agent_runner=runtime.agent_adapter,
                 render_prompt=(
-                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path, bt=runtime.config.bindings[0].binding_type:
-                    _render_candidate_prompt(issue, contract=contract, repo_path=repo_path, binding_type=bt)
+                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path, binding=runtime.config.bindings[0]:
+                    _render_candidate_prompt(
+                        issue,
+                        contract=contract,
+                        repo_path=repo_path,
+                        binding_type=getattr(binding, "binding_type", "infra"),
+                        tracker_kind=getattr(binding, "tracker", "plane"),
+                    )
                 ),
                 notifier=notifier,
             )
@@ -120,7 +140,8 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
         await asyncio.gather(*tasks)
     finally:
         for runtime in runtimes:
-            await runtime.transport.aclose()
+            if runtime.transport is not None:
+                await runtime.transport.aclose()
 
 
 async def async_main() -> None:
