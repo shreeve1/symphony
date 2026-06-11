@@ -1,7 +1,7 @@
 ---
 id: 026
 title: Engine-built context compaction (Symphony invokes configured agent)
-status: in-progress
+status: review
 blocked_by: [020]
 updated: 2026-06-11
 actor: ralph
