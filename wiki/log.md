@@ -100,3 +100,10 @@ Append entries with this format:
 - Inputs: issue #017 implementation; commit `0a50bc7`; `web/api/main.py`; `web/api/seed.py`; `web/api/tests/test_websocket.py`; `web/frontend/components/QueryProvider.tsx`; `web/frontend/components/NewIssueModal.tsx`; `web/frontend/tests/live-sync.spec.ts`; `web/frontend/playwright.config.ts`.
 - Outputs: `wiki/analyses/podium-017-live-updates.md`; `wiki/CLAIMS.md` (C-0069..C-0072); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Captured WS `/api/ws` in-process fanout, issue/run event contract, frontend TanStack Query live cache strategy, reconnect/disconnect pill behavior, optimistic-create race fix, `websockets` runtime dependency, and last-write-wins concurrency decision. No secrets, no `.env` contents, no transcript.
+
+## [2026-06-11] session-update | Podium #018 shared-password auth
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #018 implementation; commit `b8a50f0`; `web/api/auth.py`; `web/api/main.py`; `web/api/tests/test_auth.py`; `web/cli/podium.py`; `web/frontend/components/AppShell.tsx`; `web/frontend/app/login/page.tsx`; `web/frontend/tests/auth.spec.ts`.
+- Outputs: `wiki/analyses/podium-018-auth.md`; `wiki/CLAIMS.md` (C-0073..C-0076); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured bcrypt shared-password auth, required env contract, signed `podium_session` cookie, HTTP and WebSocket auth gates, frontend login/logout redirect contract, set-password stdout-only helper, and test-auth convention. No production secrets, no `.env` contents, no transcript.
