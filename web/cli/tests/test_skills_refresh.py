@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
@@ -46,6 +47,24 @@ def test_dry_run_command_lists_fixture_skills() -> None:
         f"bravo\tBravo skill from fixture.\t{FIXTURE_SOURCE / 'bravo/SKILL.md'}",
         f"charlie\tCharlie skill from fixture.\t{FIXTURE_SOURCE / 'charlie/SKILL.md'}",
     ]
+
+
+def test_set_password_writes_hash_to_stdout_only(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    result = subprocess.run(
+        [sys.executable, "-m", "web.cli.podium", "set-password"],
+        cwd=REPO_ROOT,
+        input="secret\nsecret\n",
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.startswith("PODIUM_PASSWORD_HASH=$2")
+    assert result.stderr == ""
+    assert list(home.iterdir()) == []
 
 
 def test_refresh_add_noop_change_and_remove(

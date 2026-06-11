@@ -67,12 +67,17 @@ function useFlyoutWidth() {
 
 // Optimistic PATCH (#013): the flyout cache updates immediately, rolls back on
 // a 4xx, and both the detail and the board list refetch once the write settles.
-function usePatchIssue(issue: IssueDetail | undefined) {
+interface PatchVariables {
+	issue: IssueDetail;
+	patch: IssuePatch;
+}
+
+function usePatchIssue() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (patch: IssuePatch) => patchIssue(issue!.id, patch),
-		onMutate: async (patch) => {
-			const key = ["issue", issue!.id];
+		mutationFn: ({ issue, patch }: PatchVariables) => patchIssue(issue.id, patch),
+		onMutate: async ({ issue, patch }) => {
+			const key = ["issue", issue.id];
 			await queryClient.cancelQueries({ queryKey: key });
 			const previous = queryClient.getQueryData<IssueDetail>(key);
 			queryClient.setQueryData<IssueDetail>(
@@ -81,15 +86,15 @@ function usePatchIssue(issue: IssueDetail | undefined) {
 			);
 			return { previous };
 		},
-		onError: (_error, _patch, context) => {
+		onError: (_error, { issue }, context) => {
 			if (context?.previous) {
-				queryClient.setQueryData(["issue", issue!.id], context.previous);
+				queryClient.setQueryData(["issue", issue.id], context.previous);
 			}
 		},
-		onSettled: () => {
-			queryClient.invalidateQueries({ queryKey: ["issue", issue!.id] });
+		onSettled: (_data, _error, { issue }) => {
+			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
 			queryClient.invalidateQueries({
-				queryKey: ["issues", issue!.binding_name],
+				queryKey: ["issues", issue.binding_name],
 			});
 		},
 	});
@@ -377,8 +382,10 @@ export function IssueFlyout({
 		queryFn: () => fetchIssueRuns(issueId as number),
 		enabled: issueId != null,
 	});
-	const patch = usePatchIssue(detail.data);
-	const onPatch: OnPatch = patch.mutate;
+	const patch = usePatchIssue();
+	const onPatch: OnPatch = (issuePatch) => {
+		if (detail.data) patch.mutate({ issue: detail.data, patch: issuePatch });
+	};
 	// Skill catalog feeds the preferred_skill picker; free text would 422
 	// against the FK and silently roll back.
 	const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });

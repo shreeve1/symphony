@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import sys
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
+_auth = cast(Any, import_module("web.api.auth"))
 _skills = cast(Any, import_module("web.cli.podium_skills"))
 DEFAULT_SOURCE = _skills.DEFAULT_SOURCE
+hash_password = _auth.hash_password
 refresh_skills = _skills.refresh_skills
 
 
@@ -26,12 +30,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory scanned recursively for SKILL.md files.",
     )
     refresh.set_defaults(func=_skills_refresh)
+
+    set_password = subcommands.add_parser("set-password")
+    set_password.set_defaults(func=_set_password)
     return parser
 
 
 def _skills_refresh(args: argparse.Namespace) -> int:
     for line in refresh_skills(args.source, dry_run=args.dry_run):
         print(line)
+    return 0
+
+
+def _read_password(prompt: str) -> str:
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    return sys.stdin.readline().rstrip("\n")
+
+
+def _set_password(_args: argparse.Namespace) -> int:
+    password = _read_password("Password: ")
+    confirm = _read_password("Confirm password: ")
+    if password != confirm:
+        print("passwords do not match", file=sys.stderr)
+        return 1
+    if not password:
+        print("password cannot be empty", file=sys.stderr)
+        return 1
+    print(f"PODIUM_PASSWORD_HASH={hash_password(password)}")
     return 0
 
 

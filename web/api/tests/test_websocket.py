@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 main = import_module("web.api.main")
 app = cast(Any, main.app)
+login = cast(Any, import_module("web.api.tests.conftest")).login
 
 
 @pytest.fixture()
@@ -19,6 +20,7 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
     db_path = tmp_path / "podium.db"
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
     with TestClient(app) as test_client:
+        login(test_client)
         yield test_client
 
 

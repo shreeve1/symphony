@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 
-import { expect, expectCleanConsole, test } from "./fixtures";
+import { authenticate, expect, expectCleanConsole, test } from "./fixtures";
 
 const LIVE_SYNC_CARD = "Seed todo issue for homelab";
 
@@ -25,6 +25,7 @@ test("live issue updates sync between browser contexts", async ({
 	problems,
 }) => {
 	const other = await browser.newPage();
+	await authenticate(other);
 	const otherProblems: string[] = [];
 	other.on("console", (msg) => {
 		if (msg.type() === "error")

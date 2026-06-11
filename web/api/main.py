@@ -12,28 +12,41 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException, Response, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
-try:
-    from .db import RUN_LOG_ROOT, connect, get_connection
-    from .schema import INITIAL_REVISION, SCHEMA_SQL
-    from .seed import BINDINGS_PATH, _load_bindings, seed_if_empty
-except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
+if __package__:
+    _auth = import_module(f"{__package__}.auth")
+    _db = import_module(f"{__package__}.db")
+    _schema = import_module(f"{__package__}.schema")
+    _seed = import_module(f"{__package__}.seed")
+else:  # pragma: no cover - supports uvicorn main:app from web/api
+    _auth = import_module("auth")
     _db = import_module("db")
     _schema = import_module("schema")
     _seed = import_module("seed")
-    RUN_LOG_ROOT = _db.RUN_LOG_ROOT
-    connect = _db.connect
-    get_connection = _db.get_connection
-    INITIAL_REVISION = _schema.INITIAL_REVISION
-    SCHEMA_SQL = _schema.SCHEMA_SQL
-    BINDINGS_PATH = _seed.BINDINGS_PATH
-    _load_bindings = _seed._load_bindings
-    seed_if_empty = _seed.seed_if_empty
+
+COOKIE_NAME = _auth.COOKIE_NAME
+SESSION_MAX_AGE_SECONDS = _auth.SESSION_MAX_AGE_SECONDS
+clear_failed_attempts = _auth.clear_failed_attempts
+config_from_environment = _auth.config_from_environment
+rate_limited = _auth.rate_limited
+record_failed_attempt = _auth.record_failed_attempt
+sign_session = _auth.sign_session
+verify_password = _auth.verify_password
+verify_session = _auth.verify_session
+RUN_LOG_ROOT = _db.RUN_LOG_ROOT
+connect = _db.connect
+get_connection = _db.get_connection
+INITIAL_REVISION = _schema.INITIAL_REVISION
+SCHEMA_SQL = _schema.SCHEMA_SQL
+BINDINGS_PATH = _seed.BINDINGS_PATH
+_load_bindings = _seed._load_bindings
+seed_if_empty = _seed.seed_if_empty
 
 
 class WebSocketHub:
@@ -95,10 +108,13 @@ class WebSocketHub:
 
 
 websocket_hub = WebSocketHub()
+_auth_config: Any | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _auth_config
+    _auth_config = config_from_environment()
     connection = connect()
     try:
         ensure_schema(connection)
@@ -116,8 +132,83 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Podium API", lifespan=lifespan)
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
+def _get_auth_config() -> Any:
+    global _auth_config
+    if _auth_config is None:
+        _auth_config = config_from_environment()
+    return _auth_config
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _auth_exempt(path: str) -> bool:
+    return path == "/api/health" or path.startswith("/api/auth/")
+
+
+@app.middleware("http")
+async def require_auth(request: Request, call_next):
+    if not request.url.path.startswith("/api/") or _auth_exempt(request.url.path):
+        return await call_next(request)
+    config = _get_auth_config()
+    if verify_session(request.cookies.get(COOKIE_NAME), config):
+        return await call_next(request)
+    return JSONResponse({"detail": "not authenticated"}, status_code=401)
+
+
+@app.post("/api/auth/login")
+async def login(request: Request, body: LoginRequest, response: Response) -> dict[str, bool]:
+    config = _get_auth_config()
+    ip = _client_ip(request)
+    if rate_limited(ip):
+        raise HTTPException(
+            status_code=429,
+            detail="too many failed login attempts",
+            headers={"Retry-After": "60"},
+        )
+    if not verify_password(body.password, config):
+        record_failed_attempt(ip)
+        await asyncio.sleep(0.25)
+        raise HTTPException(status_code=401, detail="invalid password")
+    clear_failed_attempts(ip)
+    response.set_cookie(
+        COOKIE_NAME,
+        sign_session(config),
+        max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+    )
+    return {"authenticated": True}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response) -> dict[str, bool]:
+    response.delete_cookie(COOKIE_NAME)
+    return {"authenticated": False}
+
+
+@app.get("/api/auth/whoami")
+def whoami(request: Request) -> dict[str, bool]:
+    config = _get_auth_config()
+    if not verify_session(request.cookies.get(COOKIE_NAME), config):
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return {"authenticated": True}
+
+
 @app.websocket("/api/ws")
 async def websocket_events(websocket: WebSocket) -> None:
+    config = _get_auth_config()
+    if not verify_session(websocket.cookies.get(COOKIE_NAME), config):
+        await websocket.close(code=1008)
+        return
     await websocket_hub.stream(websocket)
 
 

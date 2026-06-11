@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 main = import_module("web.api.main")
 app = cast(Any, main.app)
+login = cast(Any, import_module("web.api.tests.conftest")).login
 
 
 def _seeded_run_id(db_path: Path) -> int:
@@ -26,6 +27,7 @@ def test_get_run_returns_full_row(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
 
     with TestClient(app) as client:
+        login(client)
         run_id = _seeded_run_id(db_path)
         response = client.get(f"/api/runs/{run_id}")
 
@@ -38,6 +40,7 @@ def test_get_run_log_returns_tail_and_404(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
 
     with TestClient(app) as client:
+        login(client)
         run_id = _seeded_run_id(db_path)
         log_path = tmp_path / "runs" / f"{run_id}.log"
         log_path.parent.mkdir()

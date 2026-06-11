@@ -10,6 +10,8 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
+login = cast(Any, import_module("web.api.tests.conftest")).login
+
 main = import_module("web.api.main")
 app = cast(Any, main.app)
 
@@ -23,6 +25,7 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         assert health.status_code == 200
         assert health.json() == {"status": "ok"}
 
+        login(client)
         bindings_response = client.get("/api/bindings")
         assert bindings_response.status_code == 200
         bindings = bindings_response.json()
@@ -72,6 +75,7 @@ def test_skills_endpoint_returns_rows_sorted_by_name(
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
 
     with TestClient(app) as client:
+        login(client)
         with main.connect(db_path) as connection:
             connection.executemany(
                 "INSERT INTO skill(name, description, source) VALUES (?, ?, ?)",
@@ -106,6 +110,7 @@ def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
 
     with TestClient(app) as client:
+        login(client)
 
         def fetch_bindings(_: int) -> int:
             return client.get("/api/bindings").status_code

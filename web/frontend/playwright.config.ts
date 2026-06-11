@@ -8,6 +8,9 @@ const E2E_WEB_PORT = 18091;
 const E2E_API_ORIGIN = `http://127.0.0.1:${E2E_API_PORT}`;
 const E2E_WEB_ORIGIN = `http://127.0.0.1:${E2E_WEB_PORT}`;
 const E2E_DB_PATH = path.resolve(__dirname, "test-results/podium-e2e.db");
+const E2E_PASSWORD_HASH =
+	"$2b$12$ZjUmIMBDipXIftuigS2s0O3SSJzKwkSHWsrHmauOcytbDU.K3e1k2";
+const E2E_SESSION_SECRET = "e2e-session-secret";
 
 export default defineConfig({
 	testDir: "./tests",
@@ -25,6 +28,8 @@ export default defineConfig({
 			command:
 				`mkdir -p test-results && rm -f ${E2E_DB_PATH} && ` +
 				`PODIUM_DB_PATH=${E2E_DB_PATH} ` +
+				`PODIUM_PASSWORD_HASH='${E2E_PASSWORD_HASH}' ` +
+				`PODIUM_SESSION_SECRET=${E2E_SESSION_SECRET} ` +
 				`uv run uvicorn main:app --host 127.0.0.1 --port ${E2E_API_PORT} --app-dir ../api`,
 			url: `${E2E_API_ORIGIN}/api/health`,
 			reuseExistingServer: false,

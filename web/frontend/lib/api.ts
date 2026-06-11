@@ -137,6 +137,24 @@ export const fetchIssueRuns = (id: number) =>
 
 export const fetchRun = (id: number) => getJSON<RunDetail>(`/api/runs/${id}`);
 
+export async function login(password: string): Promise<void> {
+	const res = await fetch("/api/auth/login", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ password }),
+	});
+	if (!res.ok) {
+		throw new Error(`POST /api/auth/login -> ${res.status} ${res.statusText}`);
+	}
+}
+
+export async function logout(): Promise<void> {
+	const res = await fetch("/api/auth/logout", { method: "POST" });
+	if (!res.ok) {
+		throw new Error(`POST /api/auth/logout -> ${res.status} ${res.statusText}`);
+	}
+}
+
 export async function fetchRunLog(id: number): Promise<string | null> {
 	const res = await fetch(`/api/runs/${id}/log`);
 	if (res.status === 404) return null;

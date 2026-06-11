@@ -1,6 +1,11 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { test as base, expect, type ConsoleMessage } from "@playwright/test";
+import {
+	test as base,
+	expect,
+	type ConsoleMessage,
+	type Page,
+} from "@playwright/test";
 
 // Collected browser-side problems for one page: console.error lines, uncaught
 // exceptions (pageerror), and failed network requests. Specs read this and
@@ -16,7 +21,21 @@ const DEFAULT_IGNORE: RegExp[] = [
 	/\?_rsc=/, // App Router RSC prefetch: aborts on supersede + dev cold-compile 500s
 ];
 
-export const test = base.extend<{ problems: PageProblems }>({
+export async function authenticate(page: Page) {
+	const response = await page.request.post("/api/auth/login", {
+		data: { password: "secret" },
+	});
+	expect(response.ok()).toBeTruthy();
+}
+
+export const test = base.extend<{ problems: PageProblems; authenticated: void }>({
+	authenticated: [
+		async ({ page }, use) => {
+			await authenticate(page);
+			await use();
+		},
+		{ auto: true },
+	],
 	problems: [
 		async ({ page }, use) => {
 			const errors: string[] = [];
