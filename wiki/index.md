@@ -14,7 +14,7 @@
 | Page | Summary | Sources | Updated |
 |------|---------|---------|---------|
 | [entities/binding-homelab.md](entities/binding-homelab.md) | homelab Project Binding — full Role set, original Symphony target | `wiki/raw/bindings.yml` | 2026-06-09 |
-| [entities/binding-trading.md](entities/binding-trading.md) | trading Project Binding — leaner Role set, multi-project demonstrator | `wiki/raw/bindings.yml` | 2026-06-09 |
+| [entities/binding-trading.md](entities/binding-trading.md) | trading Project Binding — leaner Role set, multi-project demonstrator; Plane project archived + contract removed 2026-06-11 (#023d) | `wiki/raw/bindings.yml`, `wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md` | 2026-06-11 |
 | [entities/workflow-homelab.md](entities/workflow-homelab.md) | homelab `WORKFLOW.md` — medium-risk autonomy, plan/build/execute, excluded services, completion contract | `wiki/raw/workflow-homelab.md` | 2026-06-09 |
 | [entities/workflow-trading.md](entities/workflow-trading.md) | trading `WORKFLOW.md` — Trading Safety Boundary, secrets-never-read, sandbox-only-by-default | `wiki/raw/workflow-trading.md` | 2026-06-09 |
 
@@ -57,6 +57,7 @@
 | [analyses/podium-022-run-reconcile-log-retention.md](analyses/podium-022-run-reconcile-log-retention.md) | #022 Podium restart Run reconciliation + run-log retention — orphaned queued/running Run rows, blocked parent Issues, preserved worktrees, 90-day/100-log pruning, structured log pairs | `scheduler.py`, `tracker_podium.py`, `tests/test_run_reconcile.py`, `tests/test_log_retention.py` | 2026-06-11 |
 | [analyses/podium-023b-alembic-backup.md](analyses/podium-023b-alembic-backup.md) | #023b Podium Alembic baseline + SQLite backup wiring — migration/runtime schema parity, cron `.backup`, restore drill, pytest dev-tool pin | `tests/test_alembic_baseline.py`, `scripts/podium-backup.sh`, `web/README.md`, `wiki/raw/podium-backup.cron` | 2026-06-11 |
 | [analyses/podium-023c-homelab-cutover.md](analyses/podium-023c-homelab-cutover.md) | #023c homelab→Podium cutover + infra role projection — both active bindings on Podium, approval/schedule columns, live smoke, rollback docs | `bindings.yml`, `tracker_podium.py`, `web/api/schema.py`, `.kanban/issues/023c-podium-homelab-cutover.md` | 2026-06-11 |
+| [analyses/podium-023d-trading-plane-archive.md](analyses/podium-023d-trading-plane-archive.md) | #023d trading Plane archive (descoped, soak gate waived) + reverse-proxy docs — trading project archived, `tracker_contract` removed → `DEFAULT_CONTRACT`, Authelia snippet in README, homelab archive deferred | `.kanban/issues/023d-podium-plane-archive.md`, `bindings.yml`, `CONTEXT.md`, `web/README.md`, `wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md` | 2026-06-11 |
 | [analyses/podium-026-context-compaction.md](analyses/podium-026-context-compaction.md) | #026 Podium Issue Context compaction — threshold settings, pre-Run agent compaction, replace_context, manual compact endpoint | `context_compaction.py`, `scheduler.py`, `tracker_podium.py`, `web/api/main.py` | 2026-06-11 |
 
 ## Candidate Review Queue

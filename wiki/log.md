@@ -186,3 +186,12 @@ Append entries with this format:
 - Inputs: issue #019 implementation; commits `9e84869`, `37c5170`, `1eff632`; `config.py`; `main.py`; `scheduler.py`; `tracker_adapter.py`; `tracker_podium.py`; `web/api/db.py`; `tests/test_tracker_podium.py`; `tests/test_podium_sqlite_concurrent.py`; `tests/test_engine_against_podium.py`.
 - Outputs: updated `wiki/concepts/podium-tracker.md`; `wiki/CLAIMS.md` (C-0079..C-0081); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Captured `tracker: plane|podium` binding validation, runtime tracker protocol, SQLite Podium adapter, WAL/busy-timeout concurrency posture, no direct `plane_adapter` import in `tracker_podium.py`, and scheduler `stores_context` path for Podium `context_md`. No secrets, no `.env` contents, no transcript.
+
+## [2026-06-11] session-update | Podium #023d trading Plane archive + reverse-proxy docs
+
+- Actor: agent (Claude, interactive session + wiki update)
+- Inputs: issue #023d execution (descoped to trading-only); `symphony-plane-recover archive` run; `bindings.yml`; `CONTEXT.md`; `web/README.md`; `config.py:345,391`; `tests/test_trading_podium_dispatch.py`; `.kanban/issues/023d-podium-plane-archive.md`.
+- Outputs: `wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md`; `wiki/analyses/podium-023d-trading-plane-archive.md`; `wiki/CLAIMS.md` (C-0107, C-0108; supersession notes on C-0023→superseded, C-0059, C-0104); updated `wiki/entities/binding-trading.md` (retire banner, historical Tracker Contract section); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured the operator-waived soak gate, the irreversible trading Plane archive (HTTP 204, `archived_at: 2026-06-11T22:42:15Z`), the live `tracker_contract` removal → `DEFAULT_CONTRACT` fallback, the README Authelia reverse-proxy snippet, and the deferred homelab archive. No secrets, no `.env` contents (PLANE_API_KEY only echoed as char-count during env sourcing), no transcript.
+- Unresolved: homelab Plane archive follow-up issue (e.g. 023e) not yet created; Authelia/proxy live edit + Podium reachability confirmation operator-pending; no git commit yet.
+- Addendum: added a non-destructive drift banner to `wiki/raw/bindings.yml` (immutable snapshot) flagging it predates #023c/#023d; body preserved verbatim, still valid YAML. Raw immutability honored — flag, never silently rewrite.

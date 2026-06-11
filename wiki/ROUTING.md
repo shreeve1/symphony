@@ -19,13 +19,13 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Bindings & Repos
 
-- Pages: `entities/binding-homelab.md`, `entities/binding-trading.md`, `entities/workflow-homelab.md`, `entities/workflow-trading.md`, `concepts/tracker-contract.md`, `analyses/adr-0004-tracker-contract.md`
-- Keywords: bindings.yml, homelab, trading, crypto-trading-agents, WORKFLOW.md, smoke ticket, project scaffold, Role, TrackerRole, RoleBinding, PlaneUserMapping, default_agent, base_branch, approval.enabled, landing.mode, project_id, project_slug, workspace_slug, plane_uuid, medium-risk autonomy, Trading Safety Boundary, excluded services
+- Pages: `entities/binding-homelab.md`, `entities/binding-trading.md`, `entities/workflow-homelab.md`, `entities/workflow-trading.md`, `concepts/tracker-contract.md`, `analyses/adr-0004-tracker-contract.md`, `analyses/podium-023d-trading-plane-archive.md`
+- Keywords: bindings.yml, homelab, trading, crypto-trading-agents, WORKFLOW.md, smoke ticket, project scaffold, Role, TrackerRole, RoleBinding, PlaneUserMapping, default_agent, base_branch, approval.enabled, landing.mode, project_id, project_slug, workspace_slug, plane_uuid, medium-risk autonomy, Trading Safety Boundary, excluded services, tracker_contract removed, DEFAULT_CONTRACT fallback, trading archived
 
 ## Plane Integration
 
-- Pages: `concepts/symphony-engine.md`, `concepts/tracker-contract.md`, `entities/binding-homelab.md`, `entities/binding-trading.md`
-- Keywords: PLANE_API_URL, PLANE_API_KEY, workspace slug, project id, todo, in review, running, blocked, done, labels, X-API-Key, label UUIDs, state UUIDs
+- Pages: `concepts/symphony-engine.md`, `concepts/tracker-contract.md`, `entities/binding-homelab.md`, `entities/binding-trading.md`, `analyses/podium-023d-trading-plane-archive.md`
+- Keywords: PLANE_API_URL, PLANE_API_KEY, workspace slug, project id, todo, in review, running, blocked, done, labels, X-API-Key, label UUIDs, state UUIDs, plane archive, projects/<id>/archive, archived_at, symphony-plane-recover archive, soak gate waived, 023d, Plane retirement, trading project archived, homelab archive deferred
 
 ## Scheduling
 
@@ -79,7 +79,7 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Podium Web UI
 
-- Pages: `concepts/podium-tracker.md`, `analyses/adr-0005-replace-plane-with-podium.md`, `analyses/podium-014-new-issue-flow.md`, `analyses/podium-017-live-updates.md`, `analyses/podium-018-auth.md`, `analyses/podium-021-worktree-auto-merge.md`, `analyses/podium-022-run-reconcile-log-retention.md`, `analyses/podium-023b-alembic-backup.md`, `analyses/podium-023c-homelab-cutover.md`, `analyses/podium-026-context-compaction.md`, `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-09-ui-brainstorm-handoff.md`
+- Pages: `concepts/podium-tracker.md`, `analyses/adr-0005-replace-plane-with-podium.md`, `analyses/podium-014-new-issue-flow.md`, `analyses/podium-017-live-updates.md`, `analyses/podium-018-auth.md`, `analyses/podium-021-worktree-auto-merge.md`, `analyses/podium-022-run-reconcile-log-retention.md`, `analyses/podium-023b-alembic-backup.md`, `analyses/podium-023c-homelab-cutover.md`, `analyses/podium-023d-trading-plane-archive.md`, `analyses/podium-026-context-compaction.md`, `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-09-ui-brainstorm-handoff.md`
 - Keywords: podium, web ui, kanban board, new issue, POST issues, IssueCreate, IssuePatch, options endpoint, KNOWN_AGENTS, KNOWN_MODELS, branches dropdown, optimistic update, temp card, NewIssueModal, IssueFlyout, metadata chips, infra chips, approval_required, approved, scheduled_for, skill seeding, INSERT OR IGNORE, /diagnose, websocket, WS /api/ws, WebSocketHub, issue.updated, issue.created, run.updated, TanStack Query live cache, reconnect backoff, Disconnected retrying pill, live-sync.spec.ts, websocket fanout, last-write-wins, podium.db, PODIUM_DB_PATH, resolve_db_path, uvicorn 8090, --workers 1, next start 8091, next dev 8091, playwright e2e, persistent dev DB, FieldSelect, base_branch fallback, issue.state, run.state, queued running succeeded failed, todo in_review blocked done, check_same_thread, no-op guard, monotonic updated_at, 400 422 split, extra_forbidden, startup reaper, restart-orphan, Run table, latest_run_id, Binding-is-Project, Skill subsumes Mode, Skill→Mode bridge, skill_mode_map, preferred_skill, tracker_kind, tracker plane podium, tracker_podium, tracker_adapter, PodiumTrackerAdapter, stores_context, WAL, busy_timeout, podium-api.service, podium-web.service, podium systemd, PODIUM_PASSWORD_HASH, PODIUM_SESSION_SECRET, podium_session, bcrypt, auth, login, logout, whoami, set-password, API auth gate, WebSocket auth gate, Authelia 9091, comments_md, context_md, engine-built compaction, context_compaction, binding_settings, context_compact_threshold_tokens, context_compact_keep_recent_runs, SYMPHONY_COMPACTED_CONTEXT, replace_context, compact endpoint, Alembic, schema.py, ADR-0005, worktree_active, worktree chip, worktree.spec.ts, FF-only auto-merge, Worktree archived, run-log retention, log_path NULL, 90-day log pruning, newest 100 logs per issue
 
 ## Tests

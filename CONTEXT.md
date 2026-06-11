@@ -29,7 +29,7 @@ The per-repo prompt policy — a `WORKFLOW.md` at the bound repo's root that Sym
 _Avoid_: "domain overlay" (the homelab-era label-selected fragments; dropped in favour of one flat per-repo Workflow)
 
 **Tracker Adapter**:
-The seam that isolates tracker-specific reads and writes behind one interface, so the engine talks to "a tracker" rather than to a concrete backend. Borrowed from sortie's vocabulary. Plane is retired for active bindings as of the Podium cutover: both `homelab` and `trading` use Podium, while the Plane adapter remains dormant as the ADR-0002 hedge and rollback aid.
+The seam that isolates tracker-specific reads and writes behind one interface, so the engine talks to "a tracker" rather than to a concrete backend. Borrowed from sortie's vocabulary. Plane is retired for active bindings as of the Podium cutover: both `homelab` and `trading` use Podium, while the Plane adapter remains dormant as the ADR-0002 hedge and rollback aid. The `trading` Plane project was archived 2026-06-11 (#023d) and its rollback contract removed; the `homelab` Plane project and rollback contract are retained (archive deferred to a follow-up issue).
 _Avoid_: "Plane client" (the adapter is the abstraction; the Plane client is one implementation of it)
 
 **Tracker Contract**:

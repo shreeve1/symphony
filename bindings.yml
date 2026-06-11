@@ -72,37 +72,7 @@ bindings:
       enabled: false
     landing:
       mode: local
-    tracker_contract:
-      project_slug: trading
-      project_id: 201a3995-c738-4f5a-acbe-7608f302301e
-      state_roles:
-        state:todo:
-          name: Todo
-          uuid: 9f67c662-45c0-4d04-b1c2-7b1e1996d868
-        state:in-review:
-          name: In Review
-          uuid: 6e939873-c8e2-441d-a2c6-cc2e5624c89c
-        state:running:
-          name: Running
-          uuid: 63cdba03-fd48-4331-b093-a9ea756d0512
-        state:blocked:
-          name: Blocked
-          uuid: fdc408d4-bf6a-4a97-b934-fcc8c819dbfb
-        state:done:
-          name: Done
-          uuid: d3419e46-b00e-4eec-ac5b-f6b927e2c7a6
-      label_roles:
-        mode:plan:
-          name: plan
-          uuid: 8041d267-1e1e-4b8e-988e-b035f1a6ea37
-        mode:build:
-          name: build
-          uuid: 1e8b7d18-94dd-48c9-b273-bf781f2de01b
-        approval-required:
-          name: approval-required
-          uuid: 0d492a5f-4d6f-4937-90ca-909cf7f185b7
-        has-worktree:
-          name: has-worktree
-      extra_label_ids:
-        agent:claude: 2a969e9f-69e2-47a3-a6d0-1c9349fd62c1
-        agent:pi: 784b2719-39ed-4ce9-9f8e-f07224b33df1
+    # Plane rollback tracker_contract removed 2026-06-11 (#023d): the trading
+    # Plane project (id 201a3995-c738-4f5a-acbe-7608f302301e) was archived, so
+    # the rollback path is retired. tracker is podium; config falls back to
+    # DEFAULT_CONTRACT (config.py:391).

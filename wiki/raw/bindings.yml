@@ -1,3 +1,16 @@
+# ⚠️ HISTORICAL SNAPSHOT — DRIFT NOTE (added 2026-06-11, body unchanged below)
+# This is a point-in-time capture (ingested 2026-06-09) and no longer matches
+# the live /home/james/symphony/bindings.yml. Known drift, newest first:
+#   - #023d (2026-06-11): trading Plane project archived; trading's
+#     `tracker_contract` block REMOVED from live bindings.yml → falls back to
+#     DEFAULT_CONTRACT. See wiki/analyses/podium-023d-trading-plane-archive.md,
+#     claim C-0107.
+#   - #023c (2026-06-11): both bindings cut over to Podium — live entries carry
+#     `tracker: podium` and a `type:` (infra/coding) field not present below;
+#     homelab's `tracker_contract` is COMMENTED OUT as a rollback block. See
+#     wiki/analyses/podium-023c-homelab-cutover.md, claim C-0104.
+# The block below is retained verbatim for the rollback/audit record. For live
+# state, read the repo-root bindings.yml directly; do not treat this as current.
 bindings:
 - name: homelab
   plane_project_id: cff68c17-bff6-452f-89b3-9b570613cfaa

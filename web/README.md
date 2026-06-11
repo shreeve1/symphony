@@ -11,7 +11,7 @@ cd web/api
 uvicorn main:app --host 127.0.0.1 --port 8090
 ```
 
-Bind to `127.0.0.1` only. External access will be handled by the later reverse-proxy slice.
+Bind to `127.0.0.1` only. External access is handled by the Authelia gate — see *Reverse proxy* below.
 
 Health check:
 
@@ -56,7 +56,7 @@ On the host default path, that resolves to `/var/lib/symphony/runs/`. When the A
 ## Binding tracker rollback
 
 The `trading` and `homelab` bindings are cut over by declaring
-`tracker: podium` in `bindings.yml`. To roll either binding back to Plane,
+`tracker: podium` in `bindings.yml`. To roll a binding back to Plane,
 remove that binding's `tracker: podium` line, uncomment its Plane rollback
 `tracker_contract` block if present, and restart the scheduler after explicit
 operator approval:
@@ -65,8 +65,15 @@ operator approval:
 sudo systemctl restart symphony-host.service
 ```
 
-The commented Plane tracker contract blocks remain in `bindings.yml` for this
-rollback path until the later Plane archive slice.
+Rollback availability per binding:
+
+- **homelab** — rollback still available; its Plane `tracker_contract` block
+  remains commented in `bindings.yml` and its Plane project is still active.
+- **trading** — rollback **retired** (#023d, 2026-06-11). The Plane project was
+  archived and the `tracker_contract` block removed from `bindings.yml`, so the
+  binding now falls back to `DEFAULT_CONTRACT`. Re-establishing Plane rollback
+  for trading would require unarchiving the Plane project and restoring the
+  contract block.
 
 ## Migrations
 
@@ -143,6 +150,56 @@ pnpm dev          # next dev -H 127.0.0.1 -p 8091
 
 Then open http://localhost:8091/. Override the backend origin with
 `PODIUM_API_ORIGIN` if it is not on `127.0.0.1:8090`.
+
+## Reverse proxy
+
+The Podium frontend binds to `127.0.0.1:8091` only and is not reachable off
+the host. External access goes through the existing Authelia gate on port
+`9091`, mirroring the pattern used for the other internal services on this
+host. Authelia is an auth middleware in front of the reverse proxy; the proxy
+terminates the public route, forwards an auth subrequest to Authelia, and on
+success proxies through to the localhost-bound Podium frontend.
+
+This is operator-side infrastructure outside this repo. Symphony does not edit
+Authelia or the reverse proxy. The snippet below is the rule to add; adapt host
+names and the proxy syntax to whatever the other internal services already use.
+
+Authelia access-control rule (`configuration.yml` `access_control.rules`):
+
+```yaml
+access_control:
+  rules:
+    # Podium operator console — same one_factor/two_factor policy as the
+    # other internal services on this host.
+    - domain: podium.<your-internal-domain>
+      policy: two_factor
+```
+
+Reverse-proxy route (forward-auth to Authelia on `9091`, upstream Podium on
+`127.0.0.1:8091`) — shown as an nginx `location`; translate to the host's
+actual proxy (Traefik labels, Caddy, etc.) to match the existing services:
+
+```nginx
+location / {
+    # Authelia forward-auth subrequest
+    auth_request /authelia;
+    error_page 401 =302 https://auth.<your-internal-domain>/;
+
+    proxy_pass http://127.0.0.1:8091;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location = /authelia {
+    internal;
+    proxy_pass http://127.0.0.1:9091/api/verify;
+    proxy_set_header X-Original-URL    $scheme://$host$request_uri;
+}
+```
+
+After the operator applies this and reloads the proxy, confirm Podium is
+reachable through the Authelia gate at the documented URL.
 
 ## Skill catalog
 

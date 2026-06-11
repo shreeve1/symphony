@@ -3,17 +3,26 @@ title: trading Binding
 type: entity
 status: promoted
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-11
 sources:
   - wiki/raw/bindings.yml
   - bindings.yml
+  - wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md
 confidence: high
-tags: [binding, trading, plane, project, default-agent, pi, multi-project]
+tags: [binding, trading, plane, project, default-agent, pi, multi-project, podium, archived]
 ---
 
 # trading Binding
 
 Second Project Binding, added after Symphony was generalized for multi-project use. Demonstrates a leaner Role set than homelab — no `scheduled`, no `approved`, no `has-worktree` UUID, no domain labels beyond `agent:*`.
+
+> **Status (2026-06-11, #023d):** trading is on Podium (`tracker: podium`) and its
+> Plane project (`201a3995-...`) was **archived**. The `tracker_contract` block
+> below was **removed from `bindings.yml`**; trading now resolves to
+> `DEFAULT_CONTRACT` (`config.py:391`). The Tracker Contract / Role tables below
+> are retained as **historical** (the pre-archive `wiki/raw/bindings.yml`
+> snapshot) — see [#023d archive](../analyses/podium-023d-trading-plane-archive.md)
+> and C-0107. The binding still carries the required `plane_project_id`.
 
 ## Identity
 
@@ -29,7 +38,11 @@ Second Project Binding, added after Symphony was generalized for multi-project u
 
 [source: wiki/raw/bindings.yml]
 
-## Tracker Contract
+## Tracker Contract (historical — removed 2026-06-11)
+
+The block below documents the trading `tracker_contract` as it stood before
+#023d removed it. It no longer exists in `bindings.yml`; trading resolves to
+`DEFAULT_CONTRACT`. Retained for the rollback/audit record only.
 
 No `workspace_slug` in this entry (homelab has one; trading doesn't — defaults presumably resolve through code). Project slug: `trading`. Project ID matches `plane_project_id`.
 
