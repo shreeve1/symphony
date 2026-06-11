@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #021 Podium worktree opt-in + FF-only auto-merge
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #021 implementation; commits `74b024d`, `b59f193`, `f0c5d37`; `web/api/worktree.py`; `agent_runner.py`; `plane_adapter.py`; `tracker_podium.py`; `web/api/main.py`; `tests/test_agent_runner.py`; `web/api/tests/test_worktree.py`; `web/api/tests/test_worktree_api.py`; `web/frontend/tests/worktree.spec.ts`; `.kanban/issues/021-podium-worktree-auto-merge.md`; session wiki query of `wiki/index.md` and `wiki/ROUTING.md` before implementation.
+- Outputs: `wiki/analyses/podium-021-worktree-auto-merge.md`; `wiki/CLAIMS.md` (C-0084..C-0088); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured deterministic Podium worktree path/branch, dispatch cwd switching, FF-only Done merge and teardown, blocked abort comments, archive toggle behavior, frontend chip lifecycle, and dotenv masking fix for the auth missing-secret test. Verification passed: `uv run pytest` (545 passed, 1 skipped) and `pnpm test:e2e` (15 passed). No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #020 trading→Podium cutover smoke + run-log finalization bug
 
 - Actor: agent (Claude, cutover smoke + wiki update)
