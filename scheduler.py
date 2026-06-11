@@ -8,6 +8,7 @@ import logging
 import random
 import re
 from collections.abc import Callable, Sequence
+from importlib import import_module
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -281,6 +282,10 @@ class SchedulerError(RuntimeError):
     """Raised for scheduler setup failures."""
 
 
+class SchedulerContextCompactionError(RuntimeError):
+    """Raised when pre-dispatch context compaction fails safely."""
+
+
 def _sanitize_report(text: str, secrets: Sequence[str]) -> str:
     report = _ANSI_ESCAPE_RE.sub("", text).strip()
     for secret in secrets:
@@ -439,6 +444,54 @@ def _worktree_run_fields(
         "branch_name": branch_name(binding_name, issue_id),
         "base_branch": base_branch,
     }
+
+
+async def _maybe_compact_context(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    agent_runner: Callable[..., AgentResult],
+    *,
+    now: Callable[[], datetime],
+) -> CandidateIssue:
+    if not getattr(adapter, "stores_context", False):
+        return candidate
+    if not config.bindings:
+        return candidate
+    replace_context = getattr(adapter, "replace_context", None)
+    if not callable(replace_context):
+        return candidate
+    settings_fn = getattr(adapter, "context_compaction_settings", None)
+    settings = {
+        "threshold_tokens": 16_000,
+        "keep_recent_runs": 3,
+    }
+    if callable(settings_fn):
+        settings.update(
+            await _maybe_await(settings_fn(getattr(candidate, "binding_name", "") or config.bindings[0].name))
+        )
+    compaction = import_module("context_compaction")
+    try:
+        compacted = await asyncio.to_thread(
+            vars(compaction)["maybe_compact"],
+            candidate,
+            config.bindings[0],
+            agent_runner,
+            threshold_tokens=int(settings["threshold_tokens"]),
+            keep_recent_runs=int(settings["keep_recent_runs"]),
+            now=now,
+        )
+    except Exception as exc:
+        if isinstance(exc, vars(compaction)["ContextCompactionError"]):
+            raise SchedulerContextCompactionError(str(exc)) from exc
+        raise
+    if compacted == str(getattr(candidate, "context_md", "") or ""):
+        return candidate
+    updated_issue = await _maybe_await(replace_context(candidate.id, compacted))
+    return replace(
+        candidate,
+        context_md=str(updated_issue.get("context_md") or compacted),
+    )
 
 
 async def _start_run_record(
@@ -877,9 +930,29 @@ async def run_tick(
 
         try:
             comments_text = await _fetch_issue_comments(adapter, candidate.id)
+            candidate = await _maybe_compact_context(
+                config,
+                adapter,
+                candidate,
+                agent_runner,
+                now=now,
+            )
             prompt = render_prompt(candidate)
             if comments_text:
                 prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
+        except SchedulerContextCompactionError as exc:
+            _iu, _du = _build_urls(config, candidate.id)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Context compaction failed: {exc}",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(False, "context-compaction-failed", candidate.id, mode=mode)
         except OSError as exc:
             _iu, _du = _build_urls(config, candidate.id)
             await _block_issue(

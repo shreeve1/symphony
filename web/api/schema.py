@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0001_initial"
+INITIAL_REVISION = "0002_context_compaction_settings"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -9,6 +9,12 @@ CREATE TABLE IF NOT EXISTS binding(
   color TEXT DEFAULT '#888888',
   sort_order INTEGER,
   archived BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS binding_settings(
+  binding_name TEXT PRIMARY KEY REFERENCES binding(name) ON DELETE CASCADE,
+  context_compact_threshold_tokens INTEGER DEFAULT 16000,
+  context_compact_keep_recent_runs INTEGER DEFAULT 3
 );
 
 CREATE TABLE IF NOT EXISTS skill(

@@ -263,6 +263,50 @@ class PodiumTrackerAdapter:
         block = _append_block("### Symphony Context Append", body)
         return await self._append_issue_field(issue_id, "context_md", block)
 
+    async def replace_context(self, issue_id: str, body: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            current = connection.execute(
+                "SELECT id FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+            if current is None:
+                raise KeyError(f"Podium issue not found: {issue_id}")
+            connection.execute(
+                "UPDATE issue SET context_md = ?, updated_at = ? WHERE id = ?",
+                (body, _now(), issue_id),
+            )
+            connection.commit()
+        return await self.get_issue(issue_id)
+
+    async def context_compaction_settings(self, binding_name: str) -> dict[str, int]:
+        with self.connect() as connection:
+            try:
+                row = connection.execute(
+                    """
+                    SELECT context_compact_threshold_tokens,
+                           context_compact_keep_recent_runs
+                    FROM binding_settings
+                    WHERE binding_name = ?
+                    """,
+                    (binding_name,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+        if row is None:
+            return {
+                "threshold_tokens": 16_000,
+                "keep_recent_runs": 3,
+            }
+        return {
+            "threshold_tokens": int(
+                row["context_compact_threshold_tokens"]
+                or 16_000
+            ),
+            "keep_recent_runs": int(
+                row["context_compact_keep_recent_runs"]
+                or 3
+            ),
+        }
+
     async def transition_state(
         self, issue_id: str, state: PlaneState | TrackerRole
     ) -> dict[str, Any]:

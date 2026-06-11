@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import sqlite3
 import subprocess
@@ -225,6 +226,10 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
     if existing_revision is None:
         connection.execute(
             "INSERT INTO alembic_version(version_num) VALUES (?)", (INITIAL_REVISION,)
+        )
+    elif existing_revision["version_num"] != INITIAL_REVISION:
+        connection.execute(
+            "UPDATE alembic_version SET version_num = ?", (INITIAL_REVISION,)
         )
     connection.commit()
 
@@ -522,6 +527,81 @@ def get_issue(
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
     return _row(row)
+
+
+@app.post("/api/issues/{issue_id}/compact")
+async def compact_issue_context(
+    issue_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    _get_issue_or_404(connection, issue_id)
+    return await _compact_issue_context(issue_id)
+
+
+async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
+    compaction = import_module("context_compaction")
+    from tracker_podium import CandidateIssue
+
+    engine_main = import_module("main")
+    config = vars(engine_main)["SymphonyConfig"].from_env()
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    binding_name = str(row["binding_name"] or "")
+    binding = next((item for item in config.bindings if item.name == binding_name), None)
+    if binding is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"binding {binding_name!r} is not configured for compaction",
+        )
+    runtime = vars(engine_main)["_build_binding_runtime"](config, binding)
+    adapter = runtime.adapter
+    if not getattr(adapter, "stores_context", False):
+        raise HTTPException(status_code=422, detail="tracker does not store context")
+    settings_fn = getattr(adapter, "context_compaction_settings", None)
+    settings = {"threshold_tokens": 16_000, "keep_recent_runs": 3}
+    if callable(settings_fn):
+        settings_result = settings_fn(binding_name)
+        if inspect.isawaitable(settings_result):
+            settings_result = await settings_result
+        if isinstance(settings_result, dict):
+            if "threshold_tokens" in settings_result:
+                settings["threshold_tokens"] = int(settings_result["threshold_tokens"])
+            if "keep_recent_runs" in settings_result:
+                settings["keep_recent_runs"] = int(settings_result["keep_recent_runs"])
+    issue = CandidateIssue(
+        id=str(row["id"]),
+        identifier=str(row["id"]),
+        name=str(row["title"] or ""),
+        description=str(row["description"] or ""),
+        labels=(),
+        created_at=str(row["created_at"] or ""),
+        comments_md=str(row["comments_md"] or ""),
+        context_md=str(row["context_md"] or ""),
+        preferred_skill=row["preferred_skill"],
+        worktree_active=bool(row["worktree_active"] or False),
+        base_branch=str(row["base_branch"] or ""),
+        binding_name=binding_name,
+    )
+    compacted = await asyncio.to_thread(
+        vars(compaction)["maybe_compact"],
+        issue,
+        binding,
+        runtime.agent_adapter,
+        threshold_tokens=int(settings["threshold_tokens"]),
+        keep_recent_runs=int(settings["keep_recent_runs"]),
+    )
+    changed = compacted != issue.context_md
+    if changed:
+        await adapter.replace_context(str(issue_id), compacted)
+    return {
+        "issue_id": issue_id,
+        "compacted": changed,
+        "token_count": vars(compaction)["estimate_tokens"](compacted),
+    }
 
 
 @app.patch("/api/issues/{issue_id}")

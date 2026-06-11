@@ -57,7 +57,7 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         revision = connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone()[0]
-    assert revision == "0001_initial"
+    assert revision == main.INITIAL_REVISION
 
     env = {**os.environ, "PODIUM_DB_PATH": str(db_path)}
     subprocess.run(
