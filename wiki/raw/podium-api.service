@@ -1,0 +1,16 @@
+[Unit]
+Description=Podium FastAPI
+After=network.target
+OnFailure=telegram-alert@%n.service
+
+[Service]
+Type=simple
+User=james
+WorkingDirectory=/home/james/symphony/web/api
+EnvironmentFile=/home/james/symphony-host.env
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8090 --workers 1
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

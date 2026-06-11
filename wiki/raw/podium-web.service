@@ -1,0 +1,17 @@
+[Unit]
+Description=Podium Next.js
+After=network.target podium-api.service
+OnFailure=telegram-alert@%n.service
+
+[Service]
+Type=simple
+User=james
+WorkingDirectory=/home/james/symphony/web/frontend
+EnvironmentFile=/home/james/symphony-host.env
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/pnpm start -p 8091
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

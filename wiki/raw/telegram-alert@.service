@@ -1,0 +1,10 @@
+[Unit]
+Description=Send Telegram alert for failed unit %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/home/james/symphony-host.env
+ExecStart=/usr/local/sbin/send-telegram-systemd-alert %i
+TimeoutStartSec=30

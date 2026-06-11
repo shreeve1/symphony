@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #023a Podium systemd units actionable review
+
+- Actor: agent (Pi, Ralph actionable review)
+- Inputs: issue #023a actionable review; commit `9a9b30d`; `.kanban/issues/023a-podium-systemd-units.md`; `.kanban/progress.md`; live unit snapshots `/etc/systemd/system/podium-api.service`, `/etc/systemd/system/podium-web.service`, `/etc/systemd/system/telegram-alert@.service`, `/usr/local/sbin/send-telegram-systemd-alert`.
+- Outputs: new `wiki/raw/podium-api.service`; `wiki/raw/podium-web.service`; `wiki/raw/telegram-alert@.service`; `wiki/raw/send-telegram-systemd-alert`; new `wiki/sources/podium-systemd-units.md`; updated `wiki/analyses/adr-0005-replace-plane-with-podium.md`; `wiki/CLAIMS.md` (C-0103 and C-0065 note); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured landed Podium sibling units, API `--workers 1`, web loopback `HOST=127.0.0.1`, `OnFailure=telegram-alert@%n.service` wiring, and the unattended verification rule to check external-notification wiring without firing live Telegram alerts. Verification passed: `sudo systemctl status podium-api.service podium-web.service --no-pager && ss -tlnp | grep -E '8090|8091'`; env variable presence checked without printing secrets.
+
 ## [2026-06-11] session-update | #027 Podium skill-suite migration
 
 - Actor: agent (Pi, Ralph + wiki update)

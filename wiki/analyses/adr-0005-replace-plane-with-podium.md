@@ -62,6 +62,8 @@ Issue→Done with `worktree_active=true` → FF-merge per-Issue branch to base, 
 
 `symphony-host.service` unchanged. Adds two sibling units — `podium-api.service`, `podium-web.service` — each with own `OnFailure=telegram-alert@%n.service` so the three processes fail/restart independently. Both Podium ports bind localhost; external access via existing Authelia reverse proxy on 9091. Auth = single bcrypt-hashed shared password `PODIUM_PASSWORD_HASH` from `/home/james/symphony-host.env` (single-user, James only). WebSocket pushes Run-state + Issue-field changes; clients reconcile from row state on reconnect [source: wiki/raw/adr-0005-replace-plane-with-podium.md#5].
 
+Landed state: #023a installed and enabled `podium-api.service` and `podium-web.service`; API runs uvicorn on `127.0.0.1:8090` with `--workers 1`, web runs Next.js on `127.0.0.1:8091` via `HOST=127.0.0.1`, and both load `/home/james/symphony-host.env` [source: wiki/raw/podium-api.service; wiki/raw/podium-web.service]. Failure notification is wired through `telegram-alert@.service` and `/usr/local/sbin/send-telegram-systemd-alert`; unattended review verifies this wiring without firing live Telegram alerts [source: wiki/raw/telegram-alert@.service; wiki/raw/send-telegram-systemd-alert; .kanban/issues/023a-podium-systemd-units.md].
+
 ## Migration
 
 Fresh stand-up per binding (no data migration): **trading first** (disposable PoC repo), then **homelab** after Podium tuned. Plane archived after both cut over. Clean cutover per binding → brief window per binding where neither tracker is authoritative; acceptable (trading disposable, homelab single-operator) [source: wiki/raw/adr-0005-replace-plane-with-podium.md#5,11].
@@ -95,4 +97,4 @@ Two new systemd units; Node + browser toolchain for Playwright screen-level test
 
 ## Claims
 
-C-0059 .. C-0067 in [CLAIMS.md](../CLAIMS.md). Supersession note added to C-0004 (Mode plan/build/execute → Podium drops Mode for Skill).
+C-0059 .. C-0067 and C-0103 in [CLAIMS.md](../CLAIMS.md). Supersession note added to C-0004 (Mode plan/build/execute → Podium drops Mode for Skill).
