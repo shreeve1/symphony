@@ -153,16 +153,27 @@ Then open http://localhost:8091/. Override the backend origin with
 
 ## Reverse proxy
 
-The Podium frontend binds to `127.0.0.1:8091` only and is not reachable off
-the host. External access goes through the existing Authelia gate on port
-`9091`, mirroring the pattern used for the other internal services on this
-host. Authelia is an auth middleware in front of the reverse proxy; the proxy
+External access is served at `https://podium.testytech.net` through the existing
+Authelia gate on port `9091`, mirroring the pattern used for the other internal
+services on this host.
+Authelia is an auth middleware in front of the reverse proxy; the proxy
 terminates the public route, forwards an auth subrequest to Authelia, and on
-success proxies through to the localhost-bound Podium frontend.
+success proxies through to the Podium frontend.
+
+The reverse proxy reaches the frontend at the host's LAN address
+`10.20.20.16:8091` (not loopback). **Bind-address requirement:** by default the
+frontend listens on `127.0.0.1:8091` only (`podium-web.service` `HOST=127.0.0.1`),
+which a proxy targeting `10.20.20.16:8091` cannot reach. The operator must set
+the frontend to listen on the LAN interface — e.g. `HOST=10.20.20.16` (or
+`0.0.0.0`) on `podium-web.service`, then `daemon-reload` + restart that unit.
+Note this exposes the raw port `8091` on the `10.20.20.16` network; the Authelia
+gate remains the only intended entry point, but the unauthenticated port becomes
+reachable to LAN hosts. Restrict with a host firewall rule if that is a concern.
 
 This is operator-side infrastructure outside this repo. Symphony does not edit
-Authelia or the reverse proxy. The snippet below is the rule to add; adapt host
-names and the proxy syntax to whatever the other internal services already use.
+Authelia, the reverse proxy, or the `podium-web.service` unit. The snippet below
+is the rule to add; adapt host names and the proxy syntax to whatever the other
+internal services already use.
 
 Authelia access-control rule (`configuration.yml` `access_control.rules`):
 
@@ -171,21 +182,24 @@ access_control:
   rules:
     # Podium operator console — same one_factor/two_factor policy as the
     # other internal services on this host.
-    - domain: podium.<your-internal-domain>
+    - domain: podium.testytech.net
       policy: two_factor
 ```
 
 Reverse-proxy route (forward-auth to Authelia on `9091`, upstream Podium on
-`127.0.0.1:8091`) — shown as an nginx `location`; translate to the host's
+`10.20.20.16:8091`) — shown as an nginx `location`; translate to the host's
 actual proxy (Traefik labels, Caddy, etc.) to match the existing services:
 
 ```nginx
+server_name podium.testytech.net;
+
 location / {
     # Authelia forward-auth subrequest
     auth_request /authelia;
-    error_page 401 =302 https://auth.<your-internal-domain>/;
+    # Authelia portal FQDN — confirm against the existing services' value.
+    error_page 401 =302 https://auth.testytech.net/;
 
-    proxy_pass http://127.0.0.1:8091;
+    proxy_pass http://10.20.20.16:8091;
     proxy_set_header Host              $host;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
