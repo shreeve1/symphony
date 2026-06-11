@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-11] session-update | #027 Podium skill-suite migration
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #027 implementation; commits `07b0c36`, `628ea08`, `73ce14c`; `.claude/skills/symphony-binding-scaffold/SKILL.md`; `.claude/skills/symphony-binding-smoke/SKILL.md`; `.claude/skills/symphony-bindings-status/SKILL.md`; `.claude/skills/symphony-onboard-project/SKILL.md`; `.claude/skills/symphony-plane-recover/SKILL.md`; `.claude/skills/symphony-project-scaffold/SKILL.md`; `.claude/skills/symphony-workflow-author/SKILL.md`; `skill_migration.py`; `tests/skills/`; `.kanban/issues/027-podium-skill-suite-migration.md`; `.kanban/progress.md`.
+- Outputs: updated `wiki/analyses/symphony-skills-index.md`; `wiki/CLAIMS.md` (C-0099..C-0102, C-0049 Podium supersession note); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Captured Podium-era `symphony-*` skill paths, new `symphony-binding-scaffold`, smoke/status Podium endpoint migration, Plane-only scaffold/recover split, tracker-agnostic workflow-author posture, and test coverage. Verification passed: `uv run pytest` (572 passed, 1 skipped), touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #026 Podium Issue Context compaction
 
 - Actor: agent (Pi, Ralph + wiki update)
