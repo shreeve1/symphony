@@ -1,14 +1,14 @@
 ---
 id: 021
 title: Worktree opt-in + auto-merge on Done (fast-forward only)
-status: review
+status: done
 blocked_by: [020]
 parent: null
 priority: 0
 created: 2026-06-10
 updated: 2026-06-11
 actor: ralph
-previous_status: in-progress
+previous_status: review
 ---
 
 ## What to build
@@ -49,14 +49,14 @@ Mechanics:
 
 ## Acceptance criteria
 
-- [ ] `worktree.py` creates the worktree at the documented path with the documented branch name (test asserts both).
-- [ ] Dispatch flow: an issue with `worktree_active=true` runs `pi` inside the worktree path (test mocks `pi`, asserts `cwd` arg).
-- [ ] State transition `* → done` with `worktree_active=true` triggers `git merge --ff-only`. Test sets up a fixture repo where the branch is ahead of base, asserts the merge runs and the worktree is removed.
-- [ ] Conflict test: fixture repo where base has diverged; merge attempt aborts, worktree remains, blocked comment appended to `comments_md`.
-- [ ] Force-pushed base test: same outcome as conflict.
-- [ ] Dirty base-checkout test: fixture has uncommitted edits in the base repo; merge attempt aborts before running `git merge`; blocked comment posted; worktree intact.
-- [ ] Toggling `worktree_active` off does NOT delete an existing worktree; a comment is appended noting the archive.
-- [ ] Playwright `worktree.spec.ts`: toggle the chip on, file an issue, watch the chip render the worktree path; toggle to done, watch the chip clear.
+- [x] `worktree.py` creates the worktree at the documented path with the documented branch name (test asserts both).
+- [x] Dispatch flow: an issue with `worktree_active=true` runs `pi` inside the worktree path (test mocks `pi`, asserts `cwd` arg).
+- [x] State transition `* → done` with `worktree_active=true` triggers `git merge --ff-only`. Test sets up a fixture repo where the branch is ahead of base, asserts the merge runs and the worktree is removed.
+- [x] Conflict test: fixture repo where base has diverged; merge attempt aborts, worktree remains, blocked comment appended to `comments_md`.
+- [x] Force-pushed base test: same outcome as conflict.
+- [x] Dirty base-checkout test: fixture has uncommitted edits in the base repo; merge attempt aborts before running `git merge`; blocked comment posted; worktree intact.
+- [x] Toggling `worktree_active` off does NOT delete an existing worktree; a comment is appended noting the archive.
+- [x] Playwright `worktree.spec.ts`: toggle the chip on, file an issue, watch the chip render the worktree path; toggle to done, watch the chip clear.
 
 ## Verification
 
@@ -68,3 +68,7 @@ cd web/frontend && pnpm test:e2e
 ## Blocked by
 
 - #020 (real engine dispatch through Podium is the host for this behaviour)
+
+## Implementation Notes
+
+Added Podium worktree helpers, dispatch-time worktree cwd selection, API merge/archive handling for `worktree_active`, worktree metadata UI, and regression coverage for merge success, conflict/diverged base, force-pushed base, dirty base, toggle-off archive, and Playwright chip behavior.

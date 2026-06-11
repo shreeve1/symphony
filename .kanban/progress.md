@@ -68,3 +68,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** The mocked dispatch test masked the bug by passing an explicit `db_path` AND monkeypatching `RUN_LOG_ROOT`; regression coverage must exercise the production construction path.
 **Conventions established:** Podium run logs live beside the active `podium.db` (`<db parent>/runs/<id>.log`), not at the `/var/lib/symphony/runs` default, until/unless a writable `/var/lib/symphony` exists.
 **Notes for next iteration:** Podium web UI/API was not running, so the smoke was filed by direct `podium.db` insert. Seed issue 3 / run 5 are left in a stale state (run 5 stuck `running`) from the pre-fix crash — cosmetic seed noise, safe to clean later. Commits `12289da` and `8eb4aa6` are local-only (not pushed to `github-personal`).
+
+## #021 Worktree opt-in + auto-merge on Done — 2026-06-11
+
+**What changed:** Added persistent per-Issue Podium worktrees, dispatch-time worktree cwd selection, FF-only merge-on-Done cleanup, blocked comments for merge aborts, toggle-off archive comments, UI worktree path chips, and regression/e2e coverage.
+**Files:** agent_runner.py, plane_adapter.py, tracker_podium.py, web/api/worktree.py, web/api/main.py, tests/test_agent_runner.py, web/api/tests/test_worktree.py, web/api/tests/test_worktree_api.py, web/frontend/components/IssueFlyout.tsx, web/frontend/components/RunDetailPanel.tsx, web/frontend/tests/worktree.spec.ts
+**Decisions:** Podium-owned nested `worktrees/` directories are ignored by the dirty-base precheck, but other untracked files still block auto-merge. Merge always checks out `base_branch` before `git merge --ff-only`.
+**Conventions established:** `worktree_active=true` creates/reuses `worktrees/<binding>/<issue_id>` on dispatch and branch `podium/<binding>/<issue_id>`; state→Done performs FF-only merge and teardown, while abort paths leave the worktree intact and move the issue to Blocked with an operator-facing comment.
+**Notes for next iteration:** Full verification passed: `uv run pytest` (545 passed, 1 skipped) and `pnpm test:e2e` (15 passed). The local `.env` can mask missing auth env in tests; auth tests now monkeypatch dotenv loading for the missing-secret startup case.
