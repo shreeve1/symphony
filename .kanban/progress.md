@@ -76,3 +76,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Podium-owned nested `worktrees/` directories are ignored by the dirty-base precheck, but other untracked files still block auto-merge. Merge always checks out `base_branch` before `git merge --ff-only`.
 **Conventions established:** `worktree_active=true` creates/reuses `worktrees/<binding>/<issue_id>` on dispatch and branch `podium/<binding>/<issue_id>`; state→Done performs FF-only merge and teardown, while abort paths leave the worktree intact and move the issue to Blocked with an operator-facing comment.
 **Notes for next iteration:** Full verification passed: `uv run pytest` (545 passed, 1 skipped) and `pnpm test:e2e` (15 passed). The local `.env` can mask missing auth env in tests; auth tests now monkeypatch dotenv loading for the missing-secret startup case.
+
+## #021 Claude review fixes — 2026-06-11
+
+**What changed:** Addressed all dev-review-claude findings for #021. Blocked merge aborts now publish the final Blocked row over WebSocket, git worktree operations are offloaded from the async PATCH path, Run rows now record worktree path/branch metadata for active worktree dispatch, Issue API rows expose server-derived worktree path/branch for the frontend, combined done+worktree-off PATCH avoids duplicate archive comments after merge failure, and review note cleanup landed.
+**Files:** agent_runner.py, scheduler.py, web/api/main.py, web/api/worktree.py, tests/test_trading_podium_dispatch.py, web/api/tests/test_worktree.py, web/api/tests/test_worktree_api.py, web/frontend/lib/api.ts, web/frontend/components/IssueFlyout.tsx
+**Decisions:** Worktree metadata is now projected by the backend instead of reconstructed in the frontend. `state=done` merge/block outcome takes precedence over archive messaging when both fields are patched in one request.
+**Conventions established:** Slow git worktree checks/merge/cleanup should run outside the FastAPI event loop via `asyncio.to_thread`; any DB state correction after optimistic PATCH publish must publish the final row too.
+**Notes for next iteration:** Verification passed after review fixes: `uv run pytest` (547 passed, 1 skipped), `pnpm exec tsc --noEmit`, and `pnpm test:e2e` (15 passed).

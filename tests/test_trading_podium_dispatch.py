@@ -38,7 +38,7 @@ def _config(tmp_path: Path) -> SymphonyConfig:
     return config.for_binding(binding)
 
 
-def _seed_db(path: Path) -> int:
+def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
     connection = sqlite3.connect(path)
     try:
         connection.executescript(SCHEMA_SQL)
@@ -48,9 +48,11 @@ def _seed_db(path: Path) -> int:
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              preferred_skill, comments_md, context_md, created_at, updated_at
-            ) VALUES ('trading', 'Smoke cutover', 'Exercise trading dispatch', 'todo', 'pi', '/dev-build', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
-            """
+              preferred_skill, worktree_active, base_branch, comments_md,
+              context_md, created_at, updated_at
+            ) VALUES ('trading', 'Smoke cutover', 'Exercise trading dispatch', 'todo', 'pi', '/dev-build', ?, 'main', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            """,
+            (worktree_active,),
         )
         connection.commit()
         assert cursor.lastrowid is not None
@@ -132,6 +134,59 @@ async def test_trading_podium_dispatch_records_run_log_and_context(tmp_path: Pat
     log = Path(run["log_path"]).read_text(encoding="utf-8")
     assert "stdout body" in log
     assert "stderr body" in log
+
+
+@pytest.mark.asyncio
+async def test_trading_podium_dispatch_records_worktree_metadata(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, worktree_active=True)
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: ok",
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+    issue = await adapter.get_issue(str(issue_id))
+    run = await adapter.get_run(str(issue["latest_run_id"]))
+
+    assert result.dispatched is True
+    assert run is not None
+    assert run["worktree_path"] == str(
+        (tmp_path / "worktrees" / "trading" / str(issue_id)).resolve()
+    )
+    assert run["branch_name"] == f"podium/trading/{issue_id}"
+    assert run["base_branch"] == "main"
 
 
 @pytest.mark.asyncio

@@ -119,8 +119,10 @@ def merge_worktree(
 ) -> str | None:
     """Fast-forward-merge the worktree branch into ``base_branch``.
 
-    Returns ``None`` on success, or an error message string on failure.
-    Does NOT remove the worktree — the caller decides what to do.
+    Checks out ``base_branch`` in the base repo before merging and leaves the
+    base checkout there after success. Returns ``None`` on success, or an
+    error message string on failure. Does NOT remove the worktree — the caller
+    decides what to do.
     """
     branch = branch_name(binding_name, issue_id)
 

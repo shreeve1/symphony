@@ -21,6 +21,8 @@ export interface Issue {
 	preferred_skill: string | null;
 	reasoning_effort: string | null;
 	worktree_active: boolean;
+	worktree_path: string;
+	worktree_branch: string;
 	max_duration_seconds: number | null;
 	base_branch: string | null;
 	created_at: string | null;

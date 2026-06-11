@@ -148,6 +148,8 @@ def test_merge_on_done_happy_path(repo_and_db: tuple[Path, Path]) -> None:
     body = response.json()
     assert response.status_code == 200, f"status={response.status_code} body={body}"
     assert body["state"] == "done", f"Blocked comment: {body.get('comments_md', '')}"
+    assert body["worktree_path"] == f"worktrees/trading/{issue_id}"
+    assert body["worktree_branch"] == f"podium/trading/{issue_id}"
 
     # The merge landed the agent commit.
     log = _git(repo, "log", "--oneline", "-1").stdout
@@ -175,18 +177,62 @@ def test_merge_on_done_aborts_when_base_dirty(repo_and_db: tuple[Path, Path]) ->
     # Dirty the base repo by modifying a tracked file.
     (repo / "README.md").write_text("uncommitted change", encoding="utf-8")
 
-    with TestClient(app) as client:
-        login(client)
-        response = client.patch(
-            f"/api/issues/{issue_id}",
-            json={"state": "done"},
-        )
+    queue = main.websocket_hub.subscribe()
+    try:
+        with TestClient(app) as client:
+            login(client)
+            response = client.patch(
+                f"/api/issues/{issue_id}",
+                json={"state": "done"},
+            )
+    finally:
+        main.websocket_hub.unsubscribe(queue)
     assert response.status_code == 200
     body = response.json()
     assert body["state"] == "blocked"
     assert "uncommitted changes" in body["comments_md"]
 
+    messages = []
+    while not queue.empty():
+        messages.append(queue.get_nowait())
+    assert messages[-1]["row"]["state"] == "blocked"
+
     # Worktree intact.
+    assert wt_path.is_dir()
+
+
+def test_combined_done_and_worktree_off_does_not_archive_after_merge_block(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """Merge/block result wins over archive note in a combined PATCH."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    wt_path = create_worktree(repo, "trading", str(issue_id), "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "agent change")
+    (repo / "README.md").write_text("uncommitted change", encoding="utf-8")
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(
+            f"/api/issues/{issue_id}",
+            json={
+                "state": "done",
+                "worktree_active": False,
+                "comments_md": "operator note",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "blocked"
+    assert "operator note" in body["comments_md"]
+    assert "uncommitted changes" in body["comments_md"]
+    assert "Worktree archived" not in body["comments_md"]
     assert wt_path.is_dir()
 
 

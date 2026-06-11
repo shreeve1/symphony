@@ -18,6 +18,13 @@ Append entries with this format:
 - Outputs: `wiki/analyses/podium-021-worktree-auto-merge.md`; `wiki/CLAIMS.md` (C-0084..C-0088); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Captured deterministic Podium worktree path/branch, dispatch cwd switching, FF-only Done merge and teardown, blocked abort comments, archive toggle behavior, frontend chip lifecycle, and dotenv masking fix for the auth missing-secret test. Verification passed: `uv run pytest` (545 passed, 1 skipped) and `pnpm test:e2e` (15 passed). No secrets, no `.env` contents, no transcript.
 
+## [2026-06-11] session-update | #021 dev-review fixes
+
+- Actor: agent (Pi after dev-review-claude)
+- Inputs: dev-review findings for commits `5858e7c..97f9ae6`; `web/api/main.py`; `scheduler.py`; `agent_runner.py`; `web/api/worktree.py`; `tests/test_trading_podium_dispatch.py`; `web/api/tests/test_worktree.py`; `web/api/tests/test_worktree_api.py`; `web/frontend/lib/api.ts`; `web/frontend/components/IssueFlyout.tsx`; `.kanban/issues/021-podium-worktree-auto-merge.md`; `.kanban/progress.md`.
+- Outputs: updated `wiki/analyses/podium-021-worktree-auto-merge.md`; updated `wiki/CLAIMS.md` (C-0086..C-0088); updated `wiki/log.md`.
+- Notes: Captured final blocked-row WebSocket publish after merge aborts, async `to_thread` git work, Run-row worktree metadata, server-derived Issue worktree path/branch fields, combined done+worktree-off PATCH precedence, and review-fix verification: `uv run pytest` (547 passed, 1 skipped), `pnpm exec tsc --noEmit`, and `pnpm test:e2e` (15 passed). No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #020 trading→Podium cutover smoke + run-log finalization bug
 
 - Actor: agent (Claude, cutover smoke + wiki update)

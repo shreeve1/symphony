@@ -26,8 +26,9 @@ function useCreateIssue(binding: string) {
 		onMutate: async (body) => {
 			await queryClient.cancelQueries({ queryKey: key });
 			const previous = queryClient.getQueryData<Issue[]>(key);
+			const tempId = -Date.now(); // negative: cannot collide with a server-assigned id
 			const temp: Issue = {
-				id: -Date.now(), // negative: cannot collide with a server-assigned id
+				id: tempId,
 				binding_name: binding,
 				title: body.title,
 				description: body.description ?? null,
@@ -38,6 +39,8 @@ function useCreateIssue(binding: string) {
 				preferred_skill: body.preferred_skill ?? null,
 				reasoning_effort: body.reasoning_effort ?? "high",
 				worktree_active: body.worktree_active ?? false,
+				worktree_path: "",
+				worktree_branch: "",
 				max_duration_seconds: null,
 				base_branch: body.base_branch ?? null,
 				created_at: null,

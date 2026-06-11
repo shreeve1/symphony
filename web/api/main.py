@@ -288,7 +288,20 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
     for key in ("archived", "worktree_active"):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
+    if "binding_name" in result and "id" in result:
+        result.update(_worktree_metadata(str(result["binding_name"]), str(result["id"])))
     return result
+
+
+def _worktree_metadata(binding_name: str, issue_id: str) -> dict[str, str]:
+    try:
+        from web.api.worktree import branch_name
+    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+        from worktree import branch_name  # type: ignore[no-redef]
+    return {
+        "worktree_path": f"worktrees/{binding_name}/{issue_id}",
+        "worktree_branch": branch_name(binding_name, issue_id),
+    }
 
 
 def _rows_by_id(
@@ -566,17 +579,21 @@ async def patch_issue(
 
     # Worktree merge-on-done: when state transitions to "done" and
     # worktree is active, attempt FF-merge + cleanup.
-    if (
+    merge_attempted = (
         "state" in changed
         and changed["state"] == "done"
         and current.get("worktree_active")
-    ):
+    )
+    if merge_attempted:
         result = await _maybe_merge_worktree(issue_id, current, connection)
 
     # Worktree toggle-off archive: toggling worktree_active from true -> false
-    # while the worktree still exists appends an archive comment.
+    # while the worktree still exists appends an archive comment. If the same
+    # PATCH attempted a done merge, merge/block outcome wins to avoid double
+    # comments on failure.
     if (
-        "worktree_active" in changed
+        not merge_attempted
+        and "worktree_active" in changed
         and changed["worktree_active"] is False
         and current.get("worktree_active") is True
     ):
@@ -622,19 +639,14 @@ async def _maybe_merge_worktree(
 
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
-        _append_blocked_and_publish(
+        return await _append_blocked_and_publish(
             connection,
             issue_id,
             current,
             f"Auto-merge halted: unknown repo_path for binding {binding_name}.",
         )
-        return _row(
-            connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-        )
 
-    if not worktree_exists(repo_path, binding_name, issue_str):
+    if not await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
         # No worktree to merge — nothing to do.
         return _row(
             connection.execute(
@@ -643,31 +655,23 @@ async def _maybe_merge_worktree(
         )
 
     # Precheck: base checkout must be clean.
-    if base_repo_dirty(repo_path):
+    if await asyncio.to_thread(base_repo_dirty, repo_path):
         msg = (
             f"Auto-merge halted: base checkout has uncommitted changes. "
             f"Branch {branch_name(binding_name, issue_str)} is unmerged. "
             f"Worktree at {worktree_dir(repo_path, binding_name, issue_str)} is intact."
         )
-        _append_blocked_and_publish(connection, issue_id, current, msg)
-        return _row(
-            connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-        )
+        return await _append_blocked_and_publish(connection, issue_id, current, msg)
 
     # Attempt FF-only merge.
-    error = merge_worktree(repo_path, binding_name, issue_str, base_branch)
+    error = await asyncio.to_thread(
+        merge_worktree, repo_path, binding_name, issue_str, base_branch
+    )
     if error is not None:
-        _append_blocked_and_publish(connection, issue_id, current, error)
-        return _row(
-            connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-        )
+        return await _append_blocked_and_publish(connection, issue_id, current, error)
 
     # Merge succeeded: clean up worktree + branch.
-    cleanup_worktree(repo_path, binding_name, issue_str)
+    await asyncio.to_thread(cleanup_worktree, repo_path, binding_name, issue_str)
     return _row(
         connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     )
@@ -700,7 +704,7 @@ async def _maybe_archive_worktree(
             ).fetchone()
         )
 
-    if worktree_exists(repo_path, binding_name, issue_str):
+    if await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
         wt_path = worktree_dir(repo_path, binding_name, issue_str)
         wt_branch = branch_name(binding_name, issue_str)
         archive_note = (
@@ -736,21 +740,28 @@ async def _maybe_archive_worktree(
     )
 
 
-def _append_blocked_and_publish(
+async def _append_blocked_and_publish(
     connection: sqlite3.Connection,
     issue_id: int,
     current: dict[str, Any],
     message: str,
-) -> None:
-    """Set issue state to blocked and append a merge-failure comment."""
-    existing = str(current.get("comments_md") or "").rstrip()
+) -> dict[str, Any]:
+    """Set issue state to blocked, append a merge-failure comment, publish row."""
+    latest = connection.execute(
+        "SELECT comments_md, updated_at FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    existing = str(latest["comments_md"] or "").rstrip()
     updated_comments = f"{existing}\n\n{message}".strip() if existing else message
-    now = _next_updated_at(current.get("updated_at"))
+    now = _next_updated_at(latest["updated_at"])
     connection.execute(
         "UPDATE issue SET state = 'blocked', comments_md = ?, updated_at = ? WHERE id = ?",
         (updated_comments, now, issue_id),
     )
     connection.commit()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish({"type": "issue.updated", "id": issue_id, "row": result})
+    return result
 
 
 # Overridable for tests: direct list of binding dicts bypasses disk.

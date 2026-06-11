@@ -215,9 +215,9 @@ def test_merge_worktree_noop_when_already_merged(
 
     # Merge once.
     assert merge_worktree(repo, binding_name, issue_id, "main") is None
-    # Branch is destroyed after cleanup; worktree gone — nothing to merge.
+    # Second merge is already up to date and remains a safe no-op.
     error = merge_worktree(repo, binding_name, issue_id, "main")
-    assert error is None  # safe no-op
+    assert error is None
 
 
 def test_merge_worktree_fails_on_diverged_base(
@@ -242,10 +242,10 @@ def test_merge_worktree_fails_on_diverged_base(
     assert worktree_exists(repo, binding_name, issue_id)
 
 
-def test_merge_worktree_fails_on_dirty_base(
+def test_base_repo_dirty_detects_tracked_edits(
     repo: Path, binding_name: str, issue_id: str
 ) -> None:
-    """Uncommitted changes in base repo cause abort before merge attempt."""
+    """Dirty-base detection is the guard used by the API before merge."""
     create_worktree(repo, binding_name, issue_id, "main")
     # Modify a tracked file in the base.
     (repo / "README.md").write_text("uncommitted change", encoding="utf-8")

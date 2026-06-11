@@ -65,6 +65,8 @@ cd /home/james/symphony && uv run pytest && \
 cd web/frontend && pnpm test:e2e
 ```
 
+Review-fix verification (2026-06-11): `uv run pytest` (547 passed, 1 skipped), `pnpm exec tsc --noEmit`, and `pnpm test:e2e` (15 passed).
+
 ## Blocked by
 
 - #020 (real engine dispatch through Podium is the host for this behaviour)
@@ -72,3 +74,5 @@ cd web/frontend && pnpm test:e2e
 ## Implementation Notes
 
 Added Podium worktree helpers, dispatch-time worktree cwd selection, API merge/archive handling for `worktree_active`, worktree metadata UI, and regression coverage for merge success, conflict/diverged base, force-pushed base, dirty base, toggle-off archive, and Playwright chip behavior.
+
+Dev-review fixes publish the final Blocked row after merge aborts, offload git work from the async PATCH path, record worktree metadata on Run rows, project Issue worktree path/branch from the API, avoid duplicate archive comments on combined done+worktree-off PATCH failures, and clarify merge/test comments.

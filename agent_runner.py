@@ -10,9 +10,10 @@ import signal
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol, cast
+from typing import Protocol, cast
 
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
@@ -165,7 +166,10 @@ def run_agent(
     # The worktree persists after the run — cleanup happens on merge-on-done.
     worktree_path: Path | None = None
     if getattr(issue, "worktree_active", False):
-        from web.api.worktree import create_worktree
+        try:
+            from web.api.worktree import create_worktree
+        except ImportError:  # pragma: no cover - supports web/api import path
+            from worktree import create_worktree  # type: ignore[no-redef]
 
         binding_name = getattr(issue, "binding_name", "") or (
             config.bindings[0].name if config.bindings else ""

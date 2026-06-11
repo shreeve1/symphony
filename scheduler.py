@@ -7,9 +7,9 @@ import inspect
 import logging
 import random
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -24,9 +24,14 @@ from notifier import (
     format_review_message,
 )
 
-from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, ScheduleParseError, latest_event
-
 from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
+from schedule import (
+    CandidateComment,
+    ScheduleEvent,
+    ScheduleEventType,
+    ScheduleParseError,
+    latest_event,
+)
 from prompt_renderer import render_previous_comments_block
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from web.api.db import resolve_run_log_root
@@ -406,6 +411,26 @@ def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
     )
 
 
+def _worktree_run_fields(
+    config: SymphonyConfig, candidate: CandidateIssue, base_branch: str
+) -> dict[str, str]:
+    if not getattr(candidate, "worktree_active", False):
+        return {}
+    try:
+        from web.api.worktree import branch_name, worktree_dir
+    except ImportError:  # pragma: no cover - supports web/api import path
+        from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
+    binding_name = getattr(candidate, "binding_name", "") or (
+        config.bindings[0].name if config.bindings else ""
+    )
+    issue_id = str(candidate.id)
+    return {
+        "worktree_path": str(worktree_dir(config.homelab_repo_path, binding_name, issue_id)),
+        "branch_name": branch_name(binding_name, issue_id),
+        "base_branch": base_branch,
+    }
+
+
 async def _start_run_record(
     adapter: TrackerAdapter,
     config: SymphonyConfig,
@@ -419,18 +444,19 @@ async def _start_run_record(
         return None, None
     binding = config.bindings[0] if config.bindings else None
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    base_branch = getattr(candidate, "base_branch", "") or config.base_branch
+    run_payload = {
+        "issue_id": candidate.id,
+        "agent": agent,
+        "provider": config.pi_provider,
+        "model": config.pi_model,
+        "state": "queued",
+        "base_branch": base_branch,
+        "skill_invoked": getattr(candidate, "preferred_skill", None),
+        **_worktree_run_fields(config, candidate, base_branch),
+    }
     run = await _maybe_await(
-        cast(Callable[[dict[str, Any]], Any], record_run)(
-            {
-                "issue_id": candidate.id,
-                "agent": agent,
-                "provider": config.pi_provider,
-                "model": config.pi_model,
-                "state": "queued",
-                "base_branch": config.base_branch,
-                "skill_invoked": getattr(candidate, "preferred_skill", None),
-            }
-        )
+        cast(Callable[[dict[str, Any]], Any], record_run)(run_payload)
     )
     run_id = str(run.get("id") or "")
     if not run_id:
