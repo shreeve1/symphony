@@ -8,11 +8,13 @@ context blocks. Repo-specific policy lives entirely in WORKFLOW.md.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
+
+from skill_mode_map import mode_for_skill
 
 _PREVIOUS_COMMENTS_MAX_CHARS = 12000
 
@@ -30,6 +32,9 @@ class IssueData:
     schedule_reason: str = ""
     schedule_source: str = ""
     schedule_late: str = ""
+    comments_md: str = ""
+    context_md: str = ""
+    preferred_skill: str | None = None
 
 
 @dataclass
@@ -72,6 +77,7 @@ def _escape_untrusted_block(text: str) -> str:
     return (
         text.replace("</issue>", "< /issue>")
         .replace("</previous_comments>", "< /previous_comments>")
+        .replace("</issue_context>", "< /issue_context>")
     )
 
 
@@ -100,11 +106,11 @@ def _substitute(text: str, issue: IssueData) -> str:
     return _VARIABLE_RE.sub(_repl, text)
 
 
-def render_previous_comments_block(comments_text: str) -> str:
+def render_previous_comments_block(comments_text: str, *, truncate: bool = True) -> str:
     comments = comments_text.strip()
     if not comments:
         return ""
-    if len(comments) > _PREVIOUS_COMMENTS_MAX_CHARS:
+    if truncate and len(comments) > _PREVIOUS_COMMENTS_MAX_CHARS:
         comments = comments[-_PREVIOUS_COMMENTS_MAX_CHARS:]
         comments = "[Earlier previous comments truncated]\n" + comments
     escaped = _escape_untrusted_block(comments)
@@ -115,6 +121,20 @@ def render_previous_comments_block(comments_text: str) -> str:
         "<previous_comments>\n"
         f"{escaped}\n"
         "</previous_comments>"
+    )
+
+
+def render_issue_context_block(context_text: str) -> str:
+    context = context_text.strip()
+    if not context:
+        return ""
+    escaped = _escape_untrusted_block(context)
+    return (
+        "## Issue Context\n"
+        "The following Podium Issue Context is AI-managed continuity from prior runs.\n\n"
+        "<issue_context>\n"
+        f"{escaped}\n"
+        "</issue_context>"
     )
 
 
@@ -138,7 +158,19 @@ def _render_schedule_context(issue: IssueData) -> str:
     return "\n".join(lines)
 
 
-def render_prompt(issue: IssueData, *, path: Path, binding_type: str = "infra") -> str:
+def render_prompt(
+    issue: IssueData,
+    *,
+    path: Path,
+    binding_type: str = "infra",
+    tracker_kind: Literal["plane", "podium"] = "plane",
+) -> str:
+    if tracker_kind not in {"plane", "podium"}:
+        raise ValueError(f"unsupported tracker_kind: {tracker_kind}")
+
+    if tracker_kind == "podium":
+        issue = replace(issue, mode=mode_for_skill(issue.preferred_skill))
+
     _cfg, body = load_workflow(path)
     rendered = _substitute(body, issue)
 
@@ -146,6 +178,14 @@ def render_prompt(issue: IssueData, *, path: Path, binding_type: str = "infra") 
         schedule_context = _render_schedule_context(issue)
         if schedule_context:
             rendered = f"{rendered}\n\n{schedule_context}"
+
+    if tracker_kind == "podium":
+        comments_block = render_previous_comments_block(issue.comments_md, truncate=False)
+        if comments_block:
+            rendered = f"{rendered}\n\n{comments_block}"
+        context_block = render_issue_context_block(issue.context_md)
+        if context_block:
+            rendered = f"{rendered}\n\n{context_block}"
 
     issue_block = (
         f"<issue>\n"
