@@ -8,8 +8,8 @@ import logging
 import random
 import re
 from collections.abc import Callable, Sequence
-from importlib import import_module
 from dataclasses import dataclass, field, replace
+from importlib import import_module
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
 from code_version import resolve_code_sha
-from config import SymphonyConfig
+from config import ProjectBinding, SymphonyConfig
 from notifier import (
     TelegramNotifier,
     format_blocked_message,
@@ -424,8 +424,34 @@ def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
     )
 
 
+def _binding_from_config(config: SymphonyConfig) -> ProjectBinding | None:
+    if len(config.bindings) == 1:
+        return config.bindings[0]
+    return None
+
+
+def _binding_for_issue(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None = None,
+) -> ProjectBinding | None:
+    if binding is not None:
+        return binding
+    candidate_binding_name = getattr(candidate, "binding_name", "")
+    if candidate_binding_name:
+        for configured_binding in config.bindings:
+            if configured_binding.name == candidate_binding_name:
+                return configured_binding
+    return _binding_from_config(config)
+
+
 def _worktree_run_fields(
-    config: SymphonyConfig, candidate: CandidateIssue, base_branch: str
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    base_branch: str,
+    *,
+    binding: ProjectBinding | None = None,
 ) -> dict[str, str]:
     if not getattr(candidate, "worktree_active", False):
         return {}
@@ -433,8 +459,9 @@ def _worktree_run_fields(
         from web.api.worktree import branch_name, worktree_dir
     except ImportError:  # pragma: no cover - supports web/api import path
         from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
     binding_name = getattr(candidate, "binding_name", "") or (
-        config.bindings[0].name if config.bindings else ""
+        resolved_binding.name if resolved_binding is not None else ""
     )
     issue_id = str(candidate.id)
     return {
@@ -453,10 +480,12 @@ async def _maybe_compact_context(
     agent_runner: Callable[..., AgentResult],
     *,
     now: Callable[[], datetime],
+    binding: ProjectBinding | None = None,
 ) -> CandidateIssue:
     if not getattr(adapter, "stores_context", False):
         return candidate
-    if not config.bindings:
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    if resolved_binding is None:
         return candidate
     replace_context = getattr(adapter, "replace_context", None)
     if not callable(replace_context):
@@ -468,14 +497,18 @@ async def _maybe_compact_context(
     }
     if callable(settings_fn):
         settings.update(
-            await _maybe_await(settings_fn(getattr(candidate, "binding_name", "") or config.bindings[0].name))
+            await _maybe_await(
+                settings_fn(
+                    getattr(candidate, "binding_name", "") or resolved_binding.name
+                )
+            )
         )
     compaction = import_module("context_compaction")
     try:
         compacted = await asyncio.to_thread(
             vars(compaction)["maybe_compact"],
             candidate,
-            config.bindings[0],
+            resolved_binding,
             agent_runner,
             threshold_tokens=int(settings["threshold_tokens"]),
             keep_recent_runs=int(settings["keep_recent_runs"]),
@@ -498,6 +531,8 @@ async def _start_run_record(
     adapter: TrackerAdapter,
     config: SymphonyConfig,
     candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None = None,
 ) -> tuple[str | None, Path | None]:
     if not getattr(adapter, "stores_context", False):
         return None, None
@@ -505,8 +540,12 @@ async def _start_run_record(
     update_run = getattr(adapter, "update_run", None)
     if not callable(record_run) or not callable(update_run):
         return None, None
-    binding = config.bindings[0] if config.bindings else None
-    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    agent = (
+        resolved_binding.resolve_agent(candidate.labels)
+        if resolved_binding is not None
+        else "pi"
+    )
     base_branch = getattr(candidate, "base_branch", "") or config.base_branch
     run_payload = {
         "issue_id": candidate.id,
@@ -516,7 +555,9 @@ async def _start_run_record(
         "state": "queued",
         "base_branch": base_branch,
         "skill_invoked": getattr(candidate, "preferred_skill", None),
-        **_worktree_run_fields(config, candidate, base_branch),
+        **_worktree_run_fields(
+            config, candidate, base_branch, binding=resolved_binding
+        ),
     }
     run = await _maybe_await(
         cast(Callable[[dict[str, Any]], Any], record_run)(run_payload)
@@ -636,8 +677,8 @@ def _resolve_mode(
     return "conversation"
 
 
-def _binding_approval_enabled(config: SymphonyConfig) -> bool:
-    return bool(config.bindings and config.bindings[0].approval_policy.enabled)
+def _binding_approval_enabled(binding: ProjectBinding | None) -> bool:
+    return bool(binding and binding.approval_policy.enabled)
 
 
 def _issue_slug(issue: CandidateIssue) -> str:
@@ -706,10 +747,12 @@ async def run_tick(
     notifier: TelegramNotifier | None = None,
     run_blocked_reconciler: bool = True,
     dispatch_state: _DispatchState | None = None,
+    binding: ProjectBinding | None = None,
 ) -> TickResult:
     """Run one scheduler tick without sleeping forever."""
 
-    is_coding = len(config.bindings) > 0 and config.bindings[0].binding_type == "coding"
+    tick_binding = binding or _binding_from_config(config)
+    is_coding = tick_binding is not None and tick_binding.binding_type == "coding"
 
     if dispatch_state is not None:
         await reconcile_pending_review(
@@ -833,7 +876,7 @@ async def run_tick(
     if dispatch_state is not None:
         _clear_rate_limit(dispatch_state)
 
-    approval_policy_enabled = _binding_approval_enabled(config) and not is_coding
+    approval_policy_enabled = _binding_approval_enabled(tick_binding) and not is_coding
     if candidate is None:
         candidate = await _reserve_candidate(
             candidates,
@@ -936,6 +979,7 @@ async def run_tick(
                 candidate,
                 agent_runner,
                 now=now,
+                binding=tick_binding,
             )
             prompt = render_prompt(candidate)
             if comments_text:
@@ -952,7 +996,9 @@ async def run_tick(
                 issue_url=_iu,
                 dashboard_url=_du,
             )
-            return TickResult(False, "context-compaction-failed", candidate.id, mode=mode)
+            return TickResult(
+                False, "context-compaction-failed", candidate.id, mode=mode
+            )
         except OSError as exc:
             _iu, _du = _build_urls(config, candidate.id)
             await _block_issue(
@@ -968,7 +1014,9 @@ async def run_tick(
             return TickResult(False, "workflow-missing", candidate.id, mode=mode)
 
         try:
-            run_id, run_log_path = await _start_run_record(adapter, config, candidate)
+            run_id, run_log_path = await _start_run_record(
+                adapter, config, candidate, binding=tick_binding
+            )
             await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
             claim_time = now().isoformat()
             await _mark_run_record_running(
@@ -1332,6 +1380,7 @@ async def _dispatch_one(
     notifier: TelegramNotifier | None,
     run_blocked_reconciler: bool,
     dispatch_state: _DispatchState | None = None,
+    binding: ProjectBinding | None = None,
 ) -> TickResult:
     """Dispatch a single Run to the semaphore-bounded slot.
 
@@ -1350,6 +1399,7 @@ async def _dispatch_one(
                 notifier=notifier,
                 run_blocked_reconciler=run_blocked_reconciler,
                 dispatch_state=state,
+                binding=binding,
             )
         except PlaneRateLimitError as exc:
             _record_rate_limit(state, exc)
@@ -1407,6 +1457,7 @@ async def reconcile_orphaned_runs(
     adapter: TrackerAdapter,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    binding: ProjectBinding | None = None,
 ) -> int:
     """Reap durable Podium Run rows orphaned by scheduler restart."""
 
@@ -1414,7 +1465,8 @@ async def reconcile_orphaned_runs(
     if not callable(reconcile):
         return 0
     timestamp = now().isoformat()
-    binding_name = config.bindings[0].name if config.bindings else ""
+    resolved_binding = binding or _binding_from_config(config)
+    binding_name = resolved_binding.name if resolved_binding is not None else ""
     LOGGER.info("run_reconcile_begin binding=%s", binding_name)
     reaped = int(await _maybe_await(reconcile(reaped_at=timestamp)))
     LOGGER.info("run_reconcile_done binding=%s reaped=%d", binding_name, reaped)
@@ -1426,13 +1478,15 @@ async def run_log_retention(
     adapter: TrackerAdapter,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    binding: ProjectBinding | None = None,
 ) -> int:
     """Prune old Podium Run log files while keeping durable Run rows."""
 
     prune = getattr(adapter, "prune_run_logs", None)
     if not callable(prune):
         return 0
-    binding_name = config.bindings[0].name if config.bindings else ""
+    resolved_binding = binding or _binding_from_config(config)
+    binding_name = resolved_binding.name if resolved_binding is not None else ""
     now_dt = now()
     LOGGER.info("log_retention_begin binding=%s", binding_name)
     pruned = int(await _maybe_await(prune(now=now_dt)))
@@ -1496,6 +1550,7 @@ async def reconcile_startup(
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
+    binding: ProjectBinding | None = None,
 ) -> int:
     """Reconcile startup state: recover Plane issues stuck in Running.
 
@@ -1504,8 +1559,8 @@ async def reconcile_startup(
     """
     cleaned = 0
 
-    cleaned += await reconcile_orphaned_runs(config, adapter, now=now)
-    await run_log_retention(config, adapter, now=now)
+    cleaned += await reconcile_orphaned_runs(config, adapter, now=now, binding=binding)
+    await run_log_retention(config, adapter, now=now, binding=binding)
 
     stale_running_issues: list[dict[str, Any]] = []
     for issue in await adapter.list_issues_by_state(
@@ -1608,6 +1663,7 @@ async def run_loop(
     agent_runner: AgentAdapter,
     render_prompt: Callable[[CandidateIssue], str],
     notifier: TelegramNotifier | None = None,
+    binding: ProjectBinding | None = None,
 ) -> None:
     """Run the concurrent dispatcher forever, sleeping between dispatches.
 
@@ -1632,10 +1688,12 @@ async def run_loop(
         run_blocked_reconcile = now_dt >= next_blocked_reconcile_at
         if now_dt >= next_log_retention_at:
             next_log_retention_at = now_dt + LOG_RETENTION_INTERVAL
+            retention_kwargs = {"binding": binding} if binding is not None else {}
             await run_log_retention(
                 config,
                 adapter,
                 now=_fixed_now(now_dt),
+                **retention_kwargs,
             )
 
         # Reap completed tasks and propagate their log lines.
@@ -1669,6 +1727,7 @@ async def run_loop(
         # Runs are active.
         slots_available = config.run_cap - len(active_tasks)
         if slots_available > 0 and cooldown_remaining <= 0:
+            dispatch_kwargs = {"binding": binding} if binding is not None else {}
             task = asyncio.create_task(
                 _dispatch_one(
                     config,
@@ -1678,6 +1737,7 @@ async def run_loop(
                     notifier,
                     run_blocked_reconcile,
                     state,
+                    **dispatch_kwargs,
                 )
             )
             active_tasks.add(task)

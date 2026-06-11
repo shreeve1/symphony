@@ -71,7 +71,9 @@ def test_async_main_passes_configured_bindings_loop(monkeypatch):
         calls["run_bindings_loop"] = (config, notifier)
 
     monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)
-    monkeypatch.setattr(main.TelegramNotifier, "from_env", staticmethod(lambda: "notifier"))
+    monkeypatch.setattr(
+        main.TelegramNotifier, "from_env", staticmethod(lambda: "notifier")
+    )
     monkeypatch.setattr(main, "run_bindings_loop", fake_run_bindings_loop)
 
     asyncio.run(main.async_main())
@@ -81,7 +83,9 @@ def test_async_main_passes_configured_bindings_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_bindings_loop_continues_after_startup_reconcile_transient_failure(monkeypatch):
+async def test_run_bindings_loop_continues_after_startup_reconcile_transient_failure(
+    monkeypatch,
+):
     calls = []
     closed = []
 
@@ -111,11 +115,13 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
             agent_adapter=cast(Any, "agent"),
         )
 
-    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
         calls.append("reconcile")
         raise RuntimeError("temporary 429")
 
-    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
+    async def fake_run_loop(
+        config, adapter, *, agent_runner, render_prompt, notifier=None, binding=None
+    ):
         calls.append("run-loop")
         raise StopLoop
 
@@ -124,7 +130,9 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with pytest.raises(StopLoop):
-        await main.run_bindings_loop(cast(Any, FakeConfig()), notifier=cast(Any, "notifier"))
+        await main.run_bindings_loop(
+            cast(Any, FakeConfig()), notifier=cast(Any, "notifier")
+        )
 
     assert calls == ["reconcile", "run-loop"]
     assert closed == ["closed"]
@@ -192,13 +200,14 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
         agent_runner,
         render_prompt,
         notifier=None,
+        binding=None,
     ):
         """Simulate run_loop: one reconcile+tick cycle then raises StopLoop."""
         calls.append(("reconcile-tick", config, adapter, notifier))
         calls.append(("tick", config, adapter, agent_runner, notifier))
         raise StopLoop
 
-    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
         calls.append(("reconcile-startup", config, adapter, notifier))
         return 0
 
@@ -212,7 +221,9 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
     monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
 
     with pytest.raises(StopLoop):
-        await main.run_bindings_loop(cast(Any, FakeConfig()), notifier=cast(Any, "notifier"))
+        await main.run_bindings_loop(
+            cast(Any, FakeConfig()), notifier=cast(Any, "notifier")
+        )
 
     # Structure: startup reconcile for all bindings (sequential), then
     # concurrent run_loop tasks run in parallel (gather) — order of tick
@@ -224,7 +235,9 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
         ("reconcile-startup", "config-one"),
         ("reconcile-startup", "config-two"),
     ], f"Startup reconcile should run sequentially before dispatch: {calls}"
-    assert len(tick_calls) == 4, f"Expected 4 dispatch calls (reconcile+tick per binding): {calls}"
+    assert len(tick_calls) == 4, (
+        f"Expected 4 dispatch calls (reconcile+tick per binding): {calls}"
+    )
     assert ("tick", "config-one") in tick_calls
     assert ("tick", "config-two") in tick_calls
     assert closed == ["one", "two"]
@@ -263,7 +276,9 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
             pass
 
     monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
-    monkeypatch.setattr(main, "verify_pi_support", lambda *args: calls.setdefault("verify", args))
+    monkeypatch.setattr(
+        main, "verify_pi_support", lambda *args: calls.setdefault("verify", args)
+    )
 
     runtime = main._build_binding_runtime(config, binding)
 
@@ -272,7 +287,9 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
     assert "verify" not in calls
 
 
-def test_build_binding_runtime_verifier_failure_aborts_before_transport(monkeypatch, tmp_path):
+def test_build_binding_runtime_verifier_failure_aborts_before_transport(
+    monkeypatch, tmp_path
+):
     calls = {}
     config = main.SymphonyConfig.from_env(
         {
@@ -340,10 +357,12 @@ async def test_rate_limited_binding_does_not_block_other_binding(monkeypatch):
             agent_adapter=cast(Any, f"agent-{binding}"),
         )
 
-    async def fake_reconcile_startup(config, adapter, *, notifier=None):
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
         return 0
 
-    async def fake_run_loop(config, adapter, *, agent_runner, render_prompt, notifier=None):
+    async def fake_run_loop(
+        config, adapter, *, agent_runner, render_prompt, notifier=None, binding=None
+    ):
         calls.append(config.name)
         if config.name == "healthy":
             raise StopLoop

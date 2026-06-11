@@ -9,11 +9,21 @@ from importlib import import_module
 from pathlib import Path
 from typing import Literal
 
-from agent_runner import AgentAdapter, PiAgentAdapter, RoutingAgentAdapter, verify_pi_support
+from agent_runner import (
+    AgentAdapter,
+    PiAgentAdapter,
+    RoutingAgentAdapter,
+    verify_pi_support,
+)
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
-from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, TrackerAdapter, build_adapter
+from plane_adapter import (
+    ClosablePlaneTransport,
+    HttpxPlaneTransport,
+    TrackerAdapter,
+    build_adapter,
+)
 from scheduler import _resolve_mode, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
 from prompt_renderer import IssueData, render_prompt
@@ -26,6 +36,7 @@ class BindingRuntime:
     transport: ClosablePlaneTransport | None
     adapter: TrackerAdapter
     agent_adapter: AgentAdapter
+    binding: ProjectBinding | None = None
 
 
 def _render_candidate_prompt(
@@ -43,7 +54,9 @@ def _render_candidate_prompt(
         name=issue.name,
         description=issue.description,
         labels=", ".join(issue.labels),
-        mode=_resolve_mode(issue.labels, contract) if contract is not None else _resolve_mode(issue.labels),
+        mode=_resolve_mode(issue.labels, contract)
+        if contract is not None
+        else _resolve_mode(issue.labels),
         schedule_not_before=getattr(issue, "schedule_not_before", ""),
         schedule_not_after=getattr(issue, "schedule_not_after", ""),
         schedule_reason=getattr(issue, "schedule_reason", ""),
@@ -63,7 +76,9 @@ def _render_candidate_prompt(
     return render_prompt(issue_data, path=workflow_path, binding_type=binding_type)
 
 
-def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> BindingRuntime:
+def _build_binding_runtime(
+    config: SymphonyConfig, binding: ProjectBinding
+) -> BindingRuntime:
     binding_config = config.for_binding(binding)
     if binding.default_agent == "pi":
         verify_pi_support(
@@ -75,9 +90,13 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
     if binding.tracker == "podium":
         transport = None
         adapter_cls = import_module("tracker_podium").PodiumTrackerAdapter
-        adapter = adapter_cls(binding_name=binding.name, contract=binding.tracker_contract)
+        adapter = adapter_cls(
+            binding_name=binding.name, contract=binding.tracker_contract
+        )
     else:
-        transport = HttpxPlaneTransport(binding_config.plane_api_url, binding_config.plane_api_key)
+        transport = HttpxPlaneTransport(
+            binding_config.plane_api_url, binding_config.plane_api_key
+        )
         adapter = build_adapter(transport, contract=binding.tracker_contract)
     return BindingRuntime(
         name=binding.name,
@@ -88,10 +107,13 @@ def _build_binding_runtime(config: SymphonyConfig, binding: ProjectBinding) -> B
             binding=binding,
             pi_adapter=PiAgentAdapter(binding_config),
         ),
+        binding=binding,
     )
 
 
-async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifier | None = None) -> None:
+async def run_bindings_loop(
+    config: SymphonyConfig, *, notifier: TelegramNotifier | None = None
+) -> None:
     """Run the concurrent dispatcher for all bindings.
 
     Each binding gets its own run_loop with a per-binding _DispatchState
@@ -101,9 +123,16 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
     runtimes = [_build_binding_runtime(config, binding) for binding in config.bindings]
     try:
         for runtime in runtimes:
-            logging.getLogger(__name__).info("reconcile_startup_begin binding=%s", runtime.name)
+            logging.getLogger(__name__).info(
+                "reconcile_startup_begin binding=%s", runtime.name
+            )
             try:
-                cleaned = await reconcile_startup(runtime.config, runtime.adapter, notifier=notifier)
+                cleaned = await reconcile_startup(
+                    runtime.config,
+                    runtime.adapter,
+                    notifier=notifier,
+                    binding=runtime.binding,
+                )
             except Exception as exc:
                 logging.getLogger(__name__).warning(
                     "reconcile_startup_failed binding=%s error=%s",
@@ -124,16 +153,18 @@ async def run_bindings_loop(config: SymphonyConfig, *, notifier: TelegramNotifie
                 runtime.adapter,
                 agent_runner=runtime.agent_adapter,
                 render_prompt=(
-                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path, binding=runtime.config.bindings[0]:
-                    _render_candidate_prompt(
-                        issue,
-                        contract=contract,
-                        repo_path=repo_path,
-                        binding_type=getattr(binding, "binding_type", "infra"),
-                        tracker_kind=getattr(binding, "tracker", "plane"),
+                    lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path, binding=runtime.binding: (
+                        _render_candidate_prompt(
+                            issue,
+                            contract=contract,
+                            repo_path=repo_path,
+                            binding_type=getattr(binding, "binding_type", "infra"),
+                            tracker_kind=getattr(binding, "tracker", "plane"),
+                        )
                     )
                 ),
                 notifier=notifier,
+                binding=runtime.binding,
             )
             for runtime in runtimes
         ]

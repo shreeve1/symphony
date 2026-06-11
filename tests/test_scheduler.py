@@ -4,7 +4,7 @@ import asyncio
 import fcntl
 import threading
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +14,12 @@ import scheduler
 from agent_runner import AgentResult
 from config import ApprovalPolicy, SymphonyConfig
 from plane_poller import CandidateIssue
-from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels, init_run_semaphore, _dispatch_one, _reserve_candidate, _release_candidate
+from scheduler import reconcile_startup, reconcile_stale_running, run_tick, _resolve_mode, _extract_labels, init_run_semaphore, _dispatch_one, _reserve_candidate, _release_candidate, _DispatchState, _cooldown_remaining_s, _record_rate_limit, reconcile_pending_review
 from schedule import format_cancellation_comment, format_schedule_comment
 
 from notifier import TelegramNotifier
 
-from plane_adapter import PlaneAdapter
+from plane_adapter import PlaneAdapter, PlaneRateLimitError
 from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState, RoleBinding, TrackerContract, TrackerRole
 
 
@@ -152,6 +152,37 @@ async def test_run_tick_invokes_blocked_reconciler_when_enabled(tmp_path: Path, 
 
     assert result.reason == "no-candidates"
     assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_tick_uses_passed_binding_type_for_coding_gate(tmp_path: Path, monkeypatch) -> None:
+    async def fake_reconcile_blocked(adapter, *, apply: bool, now):
+        raise AssertionError("coding binding should skip blocked reconciler")
+
+    monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
+    config = _config(tmp_path, blocked_reconciler_enabled=True)
+    infra_binding = config.bindings[0]
+    coding_binding = replace(infra_binding, name="coding", binding_type="coding")
+    wide_config = replace(config, bindings=(infra_binding, coding_binding))
+    transport = FakeTransport()
+    scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    transport.issues["scheduled"] = _issue("scheduled", labels=(scheduled_uuid,))
+    transport.comments["scheduled"] = [
+        _schedule_comment(datetime(2026, 5, 4, 1, 0, tzinfo=UTC))
+    ]
+
+    result = await run_tick(
+        wide_config,
+        _adapter(transport),
+        agent_runner=lambda issue, rendered_prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [],
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        binding=coding_binding,
+    )
+
+    assert result.reason == "no-candidates"
+    assert scheduled_uuid in transport.issues["scheduled"]["labels"]
 
 
 @pytest.mark.asyncio
@@ -2484,7 +2515,6 @@ async def test_reconcile_startup_reaps_stale_running_issue(tmp_path: Path) -> No
     _init_tmp_repo(repo)
     config = _config(repo)
     transport = FakeTransport()
-    run_id = _run_id_from_identifier_for_tests("HOM-1")
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.RUNNING.value),
         "sequence_id": "HOM-1",
@@ -2839,8 +2869,8 @@ async def test_semaphore_at_cap_reports_locked(tmp_path: Path) -> None:
 
     sem = sched_mod._RUN_SEMAPHORE
     assert sem is not None
-    s1 = await sem.acquire()
-    s2 = await sem.acquire()
+    assert await sem.acquire() is True
+    assert await sem.acquire() is True
 
     # Cap fully utilized
     assert sem.locked() is True
@@ -2861,7 +2891,7 @@ async def test_semaphore_slot_released_on_exit(tmp_path: Path) -> None:
 
     sem = sched_mod._RUN_SEMAPHORE
     assert sem is not None
-    slot = await sem.acquire()
+    assert await sem.acquire() is True
     assert sem.locked() is True
     # Release directly on the semaphore (asyncio Semaphore.acquire
     # returns True, not a releasable context manager)
@@ -3051,9 +3081,6 @@ async def test_run_loop_logs_dispatch_exceptions_without_exiting(tmp_path: Path,
 
 @pytest.mark.asyncio
 async def test_plane_rate_limit_records_per_binding_cooldown(tmp_path: Path, monkeypatch) -> None:
-    from plane_adapter import PlaneRateLimitError
-    from scheduler import _DispatchState, _dispatch_one
-
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),
         in_flight_ids=set(),
@@ -3081,9 +3108,6 @@ async def test_plane_rate_limit_records_per_binding_cooldown(tmp_path: Path, mon
 
 
 def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> None:
-    from plane_adapter import PlaneRateLimitError
-    from scheduler import _DispatchState, _cooldown_remaining_s, _record_rate_limit
-
     scheduler._PLANE_COOLDOWN_UNTIL = None
     first = _DispatchState(
         semaphore=asyncio.Semaphore(1),
@@ -3112,9 +3136,6 @@ def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_post_agent_comment_429_stores_pending_data_and_propagates(tmp_path: Path, monkeypatch) -> None:
     """add_comment 429 stores pending data and re-raises so cooldown is recorded."""
-    from plane_adapter import PlaneRateLimitError
-    from scheduler import _DispatchState, _dispatch_one
-
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),
         in_flight_ids=set(),
@@ -3159,8 +3180,6 @@ async def test_post_agent_comment_429_stores_pending_data_and_propagates(tmp_pat
 @pytest.mark.asyncio
 async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> None:
     """reconcile_pending_review posts completion comment and transitions to In Review."""
-    from scheduler import _DispatchState, reconcile_pending_review
-
     issue_id = "test-issue-1"
     transport = FakeTransport()
     transport.issues[issue_id] = {
@@ -3204,9 +3223,6 @@ async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_reconcile_pending_review_retry_429_propagates(tmp_path: Path, monkeypatch) -> None:
     """Retry add_comment 429 in reconcile_pending_review raises, preserves pending data."""
-    from plane_adapter import PlaneRateLimitError
-    from scheduler import _DispatchState, _dispatch_one
-
     issue_id = "test-issue-1"
     pending_body = "**Symphony completed:** Test summary."
 
@@ -3255,9 +3271,6 @@ async def test_reconcile_pending_review_retry_429_propagates(tmp_path: Path, mon
 @pytest.mark.asyncio
 async def test_post_agent_transition_429_no_duplicate_comment(tmp_path: Path, monkeypatch) -> None:
     """Transition 429 after successful comment stores pending but not completion body."""
-    from plane_adapter import PlaneRateLimitError
-    from scheduler import _DispatchState, _dispatch_one
-
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),
         in_flight_ids=set(),
