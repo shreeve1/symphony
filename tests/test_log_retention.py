@@ -148,7 +148,9 @@ async def test_reconcile_startup_invokes_log_retention_once(
     )
 
     with sqlite3.connect(db_path) as connection:
-        reaped = connection.execute("SELECT COUNT(*) FROM run WHERE log_path IS NULL").fetchone()[0]
+        reaped = connection.execute(
+            "SELECT COUNT(*) FROM run WHERE log_path IS NULL"
+        ).fetchone()[0]
     assert reaped == 40
 
 

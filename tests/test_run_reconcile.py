@@ -141,9 +141,9 @@ async def test_reconcile_startup_reaps_queued_and_running_podium_runs(
         assert issue["state"] == "blocked"
         assert issue["latest_run_state"] == "failed"
         assert issue["latest_verdict"] == "blocked"
-        assert "Run reaped on restart at 2026-06-11T12:00:00+00:00" in issue[
-            "comments_md"
-        ]
+        assert (
+            "Run reaped on restart at 2026-06-11T12:00:00+00:00" in issue["comments_md"]
+        )
         assert "worktree preserved" in issue["comments_md"]
     assert issues[0]["id"] == running_issue
 
@@ -169,6 +169,8 @@ async def test_reconcile_startup_logs_run_reconcile_pairs(
 
     messages = [record.getMessage() for record in caplog.records]
     assert any("run_reconcile_begin binding=trading" in message for message in messages)
-    assert any("run_reconcile_done binding=trading reaped=2" in message for message in messages)
+    assert any(
+        "run_reconcile_done binding=trading reaped=2" in message for message in messages
+    )
     assert any("log_retention_begin binding=trading" in message for message in messages)
     assert any("log_retention_done binding=trading" in message for message in messages)
