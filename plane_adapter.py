@@ -66,6 +66,9 @@ class CandidateIssue:
     comments_md: str = ""
     context_md: str = ""
     preferred_skill: str | None = None
+    worktree_active: bool = False
+    base_branch: str = ""
+    binding_name: str = ""
 
 
 def stable_external_id(runbook: str, external_key: str) -> str:
@@ -127,7 +130,9 @@ class TrackerAdapter(Protocol):
 
     def issue_labels(self, issue: dict[str, Any]) -> tuple[str, ...]: ...
     def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool: ...
-    def labels_contain_role(self, labels: tuple[str, ...] | list[str], role: TrackerRole) -> bool: ...
+    def labels_contain_role(
+        self, labels: tuple[str, ...] | list[str], role: TrackerRole
+    ) -> bool: ...
     async def list_candidates(self) -> list[CandidateIssue]: ...
     async def list_issues_by_state(
         self,
@@ -137,15 +142,29 @@ class TrackerAdapter(Protocol):
         max_pages: int = MAX_PAGES_PER_TICK,
     ) -> list[dict[str, Any]]: ...
     async def get_issue(self, issue_id: str) -> dict[str, Any]: ...
-    async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]: ...
-    async def add_comment(self, issue_id: str, comment: CommentPayload) -> dict[str, Any]: ...
+    async def list_comments(
+        self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK
+    ) -> list[dict[str, Any]]: ...
+    async def add_comment(
+        self, issue_id: str, comment: CommentPayload
+    ) -> dict[str, Any]: ...
     async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]: ...
     async def append_context(self, issue_id: str, body: str) -> dict[str, Any]: ...
-    async def transition_state(self, issue_id: str, state: PlaneState | TrackerRole) -> dict[str, Any]: ...
-    async def add_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]: ...
-    async def remove_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]: ...
-    async def add_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]: ...
-    async def remove_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]: ...
+    async def transition_state(
+        self, issue_id: str, state: PlaneState | TrackerRole
+    ) -> dict[str, Any]: ...
+    async def add_label(
+        self, issue_id: str, label: PlaneLabel | TrackerRole
+    ) -> dict[str, Any]: ...
+    async def remove_label(
+        self, issue_id: str, label: PlaneLabel | TrackerRole
+    ) -> dict[str, Any]: ...
+    async def add_labels(
+        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+    ) -> dict[str, Any]: ...
+    async def remove_labels(
+        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+    ) -> dict[str, Any]: ...
     async def get_run(self, run_id: str) -> dict[str, Any] | None: ...
     async def record_run(self, run_row: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -165,7 +184,11 @@ class InMemoryTransport:
                     return {"results": [issue]}
             return {"results": []}
         if path.endswith("/labels/"):
-            return {"results": [{"id": uuid, "name": name} for name, uuid in self.labels.items()]}
+            return {
+                "results": [
+                    {"id": uuid, "name": name} for name, uuid in self.labels.items()
+                ]
+            }
         if "/comments" in path and "/issues/" in path:
             issue_id = path.split("/issues/")[1].split("/comments")[0].strip("/")
             return {"results": list(self.comments.get(issue_id, []))}
@@ -229,7 +252,9 @@ class PlaneTrackerAdapter:
             if binding.name in self.resolved_label_ids:
                 return self.resolved_label_ids[binding.name]
             return binding.uuid or binding.name
-        return self.resolved_label_ids.get(label.value) or self.contract.label_ids.get(label.value, label.value)
+        return self.resolved_label_ids.get(label.value) or self.contract.label_ids.get(
+            label.value, label.value
+        )
 
     def _optional_label_value(self, role: TrackerRole) -> str | None:
         binding = self.contract.optional_label_binding(role)
@@ -249,7 +274,9 @@ class PlaneTrackerAdapter:
         binding = self.contract.optional_label_binding(role)
         if binding is None:
             return False
-        return label == binding.name or label == (self.resolved_label_ids.get(binding.name) or binding.uuid)
+        return label == binding.name or label == (
+            self.resolved_label_ids.get(binding.name) or binding.uuid
+        )
 
     def issue_labels(self, issue: dict[str, Any]) -> tuple[str, ...]:
         """Return labels normalized through this binding's Tracker Contract."""
@@ -261,10 +288,14 @@ class PlaneTrackerAdapter:
 
         return _is_state(issue, self, state)
 
-    def labels_contain_role(self, labels: tuple[str, ...] | list[str], role: TrackerRole) -> bool:
+    def labels_contain_role(
+        self, labels: tuple[str, ...] | list[str], role: TrackerRole
+    ) -> bool:
         return any(self.label_matches_role(label, role) for label in labels)
 
-    async def resolve_label_uuids(self, names: list[str] | None = None) -> dict[str, str]:
+    async def resolve_label_uuids(
+        self, names: list[str] | None = None
+    ) -> dict[str, str]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
         discovered: dict[str, str] = {}
@@ -345,7 +376,9 @@ class PlaneTrackerAdapter:
 
         try:
             while pages_fetched < MAX_MIXED_STATE_PAGES_PER_TICK:
-                path = f"{self._issue_path()}?per_page={PAGE_SIZE}&state={todo_state_id}"
+                path = (
+                    f"{self._issue_path()}?per_page={PAGE_SIZE}&state={todo_state_id}"
+                )
                 if cursor:
                     path = f"{path}&cursor={cursor}"
                 response = await self.transport.get(path)
@@ -360,7 +393,9 @@ class PlaneTrackerAdapter:
                     if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
                         mixed_state_seen = True
                         continue
-                    candidates.append(_candidate_from_issue(issue, label_ids=self.contract.label_ids))
+                    candidates.append(
+                        _candidate_from_issue(issue, label_ids=self.contract.label_ids)
+                    )
                 cursor = _next_cursor(response)
                 if not cursor:
                     return candidates
@@ -389,7 +424,9 @@ class PlaneTrackerAdapter:
             raise RuntimeError("Transport not configured")
         return await self.transport.get(self._issue_path(issue_id))
 
-    async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]:
+    async def list_comments(
+        self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK
+    ) -> list[dict[str, Any]]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
         comments: list[dict[str, Any]] = []
@@ -408,7 +445,9 @@ class PlaneTrackerAdapter:
                 break
             comments.extend(comment for comment in raw if isinstance(comment, dict))
             next_path = response.get("next") if isinstance(response, dict) else None
-            next_cursor = response.get("next_cursor") if isinstance(response, dict) else None
+            next_cursor = (
+                response.get("next_cursor") if isinstance(response, dict) else None
+            )
             if isinstance(next_path, str) and next_path:
                 path = next_path
             elif next_cursor:
@@ -421,7 +460,9 @@ class PlaneTrackerAdapter:
     async def find_by_external_id(self, external_id: str) -> dict[str, Any] | None:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
-        result = await self.transport.get(f"{self._issue_path()}?external_id={external_id}")
+        result = await self.transport.get(
+            f"{self._issue_path()}?external_id={external_id}"
+        )
         for issue in result.get("results", []):
             if issue.get("external_id") == external_id:
                 return issue
@@ -445,10 +486,14 @@ class PlaneTrackerAdapter:
         body["external_id"] = payload.external_id
         return await self.transport.post(self._issue_path(), body)
 
-    async def add_comment(self, issue_id: str, comment: CommentPayload) -> dict[str, Any]:
+    async def add_comment(
+        self, issue_id: str, comment: CommentPayload
+    ) -> dict[str, Any]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
-        return await self.transport.post(self._comment_path(issue_id), {"comment_html": comment.render()})
+        return await self.transport.post(
+            self._comment_path(issue_id), {"comment_html": comment.render()}
+        )
 
     async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]:
         return await self.add_comment(issue_id, CommentPayload(body=body))
@@ -456,33 +501,53 @@ class PlaneTrackerAdapter:
     async def append_context(self, issue_id: str, body: str) -> dict[str, Any]:
         return await self.add_comment(issue_id, CommentPayload(body=body))
 
-    async def transition_state(self, issue_id: str, state: PlaneState | TrackerRole) -> dict[str, Any]:
+    async def transition_state(
+        self, issue_id: str, state: PlaneState | TrackerRole
+    ) -> dict[str, Any]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
-        return await self.transport.patch(self._issue_path(issue_id), {"state": self._resolve_state(state)})
+        return await self.transport.patch(
+            self._issue_path(issue_id), {"state": self._resolve_state(state)}
+        )
 
-    async def add_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]:
+    async def add_label(
+        self, issue_id: str, label: PlaneLabel | TrackerRole
+    ) -> dict[str, Any]:
         return await self.add_labels(issue_id, [label])
 
-    async def remove_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]:
+    async def remove_label(
+        self, issue_id: str, label: PlaneLabel | TrackerRole
+    ) -> dict[str, Any]:
         return await self.remove_labels(issue_id, [label])
 
-    async def add_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]:
+    async def add_labels(
+        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+    ) -> dict[str, Any]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
         current = await self.transport.get(self._issue_path(issue_id))
         existing_uuids: list[str] = list(current.get("labels") or [])
         new_uuids = [self._resolve_label(label) for label in labels]
         merged = list(dict.fromkeys(existing_uuids + new_uuids))
-        return await self.transport.patch(self._issue_path(issue_id), {"labels": merged})
+        return await self.transport.patch(
+            self._issue_path(issue_id), {"labels": merged}
+        )
 
-    async def remove_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]:
+    async def remove_labels(
+        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+    ) -> dict[str, Any]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
         current = await self.transport.get(self._issue_path(issue_id))
         remove_uuids = {self._resolve_label(label) for label in labels}
-        remaining = [label_uuid for label_uuid in list(current.get("labels") or []) if label_uuid not in remove_uuids]
-        return await self.transport.patch(self._issue_path(issue_id), {"labels": remaining})
+        remaining = [
+            label_uuid
+            for label_uuid in list(current.get("labels") or [])
+            if label_uuid not in remove_uuids
+        ]
+        return await self.transport.patch(
+            self._issue_path(issue_id), {"labels": remaining}
+        )
 
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
         return None
@@ -510,13 +575,19 @@ class HttpxPlaneTransport:
     async def get(self, path: str) -> dict[str, Any]:
         return await self._request("GET", path)
 
-    async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _request(
+        self, method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         if method in {"POST", "PATCH"} and "?" not in path and not path.endswith("/"):
             path = f"{path}/"
         response = await self._client.request(method, path, json=body)
         if response.status_code in {401, 403}:
-            LOGGER.error("Plane authentication failed with status %s", response.status_code)
-            raise PlanePollingAuthError(f"Plane authentication failed: {response.status_code}")
+            LOGGER.error(
+                "Plane authentication failed with status %s", response.status_code
+            )
+            raise PlanePollingAuthError(
+                f"Plane authentication failed: {response.status_code}"
+            )
         if response.status_code == 429:
             retry_after_s = _parse_retry_after(response.headers.get("Retry-After"))
             raise PlaneRateLimitError(
@@ -557,9 +628,7 @@ def build_adapter(
     )
     errors = resolved_contract.validate_shape()
     if errors:
-        raise PlaneContractError(
-            "Plane contract is invalid: " + "; ".join(errors)
-        )
+        raise PlaneContractError("Plane contract is invalid: " + "; ".join(errors))
     return PlaneTrackerAdapter(contract=resolved_contract, transport=transport)
 
 
@@ -582,7 +651,9 @@ def _extract_labels(
     return tuple(extracted)
 
 
-def _is_state(issue: dict[str, Any], adapter: PlaneTrackerAdapter, state: TrackerRole) -> bool:
+def _is_state(
+    issue: dict[str, Any], adapter: PlaneTrackerAdapter, state: TrackerRole
+) -> bool:
     current = issue.get("state")
     state_name = adapter.contract.state_name_for_role(state)
     wanted = {state_name, adapter._resolve_state(state)}
@@ -602,15 +673,21 @@ def _candidate_from_issue(
             id=str(issue["id"]),
             identifier=str(issue.get("identifier") or issue.get("sequence_id") or ""),
             name=str(issue["name"]),
-            description=str(issue.get("description") or issue.get("description_html") or ""),
+            description=str(
+                issue.get("description") or issue.get("description_html") or ""
+            ),
             labels=_extract_labels(issue, label_ids=label_ids),
             created_at=str(issue.get("created_at") or ""),
         )
     except KeyError as exc:
-        raise PlanePollingSchemaError(f"Plane issue missing field: {exc.args[0]}") from exc
+        raise PlanePollingSchemaError(
+            f"Plane issue missing field: {exc.args[0]}"
+        ) from exc
 
 
-def _page_items(response: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _page_items(
+    response: dict[str, Any] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     if isinstance(response, list):
         return response
     results = response.get("results")

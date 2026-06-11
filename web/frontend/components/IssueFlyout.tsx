@@ -75,7 +75,8 @@ interface PatchVariables {
 function usePatchIssue() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: ({ issue, patch }: PatchVariables) => patchIssue(issue.id, patch),
+		mutationFn: ({ issue, patch }: PatchVariables) =>
+			patchIssue(issue.id, patch),
 		onMutate: async ({ issue, patch }) => {
 			const key = ["issue", issue.id];
 			await queryClient.cancelQueries({ queryKey: key });
@@ -294,6 +295,15 @@ function MetadataChips({
 					onPatch={onPatch}
 				/>
 			</div>
+			{issue.worktree_active && issue.state !== "done" && (
+				<p
+					data-testid="worktree-path"
+					className="text-xs text-muted-foreground"
+				>
+					worktree: worktrees/{issue.binding_name}/{issue.id} (branch: podium/
+					{issue.binding_name}/{issue.id})
+				</p>
+			)}
 			{showEmptySkillHint && (
 				<p
 					data-testid="skill-catalog-empty"

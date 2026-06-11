@@ -1,0 +1,215 @@
+"""Worktree management for Podium per-Issue persistent worktrees.
+
+Worktree paths: ``<repo_path>/worktrees/<binding_name>/<issue_id>``
+Branch names: ``podium/<binding_name>/<issue_id>``
+"""
+
+from __future__ import annotations
+
+import logging
+import subprocess
+from pathlib import Path
+
+LOGGER = logging.getLogger(__name__)
+
+
+def worktree_dir(repo_path: Path, binding_name: str, issue_id: str) -> Path:
+    """Return the worktree path for an issue."""
+    return (repo_path / "worktrees" / binding_name / issue_id).resolve()
+
+
+def branch_name(binding_name: str, issue_id: str) -> str:
+    """Return the branch name for an issue's worktree."""
+    return f"podium/{binding_name}/{issue_id}"
+
+
+def worktree_exists(repo_path: Path, binding_name: str, issue_id: str) -> bool:
+    """Check if the worktree already exists on disk."""
+    return worktree_dir(repo_path, binding_name, issue_id).is_dir()
+
+
+def create_worktree(
+    repo_path: Path,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str,
+) -> Path:
+    """Create a git worktree at the standard path with the standard branch name.
+
+    The branch is created from ``base_branch``. If the worktree already exists
+    (idempotent), returns the existing path. If the branch already exists
+    without a worktree (orphan ref), it is reused.
+
+    Returns the worktree path.
+    """
+    wt_path = worktree_dir(repo_path, binding_name, issue_id)
+    if wt_path.is_dir():
+        LOGGER.info("worktree_already_exists path=%s", wt_path)
+        return wt_path
+
+    branch = branch_name(binding_name, issue_id)
+    wt_path.parent.mkdir(parents=True, exist_ok=True)
+
+    branch_exists = (
+        _run_git(repo_path, ["show-ref", "--verify", f"refs/heads/{branch}"], check=False)
+        is not None
+    )
+    if branch_exists:
+        _run_git(repo_path, ["worktree", "add", "--checkout", str(wt_path), branch])
+    else:
+        _run_git(
+            repo_path,
+            [
+                "worktree",
+                "add",
+                "--checkout",
+                "-b",
+                branch,
+                str(wt_path),
+                base_branch,
+            ],
+        )
+    LOGGER.info(
+        "worktree_created path=%s branch=%s base=%s",
+        wt_path,
+        branch,
+        base_branch,
+    )
+    return wt_path
+
+
+def remove_worktree(repo_path: Path, binding_name: str, issue_id: str) -> None:
+    """Remove the worktree and its branch ref. Safe to call when already gone."""
+    wt_path = worktree_dir(repo_path, binding_name, issue_id)
+    branch = branch_name(binding_name, issue_id)
+
+    if wt_path.is_dir():
+        _run_git(repo_path, ["worktree", "remove", "--force", str(wt_path)])
+        LOGGER.info("worktree_removed path=%s", wt_path)
+    else:
+        LOGGER.info("worktree_absent_skip path=%s", wt_path)
+
+    # Remove the branch ref (if still present after worktree removal).
+    _run_git(repo_path, ["branch", "-D", branch], check=False)
+    LOGGER.info("worktree_branch_removed branch=%s", branch)
+
+
+def base_repo_dirty(repo_path: Path) -> bool:
+    """Return True if the base repo checkout has uncommitted changes.
+
+    Git reports nested worktree directories as untracked from the base checkout;
+    those are Podium-owned and should not block their own merge. All other
+    porcelain entries, including other untracked files, count as dirty.
+    """
+    result = _run_git(repo_path, ["status", "--porcelain"], check=True)
+    assert result is not None  # check=True guarantees str
+    for line in result.splitlines():
+        if line.startswith("?? worktrees/"):
+            continue
+        if line.strip():
+            return True
+    return False
+
+
+def merge_worktree(
+    repo_path: Path,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str,
+) -> str | None:
+    """Fast-forward-merge the worktree branch into ``base_branch``.
+
+    Returns ``None`` on success, or an error message string on failure.
+    Does NOT remove the worktree — the caller decides what to do.
+    """
+    branch = branch_name(binding_name, issue_id)
+
+    wt_path = worktree_dir(repo_path, binding_name, issue_id)
+    checkout_ok = _run_git(repo_path, ["checkout", base_branch], check=False) is not None
+    if not checkout_ok:
+        return (
+            f"Auto-merge halted: checkout of base branch {base_branch} failed. "
+            f"Inspect worktree at {wt_path}."
+        )
+
+    try:
+        subprocess.run(
+            ["git", "-C", str(repo_path), "merge", "--ff-only", branch],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        LOGGER.info("merge_succeeded branch=%s base=%s", branch, base_branch)
+        return None
+    except subprocess.CalledProcessError as exc:
+        LOGGER.warning(
+            "merge_failed branch=%s base=%s stderr=%s",
+            branch,
+            base_branch,
+            exc.stderr,
+        )
+        # Abort the failed merge to leave a clean checkout.
+        subprocess.run(
+            ["git", "-C", str(repo_path), "merge", "--abort"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        return (
+            f"Auto-merge halted: FF-only merge of {branch} into "
+            f"{base_branch} failed. Inspect worktree at {wt_path}."
+        )
+
+
+def cleanup_worktree(repo_path: Path, binding_name: str, issue_id: str) -> None:
+    """Convenience: remove worktree + branch ref after a successful merge."""
+    remove_worktree(repo_path, binding_name, issue_id)
+
+
+def _run_git(repo_path: Path, args: list[str], *, check: bool = True) -> str | None:
+    """Run a git command in ``repo_path``.
+
+    Returns stdout on success. If ``check`` is False, returns ``None`` on
+    non-zero exit instead of raising.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            LOGGER.warning(
+                "git_command_failed args=%s returncode=%s stderr=%s",
+                args,
+                result.returncode,
+                result.stderr,
+            )
+            if not check:
+                return None
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                ["git", "-C", str(repo_path), *args],
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return result.stdout
+    except subprocess.CalledProcessError as exc:
+        LOGGER.warning(
+            "git_command_failed args=%s returncode=%s stderr=%s",
+            args,
+            exc.returncode,
+            exc.stderr,
+        )
+        if not check:
+            return None
+        raise
+    except subprocess.TimeoutExpired as exc:
+        LOGGER.error("git_command_timeout args=%s", args)
+        if not check:
+            return None
+        raise RuntimeError(f"git command timed out: {args}") from exc

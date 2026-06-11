@@ -165,7 +165,9 @@ async def require_auth(request: Request, call_next):
 
 
 @app.post("/api/auth/login")
-async def login(request: Request, body: LoginRequest, response: Response) -> dict[str, bool]:
+async def login(
+    request: Request, body: LoginRequest, response: Response
+) -> dict[str, bool]:
     config = _get_auth_config()
     ip = _client_ip(request)
     if rate_limited(ip):
@@ -561,7 +563,220 @@ async def patch_issue(
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )
+
+    # Worktree merge-on-done: when state transitions to "done" and
+    # worktree is active, attempt FF-merge + cleanup.
+    if (
+        "state" in changed
+        and changed["state"] == "done"
+        and current.get("worktree_active")
+    ):
+        result = await _maybe_merge_worktree(issue_id, current, connection)
+
+    # Worktree toggle-off archive: toggling worktree_active from true -> false
+    # while the worktree still exists appends an archive comment.
+    if (
+        "worktree_active" in changed
+        and changed["worktree_active"] is False
+        and current.get("worktree_active") is True
+    ):
+        result = await _maybe_archive_worktree(issue_id, current, connection)
+
     return result
+
+
+async def _maybe_merge_worktree(
+    issue_id: int,
+    current: dict[str, Any],
+    connection: sqlite3.Connection,
+) -> dict[str, Any]:
+    """Attempt FF-merge of worktree branch into base_branch for a done issue.
+
+    Called after the issue has already been transitioned to ``done``. On
+    failure, reverts state to ``blocked`` with an explanatory comment.
+    On success, removes the worktree and branch ref.
+    Returns the final issue row.
+    """
+    try:
+        from web.api.worktree import (
+            base_repo_dirty,
+            branch_name,
+            cleanup_worktree,
+            merge_worktree,
+            worktree_dir,
+            worktree_exists,
+        )
+    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+        from worktree import (  # type: ignore[no-redef]
+            base_repo_dirty,
+            branch_name,
+            cleanup_worktree,
+            merge_worktree,
+            worktree_dir,
+            worktree_exists,
+        )
+
+    binding_name = current.get("binding_name", "")
+    issue_str = str(issue_id)
+    base_branch = current.get("base_branch") or "main"
+
+    repo_path = _repo_path_for_binding(binding_name)
+    if not repo_path:
+        _append_blocked_and_publish(
+            connection,
+            issue_id,
+            current,
+            f"Auto-merge halted: unknown repo_path for binding {binding_name}.",
+        )
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    if not worktree_exists(repo_path, binding_name, issue_str):
+        # No worktree to merge — nothing to do.
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    # Precheck: base checkout must be clean.
+    if base_repo_dirty(repo_path):
+        msg = (
+            f"Auto-merge halted: base checkout has uncommitted changes. "
+            f"Branch {branch_name(binding_name, issue_str)} is unmerged. "
+            f"Worktree at {worktree_dir(repo_path, binding_name, issue_str)} is intact."
+        )
+        _append_blocked_and_publish(connection, issue_id, current, msg)
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    # Attempt FF-only merge.
+    error = merge_worktree(repo_path, binding_name, issue_str, base_branch)
+    if error is not None:
+        _append_blocked_and_publish(connection, issue_id, current, error)
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    # Merge succeeded: clean up worktree + branch.
+    cleanup_worktree(repo_path, binding_name, issue_str)
+    return _row(
+        connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    )
+
+
+async def _maybe_archive_worktree(
+    issue_id: int,
+    current: dict[str, Any],
+    connection: sqlite3.Connection,
+) -> dict[str, Any]:
+    """Append an archive comment when worktree_active is toggled off while
+    the worktree still exists. Does NOT delete the worktree — preserves
+    operator intent per the issue spec."""
+    try:
+        from web.api.worktree import branch_name, worktree_dir, worktree_exists
+    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+        from worktree import (  # type: ignore[no-redef]
+            branch_name,
+            worktree_dir,
+            worktree_exists,
+        )
+
+    binding_name = current.get("binding_name", "")
+    issue_str = str(issue_id)
+    repo_path = _repo_path_for_binding(binding_name)
+    if not repo_path:
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    if worktree_exists(repo_path, binding_name, issue_str):
+        wt_path = worktree_dir(repo_path, binding_name, issue_str)
+        wt_branch = branch_name(binding_name, issue_str)
+        archive_note = (
+            f"Worktree archived; not torn down — branch `{wt_branch}` "
+            f"at `{wt_path}` persists. Toggle worktree on again or delete manually."
+        )
+        existing = connection.execute(
+            "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        existing_text = str(existing["comments_md"] or "").rstrip()
+        updated_comments = (
+            f"{existing_text}\n\n{archive_note}".strip()
+            if existing_text
+            else archive_note
+        )
+        now = _next_updated_at(current.get("updated_at"))
+        connection.execute(
+            "UPDATE issue SET comments_md = ?, updated_at = ? WHERE id = ?",
+            (updated_comments, now, issue_id),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        result = _row(row)
+        await websocket_hub.publish(
+            {"type": "issue.updated", "id": issue_id, "row": result}
+        )
+        return result
+
+    return _row(
+        connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    )
+
+
+def _append_blocked_and_publish(
+    connection: sqlite3.Connection,
+    issue_id: int,
+    current: dict[str, Any],
+    message: str,
+) -> None:
+    """Set issue state to blocked and append a merge-failure comment."""
+    existing = str(current.get("comments_md") or "").rstrip()
+    updated_comments = f"{existing}\n\n{message}".strip() if existing else message
+    now = _next_updated_at(current.get("updated_at"))
+    connection.execute(
+        "UPDATE issue SET state = 'blocked', comments_md = ?, updated_at = ? WHERE id = ?",
+        (updated_comments, now, issue_id),
+    )
+    connection.commit()
+
+
+# Overridable for tests: direct list of binding dicts bypasses disk.
+_bindings_override: list[dict[str, Any]] | None = None
+
+
+def _repo_path_for_binding(name: str) -> Path | None:
+    """Return the repo_path for a binding name from bindings.yml, or None.
+
+    Uses ``_bindings_override`` when set (test hook); otherwise reads
+    ``BINDINGS_PATH`` from disk.
+    """
+    import yaml
+
+    if _bindings_override is not None:
+        raw = _bindings_override
+    else:
+        try:
+            raw = _load_bindings(BINDINGS_PATH)
+        except (OSError, yaml.YAMLError):
+            return None
+    for binding in raw if isinstance(raw, list) else raw.get("bindings", []):
+        if binding.get("name") == name:
+            repo = binding.get("repo_path")
+            return Path(repo) if repo else None
+    return None
 
 
 def _next_updated_at(previous: str | None) -> str:

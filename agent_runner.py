@@ -18,7 +18,6 @@ from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
 
 
-
 LOGGER = logging.getLogger(__name__)
 TERMINATE_GRACE_SECONDS = 5
 PI_HELP_TIMEOUT_SECONDS = 30
@@ -90,9 +89,15 @@ def verify_pi_support(
             f"Configured pi help check timed out after {PI_HELP_TIMEOUT_SECONDS}s"
         ) from exc
     except OSError as exc:
-        raise AgentRunnerError(f"Configured pi binary could not be executed: {exc}") from exc
+        raise AgentRunnerError(
+            f"Configured pi binary could not be executed: {exc}"
+        ) from exc
     output = f"{result.stdout}\n{result.stderr}"
-    if result.returncode != 0 or "--print" not in output or "--no-session" not in output:
+    if (
+        result.returncode != 0
+        or "--print" not in output
+        or "--no-session" not in output
+    ):
         raise AgentRunnerError(
             "Configured pi binary does not advertise `--print --no-session` support"
         )
@@ -120,7 +125,9 @@ def verify_pi_support(
             f"Configured pi probe timed out after {PI_PROBE_TIMEOUT_SECONDS}s; provider/model/auth may be invalid"
         ) from exc
     except OSError as exc:
-        raise AgentRunnerError(f"Configured pi probe could not be executed: {exc}") from exc
+        raise AgentRunnerError(
+            f"Configured pi probe could not be executed: {exc}"
+        ) from exc
     if probe.returncode != 0:
         raise AgentRunnerError(
             f"Configured pi probe failed with exit code {probe.returncode}: {probe.stderr.strip()}"
@@ -153,6 +160,38 @@ def run_agent(
     temp_dir = mkdtemp(prefix="symphony-plane-cli-")
     started = clock()
     process: ProcessLike | None = None
+
+    # Worktree setup: create per-Issue worktree when worktree_active is True.
+    # The worktree persists after the run — cleanup happens on merge-on-done.
+    worktree_path: Path | None = None
+    if getattr(issue, "worktree_active", False):
+        from web.api.worktree import create_worktree
+
+        binding_name = getattr(issue, "binding_name", "") or (
+            config.bindings[0].name if config.bindings else ""
+        )
+        base_branch = getattr(issue, "base_branch", "") or config.base_branch
+        try:
+            worktree_path = create_worktree(
+                config.homelab_repo_path,
+                binding_name,
+                issue.id,
+                base_branch or "main",
+            )
+            LOGGER.info(
+                "worktree_prepared issue_id=%s binding=%s path=%s",
+                issue.id,
+                binding_name,
+                worktree_path,
+            )
+        except Exception as exc:
+            LOGGER.error(
+                "worktree_create_failed issue_id=%s error=%s",
+                issue.id,
+                exc,
+            )
+            raise AgentRunnerError(f"Worktree creation failed: {exc}") from exc
+
     try:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
         helper_target = Path(temp_dir) / "plane"
@@ -165,10 +204,19 @@ def run_agent(
         # ANSI escapes or progress trace into our captured stderr. Plane
         # renders fenced blocks as plain text; ANSI is pure noise there.
         allowed_keys = {
-            "PATH", "HOME", "USER", "LANG", "XDG_RUNTIME_DIR",
-            "PYTHONUNBUFFERED", "TMPDIR",
-            "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_HOME_CHANNEL",
-            "ZAI_API_KEY", "PI_OFFLINE", "PI_CODING_AGENT_DIR",
+            "PATH",
+            "HOME",
+            "USER",
+            "LANG",
+            "XDG_RUNTIME_DIR",
+            "PYTHONUNBUFFERED",
+            "TMPDIR",
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_CHAT_ID",
+            "TELEGRAM_HOME_CHANNEL",
+            "ZAI_API_KEY",
+            "PI_OFFLINE",
+            "PI_CODING_AGENT_DIR",
             "PI_CODING_AGENT_SESSION_DIR",
         }
         env = {k: v for k, v in source_env.items() if k in allowed_keys}
@@ -199,10 +247,13 @@ def run_agent(
             config.pi_model,
             rendered_prompt,
         ]
-        cwd = str(config.homelab_repo_path)
+        cwd = str(worktree_path or config.homelab_repo_path)
         LOGGER.info(
             "pi_dispatch issue_id=%s provider=%s model=%s cwd=%s",
-            issue.id, config.pi_provider, config.pi_model, cwd,
+            issue.id,
+            config.pi_provider,
+            config.pi_model,
+            cwd,
         )
         process = popen_factory(
             command,
@@ -253,13 +304,8 @@ class PiAgentAdapter:
 
     config: SymphonyConfig
 
-    def __call__(
-        self, issue: CandidateIssue, rendered_prompt: str, /
-    ) -> AgentResult:
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
         return run_agent(self.config, issue, rendered_prompt)
-
-
-
 
 
 @dataclass(frozen=True)
@@ -269,9 +315,7 @@ class RoutingAgentAdapter:
     binding: ProjectBinding
     pi_adapter: AgentAdapter
 
-    def __call__(
-        self, issue: CandidateIssue, rendered_prompt: str, /
-    ) -> AgentResult:
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
         return self.pi_adapter(issue, rendered_prompt)
 
 

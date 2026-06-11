@@ -53,6 +53,9 @@ class CandidateIssue:
     comments_md: str = ""
     context_md: str = ""
     preferred_skill: str | None = None
+    worktree_active: bool = False
+    base_branch: str = ""
+    binding_name: str = ""
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -65,7 +68,9 @@ PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
 
 PODIUM_CONTRACT = replace(
     DEFAULT_CONTRACT,
-    state_roles={role: RoleBinding(value, value) for role, value in PODIUM_STATE_BY_ROLE.items()},
+    state_roles={
+        role: RoleBinding(value, value) for role, value in PODIUM_STATE_BY_ROLE.items()
+    },
 )
 
 
@@ -84,7 +89,10 @@ class PodiumTrackerAdapter:
         if self.contract is not PODIUM_CONTRACT:
             self.contract = replace(
                 self.contract,
-                state_roles={role: RoleBinding(value, value) for role, value in PODIUM_STATE_BY_ROLE.items()},
+                state_roles={
+                    role: RoleBinding(value, value)
+                    for role, value in PODIUM_STATE_BY_ROLE.items()
+                },
             )
 
     def connect(self) -> sqlite3.Connection:
@@ -126,8 +134,15 @@ class PodiumTrackerAdapter:
     def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool:
         return str(issue.get("state") or "") == PODIUM_STATE_BY_ROLE[state]
 
-    def labels_contain_role(self, labels: tuple[str, ...] | list[str], role: TrackerRole) -> bool:
-        if role in {TrackerRole.APPROVAL_REQUIRED, TrackerRole.APPROVED, TrackerRole.SCHEDULED, TrackerRole.HAS_WORKTREE}:
+    def labels_contain_role(
+        self, labels: tuple[str, ...] | list[str], role: TrackerRole
+    ) -> bool:
+        if role in {
+            TrackerRole.APPROVAL_REQUIRED,
+            TrackerRole.APPROVED,
+            TrackerRole.SCHEDULED,
+            TrackerRole.HAS_WORKTREE,
+        }:
             return False
         binding = self.contract.optional_label_binding(role)
         return bool(binding and binding.name in set(labels))
@@ -146,6 +161,9 @@ class PodiumTrackerAdapter:
                     comments_md=str(issue.get("comments_md") or ""),
                     context_md=str(issue.get("context_md") or ""),
                     preferred_skill=issue.get("preferred_skill"),
+                    worktree_active=bool(issue.get("worktree_active") or False),
+                    base_branch=str(issue.get("base_branch") or ""),
+                    binding_name=self.binding_name or "",
                 )
             )
         return candidates
@@ -211,17 +229,28 @@ class PodiumTrackerAdapter:
 
     async def get_issue(self, issue_id: str) -> dict[str, Any]:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
         if row is None:
             raise KeyError(f"Podium issue not found: {issue_id}")
         return self._row_to_issue(row)
 
-    async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]:
+    async def list_comments(
+        self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK
+    ) -> list[dict[str, Any]]:
         issue = await self.get_issue(issue_id)
         body = str(issue.get("comments_md") or "").strip()
         if not body:
             return []
-        return [{"id": f"podium-comments-{issue_id}", "created_at": issue.get("updated_at") or "", "body": body, "comment_html": body}]
+        return [
+            {
+                "id": f"podium-comments-{issue_id}",
+                "created_at": issue.get("updated_at") or "",
+                "body": body,
+                "comment_html": body,
+            }
+        ]
 
     async def add_comment(self, issue_id: str, comment: Any) -> dict[str, Any]:
         return await self.post_comment(issue_id, comment.render())
@@ -234,7 +263,9 @@ class PodiumTrackerAdapter:
         block = _append_block("### Symphony Context Append", body)
         return await self._append_issue_field(issue_id, "context_md", block)
 
-    async def transition_state(self, issue_id: str, state: PlaneState | TrackerRole) -> dict[str, Any]:
+    async def transition_state(
+        self, issue_id: str, state: PlaneState | TrackerRole
+    ) -> dict[str, Any]:
         with self.connect() as connection:
             connection.execute(
                 "UPDATE issue SET state = ?, updated_at = ? WHERE id = ?",
@@ -243,21 +274,31 @@ class PodiumTrackerAdapter:
             connection.commit()
         return await self.get_issue(issue_id)
 
-    async def add_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]:
+    async def add_label(
+        self, issue_id: str, label: PlaneLabel | TrackerRole
+    ) -> dict[str, Any]:
         return await self.get_issue(issue_id)
 
-    async def remove_label(self, issue_id: str, label: PlaneLabel | TrackerRole) -> dict[str, Any]:
+    async def remove_label(
+        self, issue_id: str, label: PlaneLabel | TrackerRole
+    ) -> dict[str, Any]:
         return await self.get_issue(issue_id)
 
-    async def add_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]:
+    async def add_labels(
+        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+    ) -> dict[str, Any]:
         return await self.get_issue(issue_id)
 
-    async def remove_labels(self, issue_id: str, labels: list[PlaneLabel | TrackerRole]) -> dict[str, Any]:
+    async def remove_labels(
+        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+    ) -> dict[str, Any]:
         return await self.get_issue(issue_id)
 
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM run WHERE id = ?", (run_id,)
+            ).fetchone()
         return dict(row) if row is not None else None
 
     async def record_run(self, run_row: dict[str, Any]) -> dict[str, Any]:
@@ -277,7 +318,9 @@ class PodiumTrackerAdapter:
                 values,
             )
             run_id = cursor.lastrowid
-            row = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM run WHERE id = ?", (run_id,)
+            ).fetchone()
             assert row is not None
             self._update_issue_run_projection(connection, row)
             connection.commit()
@@ -292,20 +335,26 @@ class PodiumTrackerAdapter:
         assignments = ", ".join(f"{key} = ?" for key in updates)
         values = tuple(updates.values())
         with self.connect() as connection:
-            existing = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            existing = connection.execute(
+                "SELECT * FROM run WHERE id = ?", (run_id,)
+            ).fetchone()
             if existing is None:
                 raise KeyError(f"Podium run not found: {run_id}")
             connection.execute(
                 f"UPDATE run SET {assignments} WHERE id = ?",
                 (*values, run_id),
             )
-            row = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM run WHERE id = ?", (run_id,)
+            ).fetchone()
             assert row is not None
             self._update_issue_run_projection(connection, row)
             connection.commit()
         return dict(row)
 
-    def _update_issue_run_projection(self, connection: sqlite3.Connection, row: sqlite3.Row) -> None:
+    def _update_issue_run_projection(
+        self, connection: sqlite3.Connection, row: sqlite3.Row
+    ) -> None:
         issue_id = row["issue_id"]
         if issue_id is None:
             return
@@ -321,7 +370,9 @@ class PodiumTrackerAdapter:
             ),
         )
 
-    async def _append_issue_field(self, issue_id: str, field_name: str, block: str) -> dict[str, Any]:
+    async def _append_issue_field(
+        self, issue_id: str, field_name: str, block: str
+    ) -> dict[str, Any]:
         if field_name == "comments_md":
             return await self._append_comments(issue_id, block)
         if field_name == "context_md":
@@ -330,7 +381,9 @@ class PodiumTrackerAdapter:
 
     async def _append_comments(self, issue_id: str, block: str) -> dict[str, Any]:
         with self.connect() as connection:
-            current = connection.execute("SELECT comments_md FROM issue WHERE id = ?", (issue_id,)).fetchone()
+            current = connection.execute(
+                "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
             if current is None:
                 raise KeyError(f"Podium issue not found: {issue_id}")
             existing = str(current["comments_md"] or "").rstrip()
@@ -344,7 +397,9 @@ class PodiumTrackerAdapter:
 
     async def _append_context(self, issue_id: str, block: str) -> dict[str, Any]:
         with self.connect() as connection:
-            current = connection.execute("SELECT context_md FROM issue WHERE id = ?", (issue_id,)).fetchone()
+            current = connection.execute(
+                "SELECT context_md FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
             if current is None:
                 raise KeyError(f"Podium issue not found: {issue_id}")
             existing = str(current["context_md"] or "").rstrip()

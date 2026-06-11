@@ -73,6 +73,16 @@ def _issue() -> CandidateIssue:
     )
 
 
+def _init_git_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "-C", str(path), "init", "-b", "main"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.email", "test@test"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
+    (path / "README.md").write_text("# test\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-m", "initial"], check=True)
+
+
 def test_verify_pi_support_checks_help_and_probe_with_cwd(tmp_path: Path) -> None:
     calls: list[tuple[list[str], dict]] = []
 
@@ -274,6 +284,53 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     # TERM must be overridden, NO_COLOR forced.
     assert env.get("TERM") == "dumb"
     assert env.get("NO_COLOR") == "1"
+
+
+def test_run_agent_uses_worktree_cwd_when_issue_opted_in(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+    issue = CandidateIssue(
+        id="42",
+        identifier="HOM-42",
+        name="Worktree issue",
+        description="Test description",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        worktree_active=True,
+        base_branch="main",
+        binding_name="trading",
+    )
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return FakeProcess()
+
+    result = run_agent(
+        _config(repo),
+        issue,
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        mkdtemp=lambda **k: str(temp_dir),
+        environ={"PATH": "/usr/bin"},
+    )
+
+    expected_worktree = (repo / "worktrees" / "trading" / "42").resolve()
+    assert result.exit_code == 0
+    assert captured["cwd"] == str(expected_worktree)
+    assert expected_worktree.is_dir()
+    branches = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--list"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "podium/trading/42" in branches
 
 
 def test_run_agent_uses_configured_provider_model_and_logs(caplog, tmp_path: Path) -> None:

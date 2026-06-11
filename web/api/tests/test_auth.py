@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 TEST_PASSWORD = cast(Any, import_module("web.api.tests.conftest")).TEST_PASSWORD
 
+auth = cast(Any, import_module("web.api.auth"))
 main = import_module("web.api.main")
 app = cast(Any, main.app)
 
@@ -79,6 +80,7 @@ def test_rate_limit_after_five_failed_attempts(monkeypatch, tmp_path) -> None:
 def test_session_secret_unset_fails_startup(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
     monkeypatch.delenv("PODIUM_SESSION_SECRET", raising=False)
+    monkeypatch.setattr(auth, "load_dotenv", lambda path=auth.REPO_ROOT / ".env": None)
 
     with pytest.raises(RuntimeError, match="PODIUM_SESSION_SECRET"), TestClient(app):
         pass

@@ -17,8 +17,11 @@ def auth_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("PODIUM_PASSWORD_HASH", TEST_PASSWORD_HASH)
     monkeypatch.setenv("PODIUM_SESSION_SECRET", TEST_SESSION_SECRET)
     auth = cast(Any, import_module("web.api.auth"))
+    main = cast(Any, import_module("web.api.main"))
+    main._auth_config = None
     auth.reset_rate_limits()
     yield
+    main._auth_config = None
     auth.reset_rate_limits()
 
 
