@@ -1,7 +1,7 @@
 ---
 id: 027
 title: Plane-coupled symphony-* skill suite migration
-status: review
+status: done
 blocked_by: [019]
 parent: null
 priority: 0
@@ -52,14 +52,14 @@ path is left in source but is not exercised by any test in this slice.
 
 ## Acceptance criteria
 
-- [ ] `symphony-binding-scaffold` skill exists and creates a binding via the Podium DB + `bindings.yml` edit (no Plane API call).
-- [ ] `symphony-binding-smoke` posts via Podium `POST /api/bindings/{name}/issues` and polls the resulting Run row.
-- [ ] `symphony-bindings-status` reads `GET /api/bindings` + per-binding issues; table format unchanged.
-- [ ] `symphony-plane-recover` SKILL.md updated to document its Plane-only purpose.
-- [ ] `symphony-onboard-project` calls the migrated sub-skills.
-- [ ] `symphony-workflow-author` SKILL.md notes tracker-agnostic behaviour.
-- [ ] Each migrated skill has its own integration test under `tests/skills/test_<skill>.py` against a temp Podium DB fixture.
-- [ ] No migrated skill imports `plane_adapter` or makes HTTP calls to the Plane API.
+- [x] `symphony-binding-scaffold` skill exists and creates a binding via the Podium DB + `bindings.yml` edit (no Plane API call).
+- [x] `symphony-binding-smoke` posts via Podium `POST /api/bindings/{name}/issues` and polls the resulting Run row.
+- [x] `symphony-bindings-status` reads `GET /api/bindings` + per-binding issues; table format unchanged.
+- [x] `symphony-plane-recover` SKILL.md updated to document its Plane-only purpose.
+- [x] `symphony-onboard-project` calls the migrated sub-skills.
+- [x] `symphony-workflow-author` SKILL.md notes tracker-agnostic behaviour.
+- [x] Each migrated skill has its own integration test under `tests/skills/test_<skill>.py` against a temp Podium DB fixture.
+- [x] No migrated skill imports `plane_adapter` or makes HTTP calls to the Plane API.
 
 ## Verification
 
@@ -70,3 +70,10 @@ cd /home/james/symphony && uv run pytest
 ## Blocked by
 
 - #019 (Podium Tracker Adapter must exist before skill migrations can read from it)
+
+## Implementation Notes
+
+- Added Podium-era repo-local `symphony-*` skill docs, including new `symphony-binding-scaffold` and a deprecated Plane-only `symphony-project-scaffold` alias.
+- Added `skill_migration.py` helpers for Podium binding scaffold, smoke Issue creation/run polling, and bindings status reads.
+- Added `tests/skills/` coverage for migrated skills against temporary Podium DB/API fixtures and no-Plane coupling checks.
+- Verification passed: `uv run pytest` (572 passed, 1 skipped). Fresh review passed.

@@ -116,3 +116,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Compaction uses the configured runtime agent adapter before Run creation, writes back with `replace_context(...)`, and records no Run row for the compaction itself. The active schema revision is now `0002_context_compaction_settings`.
 **Conventions established:** Podium context size control is engine-owned via `binding_settings.context_compact_threshold_tokens` and `context_compact_keep_recent_runs`; compaction output must include `SYMPHONY_COMPACTED_CONTEXT:` and the stored context starts with `<!-- context compacted on ... -->`.
 **Notes for next iteration:** Full verification passed with `uv run pytest` (563 passed, 1 skipped). Fresh review passed. Existing config has no separate `binding.default_model`; compaction uses the configured binding runtime/agent adapter rather than hardcoding Pi.
+
+## #027 Plane-coupled symphony-* skill suite migration — 2026-06-11
+
+**What changed:** Added repo-local Podium-era `symphony-*` skill docs, a new `symphony-binding-scaffold` skill, `skill_migration.py` helpers for Podium binding scaffold/smoke/status flows, and `tests/skills/` regression coverage.
+**Files:** `.claude/skills/symphony-binding-scaffold/SKILL.md`, `.claude/skills/symphony-binding-smoke/SKILL.md`, `.claude/skills/symphony-bindings-status/SKILL.md`, `.claude/skills/symphony-onboard-project/SKILL.md`, `.claude/skills/symphony-plane-recover/SKILL.md`, `.claude/skills/symphony-project-scaffold/SKILL.md`, `.claude/skills/symphony-workflow-author/SKILL.md`, `skill_migration.py`, `tests/skills/*.py`.
+**Decisions:** New binding onboarding uses Podium as source of truth; `plane_project_id` remains in generated `bindings.yml` entries only as transitional `ProjectBinding` compatibility. `symphony-plane-recover` remains Plane-retirement-only.
+**Conventions established:** Migrated operational skills must use Podium `/api/bindings`, `/api/bindings/{name}/issues`, and `/api/issues/{issue_id}/runs` paths and must not import `plane_adapter` or call legacy Plane workspace endpoints.
+**Notes for next iteration:** #023c can rely on Podium-oriented skill docs, but external dotfiles/global skill synchronization remains a separate operational propagation step if required.
