@@ -20,7 +20,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from plane_adapter import CandidateIssue, CommentPayload, MAX_PAGES_PER_TICK, PAGE_SIZE
 from skill_mode_map import mode_for_skill
 from tracker_contract import (
     DEFAULT_CONTRACT,
@@ -32,6 +31,28 @@ from tracker_contract import (
     coerce_state_role,
 )
 from web.api.db import resolve_db_path
+
+
+PAGE_SIZE = 50
+MAX_PAGES_PER_TICK = 3
+
+
+@dataclass(frozen=True)
+class CandidateIssue:
+    id: str
+    identifier: str
+    name: str
+    description: str
+    labels: tuple[str, ...]
+    created_at: str
+    schedule_not_before: str = ""
+    schedule_not_after: str = ""
+    schedule_reason: str = ""
+    schedule_source: str = ""
+    schedule_late: str = ""
+    comments_md: str = ""
+    context_md: str = ""
+    preferred_skill: str | None = None
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -200,7 +221,7 @@ class PodiumTrackerAdapter:
             return []
         return [{"id": f"podium-comments-{issue_id}", "created_at": issue.get("updated_at") or "", "body": body, "comment_html": body}]
 
-    async def add_comment(self, issue_id: str, comment: CommentPayload) -> dict[str, Any]:
+    async def add_comment(self, issue_id: str, comment: Any) -> dict[str, Any]:
         return await self.post_comment(issue_id, comment.render())
 
     async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]:

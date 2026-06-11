@@ -7,6 +7,9 @@ from typing import Any, Protocol, runtime_checkable
 from plane_adapter import CandidateIssue, CommentPayload
 from tracker_contract import PlaneLabel, PlaneState, TrackerContract, TrackerRole
 
+PAGE_SIZE = 50
+MAX_PAGES_PER_TICK = 3
+
 
 @runtime_checkable
 class TrackerAdapter(Protocol):
@@ -22,18 +25,18 @@ class TrackerAdapter(Protocol):
         self,
         state_filter: PlaneState | TrackerRole | None = None,
         *,
-        per_page: int = 50,
-        max_pages: int = 3,
+        per_page: int = PAGE_SIZE,
+        max_pages: int = MAX_PAGES_PER_TICK,
     ) -> list[dict[str, Any]]: ...
     async def list_issues_by_state(
         self,
         state: PlaneState | TrackerRole,
         *,
-        per_page: int = 50,
-        max_pages: int = 3,
+        per_page: int = PAGE_SIZE,
+        max_pages: int = MAX_PAGES_PER_TICK,
     ) -> list[dict[str, Any]]: ...
     async def get_issue(self, issue_id: str) -> dict[str, Any]: ...
-    async def list_comments(self, issue_id: str, *, max_pages: int = 3) -> list[dict[str, Any]]: ...
+    async def list_comments(self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK) -> list[dict[str, Any]]: ...
     async def add_comment(self, issue_id: str, comment: CommentPayload) -> dict[str, Any]: ...
     async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]: ...
     async def append_context(self, issue_id: str, body: str) -> dict[str, Any]: ...
