@@ -148,3 +148,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** For unattended Ralph verification, external notification hooks are verified by unit/template/script/env wiring instead of firing live alerts.
 **Conventions established:** Podium API and web failure hooks rely on `OnFailure=telegram-alert@%n.service` plus the shared `telegram-alert@.service` template and `/home/james/symphony-host.env` Telegram variable names.
 **Notes for next iteration:** Verification passed: `sudo systemctl status podium-api.service podium-web.service --no-pager && ss -tlnp | grep -E '8090|8091'`; `systemctl show` confirmed active units, loopback listeners, api `--workers 1`, and resolved `OnFailure` targets. Critical LSP gate was not applicable because no source files changed.
+
+## #023d Plane archive soak gate blocked — 2026-06-11
+
+**What changed:** Parked #023d as blocked without invoking Plane archive or editing Authelia because the issue's own operator soak gate is not satisfied.
+**Files:** .kanban/issues/023d-podium-plane-archive.md
+**Decisions:** The one-week Podium soak and James-written soak-passed timestamps are hard prerequisites for archiving Plane; unattended service-action approval does not satisfy this issue-specific readiness record.
+**Conventions established:** Irreversible Plane archive work remains blocked until issue completion notes contain soak start dates and explicit soak-passed confirmation timestamps for both trading and homelab.
+**Notes for next iteration:** After the soak window elapses and James records the required confirmations in #023d, rerun Ralph to perform archive/documentation work.
