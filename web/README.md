@@ -95,11 +95,33 @@ pnpm dev          # next dev -H 127.0.0.1 -p 8091
 Then open http://localhost:8091/. Override the backend origin with
 `PODIUM_API_ORIGIN` if it is not on `127.0.0.1:8090`.
 
+## Skill catalog
+
+The `skill` table is owned by the operator-run refresh CLI, not startup
+seeding. Populate or refresh it after deploys and after editing local skills:
+
+```bash
+cd /home/james/symphony
+python -m web.cli.podium skills refresh
+```
+
+Dry-run mode lists the scanned catalog rows without touching the database:
+
+```bash
+python -m web.cli.podium skills refresh --dry-run
+```
+
+Until the refresh runs, skill dropdowns show:
+
+```text
+Run `podium skills refresh` to populate.
+```
+
 ## Frontend e2e tests
 
-Playwright spins up both servers itself (`uv run uvicorn` on 8090 and
-`pnpm dev` on 8091), so no servers need to be running first. Browser binaries
-must be installed once:
+Playwright spins up both servers itself on isolated ports (`uv run uvicorn` on
+18090 and `next dev` on 18091), so no servers need to be running first. Browser
+binaries must be installed once:
 
 ```bash
 cd web/frontend
@@ -107,13 +129,11 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-The suite runs against the persistent dev database and deliberately writes to
-it: the editing spec mutates the two `/homelab` seed issues, and the new-issue
-spec appends one fresh Todo card to `/homelab` per run. Accumulated e2e cards
-are harmless; use *Reset local DB* above if the board gets noisy. Seed skills
-(including `/diagnose`, added in #014) are inserted at API startup only, so a
-long-lived dev server needs a restart before new seed rows show up in the
-skill dropdowns.
+The suite uses an isolated throwaway SQLite database at
+`web/frontend/test-results/podium-e2e.db` via `PODIUM_DB_PATH`; it does not
+write to `/var/lib/symphony/podium.db` or the repo-root fallback DB. Playwright
+removes and recreates that e2e DB at the start of each run, then test helpers
+insert any skills needed by the specs.
 
 ## Tests
 

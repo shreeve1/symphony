@@ -16,21 +16,10 @@ except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BINDINGS_PATH = REPO_ROOT / "bindings.yml"
 
-# Placeholder skill catalog so preferred_skill (FK to skill.name) is editable
-# before #015 ships the real CLI-refreshed catalog.
-SEED_SKILLS = (
-    ("/diagnose", "Disciplined diagnosis loop for hard bugs and regressions"),
-    ("tdd", "Test-driven red-green-refactor implementation loop"),
-    ("code-review", "Review a diff for correctness and quality"),
-    ("blueprint", "Decompose a feature into a phased implementation plan"),
-)
-
 
 def seed_if_empty(
     connection: sqlite3.Connection, bindings_path: Path = BINDINGS_PATH
 ) -> None:
-    _seed_skills(connection)
-
     binding_count = connection.execute("SELECT COUNT(*) FROM binding").fetchone()[0]
     if binding_count:
         return
@@ -108,18 +97,6 @@ def seed_if_empty(
                 (run_id, issue_id),
             )
 
-    connection.commit()
-
-
-def _seed_skills(connection: sqlite3.Connection) -> None:
-    # Upsert-style (OR IGNORE) instead of an emptiness check: databases seeded
-    # by an earlier slice still pick up skills added later (e.g. /diagnose in
-    # #014) on next boot, without clobbering rows #015's real catalog refresh
-    # may rewrite.
-    connection.executemany(
-        "INSERT OR IGNORE INTO skill(name, description, source) VALUES (?, ?, 'seed')",
-        SEED_SKILLS,
-    )
     connection.commit()
 
 

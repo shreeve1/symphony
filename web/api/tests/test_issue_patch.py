@@ -14,8 +14,19 @@ app = cast(Any, main.app)
 
 @pytest.fixture()
 def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
-    monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
     with TestClient(app) as test_client:
+        with main.connect(db_path) as connection:
+            connection.executemany(
+                "INSERT INTO skill(name, description, source) VALUES (?, ?, '')",
+                [
+                    ("blueprint", "Blueprint fixture skill"),
+                    ("code-review", "Code review fixture skill"),
+                    ("tdd", "TDD fixture skill"),
+                ],
+            )
+            connection.commit()
         yield test_client
 
 
@@ -133,9 +144,7 @@ def test_patch_missing_issue_returns_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_patch_noop_does_not_bump_updated_at(
-    client: TestClient, issue_id: int
-) -> None:
+def test_patch_noop_does_not_bump_updated_at(client: TestClient, issue_id: int) -> None:
     before = client.get(f"/api/issues/{issue_id}").json()
 
     # Empty body: nothing to write, row returned unchanged.
@@ -149,7 +158,7 @@ def test_patch_noop_does_not_bump_updated_at(
     assert echo.json()["updated_at"] == before["updated_at"]
 
 
-def test_list_skills_returns_seeded_catalog(client: TestClient) -> None:
+def test_list_skills_returns_catalog(client: TestClient) -> None:
     response = client.get("/api/skills")
     assert response.status_code == 200
     skills = response.json()

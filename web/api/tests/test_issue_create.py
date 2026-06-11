@@ -15,8 +15,18 @@ app = cast(Any, main.app)
 
 @pytest.fixture()
 def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
-    monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
     with TestClient(app) as test_client:
+        with main.connect(db_path) as connection:
+            connection.executemany(
+                "INSERT INTO skill(name, description, source) VALUES (?, ?, '')",
+                [
+                    ("/diagnose", "Diagnose fixture skill"),
+                    ("tdd", "TDD fixture skill"),
+                ],
+            )
+            connection.commit()
         yield test_client
 
 
@@ -167,8 +177,10 @@ def test_options_returns_agents_models_and_branches(
     subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "main"], check=True)
     (repo / "f").write_text("x")
     env = {
-        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
     }
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
     subprocess.run(
@@ -179,9 +191,7 @@ def test_options_returns_agents_models_and_branches(
     subprocess.run(["git", "-C", str(repo), "branch", "develop"], check=True)
 
     custom = tmp_path / "bindings.yml"
-    custom.write_text(
-        f"bindings:\n  - name: trading\n    repo_path: {repo}\n"
-    )
+    custom.write_text(f"bindings:\n  - name: trading\n    repo_path: {repo}\n")
     monkeypatch.setattr(main, "BINDINGS_PATH", custom)
 
     response = client.get("/api/bindings/trading/options")
@@ -201,9 +211,7 @@ def test_options_branches_degrade_to_empty_on_bad_repo(
 ) -> None:
     # repo_path that exists but is not a git repo: branches must be [] not 500.
     custom = tmp_path / "bindings.yml"
-    custom.write_text(
-        f"bindings:\n  - name: trading\n    repo_path: {tmp_path}\n"
-    )
+    custom.write_text(f"bindings:\n  - name: trading\n    repo_path: {tmp_path}\n")
     monkeypatch.setattr(main, "BINDINGS_PATH", custom)
     response = client.get("/api/bindings/trading/options")
     assert response.status_code == 200

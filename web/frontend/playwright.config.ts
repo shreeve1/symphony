@@ -1,35 +1,42 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
-// Two web servers for CI: the FastAPI backend on 8090 and Next on 8091.
-// uvicorn runs via `uv run` so it resolves the repo's Python env; --app-dir
-// points at web/api so `main:app` imports. The backend seeds podium.db from
-// bindings.yml on first boot, giving the spec real `homelab` + `trading` rows.
+// Two isolated web servers for e2e. Use non-dev ports plus a throwaway DB so
+// specs never reuse or mutate an operator's live Podium process/database.
+const E2E_API_PORT = 18090;
+const E2E_WEB_PORT = 18091;
+const E2E_API_ORIGIN = `http://127.0.0.1:${E2E_API_PORT}`;
+const E2E_WEB_ORIGIN = `http://127.0.0.1:${E2E_WEB_PORT}`;
+const E2E_DB_PATH = path.resolve(__dirname, "test-results/podium-e2e.db");
+
 export default defineConfig({
-  testDir: "./tests",
-  fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
-  reporter: "list",
-  use: {
-    baseURL: "http://127.0.0.1:8091",
-    trace: "on-first-retry",
-  },
-  projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-  ],
-  webServer: [
-    {
-      command:
-        "uv run uvicorn main:app --host 127.0.0.1 --port 8090 --app-dir ../api",
-      url: "http://127.0.0.1:8090/api/health",
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-    {
-      command: "pnpm dev",
-      url: "http://127.0.0.1:8091",
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-  ],
+	testDir: "./tests",
+	fullyParallel: true,
+	forbidOnly: !!process.env.CI,
+	retries: process.env.CI ? 1 : 0,
+	reporter: "list",
+	use: {
+		baseURL: E2E_WEB_ORIGIN,
+		trace: "on-first-retry",
+	},
+	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+	webServer: [
+		{
+			command:
+				`mkdir -p test-results && rm -f ${E2E_DB_PATH} && ` +
+				`PODIUM_DB_PATH=${E2E_DB_PATH} ` +
+				`uv run uvicorn main:app --host 127.0.0.1 --port ${E2E_API_PORT} --app-dir ../api`,
+			url: `${E2E_API_ORIGIN}/api/health`,
+			reuseExistingServer: false,
+			timeout: 120_000,
+		},
+		{
+			command:
+				`PODIUM_API_ORIGIN=${E2E_API_ORIGIN} ` +
+				`pnpm exec next dev -H 127.0.0.1 -p ${E2E_WEB_PORT}`,
+			url: E2E_WEB_ORIGIN,
+			reuseExistingServer: false,
+			timeout: 120_000,
+		},
+	],
 });

@@ -172,6 +172,25 @@ For any Symphony-specific question, investigation, design task, bug hunt, or cod
 
 Use `/wiki-update` during or after meaningful sessions to capture durable decisions, verified facts, root causes, follow-ups, and reusable context. Create curated raw session captures under `wiki/raw/sessions/` when conversation evidence is needed. Do not archive full transcripts, secrets from `/home/james/symphony-host.env`, private material, or raw pasted user content without explicit approval. New session-derived knowledge transits `wiki/candidates/`, gets linted, then auto-promotes; updates to `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md`, and `wiki/log.md` are required.
 
+### Maintenance Trigger
+
+The wiki is a standing obligation, not an opt-in step. Before reporting any task complete, run the end-of-session wiki check. This is mandatory, not advisory.
+
+A task produces durable project knowledge — and therefore requires a `/wiki-update` pass before it is reported done — when it includes any of:
+
+- A decision that sets or reverses project direction, scope, or ownership.
+- Accepted or changed terminology, naming, or domain concepts.
+- A new or revised architecture, process, or contract that future sessions must honor.
+- A verified fact, root cause, or fix that contradicts or supersedes existing wiki knowledge.
+
+End-of-session check, every task:
+
+1. Decide whether the task hit any trigger above.
+2. If yes, run `/wiki-update` before reporting completion. If a full pass must be deferred, state the wiki gap and the proposed ingest, candidate, or promotion path in the final answer.
+3. If no, state one line in the final answer confirming the wiki check ran and nothing qualified.
+
+Mark superseded knowledge `superseded` in `wiki/CLAIMS.md` with a pointer to the newer claim; never delete it to clean up history. Routine or already-documented work does not trigger a pass.
+
 ### Ingest Workflow
 
 1. Place new source under `wiki/raw/` (copy or symlink for in-tree files; preserve original path in citation).

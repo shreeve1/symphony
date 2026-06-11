@@ -65,6 +65,36 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
     )
 
 
+def test_skills_endpoint_returns_rows_sorted_by_name(
+    monkeypatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        with main.connect(db_path) as connection:
+            connection.executemany(
+                "INSERT INTO skill(name, description, source) VALUES (?, ?, ?)",
+                [
+                    ("zulu", "Zulu skill", "/tmp/zulu/SKILL.md"),
+                    ("alpha", "Alpha skill", "/tmp/alpha/SKILL.md"),
+                ],
+            )
+            connection.commit()
+
+        response = client.get("/api/skills")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "name": "alpha",
+            "description": "Alpha skill",
+            "source": "/tmp/alpha/SKILL.md",
+        },
+        {"name": "zulu", "description": "Zulu skill", "source": "/tmp/zulu/SKILL.md"},
+    ]
+
+
 def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:
     # Regression: FastAPI runs the sync get_connection dependency and the sync
     # endpoint in different anyio threadpool threads. Without
@@ -76,6 +106,7 @@ def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
 
     with TestClient(app) as client:
+
         def fetch_bindings(_: int) -> int:
             return client.get("/api/bindings").status_code
 
