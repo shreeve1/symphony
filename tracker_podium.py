@@ -275,22 +275,49 @@ class PodiumTrackerAdapter:
                 values,
             )
             run_id = cursor.lastrowid
-            if run_row.get("issue_id") is not None:
-                connection.execute(
-                    "UPDATE issue SET latest_run_id = ?, latest_run_state = ?, latest_verdict = ?, last_event_at = ?, updated_at = ? WHERE id = ?",
-                    (
-                        run_id,
-                        run_row.get("state"),
-                        run_row.get("verdict"),
-                        run_row.get("ended_at") or run_row.get("started_at") or _now(),
-                        _now(),
-                        run_row["issue_id"],
-                    ),
-                )
+            row = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            assert row is not None
+            self._update_issue_run_projection(connection, row)
             connection.commit()
         row = await self.get_run(str(run_id))
         assert row is not None
         return row
+
+    async def update_run(self, run_id: str, run_row: dict[str, Any]) -> dict[str, Any]:
+        updates = {key: run_row[key] for key in _RUN_UPDATE_COLUMNS if key in run_row}
+        if not updates:
+            raise ValueError("update_run requires at least one run column")
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = tuple(updates.values())
+        with self.connect() as connection:
+            existing = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            if existing is None:
+                raise KeyError(f"Podium run not found: {run_id}")
+            connection.execute(
+                f"UPDATE run SET {assignments} WHERE id = ?",
+                (*values, run_id),
+            )
+            row = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            assert row is not None
+            self._update_issue_run_projection(connection, row)
+            connection.commit()
+        return dict(row)
+
+    def _update_issue_run_projection(self, connection: sqlite3.Connection, row: sqlite3.Row) -> None:
+        issue_id = row["issue_id"]
+        if issue_id is None:
+            return
+        connection.execute(
+            "UPDATE issue SET latest_run_id = ?, latest_run_state = ?, latest_verdict = ?, last_event_at = ?, updated_at = ? WHERE id = ?",
+            (
+                row["id"],
+                row["state"],
+                row["verdict"],
+                row["ended_at"] or row["started_at"] or _now(),
+                _now(),
+                issue_id,
+            ),
+        )
 
     async def _append_issue_field(self, issue_id: str, field_name: str, block: str) -> dict[str, Any]:
         if field_name == "comments_md":
@@ -348,6 +375,7 @@ _RUN_INSERT_COLUMNS = (
     "started_at",
     "ended_at",
 )
+_RUN_UPDATE_COLUMNS = tuple(key for key in _RUN_INSERT_COLUMNS if key != "issue_id")
 
 
 def _append_block(title: str, body: str) -> str:

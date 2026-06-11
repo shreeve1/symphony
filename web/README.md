@@ -51,6 +51,19 @@ Run log paths stored in the database are absolute and rooted at:
 /var/lib/symphony/runs/
 ```
 
+## Trading rollback
+
+The `trading` binding is cut over by declaring `tracker: podium` in
+`bindings.yml`. To roll it back to Plane, remove that line from the `trading`
+binding and restart the scheduler after explicit operator approval:
+
+```bash
+sudo systemctl restart symphony-host.service
+```
+
+The Plane tracker contract block remains in `bindings.yml` for this rollback
+path until the later Plane archive slice.
+
 ## Migrations
 
 Initial schema lives under `web/api/migrations/` and is driven by the root `alembic.ini`.

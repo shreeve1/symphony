@@ -29,6 +29,7 @@ from schedule import CandidateComment, ScheduleEvent, ScheduleEventType, Schedul
 from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
 from prompt_renderer import render_previous_comments_block
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
+from web.api.db import RUN_LOG_ROOT
 
 
 LOGGER = logging.getLogger(__name__)
@@ -171,6 +172,10 @@ _SUMMARY_MARKER_RE = re.compile(
     r"^[ \t]*SYMPHONY_SUMMARY:[ \t]*(.+?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_METRIC_MARKER_RE = re.compile(
+    r"^[ \t]*SYMPHONY_(COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):[ \t]*(.+?)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 SUMMARY_MAX_CHARS = 500
 _PERMISSION_GATE_RE = re.compile(
     r"permission requested:|auto-rejecting|user rejected permission",
@@ -220,6 +225,27 @@ def _parse_summary_marker(*streams: str) -> str | None:
     if len(cleaned) > SUMMARY_MAX_CHARS:
         cleaned = cleaned[: SUMMARY_MAX_CHARS - 1].rstrip() + "…"
     return cleaned
+
+
+def _parse_run_metrics(stdout: str) -> dict[str, Any]:
+    """Extract optional cost/token markers emitted by pi stdout."""
+
+    metrics: dict[str, Any] = {}
+    marker_map = {
+        "COST_USD": "cost_usd",
+        "INPUT_TOKENS": "input_tokens",
+        "OUTPUT_TOKENS": "output_tokens",
+    }
+    for marker, raw_value in _METRIC_MARKER_RE.findall(stdout or ""):
+        key = marker_map[marker.upper()]
+        try:
+            if key == "cost_usd":
+                metrics[key] = float(raw_value.strip())
+            else:
+                metrics[key] = int(raw_value.strip())
+        except ValueError:
+            continue
+    return metrics
 
 
 def _hit_permission_gate(stdout: str, stderr: str) -> bool:
@@ -367,6 +393,106 @@ def _extract_summary(
         if secret:
             summary = summary.replace(secret, _REDACTED)
     return summary
+
+
+def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "## stdout\n\n"
+        f"{stdout}\n\n"
+        "## stderr\n\n"
+        f"{stderr}\n",
+        encoding="utf-8",
+    )
+
+
+async def _start_run_record(
+    adapter: TrackerAdapter,
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+) -> tuple[str | None, Path | None]:
+    if not getattr(adapter, "stores_context", False):
+        return None, None
+    record_run = getattr(adapter, "record_run", None)
+    update_run = getattr(adapter, "update_run", None)
+    if not callable(record_run) or not callable(update_run):
+        return None, None
+    binding = config.bindings[0] if config.bindings else None
+    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    run = await _maybe_await(
+        cast(Callable[[dict[str, Any]], Any], record_run)(
+            {
+                "issue_id": candidate.id,
+                "agent": agent,
+                "provider": config.pi_provider,
+                "model": config.pi_model,
+                "state": "queued",
+                "base_branch": config.base_branch,
+                "skill_invoked": getattr(candidate, "preferred_skill", None),
+            }
+        )
+    )
+    run_id = str(run.get("id") or "")
+    if not run_id:
+        return None, None
+    adapter_db_path = getattr(adapter, "db_path", None)
+    run_log_root = Path(adapter_db_path).parent / "runs" if adapter_db_path is not None else RUN_LOG_ROOT
+    return run_id, (run_log_root / f"{run_id}.log").resolve()
+
+
+async def _mark_run_record_running(
+    adapter: TrackerAdapter,
+    run_id: str | None,
+    log_path: Path | None,
+    *,
+    started_at: str,
+) -> None:
+    if not run_id or log_path is None:
+        return
+    update_run = getattr(adapter, "update_run", None)
+    if not callable(update_run):
+        return
+    await _maybe_await(
+        cast(Callable[[str, dict[str, Any]], Any], update_run)(
+            run_id,
+            {"state": "running", "started_at": started_at, "log_path": str(log_path)},
+        )
+    )
+
+
+async def _finish_run_record(
+    adapter: TrackerAdapter,
+    run_id: str | None,
+    log_path: Path | None,
+    *,
+    result: AgentResult,
+    stdout: str,
+    stderr: str,
+    state: str,
+    verdict: str | None,
+    summary: str | None,
+    ended_at: str,
+) -> None:
+    if not run_id or log_path is None:
+        return
+    _write_run_log(log_path, stdout, stderr)
+    update_run = getattr(adapter, "update_run", None)
+    if not callable(update_run):
+        return
+    await _maybe_await(
+        cast(Callable[[str, dict[str, Any]], Any], update_run)(
+            run_id,
+            {
+                "state": state,
+                "verdict": verdict,
+                "summary": summary,
+                "exit_code": result.exit_code,
+                "ended_at": ended_at,
+                "log_path": str(log_path),
+                **_parse_run_metrics(result.stdout),
+            },
+        )
+    )
 
 
 class LockHeld(RuntimeError):
@@ -687,8 +813,15 @@ async def run_tick(
             return TickResult(False, "workflow-missing", candidate.id, mode=mode)
 
         try:
+            run_id, run_log_path = await _start_run_record(adapter, config, candidate)
             await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
             claim_time = now().isoformat()
+            await _mark_run_record_running(
+                adapter,
+                run_id,
+                run_log_path,
+                started_at=claim_time,
+            )
             await adapter.add_comment(
                 candidate.id,
                 CommentPayload(body=f"{CLAIM_PREFIX}{claim_time}"),
@@ -701,6 +834,19 @@ async def run_tick(
             try:
                 result = await asyncio.to_thread(agent_runner, candidate, prompt)
             except Exception as exc:
+                result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout="",
+                    stderr=str(exc),
+                    state="failed",
+                    verdict="blocked",
+                    summary=f"Agent crashed: {exc}",
+                    ended_at=now().isoformat(),
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter, candidate.id, f"Agent crashed: {exc}",
@@ -719,12 +865,25 @@ async def run_tick(
             if result.timed_out:
                 msg = f"Agent timed out after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
+                summary = _extract_summary(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
                     claim_dt, now,
                     duration_ms=result.duration_ms,
                     verdict="timeout",
+                )
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=stdout,
+                    stderr=stderr,
+                    state="failed",
+                    verdict="blocked",
+                    summary=summary or "Agent timed out.",
+                    ended_at=now().isoformat(),
                 )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
@@ -736,12 +895,25 @@ async def run_tick(
             if result.exit_code != 0:
                 msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
+                summary = _extract_summary(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
                     claim_dt, now,
                     duration_ms=result.duration_ms,
                     verdict="nonzero",
+                )
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=stdout,
+                    stderr=stderr,
+                    state="failed",
+                    verdict="blocked",
+                    summary=summary or f"Agent failed with exit code {result.exit_code}.",
+                    ended_at=now().isoformat(),
                 )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
@@ -768,8 +940,21 @@ async def run_tick(
 
             if _hit_permission_gate(stdout, stderr):
                 msg = "Agent could not complete because required tool access was denied."
+                summary = _extract_summary(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=stdout,
+                    stderr=stderr,
+                    state="failed",
+                    verdict="blocked",
+                    summary=summary or msg,
+                    ended_at=now().isoformat(),
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
@@ -785,8 +970,21 @@ async def run_tick(
 
             if _hit_approval_gate(stdout, stderr):
                 msg = "Agent could not complete because operator approval is required."
+                summary = _extract_summary(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=stdout,
+                    stderr=stderr,
+                    state="failed",
+                    verdict="blocked",
+                    summary=summary or msg,
+                    ended_at=now().isoformat(),
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
@@ -827,6 +1025,18 @@ async def run_tick(
                     duration_ms=result.duration_ms,
                     verdict="agent-marker-blocked",
                 )
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=stdout,
+                    stderr=stderr,
+                    state="failed",
+                    verdict="blocked",
+                    summary=summary or "Agent reported a blocked result.",
+                    ended_at=now().isoformat(),
+                )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
@@ -849,6 +1059,18 @@ async def run_tick(
 
             reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
             completion_body = _completion_body(reason_code)
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                stdout=stdout,
+                stderr=stderr,
+                state="succeeded",
+                verdict=verdict or "review",
+                summary=summary,
+                ended_at=now().isoformat(),
+            )
             try:
                 await adapter.add_comment(
                     candidate.id,

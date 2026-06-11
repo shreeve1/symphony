@@ -62,6 +62,7 @@ bindings:
           role: admin
   - name: trading
     type: coding
+    tracker: podium
     plane_project_id: 201a3995-c738-4f5a-acbe-7608f302301e
     repo_path: /home/james/trading/crypto-trading-agents
     base_branch: main
