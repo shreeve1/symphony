@@ -60,7 +60,8 @@ function useCreateIssue(binding: string) {
 				);
 				return replaced.filter(
 					(issue, index) =>
-						replaced.findIndex((candidate) => candidate.id === issue.id) === index,
+						replaced.findIndex((candidate) => candidate.id === issue.id) ===
+						index,
 				);
 			});
 		},

@@ -161,7 +161,9 @@ export async function fetchRunLog(id: number): Promise<string | null> {
 	const res = await fetch(`/api/runs/${id}/log`);
 	if (res.status === 404) return null;
 	if (!res.ok) {
-		throw new Error(`GET /api/runs/${id}/log -> ${res.status} ${res.statusText}`);
+		throw new Error(
+			`GET /api/runs/${id}/log -> ${res.status} ${res.statusText}`,
+		);
 	}
 	return res.text();
 }

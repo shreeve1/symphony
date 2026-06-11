@@ -24,7 +24,12 @@ from notifier import (
     format_review_message,
 )
 
-from plane_adapter import CandidateIssue, CommentPayload, PlaneRateLimitError, TrackerAdapter
+from plane_adapter import (
+    CandidateIssue,
+    CommentPayload,
+    PlaneRateLimitError,
+    TrackerAdapter,
+)
 from schedule import (
     CandidateComment,
     ScheduleEvent,
@@ -73,7 +78,6 @@ SCHEDULED_LABEL_WINDOW_END_HOUR = 6
 SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
-
 
 
 @dataclass
@@ -307,9 +311,7 @@ def _collect_secrets(config: SymphonyConfig) -> list[str]:
     return secrets
 
 
-def _format_report(
-    result: AgentResult, secrets: Sequence[str]
-) -> tuple[str, str]:
+def _format_report(result: AgentResult, secrets: Sequence[str]) -> tuple[str, str]:
     stdout = _sanitize_report(result.stdout, secrets)
     stderr = _sanitize_report(result.stderr, secrets)
     return stdout, stderr
@@ -368,7 +370,10 @@ def _format_previous_comment_body(body: str) -> str:
     stripped = body.strip()
     if len(stripped) <= PREVIOUS_COMMENT_MAX_CHARS:
         return stripped
-    first_line = next((line.strip() for line in stripped.splitlines() if line.strip()), "Previous comment")
+    first_line = next(
+        (line.strip() for line in stripped.splitlines() if line.strip()),
+        "Previous comment",
+    )
     if len(first_line) > 180:
         first_line = first_line[:179].rstrip() + "…"
     tail = stripped[-PREVIOUS_COMMENT_TAIL_CHARS:].strip()
@@ -379,9 +384,7 @@ def _format_previous_comment_body(body: str) -> str:
     )
 
 
-def _extract_summary(
-    result: AgentResult, secrets: Sequence[str]
-) -> str | None:
+def _extract_summary(result: AgentResult, secrets: Sequence[str]) -> str | None:
     """Pull SYMPHONY_SUMMARY from the raw streams and apply secret redaction.
 
     Summary extraction runs against the *unsanitized* stdout/stderr because
@@ -403,10 +406,7 @@ def _extract_summary(
 def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
-        "## stdout\n\n"
-        f"{stdout}\n\n"
-        "## stderr\n\n"
-        f"{stderr}\n",
+        f"## stdout\n\n{stdout}\n\n## stderr\n\n{stderr}\n",
         encoding="utf-8",
     )
 
@@ -425,7 +425,9 @@ def _worktree_run_fields(
     )
     issue_id = str(candidate.id)
     return {
-        "worktree_path": str(worktree_dir(config.homelab_repo_path, binding_name, issue_id)),
+        "worktree_path": str(
+            worktree_dir(config.homelab_repo_path, binding_name, issue_id)
+        ),
         "branch_name": branch_name(binding_name, issue_id),
         "base_branch": base_branch,
     }
@@ -599,7 +601,9 @@ def _final_non_empty_line(body: str) -> str | None:
     return None
 
 
-def _validate_issue_plan_path(repo_path: Path, issue: CandidateIssue, raw_path: str) -> Path:
+def _validate_issue_plan_path(
+    repo_path: Path, issue: CandidateIssue, raw_path: str
+) -> Path:
     expected = _expected_plan_path(repo_path, issue)
     plans_dir = (repo_path / "plans").resolve()
     candidate = Path(raw_path).expanduser().resolve()
@@ -616,7 +620,9 @@ def _validate_issue_plan_path(repo_path: Path, issue: CandidateIssue, raw_path: 
     return candidate
 
 
-def _validated_fallback_plan_path(repo_path: Path, issue: CandidateIssue) -> Path | None:
+def _validated_fallback_plan_path(
+    repo_path: Path, issue: CandidateIssue
+) -> Path | None:
     expected = _expected_plan_path(repo_path, issue)
     try:
         return _validate_issue_plan_path(repo_path, issue, str(expected))
@@ -645,7 +651,9 @@ async def run_tick(
     is_coding = len(config.bindings) > 0 and config.bindings[0].binding_type == "coding"
 
     if dispatch_state is not None:
-        await reconcile_pending_review(config, adapter, dispatch_state, notifier=notifier)
+        await reconcile_pending_review(
+            config, adapter, dispatch_state, notifier=notifier
+        )
 
     try:
         await reconcile_stale_running(
@@ -655,7 +663,11 @@ async def run_tick(
             notifier=notifier,
             dispatch_state=dispatch_state,
         )
-        if config.blocked_reconciler_enabled and not is_coding and run_blocked_reconciler:
+        if (
+            config.blocked_reconciler_enabled
+            and not is_coding
+            and run_blocked_reconciler
+        ):
             try:
                 await reconcile_blocked(
                     adapter,
@@ -665,21 +677,25 @@ async def run_tick(
             except PlaneRateLimitError:
                 raise
             except Exception as exc:
-                LOGGER.warning(
-                    "blocked_reconcile_failed error=%s", exc, exc_info=True
-                )
+                LOGGER.warning("blocked_reconcile_failed error=%s", exc, exc_info=True)
         scheduled_reserved = False
-        scheduled = None if is_coding else await _select_scheduled_candidate(adapter, now=now)
+        scheduled = (
+            None if is_coding else await _select_scheduled_candidate(adapter, now=now)
+        )
     except PlaneRateLimitError:
         raise
     if scheduled is not None:
         if scheduled.reason == "scheduled-release":
             candidate = scheduled.candidate
-            if not await _reserve_specific_candidate(candidate, dispatch_state=dispatch_state):
+            if not await _reserve_specific_candidate(
+                candidate, dispatch_state=dispatch_state
+            ):
                 return TickResult(False, "already-in-flight", candidate.id)
             scheduled_reserved = True
             try:
-                released_event = await _release_scheduled_candidate(adapter, candidate.id, scheduled.event)
+                released_event = await _release_scheduled_candidate(
+                    adapter, candidate.id, scheduled.event
+                )
             except PlaneRateLimitError:
                 raise
             except Exception as exc:
@@ -696,10 +712,14 @@ async def run_tick(
                         dashboard_url=_du,
                     )
                 finally:
-                    await _release_candidate(candidate.id, dispatch_state=dispatch_state)
+                    await _release_candidate(
+                        candidate.id, dispatch_state=dispatch_state
+                    )
                     scheduled_reserved = False
                 return TickResult(False, "scheduled-release-failed", candidate.id)
-            candidate = _with_schedule_context(scheduled.candidate, released_event, now=now())
+            candidate = _with_schedule_context(
+                scheduled.candidate, released_event, now=now()
+            )
         elif scheduled.reason == "scheduled-missing":
             _iu, _du = _build_urls(config, scheduled.candidate.id)
             await _block_issue(
@@ -727,7 +747,9 @@ async def run_tick(
             )
             return TickResult(False, "scheduled-malformed", scheduled.candidate.id)
         elif scheduled.reason == "scheduled-cancelled":
-            await _repair_cancelled_schedule(adapter, scheduled.candidate.id, scheduled.event)
+            await _repair_cancelled_schedule(
+                adapter, scheduled.candidate.id, scheduled.event
+            )
             return TickResult(False, "scheduled-cancelled", scheduled.candidate.id)
         else:
             candidate = None
@@ -735,8 +757,12 @@ async def run_tick(
         candidate = None
 
     try:
-        candidates = [] if candidate is not None else await _maybe_await(
-            poller(adapter) if poller is not None else adapter.list_candidates()
+        candidates = (
+            []
+            if candidate is not None
+            else await _maybe_await(
+                poller(adapter) if poller is not None else adapter.list_candidates()
+            )
         )
     except PlaneRateLimitError:
         raise
@@ -755,14 +781,17 @@ async def run_tick(
             dispatch_state=dispatch_state,
         )
     elif not scheduled_reserved and not await _reserve_specific_candidate(
-        candidate, dispatch_state=dispatch_state,
+        candidate,
+        dispatch_state=dispatch_state,
     ):
         return TickResult(False, "already-in-flight", candidate.id)
     if candidate is None:
         return TickResult(False, "no-candidates")
 
     try:
-        if approval_policy_enabled and adapter.labels_contain_role(candidate.labels, TrackerRole.APPROVAL_REQUIRED):
+        if approval_policy_enabled and adapter.labels_contain_role(
+            candidate.labels, TrackerRole.APPROVAL_REQUIRED
+        ):
             return TickResult(False, "approval-required", candidate.id)
 
         mode = _resolve_mode(candidate.labels, adapter.contract)
@@ -772,7 +801,9 @@ async def run_tick(
             return TickResult(False, "state-changed", candidate.id)
         label_ids = adapter.contract.label_ids if adapter.contract else None
         fresh_labels = _extract_labels(fresh, label_ids=label_ids)
-        if approval_policy_enabled and adapter.labels_contain_role(fresh_labels, TrackerRole.APPROVAL_REQUIRED):
+        if approval_policy_enabled and adapter.labels_contain_role(
+            fresh_labels, TrackerRole.APPROVAL_REQUIRED
+        ):
             return TickResult(False, "approval-required", candidate.id)
 
         if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
@@ -787,11 +818,17 @@ async def run_tick(
                 except Exception as exc:
                     await adapter.add_comment(
                         candidate.id,
-                        CommentPayload(body=f"Build could not start: failed to remove stale `plan` label: {exc}"),
+                        CommentPayload(
+                            body=f"Build could not start: failed to remove stale `plan` label: {exc}"
+                        ),
                     )
-                    return TickResult(False, "stale-plan-label-remove-failed", candidate.id, mode=mode)
+                    return TickResult(
+                        False, "stale-plan-label-remove-failed", candidate.id, mode=mode
+                    )
 
-            plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
+            plan_path = _validated_fallback_plan_path(
+                config.homelab_repo_path, candidate
+            )
             if plan_path is None:
                 try:
                     await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
@@ -820,8 +857,15 @@ async def run_tick(
                         issue_url=_iu,
                         dashboard_url=_du,
                     )
-                    return TickResult(False, "build-plan-recovery-failed", candidate.id, mode=mode)
-                return TickResult(False, "build-plan-missing-returned-to-plan", candidate.id, mode=mode)
+                    return TickResult(
+                        False, "build-plan-recovery-failed", candidate.id, mode=mode
+                    )
+                return TickResult(
+                    False,
+                    "build-plan-missing-returned-to-plan",
+                    candidate.id,
+                    mode=mode,
+                )
 
         try:
             comments_text = await _fetch_issue_comments(adapter, candidate.id)
@@ -857,7 +901,9 @@ async def run_tick(
                 CommentPayload(body=f"{CLAIM_PREFIX}{claim_time}"),
             )
             claim_dt = datetime.fromisoformat(claim_time)
-            LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
+            LOGGER.info(
+                "issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time
+            )
 
             secrets = _collect_secrets(config)
 
@@ -879,9 +925,14 @@ async def run_tick(
                 )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
-                    adapter, candidate.id, f"Agent crashed: {exc}",
-                    issue_name=candidate.name, issue_identifier=candidate.identifier,
-                    notifier=notifier, issue_url=_iu, dashboard_url=_du,
+                    adapter,
+                    candidate.id,
+                    f"Agent crashed: {exc}",
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "agent-crashed", candidate.id, mode=mode)
 
@@ -899,7 +950,8 @@ async def run_tick(
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
-                    claim_dt, now,
+                    claim_dt,
+                    now,
                     duration_ms=result.duration_ms,
                     verdict="timeout",
                 )
@@ -917,9 +969,14 @@ async def run_tick(
                 )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
-                    adapter, candidate.id, msg,
-                    issue_name=candidate.name, issue_identifier=candidate.identifier,
-                    notifier=notifier, issue_url=_iu, dashboard_url=_du,
+                    adapter,
+                    candidate.id,
+                    msg,
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "timeout", candidate.id, mode=mode)
             if result.exit_code != 0:
@@ -929,7 +986,8 @@ async def run_tick(
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
-                    claim_dt, now,
+                    claim_dt,
+                    now,
                     duration_ms=result.duration_ms,
                     verdict="nonzero",
                 )
@@ -942,14 +1000,20 @@ async def run_tick(
                     stderr=stderr,
                     state="failed",
                     verdict="blocked",
-                    summary=summary or f"Agent failed with exit code {result.exit_code}.",
+                    summary=summary
+                    or f"Agent failed with exit code {result.exit_code}.",
                     ended_at=now().isoformat(),
                 )
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
-                    adapter, candidate.id, msg,
-                    issue_name=candidate.name, issue_identifier=candidate.identifier,
-                    notifier=notifier, issue_url=_iu, dashboard_url=_du,
+                    adapter,
+                    candidate.id,
+                    msg,
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
                 )
                 return TickResult(True, "nonzero", candidate.id, mode=mode)
 
@@ -966,10 +1030,14 @@ async def run_tick(
                     config=config,
                 )
                 if scheduled_after_agent is not None:
-                    return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
+                    return TickResult(
+                        True, scheduled_after_agent, candidate.id, mode=mode
+                    )
 
             if _hit_permission_gate(stdout, stderr):
-                msg = "Agent could not complete because required tool access was denied."
+                msg = (
+                    "Agent could not complete because required tool access was denied."
+                )
                 summary = _extract_summary(result, secrets)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
@@ -1037,7 +1105,8 @@ async def run_tick(
                 else:
                     body = "**Symphony completed:** Agent finished without a summary."
                 body += "\n\n" + _format_timeline(
-                    claim_dt, now,
+                    claim_dt,
+                    now,
                     duration_ms=result.duration_ms,
                     verdict=verdict_label,
                 )
@@ -1051,7 +1120,8 @@ async def run_tick(
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
-                    claim_dt, now,
+                    claim_dt,
+                    now,
                     duration_ms=result.duration_ms,
                     verdict="agent-marker-blocked",
                 )
@@ -1087,7 +1157,11 @@ async def run_tick(
                 if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
                     return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
-            reason_code = "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
+            reason_code = (
+                "agent-marker-review"
+                if verdict in {"review", "done"}
+                else "agent-clean-review"
+            )
             completion_body = _completion_body(reason_code)
             await _finish_run_record(
                 adapter,
@@ -1113,11 +1187,15 @@ async def run_tick(
                     if stderr:
                         context_parts.append(f"## Agent stderr\n\n```\n{stderr}\n```")
                     if context_parts:
-                        await adapter.append_context(candidate.id, "\n\n".join(context_parts))
+                        await adapter.append_context(
+                            candidate.id, "\n\n".join(context_parts)
+                        )
             except PlaneRateLimitError:
                 if dispatch_state is not None:
                     dispatch_state.pending_review_issue_ids.add(candidate.id)
-                    dispatch_state.pending_completion_bodies[candidate.id] = completion_body
+                    dispatch_state.pending_completion_bodies[candidate.id] = (
+                        completion_body
+                    )
                     LOGGER.info(
                         "pending_review_queued issue_id=%s reason=%s (post-agent comment/context rate-limited)",
                         candidate.id,
@@ -1125,7 +1203,9 @@ async def run_tick(
                     )
                 raise
             try:
-                await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+                await adapter.transition_state(
+                    candidate.id, TrackerRole.STATE_IN_REVIEW
+                )
             except PlaneRateLimitError:
                 if dispatch_state is not None:
                     dispatch_state.pending_review_issue_ids.add(candidate.id)
@@ -1142,7 +1222,9 @@ async def run_tick(
             )
             _iu, _du = _build_urls(config, candidate.id)
             await _notify_review(
-                notifier, candidate.name, candidate.identifier,
+                notifier,
+                candidate.name,
+                candidate.identifier,
                 reason=(
                     "Conversation response ready"
                     if mode == "conversation"
@@ -1218,7 +1300,9 @@ async def reconcile_pending_review(
             dispatch_state.pending_review_issue_ids.discard(issue_id)
             dispatch_state.pending_completion_bodies.pop(issue_id, None)
             continue
-        issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        issue_identifier = str(
+            issue.get("sequence_id") or issue.get("identifier") or issue_id
+        )
         comment_body = dispatch_state.pending_completion_bodies.get(issue_id)
         if comment_body:
             try:
@@ -1266,7 +1350,9 @@ async def reconcile_stale_running(
             continue
         elapsed = now() - claim_time
         issue_name = str(issue.get("name", ""))
-        issue_identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        issue_identifier = str(
+            issue.get("sequence_id") or issue.get("identifier") or issue_id
+        )
         if elapsed > timeout_delta:
             await _block_issue(
                 adapter,
@@ -1306,16 +1392,22 @@ async def reconcile_startup(
         max_pages=SCHEDULED_RELEASE_MAX_PAGES_PER_TICK,
     ):
         issue_id = str(issue["id"])
-        identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        identifier = str(
+            issue.get("sequence_id") or issue.get("identifier") or issue_id
+        )
         claim_time = await _claimed_at(adapter, issue_id)
-        if claim_time is not None and (now() - claim_time) <= timedelta(milliseconds=config.run_timeout_ms):
+        if claim_time is not None and (now() - claim_time) <= timedelta(
+            milliseconds=config.run_timeout_ms
+        ):
             continue
-        stale_running_issues.append({
-            "id": issue_id,
-            "identifier": identifier,
-            "name": issue.get("name", ""),
-            "claim_time": claim_time,
-        })
+        stale_running_issues.append(
+            {
+                "id": issue_id,
+                "identifier": identifier,
+                "name": issue.get("name", ""),
+                "claim_time": claim_time,
+            }
+        )
 
     for issue in stale_running_issues:
         issue_url, dashboard_url = _build_urls(config, issue["id"])
@@ -1353,7 +1445,12 @@ def init_run_semaphore(config: SymphonyConfig) -> None:
     Called once at startup and when the cap changes. Must be called before
     run_loop uses the semaphore.
     """
-    global _RUN_SEMAPHORE, _POLL_INTERVAL_S, _IN_FLIGHT_ISSUE_IDS, _IN_FLIGHT_LOCK, _PLANE_COOLDOWN_UNTIL
+    global \
+        _RUN_SEMAPHORE, \
+        _POLL_INTERVAL_S, \
+        _IN_FLIGHT_ISSUE_IDS, \
+        _IN_FLIGHT_LOCK, \
+        _PLANE_COOLDOWN_UNTIL
     _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
     _POLL_INTERVAL_S = config.poll_interval_ms / 1000
     _IN_FLIGHT_ISSUE_IDS = set()
@@ -1426,7 +1523,9 @@ async def run_loop(
                 result.issue_id or "",
             )
         active_tasks -= done
-        cooldown_remaining = _cooldown_remaining_s(state, now=lambda now_dt=now_dt: now_dt)
+        cooldown_remaining = _cooldown_remaining_s(
+            state, now=lambda now_dt=now_dt: now_dt
+        )
 
         if run_blocked_reconcile:
             next_blocked_reconcile_at = now_dt + timedelta(
@@ -1441,7 +1540,15 @@ async def run_loop(
         slots_available = config.run_cap - len(active_tasks)
         if slots_available > 0 and cooldown_remaining <= 0:
             task = asyncio.create_task(
-                _dispatch_one(config, adapter, agent_runner, render_prompt, notifier, run_blocked_reconcile, state)
+                _dispatch_one(
+                    config,
+                    adapter,
+                    agent_runner,
+                    render_prompt,
+                    notifier,
+                    run_blocked_reconcile,
+                    state,
+                )
             )
             active_tasks.add(task)
 
@@ -1493,11 +1600,7 @@ async def _reserve_candidate(
     lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
     ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
     async with lock:
-        available = [
-            candidate
-            for candidate in candidates
-            if candidate.id not in ids
-        ]
+        available = [candidate for candidate in candidates if candidate.id not in ids]
         selected = _oldest_candidate(
             available,
             contract,
@@ -1544,7 +1647,9 @@ def _oldest_candidate(
         for issue in candidates
         if (
             not approval_policy_enabled
-            or not _labels_contain_role(issue.labels, contract, TrackerRole.APPROVAL_REQUIRED)
+            or not _labels_contain_role(
+                issue.labels, contract, TrackerRole.APPROVAL_REQUIRED
+            )
         )
         and not _labels_contain_role(issue.labels, contract, TrackerRole.SCHEDULED)
     ]
@@ -1581,10 +1686,14 @@ async def _select_scheduled_candidate(
         if event.is_cancellation:
             return _ScheduledSelection(candidate, "scheduled-cancelled", event=event)
         if event.not_before is None:
-            return _ScheduledSelection(candidate, "scheduled-malformed", error="not_before missing")
+            return _ScheduledSelection(
+                candidate, "scheduled-malformed", error="not_before missing"
+            )
         if event.not_before > now_dt:
             continue
-        due.append((event.not_before, candidate.created_at, candidate.id, candidate, event))
+        due.append(
+            (event.not_before, candidate.created_at, candidate.id, candidate, event)
+        )
     if not due:
         return None
     _, _, _, candidate, event = sorted(due, key=lambda item: item[:3])[0]
@@ -1617,7 +1726,11 @@ def _with_schedule_context(
 
 def _default_scheduled_label_event(now_dt: datetime) -> ScheduleEvent:
     local_now = now_dt.astimezone(SCHEDULED_LABEL_WINDOW_TZ)
-    if SCHEDULED_LABEL_WINDOW_START_HOUR <= local_now.hour < SCHEDULED_LABEL_WINDOW_END_HOUR:
+    if (
+        SCHEDULED_LABEL_WINDOW_START_HOUR
+        <= local_now.hour
+        < SCHEDULED_LABEL_WINDOW_END_HOUR
+    ):
         window_start = local_now.replace(
             hour=SCHEDULED_LABEL_WINDOW_START_HOUR,
             minute=0,
@@ -1642,7 +1755,9 @@ def _default_scheduled_label_event(now_dt: datetime) -> ScheduleEvent:
     )
 
 
-def _response_items(response: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _response_items(
+    response: dict[str, Any] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     if isinstance(response, list):
         return response
     results = response.get("results")
@@ -1663,7 +1778,9 @@ def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _candidate_from_issue(issue: dict[str, Any], *, labels: tuple[str, ...]) -> CandidateIssue:
+def _candidate_from_issue(
+    issue: dict[str, Any], *, labels: tuple[str, ...]
+) -> CandidateIssue:
     issue_id = str(issue.get("id", ""))
     identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
     return CandidateIssue(
@@ -1676,7 +1793,9 @@ def _candidate_from_issue(issue: dict[str, Any], *, labels: tuple[str, ...]) -> 
     )
 
 
-async def _latest_schedule_event(adapter: TrackerAdapter, issue_id: str) -> ScheduleEvent | None:
+async def _latest_schedule_event(
+    adapter: TrackerAdapter, issue_id: str
+) -> ScheduleEvent | None:
     comments: list[CandidateComment] = []
     for idx, comment in enumerate(await adapter.list_comments(issue_id)):
         created = _parse_optional_datetime(comment.get("created_at"))
@@ -1746,7 +1865,9 @@ async def _repair_cancelled_schedule(
     reason = event.reason if event is not None else "unknown"
     await adapter.add_comment(
         issue_id,
-        CommentPayload(body=f"Symphony schedule cancellation repaired stale scheduled label: {reason}"),
+        CommentPayload(
+            body=f"Symphony schedule cancellation repaired stale scheduled label: {reason}"
+        ),
     )
     await adapter.remove_labels(issue_id, [TrackerRole.SCHEDULED])
 
@@ -1875,7 +1996,9 @@ async def _notify_review(
     try:
         await notifier.send(
             format_review_message(
-                issue_name, issue_identifier, reason,
+                issue_name,
+                issue_identifier,
+                reason,
                 issue_url=issue_url,
                 dashboard_url=dashboard_url,
             )
@@ -1902,7 +2025,9 @@ async def _block_issue(
         try:
             await notifier.send(
                 format_blocked_message(
-                    issue_name, issue_identifier, message,
+                    issue_name,
+                    issue_identifier,
+                    message,
                     issue_url=issue_url,
                     dashboard_url=dashboard_url,
                 )
@@ -1911,7 +2036,9 @@ async def _block_issue(
             LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)
 
 
-def _is_state(issue: dict[str, Any], adapter: TrackerAdapter, state: TrackerRole) -> bool:
+def _is_state(
+    issue: dict[str, Any], adapter: TrackerAdapter, state: TrackerRole
+) -> bool:
     current = issue.get("state")
     state_name = adapter.contract.state_name_for_role(state)
     wanted = {state_name, adapter.contract.state_value_for_role(state)}
@@ -1939,6 +2066,3 @@ def _extract_labels(
             if isinstance(name, str):
                 names.append(name)
     return tuple(names)
-
-
-

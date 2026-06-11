@@ -289,7 +289,9 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     if "binding_name" in result and "id" in result:
-        result.update(_worktree_metadata(str(result["binding_name"]), str(result["id"])))
+        result.update(
+            _worktree_metadata(str(result["binding_name"]), str(result["id"]))
+        )
     return result
 
 
@@ -760,7 +762,9 @@ async def _append_blocked_and_publish(
     connection.commit()
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     result = _row(row)
-    await websocket_hub.publish({"type": "issue.updated", "id": issue_id, "row": result})
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
     return result
 
 

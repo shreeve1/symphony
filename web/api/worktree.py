@@ -51,7 +51,9 @@ def create_worktree(
     wt_path.parent.mkdir(parents=True, exist_ok=True)
 
     branch_exists = (
-        _run_git(repo_path, ["show-ref", "--verify", f"refs/heads/{branch}"], check=False)
+        _run_git(
+            repo_path, ["show-ref", "--verify", f"refs/heads/{branch}"], check=False
+        )
         is not None
     )
     if branch_exists:
@@ -127,7 +129,9 @@ def merge_worktree(
     branch = branch_name(binding_name, issue_id)
 
     wt_path = worktree_dir(repo_path, binding_name, issue_id)
-    checkout_ok = _run_git(repo_path, ["checkout", base_branch], check=False) is not None
+    checkout_ok = (
+        _run_git(repo_path, ["checkout", base_branch], check=False) is not None
+    )
     if not checkout_ok:
         return (
             f"Auto-merge halted: checkout of base branch {base_branch} failed. "

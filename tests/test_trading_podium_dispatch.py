@@ -43,7 +43,9 @@ def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
     try:
         connection.executescript(SCHEMA_SQL)
         connection.execute("INSERT INTO binding(name) VALUES ('trading')")
-        connection.execute("INSERT INTO skill(name, description, source) VALUES ('/dev-build', '', 'test')")
+        connection.execute(
+            "INSERT INTO skill(name, description, source) VALUES ('/dev-build', '', 'test')"
+        )
         cursor = connection.execute(
             """
             INSERT INTO issue(
@@ -62,10 +64,14 @@ def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
 
 
 @pytest.mark.asyncio
-async def test_trading_podium_dispatch_records_run_log_and_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_trading_podium_dispatch_records_run_log_and_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     db_path = tmp_path / "podium.db"
     issue_id = _seed_db(db_path)
-    (tmp_path / "WORKFLOW.md").write_text("Repo policy. mode={{issue.mode}}", encoding="utf-8")
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
+    )
     config = _config(tmp_path)
     binding = config.bindings[0]
     adapter = PodiumTrackerAdapter(
@@ -249,7 +255,9 @@ async def test_trading_podium_dispatch_logs_colocate_with_resolved_db(
     assert "stdout body" in log_path.read_text(encoding="utf-8")
 
 
-def test_trading_binding_uses_podium_without_plane_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_trading_binding_uses_podium_without_plane_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     env = {
         "PLANE_API_URL": "https://plane.example.test",
         "PLANE_API_KEY": "fake-plane-key-for-tests",
