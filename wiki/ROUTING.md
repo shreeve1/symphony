@@ -64,8 +64,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Decisions
 
-- Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/adr-0002-generalize-symphony.md`, `analyses/adr-0003-worktree-per-run.md`, `analyses/adr-0004-tracker-contract.md`, `analyses/brainstorm-pi-swap.md`, `analyses/pi-swap-review-specs.md`, `sources/symphony-context.md`
-- Keywords: ADR, CONTEXT.md, design rationale, tradeoffs, deprecation, sortie, build vs buy, adapter seam, role indirection, brainstorm, locked decisions, rejected designs, audit loop
+- Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/adr-0002-generalize-symphony.md`, `analyses/adr-0003-worktree-per-run.md`, `analyses/adr-0004-tracker-contract.md`, `analyses/adr-0005-replace-plane-with-podium.md`, `analyses/brainstorm-pi-swap.md`, `analyses/pi-swap-review-specs.md`, `sources/symphony-context.md`
+- Keywords: ADR, CONTEXT.md, design rationale, tradeoffs, deprecation, sortie, build vs buy, adapter seam, role indirection, brainstorm, locked decisions, rejected designs, audit loop, retire Plane, Podium decision, Binding-is-Project, Skill subsumes Mode, Run first-class, worktree opt-in posture, tracker plane podium, ADR-0002 superseded, ADR-0001 ADR-0003 inert
 
 ## Plan History
 
@@ -79,8 +79,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Podium Web UI
 
-- Pages: `analyses/podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-09-ui-brainstorm-handoff.md`
-- Keywords: podium, web ui, kanban board, new issue, POST issues, IssueCreate, options endpoint, KNOWN_AGENTS, KNOWN_MODELS, branches dropdown, optimistic update, temp card, NewIssueModal, IssueFlyout, metadata chips, skill seeding, INSERT OR IGNORE, /diagnose, podium.db, PODIUM_DB_PATH, uvicorn 8090, next dev 8091, playwright e2e, persistent dev DB, FieldSelect, base_branch fallback
+- Pages: `concepts/podium-tracker.md`, `analyses/adr-0005-replace-plane-with-podium.md`, `analyses/podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `wiki/raw/sessions/2026-06-09-ui-brainstorm-handoff.md`
+- Keywords: podium, web ui, kanban board, new issue, POST issues, IssueCreate, IssuePatch, options endpoint, KNOWN_AGENTS, KNOWN_MODELS, branches dropdown, optimistic update, temp card, NewIssueModal, IssueFlyout, metadata chips, skill seeding, INSERT OR IGNORE, /diagnose, podium.db, PODIUM_DB_PATH, resolve_db_path, uvicorn 8090, next dev 8091, playwright e2e, persistent dev DB, FieldSelect, base_branch fallback, issue.state, run.state, queued running succeeded failed, todo in_review blocked done, check_same_thread, no-op guard, monotonic updated_at, 400 422 split, extra_forbidden, startup reaper, restart-orphan, Run table, latest_run_id, Binding-is-Project, Skill subsumes Mode, worktree_active opt-in, tracker plane podium, podium-api.service, podium-web.service, PODIUM_PASSWORD_HASH, Authelia 9091, comments_md, context_md, engine-built compaction, Alembic, schema.py, ADR-0005
 
 ## Tests
 

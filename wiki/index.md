@@ -30,6 +30,7 @@
 | [concepts/prompt-renderer.md](concepts/prompt-renderer.md) | `prompt_renderer.py` — variable set, untrusted-block escaping, schedule context, conversation Mode divergence | `prompt_renderer.py` | 2026-06-09 |
 | [concepts/schedule-comment-grammar.md](concepts/schedule-comment-grammar.md) | `Symphony-Schedule:` / `Symphony-Schedule-Cancelled:` grammar, hard invariants, sort precedence, HTML normalisation | `schedule.py` | 2026-06-09 |
 | [concepts/blocked-reconciler-implementation.md](concepts/blocked-reconciler-implementation.md) | `blocked_reconciler.py` — caps, regexes, `ReconcileRule` shape, default rule, skip conditions, log markers | `blocked_reconciler.py` | 2026-06-09 |
+| [concepts/podium-tracker.md](concepts/podium-tracker.md) | Podium tracker impl — two state enums, db-path chain, check_same_thread rationale, PATCH 400/422 split + no-op/monotonic guards, LAN-bind, seeding, slice→commit map | `web/api/schema.py`, `web/api/db.py`, `web/api/main.py`, `web/api/seed.py` | 2026-06-10 |
 
 ## Analyses
 
@@ -47,6 +48,7 @@
 | [analyses/symphony-tests-index.md](analyses/symphony-tests-index.md) | 14 test files, 435 tests — coverage map and validation contract | `tests/*.py` | 2026-06-09 |
 | [analyses/trading-smoke-rate-limit-debugging.md](analyses/trading-smoke-rate-limit-debugging.md) | Trading smoke debugging — post-agent Plane 429 recovery, shared cooldown, optional-label scan fix, conversation-mode landing-proof gap | session capture, `scheduler.py`, `prompt_renderer.py` | 2026-06-09 |
 | [analyses/podium-014-new-issue-flow.md](analyses/podium-014-new-issue-flow.md) | Podium #014 — POST issues endpoint contract, INSERT OR IGNORE seeding pivot, /options dropdown endpoint, optimistic modal UX, cross-slice constraints for #015/#020 | `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `web/api/main.py`, `web/api/seed.py` | 2026-06-10 |
+| [analyses/adr-0005-replace-plane-with-podium.md](analyses/adr-0005-replace-plane-with-podium.md) | ADR-0005 — retire Plane, build Podium; Binding-is-Project, Run first-class table + startup reaper, Skill subsumes Mode, worktree opt-in, tracker:plane\|podium seam, sibling units, rejected alternatives, ADR-0001/2/3 reconciliation | `wiki/raw/adr-0005-replace-plane-with-podium.md`, `docs/adr/0005-replace-plane-with-podium.md` | 2026-06-10 |
 
 ## Candidate Review Queue
 
