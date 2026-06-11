@@ -79,6 +79,8 @@ class PodiumTrackerAdapter:
     contract: TrackerContract = field(default_factory=lambda: PODIUM_CONTRACT)
 
     def __post_init__(self) -> None:
+        if self.db_path is None:
+            self.db_path = resolve_db_path()
         if self.contract is not PODIUM_CONTRACT:
             self.contract = replace(
                 self.contract,

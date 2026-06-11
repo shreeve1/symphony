@@ -136,6 +136,66 @@ async def test_trading_podium_dispatch_records_run_log_and_context(tmp_path: Pat
     assert "stderr body" in log
 
 
+@pytest.mark.asyncio
+async def test_trading_podium_dispatch_logs_colocate_with_resolved_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: construct the adapter the way ``main._build_binding_runtime``
+    does — no explicit ``db_path`` and no ``RUN_LOG_ROOT`` override. The run log
+    must land beside the resolved database, not at the unwritable
+    ``/var/lib/symphony/runs`` default that crashed the live cutover."""
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    # No db_path passed: __post_init__ must resolve it from PODIUM_DB_PATH.
+    adapter = PodiumTrackerAdapter(
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    assert adapter.db_path == db_path
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: ok\nstdout body",
+            stderr="stderr body",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+    issue = await adapter.get_issue(str(issue_id))
+    run = await adapter.get_run(str(issue["latest_run_id"]))
+
+    assert result.dispatched is True
+    assert run is not None
+    assert run["state"] == "succeeded"
+    log_path = Path(run["log_path"])
+    # Log co-locates with the resolved db, never the /var/lib/symphony default.
+    assert log_path == (db_path.parent / "runs" / f"{run['id']}.log").resolve()
+    assert log_path.is_file()
+    assert "stdout body" in log_path.read_text(encoding="utf-8")
+
+
 def test_trading_binding_uses_podium_without_plane_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     env = {
         "PLANE_API_URL": "https://plane.example.test",
