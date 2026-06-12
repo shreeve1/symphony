@@ -28,7 +28,10 @@ export async function authenticate(page: Page) {
 	expect(response.ok()).toBeTruthy();
 }
 
-export const test = base.extend<{ problems: PageProblems; authenticated: void }>({
+export const test = base.extend<{
+	problems: PageProblems;
+	authenticated: void;
+}>({
 	authenticated: [
 		async ({ page }, use) => {
 			await authenticate(page);
@@ -191,7 +194,9 @@ with connect() as connection:
     connection.commit()
     print(json.dumps({"issueId": issue_id, "runId": run_id, "logPath": str(log_path)}))
 `;
-	return runDbScript<{ issueId: number; runId: number; logPath: string }>(script);
+	return runDbScript<{ issueId: number; runId: number; logPath: string }>(
+		script,
+	);
 }
 
 export function finishRun(runId: number, logText: string) {

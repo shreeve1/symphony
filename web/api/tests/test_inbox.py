@@ -168,9 +168,7 @@ def _seed_inbox_issues(
         assert response.status_code == 201
         issue_id = response.json()["id"]
         # Set state directly since POST always creates as 'todo'.
-        patch_resp = client.patch(
-            f"/api/issues/{issue_id}", json={"state": state}
-        )
+        patch_resp = client.patch(f"/api/issues/{issue_id}", json={"state": state})
         assert patch_resp.status_code == 200
         ids.append(issue_id)
     return ids
@@ -179,9 +177,7 @@ def _seed_inbox_issues(
 def _archive_binding(client: TestClient, name: str) -> None:
     # Archive via direct DB write — no API endpoint for that yet.
     with main.connect() as connection:
-        connection.execute(
-            "UPDATE binding SET archived = TRUE WHERE name = ?", (name,)
-        )
+        connection.execute("UPDATE binding SET archived = TRUE WHERE name = ?", (name,))
         connection.commit()
 
 

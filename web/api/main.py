@@ -306,7 +306,6 @@ class ReplyCreate(BaseModel):
         return value
 
 
-
 # state (todo, running) returns 409.
 ALLOWED_REPLY_STATES = ("in_review", "blocked", "done")
 # Run states that mean a run is in flight; a reply during these races the run's
