@@ -3,12 +3,14 @@ title: Podium #018 Shared-Password Auth
 kind: analysis
 status: promoted
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 sources:
   - web/api/auth.py
   - web/api/main.py
   - web/api/tests/test_auth.py
   - web/cli/podium.py
+  - scripts/podium-change-password.sh
+  - web/README.md
   - web/cli/tests/test_skills_refresh.py
   - web/frontend/components/AppShell.tsx
   - web/frontend/app/login/page.tsx
@@ -40,9 +42,13 @@ Frontend e2e tests now authenticate through `page.request.post('/api/auth/login'
 
 `python -m web.cli.podium set-password` reads and confirms a password, prints `PODIUM_PASSWORD_HASH=<bcrypt>` to stdout, and does not write secrets to disk. Operator remains responsible for pasting the hash into the host env file [source: web/cli/podium.py] [source: web/cli/tests/test_skills_refresh.py].
 
+## Operational Helper
+
+`web/README.md` now documents password rotation under "Change Podium password": run the helper or manual CLI, paste only `PODIUM_PASSWORD_HASH=...` into `/home/james/symphony-host.env`, restart `podium-api.service`, and health-check `127.0.0.1:8090` [source: web/README.md]. The helper `scripts/podium-change-password.sh` wraps `uv run python -m web.cli.podium set-password`, prints next steps, and intentionally does not edit the env file or restart services [source: scripts/podium-change-password.sh]. Existing signed sessions remain valid after changing only the password hash; rotating `PODIUM_SESSION_SECRET` is the documented force-logout path [source: web/README.md] [source: scripts/podium-change-password.sh].
+
 ## Verification Evidence
 
-Automated coverage includes backend auth behavior, missing-secret startup failure, public health, CLI stdout-only hash generation, and Playwright redirect/login/board rendering [source: web/api/tests/test_auth.py] [source: web/cli/tests/test_skills_refresh.py] [source: web/frontend/tests/auth.spec.ts]. Ralph verification passed `uv run pytest`, `pnpm test:e2e`, `pnpm exec tsc --noEmit`, and touched-file LSP diagnostics with no critical errors.
+Automated coverage includes backend auth behavior, missing-secret startup failure, public health, CLI stdout-only hash generation, and Playwright redirect/login/board rendering [source: web/api/tests/test_auth.py] [source: web/cli/tests/test_skills_refresh.py] [source: web/frontend/tests/auth.spec.ts]. Ralph verification passed `uv run pytest`, `pnpm test:e2e`, `pnpm exec tsc --noEmit`, and touched-file LSP diagnostics with no critical errors. The password helper was syntax-checked with `bash -n scripts/podium-change-password.sh` and the docs/script diff passed `git diff --check` [source: scripts/podium-change-password.sh].
 
 ## Notes For Future Slices
 

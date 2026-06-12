@@ -1,0 +1,52 @@
+---
+title: Podium skill catalog refresh — CLI semantics, FK hazard, first live run
+type: analysis
+status: promoted
+created: 2026-06-12
+updated: 2026-06-12
+sources:
+  - web/cli/podium_skills.py
+  - web/cli/podium.py
+  - web/api/seed.py
+  - .claude/skills/symphony-skills/SKILL.md
+  - wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md
+confidence: high
+tags: [podium, skills, catalog, cli, sqlite, foreign-key, operations]
+---
+
+# Podium skill catalog refresh — CLI semantics, FK hazard, first live run
+
+First operator-confirmed live run of `python -m web.cli.podium skills refresh` (2026-06-12, via the `symphony-skills` skill) populated the Podium Skill dropdown and surfaced three durable behaviors of the refresh CLI. [source: wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md]
+
+## Dry-run is a catalog listing, not a diff
+
+`--dry-run` returns the full scanned catalog as `name\tdescription\tsource` TSV lines (`_format_record`). The `+`/`~`/`-` change markers exist only on the live path: `_apply_refresh` computes them while mutating the DB. [source: web/cli/podium_skills.py#L84-L85] [source: web/cli/podium_skills.py#L121-L140]
+
+`.claude/skills/symphony-skills/SKILL.md` workflow step 2 wrongly describes dry-run output as `+`/`~`/`-` lines. To preview the real diff today, compare `scan_skills()` output against the `skill` table read-only (done in-session), or accept the live run's printed markers as the after-the-fact record. Follow-up: fix the SKILL.md wording or make dry-run compute a true diff. [source: .claude/skills/symphony-skills/SKILL.md]
+
+## Single-source scan contract
+
+Default source is `~/.claude/skills` (`DEFAULT_SOURCE`) — on aidev a symlink to `/home/james/dotfiles/.claude/skills`. Repo-local `/home/james/symphony/.claude/skills/` (eleven `symphony-*` skills) is not scanned, so symphony-* skills are absent from the dropdown. [source: web/cli/podium_skills.py#L19]
+
+Refresh deletes every file-backed row absent from its own scan, so two sequential runs with different `--source` values clobber each other — there is no additive mode. Cataloging dotfiles plus repo-local skills requires a combined source directory or a code change. [source: web/cli/podium_skills.py#L135-L141]
+
+## FK deletion hazard and atomic rollback
+
+`issue.preferred_skill TEXT REFERENCES skill(name)` blocks the stale-row `DELETE`: the first live run aborted with `sqlite3.IntegrityError: FOREIGN KEY constraint failed` because 12 throwaway e2e issues (homelab, ids 5–16) referenced the legacy `/diagnose` seed row. The failure is clean — commit happens only after `_apply_refresh` returns, so the whole run rolled back with no partial writes (verified: 7 pre-refresh rows intact). Resolution, operator-approved: repoint the 12 issues to `diagnose`, rerun. [source: web/cli/podium_skills.py#L141] [source: wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md]
+
+Manual-row protection (`source = ''`) covers deletion only; the upsert overwrites any existing row whose name matches a scanned skill. The manual `diagnose` row was converted to file-backed this run. Operator-curated rows survive only if their names never collide with scanned skills. [source: web/cli/podium_skills.py#L138]
+
+## Skill seeding is retired
+
+`web/api/seed.py` no longer has `_seed_skills`/`SEED_SKILLS`; seeding covers bindings/issues/runs only, gated on an empty `binding` table. Removed seed rows (e.g. `/diagnose`) stay removed across `podium-api` restarts — the refresh CLI now owns the `skill` table, which resolves the C-0055 resurrection warning. [source: web/api/seed.py]
+
+## Resulting catalog state (2026-06-12)
+
+50 rows: 44 added from dotfiles, 4 updated (`blueprint`, `code-review`, `diagnose`, `tdd`), `/diagnose` seed removed, manual rows `catalog-alpha`/`catalog-bravo` untouched. Post-run: zero pending diff vs scan; `uv run pytest tests/skills/test_catalog_maintenance_skills.py` 6 passed. [source: wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md]
+
+## Follow-ups
+
+- Fix `symphony-skills` SKILL.md step 2 dry-run description.
+- Decide whether `symphony-*` repo-local skills belong in the dropdown; if yes, add multi-source or combined-dir support.
+- Consider graceful FK-referenced stale-row handling (skip + warn) instead of whole-run abort.
+- Consider protecting manual rows from upsert overwrite if curated descriptions matter.

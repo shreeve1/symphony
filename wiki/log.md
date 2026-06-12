@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-12] session-update | Podium password rotation helper
+
+- Actor: agent (Pi)
+- Inputs: operator request to make the successful Podium password-change workflow easier; `web/README.md`; `web/cli/podium.py`; `scripts/podium-change-password.sh`.
+- Outputs: added `scripts/podium-change-password.sh`; updated `web/README.md`; updated `wiki/analyses/podium-018-auth.md`; updated `wiki/CLAIMS.md` (C-0132); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured the low-risk helper/runbook path: generate the bcrypt hash via the existing CLI, leave env editing and `podium-api.service` restart as explicit operator steps, and document `PODIUM_SESSION_SECRET` rotation only for force-logout. Verification passed: `bash -n scripts/podium-change-password.sh` and `git diff --check`. No secrets, no `.env` contents, no live service restart.
+
 ## [2026-06-12] session-update | Claude Code hook harness personalization (re-applied)
 
 - Actor: agent (Claude, `personalize-harness` skill + wiki update)

@@ -19,6 +19,44 @@ Health check:
 curl -s http://localhost:8090/api/health
 ```
 
+## Change Podium password
+
+Use the helper from the repository root:
+
+```bash
+cd /home/james/symphony
+scripts/podium-change-password.sh
+```
+
+The helper runs the shared-password CLI, prints a new `PODIUM_PASSWORD_HASH=...`
+line, then prints the required operator steps. It does not edit secrets and does
+not restart services.
+
+Manual equivalent:
+
+```bash
+cd /home/james/symphony
+uv run python -m web.cli.podium set-password
+sudoedit /home/james/symphony-host.env
+sudo systemctl restart podium-api.service
+systemctl status podium-api.service --no-pager
+curl -s http://127.0.0.1:8090/api/health
+```
+
+Replace only `PODIUM_PASSWORD_HASH=...` in `/home/james/symphony-host.env`.
+Restarting `podium-api.service` is enough; `podium-web.service` does not validate
+passwords.
+
+Existing browser sessions remain valid after changing only the password hash. To
+force everyone to log in again, also rotate `PODIUM_SESSION_SECRET` in the same
+env file with a new value from:
+
+```bash
+openssl rand -hex 32
+```
+
+Then restart `podium-api.service`.
+
 ## SQLite path
 
 Default database path is:
