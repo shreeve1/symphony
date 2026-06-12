@@ -114,12 +114,18 @@ export interface IssueCreate {
 	base_branch?: string;
 }
 
-// Dropdown choices for the new-issue form. agents/models are static
-// server-side lists; branches are the live local branches of the binding's
+// Dropdown choices for the new-issue form. models come from models.yml with
+// an owning agent tag; branches are the live local branches of the binding's
 // repo (empty when unavailable).
+export interface ModelOption {
+	id: string;
+	agent: string;
+	label?: string;
+}
+
 export interface IssueOptions {
 	agents: string[];
-	models: string[];
+	models: ModelOption[];
 	branches: string[];
 }
 

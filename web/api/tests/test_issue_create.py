@@ -195,13 +195,69 @@ def test_options_returns_agents_models_and_branches(
     custom = tmp_path / "bindings.yml"
     custom.write_text(f"bindings:\n  - name: trading\n    repo_path: {repo}\n")
     monkeypatch.setattr(main, "BINDINGS_PATH", custom)
+    models = tmp_path / "models.yml"
+    models.write_text(
+        "models:\n"
+        "  - id: claude-fable-5\n"
+        "    agent: claude\n"
+        "  - id: glm-5.1:high\n"
+        "    agent: pi\n"
+        "    provider: zai\n"
+    )
+    monkeypatch.setattr(main, "MODELS_PATH", models)
 
     response = client.get("/api/bindings/trading/options")
     assert response.status_code == 200
     body = response.json()
     assert body["agents"] == ["pi", "claude"]
-    assert "claude-fable-5" in body["models"]
+    assert body["models"] == [
+        {"id": "claude-fable-5", "agent": "claude"},
+        {"id": "glm-5.1:high", "agent": "pi", "provider": "zai"},
+    ]
     assert body["branches"] == ["develop", "main"]
+
+
+def test_models_validator_rejects_invalid_catalogs() -> None:
+    assert main._validate_models(
+        {"models": [{"id": "claude-fable-5", "agent": "claude"}]}
+    ) == [{"id": "claude-fable-5", "agent": "claude"}]
+
+    with pytest.raises(ValueError, match="id is required"):
+        main._validate_models({"models": [{"agent": "claude"}]})
+    with pytest.raises(ValueError, match="agent must be one of"):
+        main._validate_models({"models": [{"id": "bad", "agent": "bad"}]})
+    with pytest.raises(ValueError, match="duplicate model id"):
+        main._validate_models(
+            {
+                "models": [
+                    {"id": "claude-fable-5", "agent": "claude"},
+                    {"id": "claude-fable-5", "agent": "claude"},
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize("content", [None, ": not [ yaml", "models:\n  - id: x\n    agent: bad\n"])
+def test_options_models_degrade_to_empty_on_bad_catalog(
+    client: TestClient, monkeypatch, tmp_path, content: str | None
+) -> None:
+    catalog = tmp_path / "models.yml"
+    if content is not None:
+        catalog.write_text(content)
+    monkeypatch.setattr(main, "MODELS_PATH", catalog)
+
+    response = client.get("/api/bindings/trading/options")
+    assert response.status_code == 200
+    assert response.json()["models"] == []
+
+
+def test_create_accepts_free_text_model_not_in_catalog(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/trading/issues",
+        json={"title": "custom model", "preferred_model": "unlisted-model"},
+    )
+    assert response.status_code == 201
+    assert response.json()["preferred_model"] == "unlisted-model"
 
 
 def test_options_unknown_binding_returns_404(client: TestClient) -> None:

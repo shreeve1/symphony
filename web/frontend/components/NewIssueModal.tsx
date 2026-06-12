@@ -9,6 +9,7 @@ import {
 	fetchSkills,
 	type Issue,
 	type IssueCreate,
+	type ModelOption,
 } from "@/lib/api";
 
 const EFFORTS = ["minimal", "low", "medium", "high"] as const;
@@ -97,39 +98,103 @@ export function NewIssueButton({ binding }: { binding: string }) {
 	);
 }
 
-// One labelled dropdown in the form grid. The empty option ("—" plus a hint
-// of what the server will default to) means "omit from the POST".
-function FieldSelect({
+type ComboOption = { value: string; label?: string };
+
+function labelFor(options: readonly ComboOption[], value: string) {
+	return options.find((option) => option.value === value)?.label ?? value;
+}
+
+// Searchable zero-dependency combobox. Free-text mode updates the submitted
+// value as the operator types; selection-only mode only submits clicked options.
+function FieldCombobox({
 	label,
 	testid,
 	value,
 	onChange,
 	options,
 	emptyHint,
+	allowFreeText = false,
 }: {
 	label: string;
 	testid: string;
 	value: string;
 	onChange: (value: string) => void;
-	options: readonly string[];
+	options: readonly ComboOption[];
 	emptyHint?: string;
+	allowFreeText?: boolean;
 }) {
+	const [open, setOpen] = useState(false);
+	const [draft, setDraft] = useState(labelFor(options, value));
+	const normalizedDraft = draft.trim().toLowerCase();
+	const filtered = options.filter((option) => {
+		const label = option.label ?? option.value;
+		return (
+			!normalizedDraft ||
+			label.toLowerCase().includes(normalizedDraft) ||
+			option.value.toLowerCase().includes(normalizedDraft)
+		);
+	});
+
+	useEffect(() => {
+		setDraft(labelFor(options, value));
+	}, [options, value]);
+
+	const choose = (next: string) => {
+		onChange(next);
+		setDraft(labelFor(options, next));
+		setOpen(false);
+	};
+
 	return (
-		<label className="block flex-1 space-y-1">
+		<label className="relative block flex-1 space-y-1">
 			<span className="text-xs font-medium text-muted-foreground">{label}</span>
-			<select
+			<input
 				data-testid={testid}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				className="w-full cursor-pointer rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none"
-			>
-				<option value="">{emptyHint ? `— (${emptyHint})` : "—"}</option>
-				{options.map((option) => (
-					<option key={option} value={option}>
-						{option}
-					</option>
-				))}
-			</select>
+				value={draft}
+				placeholder={emptyHint ? `— (${emptyHint})` : "—"}
+				onFocus={() => setOpen(true)}
+				onChange={(e) => {
+					setDraft(e.target.value);
+					setOpen(true);
+					if (allowFreeText) onChange(e.target.value);
+					if (!allowFreeText && e.target.value === "") onChange("");
+				}}
+				onBlur={() => {
+					setOpen(false);
+					if (!allowFreeText) setDraft(labelFor(options, value));
+				}}
+				className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+			/>
+			{open && (
+				<div className="absolute z-50 mt-1 max-h-44 w-full overflow-auto rounded-md border bg-background p-1 shadow-lg">
+					<button
+						type="button"
+						data-testid={`${testid}-option`}
+						onMouseDown={(e) => e.preventDefault()}
+						onClick={() => choose("")}
+						className="block w-full rounded px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted"
+					>
+						{emptyHint ? `— (${emptyHint})` : "—"}
+					</button>
+					{filtered.map((option) => (
+						<button
+							type="button"
+							key={option.value}
+							data-testid={`${testid}-option`}
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() => choose(option.value)}
+							className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
+						>
+							{option.label ?? option.value}
+						</button>
+					))}
+					{filtered.length === 0 && (
+						<div className="px-2 py-1.5 text-sm text-muted-foreground">
+							No matches
+						</div>
+					)}
+				</div>
+			)}
 		</label>
 	);
 }
@@ -160,6 +225,18 @@ function NewIssueModal({
 		queryFn: () => fetchIssueOptions(binding),
 	});
 	const skillNames = (skills.data ?? []).map((s) => s.name);
+	const skillOptions = skillNames.map((name) => ({ value: name }));
+	const agentOptions = (options.data?.agents ?? []).map((name) => ({ value: name }));
+	const modelOptions = (options.data?.models ?? [])
+		.filter((option: ModelOption) => !agent || option.agent === agent)
+		.map((option: ModelOption) => ({
+			value: option.id,
+			label: option.label ? `${option.label} (${option.id})` : option.id,
+		}));
+	const branchOptions = (options.data?.branches ?? []).map((name) => ({
+		value: name,
+	}));
+	const effortOptions = EFFORTS.map((name) => ({ value: name }));
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
 	useEffect(() => titleRef.current?.focus(), []);
@@ -239,19 +316,19 @@ function NewIssueModal({
 					</label>
 
 					<div className="flex gap-3">
-						<FieldSelect
+						<FieldCombobox
 							label="Skill"
 							testid="new-issue-skill"
 							value={skill}
 							onChange={setSkill}
-							options={skillNames}
+							options={skillOptions}
 						/>
-						<FieldSelect
+						<FieldCombobox
 							label="Effort"
 							testid="new-issue-effort"
 							value={effort}
 							onChange={setEffort}
-							options={EFFORTS}
+							options={effortOptions}
 							emptyHint="high"
 						/>
 					</div>
@@ -266,32 +343,35 @@ function NewIssueModal({
 					)}
 
 					<div className="flex gap-3">
-						<FieldSelect
+						<FieldCombobox
 							label="Agent"
 							testid="new-issue-agent"
 							value={agent}
 							onChange={setAgent}
-							options={options.data?.agents ?? []}
+							options={agentOptions}
 							emptyHint="binding default"
+							allowFreeText
 						/>
-						<FieldSelect
+						<FieldCombobox
 							label="Model"
 							testid="new-issue-model"
 							value={model}
 							onChange={setModel}
-							options={options.data?.models ?? []}
+							options={modelOptions}
 							emptyHint="provider default"
+							allowFreeText
 						/>
 					</div>
 
 					<div className="flex gap-3">
-						<FieldSelect
+						<FieldCombobox
 							label="Base branch"
 							testid="new-issue-base"
 							value={base}
 							onChange={setBase}
-							options={options.data?.branches ?? []}
+							options={branchOptions}
 							emptyHint="bindings.yml default"
+							allowFreeText
 						/>
 						<label className="flex flex-1 items-end gap-2 pb-1.5">
 							<input

@@ -46,6 +46,7 @@ get_connection = _db.get_connection
 INITIAL_REVISION = _schema.INITIAL_REVISION
 SCHEMA_SQL = _schema.SCHEMA_SQL
 BINDINGS_PATH = _seed.BINDINGS_PATH
+MODELS_PATH = BINDINGS_PATH.parent / "models.yml"
 _load_bindings = _seed._load_bindings
 seed_if_empty = _seed.seed_if_empty
 
@@ -390,29 +391,65 @@ def list_binding_issues(
 
 
 # Agents mirror the scheduler's validation set (config.py `_validate_agent`).
-# Models are a curated placeholder until a real catalog exists — the column
-# stays free text server-side, so the list only shapes the UI dropdown.
+# Models are authored config in models.yml; preferred_model remains free text.
 KNOWN_AGENTS = ["pi", "claude"]
-KNOWN_MODELS = [
-    "glm-5.1:high",
-    "claude-fable-5",
-    "claude-opus-4-8",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5",
-]
+
+
+def _validate_models(data: Any) -> list[dict[str, str]]:
+    """Validate the git-tracked model catalog shared by /options and tools."""
+    if not isinstance(data, dict):
+        raise ValueError("models.yml must contain a mapping")
+    models = data.get("models") or []
+    if not isinstance(models, list):
+        raise ValueError("models must be a list")
+
+    seen: set[str] = set()
+    result: list[dict[str, str]] = []
+    for index, item in enumerate(models):
+        if not isinstance(item, dict):
+            raise ValueError(f"models[{index}] must be a mapping")
+        model_id = item.get("id")
+        agent = item.get("agent")
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError(f"models[{index}].id is required")
+        if model_id in seen:
+            raise ValueError(f"duplicate model id: {model_id}")
+        if agent not in KNOWN_AGENTS:
+            raise ValueError(f"models[{index}].agent must be one of {KNOWN_AGENTS}")
+
+        entry = {"id": model_id, "agent": str(agent)}
+        for key in ("provider", "label"):
+            value = item.get(key)
+            if value is not None:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"models[{index}].{key} must be a string")
+                entry[key] = value
+        result.append(entry)
+        seen.add(model_id)
+    return result
+
+
+def _load_models(path: Path | None = None) -> list[dict[str, str]]:
+    catalog_path = path or MODELS_PATH
+    data = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    return _validate_models(data)
 
 
 @app.get("/api/bindings/{name}/options")
 def binding_issue_options(
     name: str,
     connection: sqlite3.Connection = Depends(get_connection),
-) -> dict[str, list[str]]:
-    """Dropdown choices for the new-issue form: static agent/model lists plus
-    the live local branches of the binding's repo."""
+) -> dict[str, list[Any]]:
+    """Dropdown choices for the new-issue form: static agent list, model
+    catalog, plus the live local branches of the binding's repo."""
     _get_binding_or_404(connection, name)
+    try:
+        models = _load_models()
+    except (OSError, yaml.YAMLError, ValueError):
+        models = []
     return {
         "agents": KNOWN_AGENTS,
-        "models": KNOWN_MODELS,
+        "models": models,
         "branches": _branches_for(name),
     }
 
