@@ -6,7 +6,11 @@ test("run detail opens from issue flyout and reloads its log", async ({
 }) => {
 	await page.goto("/trading");
 
-	await page.getByTestId("issue-card").first().click();
+	// Target the seeded running issue by title so extra seed data doesn't shift ordering.
+	await page
+		.getByTestId("issue-card")
+		.filter({ hasText: "Seed running issue for trading" })
+		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
 	await page.getByTestId("run-row").first().click();
