@@ -46,3 +46,5 @@ Submit prepends an optimistic temp card (negative id) to the `["issues", binding
 - Playwright specs write to the persistent dev DB by design (unique-title/idempotent-edit conventions); seed skills appear only after an API process restart since seeding runs in the FastAPI lifespan. Documented in `web/README.md`. [source: web/README.md]
 - Watch item: editing.spec and new-issue.spec both exercise `/homelab` in parallel; one transient flake observed. Serialize or split bindings if it recurs. [source: wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md#open-questions-and-follow-ups]
 - Free-text `preferred_agent`/`preferred_model` reach dispatch unvalidated; #020 must fall back to binding defaults (noted in its issue file). [source: wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md#durable-facts]
+
+> **2026-06-12 update:** `preferred_model` is no longer free-text-at-dispatch and `max_duration_seconds` was dropped (migration 0006). The dispatch contract now lives in [podium-issue-dispatch-contract.md](podium-issue-dispatch-contract.md).

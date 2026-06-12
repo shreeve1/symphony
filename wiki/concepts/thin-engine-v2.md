@@ -86,3 +86,5 @@ The SymphonyConfig constructor defaults pi_provider="zai", pi_model="glm-5.1:hig
 - [scheduler.py concepts](scheduler-loop.md) (existing promoted — needs is_coding section)
 - [agent-runner-and-worktree.md](../concepts/agent-runner-and-worktree.md) (existing promoted — stale, covered by this candidate)
 - [binding-trading entity](../entities/binding-trading.md) (existing promoted — trading uses coding binding_type)
+
+> **2026-06-12 update:** Podium dispatch provider/model now resolve per-issue from `models.yml` via the scheduler dispatch gate; `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` are a legacy Plane-path fallback. See [../analyses/podium-issue-dispatch-contract.md](../analyses/podium-issue-dispatch-contract.md).

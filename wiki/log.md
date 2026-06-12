@@ -349,3 +349,10 @@ Append entries with this format:
 - Inputs: issue #039 implementation; commits `1ca6fe2`, `5d6918f`, `c91bdcc`; `.kanban/issues/039-podium-remove-dashboard-attention-list.md`; `.kanban/progress.md`; `web/frontend/app/page.tsx`; `web/frontend/tests/dashboard.spec.ts`.
 - Outputs: updated `wiki/analyses/podium-031-board-overview-dashboard.md`; updated `wiki/CLAIMS.md` (C-0116 note, C-0140 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
 - Notes: Captured #039 removal of the Dashboard Needs attention list after Sidebar Inbox became canonical. Verification passed: `PATH=/home/james/.local/bin:$PATH pnpm test:e2e` (37 passed), `pnpm exec tsc --noEmit`, touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+## [2026-06-12] session-update | Issue-field dispatch contract (grill-me → deploy → smoke)
+
+- Actor: agent (Claude Code, grill-me session with James)
+- Inputs: grill-me decisions Q1–Q8; commits `0912016`, `2343bf2`, `ea449b5`; smoke issue 20 / run 13; journalctl drift tracebacks; pi v0.78.1 `--help` and package `docs/skills.md`.
+- Outputs: new `wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md`; promoted `wiki/analyses/podium-issue-dispatch-contract.md` (lint passed, auto-promotion); supersession notes on `analyses/podium-014-new-issue-flow.md`, `analyses/podium-028-model-catalog-searchable-dropdowns.md`, `concepts/prompt-renderer.md`, `concepts/thin-engine-v2.md`, `sources/symphony-host-service-unit.md`; `wiki/CLAIMS.md` C-0141..C-0146 added, C-0058 marked superseded, C-0114 drift note; `wiki/index.md` + `wiki/ROUTING.md` updated.
+- Notes: Six dispatch-contract decisions implemented and live-verified same session. Root cause captured: live podium.db alembic stamp-vs-run drift (0005 stamped, column missing) broke transition_state post Ralph #037/#038 merge; fixed manually + pragma parity check. Follow-up: kanban #040 (claude adapter), startup schema-parity check idea, stale glm reference in new-issue.spec.ts. No secrets, no transcript.

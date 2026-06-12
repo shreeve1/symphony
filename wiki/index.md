@@ -75,6 +75,8 @@
 | [analyses/podium-issue-archive-design.md](analyses/podium-issue-archive-design.md) | Issue archive ("delete button") design — accepted, not yet implemented: sixth `archived` state, engine-terminal contract, mid-run archive with deferred worktree teardown, per-column board minimize, 14-day opportunistic purge | `wiki/raw/sessions/2026-06-12-issue-archive-state-design.md`, `CONTEXT.md`, `web/api/schema.py`, `tracker_podium.py` | 2026-06-12 |
 >>>>>>> Stashed changes
 
+| [analyses/podium-issue-dispatch-contract.md](analyses/podium-issue-dispatch-contract.md) | Issue-field dispatch contract — fail-loud gate (agent/model/skill), models.yml `default: true` (gpt-5.5), `:effort` suffix, `--skill` loading + prompt directive, 60min timeout, max_duration dropped, alembic stamp-vs-run drift root cause | `model_catalog.py`, `scheduler.py`, `agent_runner.py`, `wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md` | 2026-06-12 |
+
 ## Candidate Review Queue
 
 Candidate rows are discoverability aids only; do not treat them as promoted knowledge. This project uses **auto-promotion** — candidates transit this queue briefly during ingest and are promoted by the agent after lint.

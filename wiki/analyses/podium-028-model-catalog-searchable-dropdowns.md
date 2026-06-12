@@ -45,3 +45,5 @@ Backend tests cover object-shaped `/options` models, catalog validation failures
 ## Claims
 
 C-0114, C-0115 in [CLAIMS.md](../CLAIMS.md). C-0114 supersedes C-0056's older `KNOWN_MODELS` placeholder wording.
+
+> **2026-06-12 update:** `models.yml` was promoted from dropdown aid to dispatch contract — unknown models block dispatch, exactly one `default: true` entry (gpt-5.5) is required, provider is required for pi entries. See [podium-issue-dispatch-contract.md](podium-issue-dispatch-contract.md).

@@ -91,3 +91,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 - Pages: `analyses/symphony-tests-index.md`
 - Keywords: pytest, test_scheduler, test_schedule, test_plane_cli, FakeTransport, validation contract, 435 tests, coverage map, py_compile, pytest 8, pytest-asyncio 0, test_alembic_baseline, alembic baseline, uv run pytest, bare python3 -m pytest fails, system python3 lacks alembic, .venv project venv, uv.lock, alembic project-only, do not install alembic system-wide, PATH venv bin pytest, 615 passed
+
+## Dispatch contract (models, effort, skills, claude gate)
+
+- Pages: `analyses/podium-issue-dispatch-contract.md`
+- Keywords: dispatch gate, _apply_dispatch_gate, model catalog, models.yml default true, gpt-5.5 default, preferred_model blocks, reasoning_effort suffix, --skill loading, skill directive, claude not wired, kanban 040, run row provider model, 60min timeout, max_duration_seconds dropped, migration 0006, alembic stamp drift, inbox_dismissed_at missing, pragma diff parity
