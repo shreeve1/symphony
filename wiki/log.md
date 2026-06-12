@@ -23,7 +23,7 @@ Append entries with this format:
 - Actor: agent (Pi)
 - Inputs: operator request to reconcile Symphony skills into `/home/james/symphony/.claude/`; dotfiles copies of `symphony-restart` and `symphony-troubleshooter`; repo-local `.claude/skills/symphony-*`; `tests/skills/`.
 - Outputs: added `.claude/skills/symphony-restart/SKILL.md`; added `.claude/skills/symphony-troubleshooter/SKILL.md`; added `tests/skills/test_restart_troubleshooter.py`; updated `wiki/analyses/symphony-skills-index.md`; updated `wiki/CLAIMS.md` (C-0129); updated `wiki/log.md`.
-- Notes: Project-local consolidation kept existing Podium-era skills canonical, did not overwrite them with stale dotfiles copies, did not copy non-Symphony `debug-hermes`, and did not delete dotfiles/global copies. Verification covered skill tests and stale Plane scaffold strings; no secrets or `.env` contents read.
+- Notes: Project-local consolidation kept existing Podium-era skills canonical, did not overwrite them with stale dotfiles copies, and did not copy non-Symphony `debug-hermes`. Follow-up dotfiles commit `06fa9a6` removed the stale global `symphony-*` copies so project-local skills no longer collide. Verification covered skill tests and stale Plane scaffold strings; no secrets or `.env` contents read.
 
 ## [2026-06-12] session-update | #035 archived engine-terminal contract
 
