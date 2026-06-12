@@ -1,7 +1,7 @@
 ---
 id: 036
 title: Podium — 14-day archived-issue retention purge
-status: in-progress
+status: review
 blocked_by: [034]
 parent: null
 priority: 0
