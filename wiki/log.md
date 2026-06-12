@@ -342,3 +342,10 @@ Append entries with this format:
 - Outputs: tracked `wiki/raw/personal-harness-pi-profile.md`; updated `.pi/extensions/personal-harness.ts`; updated `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; updated `wiki/analyses/personal-harness-pi-profile.md`; updated `wiki/CLAIMS.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
 - Notes: Hardened bash secret-read blocking for `/home/james/symphony-host.env` and `.env`-like files, switched runtime roots to `PROFILE.targetRepo`, moved the durable profile reference into tracked wiki raw storage, changed automatic pytest beforeGit into a manual `uv run pytest -q` reminder, and replaced source-only dry checks with mocked-event verification coverage. No secrets or `.env` contents captured.
 >>>>>>> Stashed changes
+
+## [2026-06-12] session-update | #039 dashboard attention list removal
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #039 implementation; commits `1ca6fe2`, `5d6918f`, `c91bdcc`; `.kanban/issues/039-podium-remove-dashboard-attention-list.md`; `.kanban/progress.md`; `web/frontend/app/page.tsx`; `web/frontend/tests/dashboard.spec.ts`.
+- Outputs: updated `wiki/analyses/podium-031-board-overview-dashboard.md`; updated `wiki/CLAIMS.md` (C-0116 note, C-0140 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured #039 removal of the Dashboard Needs attention list after Sidebar Inbox became canonical. Verification passed: `PATH=/home/james/.local/bin:$PATH pnpm test:e2e` (37 passed), `pnpm exec tsc --noEmit`, touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
