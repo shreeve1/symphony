@@ -12,8 +12,6 @@ plans/
 .WORKFLOW.md.preview
 .pi-lens/
 .rpiv/
-.kanban/
-.kanban/archive/issues
 artifacts/
 docs/adr
 CONTEXT.md
