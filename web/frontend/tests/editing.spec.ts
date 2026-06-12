@@ -57,12 +57,16 @@ test("typed column and comments edits persist across reload", async ({
 	await worktree.click();
 	await patched;
 
-	// comments_md editor (textarea, commits on blur)
+	// context_md editor (view-first; Edit reveals a textarea that commits on
+	// blur). Comments are AI-posted and read-only, so persistence is exercised
+	// through context instead.
 	const marker = `e2e edit marker ${Date.now()}`;
-	const comments = page.getByTestId("edit-comments_md");
-	await comments.fill(`# Operator comments\n\n${marker}`);
+	await page.getByTestId("tab-context").click();
+	await page.getByTestId("edit-toggle-context_md").click();
+	const context = page.getByTestId("edit-context_md");
+	await context.fill(`# Operator context\n\n${marker}`);
 	patched = waitForPatch(page);
-	await comments.blur();
+	await context.blur();
 	await patched;
 
 	// Close, reload, reopen: every edit persisted through SQLite.
@@ -81,9 +85,8 @@ test("typed column and comments edits persist across reload", async ({
 		"aria-pressed",
 		String(!wasActive),
 	);
-	await expect(page.getByTestId("edit-comments_md")).toHaveValue(
-		new RegExp(marker),
-	);
+	await page.getByTestId("tab-context").click();
+	await expect(page.getByTestId("view-context_md")).toContainText(marker);
 
 	expectCleanConsole(problems);
 });

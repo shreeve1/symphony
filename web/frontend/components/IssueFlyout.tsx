@@ -340,51 +340,66 @@ function MetadataChips({
 	);
 }
 
-// Markdown blob editor: plain textarea committing on blur, with a side-by-side
-// preview pane on toggle (no live render, per the #013 spec).
+// Markdown blob editor: view-first. The rendered markdown is the default,
+// matching how operators read a thread; an Edit button swaps in a plain
+// textarea that commits on blur and returns to the rendered view. Comments are
+// AI-posted, so they pass readOnly to drop the editor entirely.
 function MarkdownEditor({
 	value,
 	field,
 	onPatch,
+	readOnly = false,
 }: {
 	value: string;
 	field: "comments_md" | "context_md";
 	onPatch: OnPatch;
+	readOnly?: boolean;
 }) {
 	const [draft, setDraft] = useDraft(value);
-	const [preview, setPreview] = useState(false);
+	const [editing, setEditing] = useState(false);
 	const commit = () => {
 		if (draft !== value) onPatch({ [field]: draft });
+		setEditing(false);
 	};
+	if (editing) {
+		return (
+			<textarea
+				data-testid={`edit-${field}`}
+				value={draft}
+				rows={10}
+				autoFocus
+				onChange={(e) => setDraft(e.target.value)}
+				onBlur={commit}
+				className="min-h-40 w-full rounded-md border bg-transparent p-2 font-mono text-xs outline-none"
+			/>
+		);
+	}
 	return (
 		<div className="space-y-2">
-			<div className="flex justify-end">
-				<button
-					type="button"
-					data-testid={`preview-${field}`}
-					aria-pressed={preview}
-					onClick={() => setPreview((p) => !p)}
-					className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-				>
-					Preview
-				</button>
-			</div>
-			<div className="flex gap-3">
-				<textarea
-					data-testid={`edit-${field}`}
-					value={draft}
-					rows={10}
-					onChange={(e) => setDraft(e.target.value)}
-					onBlur={commit}
-					className="min-h-40 flex-1 rounded-md border bg-transparent p-2 font-mono text-xs outline-none"
-				/>
-				{preview && (
-					<div
-						data-testid={`preview-pane-${field}`}
-						className="min-h-40 flex-1 overflow-y-auto rounded-md border p-2"
+			{!readOnly && (
+				<div className="flex justify-end">
+					<button
+						type="button"
+						data-testid={`edit-toggle-${field}`}
+						onClick={() => setEditing(true)}
+						className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
 					>
-						<Markdown source={draft} />
-					</div>
+						Edit
+					</button>
+				</div>
+			)}
+			<div
+				data-testid={`view-${field}`}
+				className="min-h-40 overflow-y-auto rounded-md border p-2"
+			>
+				{value.trim() ? (
+					<Markdown source={value} />
+				) : (
+					<p className="text-xs text-muted-foreground">
+						{field === "comments_md"
+							? "No comments yet."
+							: "No context yet. Click Edit to add."}
+					</p>
 				)}
 			</div>
 		</div>
@@ -552,6 +567,7 @@ export function IssueFlyout({
 										value={
 											tab === "comments" ? issue.comments_md : issue.context_md
 										}
+										readOnly={tab === "comments"}
 										onPatch={onPatch}
 									/>
 								</div>
