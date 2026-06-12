@@ -1,6 +1,6 @@
 ---
 name: symphony-workflow-author
-description: Author WORKFLOW.md for a Symphony binding. Tracker-agnostic: works for both Podium and dormant Plane bindings because it edits repository policy on disk.
+description: "Author WORKFLOW.md for a Symphony binding. Tracker-agnostic: works for both Podium and dormant Plane bindings because it edits repository policy on disk."
 ---
 
 # Symphony Workflow Author

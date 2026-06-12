@@ -1,6 +1,6 @@
 ---
 name: symphony-binding-scaffold
-description: Create a Podium-backed Symphony binding by inserting the binding row in Podium SQLite and appending tracker: podium to bindings.yml. Does not call Plane.
+description: "Create a Podium-backed Symphony binding by inserting the binding row in Podium SQLite and appending tracker: podium to bindings.yml. Does not call Plane."
 ---
 
 # Symphony Binding Scaffold

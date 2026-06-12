@@ -1,6 +1,6 @@
 ---
 name: symphony-onboard-project
-description: Orchestrate Podium-era onboarding: symphony-binding-scaffold → symphony-workflow-author → symphony-restart → symphony-binding-smoke. Preserves each sub-skill safety gate.
+description: "Orchestrate Podium-era onboarding: symphony-binding-scaffold → symphony-workflow-author → symphony-restart → symphony-binding-smoke. Preserves each sub-skill safety gate."
 ---
 
 # Symphony Onboard Project
