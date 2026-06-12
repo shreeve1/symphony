@@ -1,7 +1,7 @@
 ---
 id: 036
 title: Podium — 14-day archived-issue retention purge
-status: review
+status: done
 blocked_by: [034]
 parent: null
 priority: 0
@@ -39,18 +39,24 @@ contract exists for deletions, so none is required.
 
 ## Acceptance criteria
 
-- [ ] Archived issue with `updated_at` older than 14 days is deleted — issue row, its run rows, and its run log files all gone — with `PRAGMA foreign_keys = ON` active in the test connection.
-- [ ] Archived issue younger than 14 days, and non-archived issues of any age, survive the sweep untouched.
-- [ ] Sweep runs at API startup (test via the FastAPI test client lifespan) and after a PATCH to `archived`; PATCH response is unaffected by the sweep.
-- [ ] Missing log file on disk does not abort the purge; remaining eligible issues still purge.
-- [ ] A failure mid-purge rolls back the transaction for that issue (no orphaned runs, no issue with nulled `latest_run_id` left behind).
-- [ ] Purge of an issue whose worktree still exists removes the worktree (defensive path).
+- [x] Archived issue with `updated_at` older than 14 days is deleted — issue row, its run rows, and its run log files all gone — with `PRAGMA foreign_keys = ON` active in the test connection.
+- [x] Archived issue younger than 14 days, and non-archived issues of any age, survive the sweep untouched.
+- [x] Sweep runs at API startup (test via the FastAPI test client lifespan) and after a PATCH to `archived`; PATCH response is unaffected by the sweep.
+- [x] Missing log file on disk does not abort the purge; remaining eligible issues still purge.
+- [x] A failure mid-purge rolls back the transaction for that issue (no orphaned runs, no issue with nulled `latest_run_id` left behind).
+- [x] Purge of an issue whose worktree still exists removes the worktree (defensive path).
 
 ## Verification
 
 ```
 cd /home/james/symphony && python3 -m pytest
 ```
+
+## Implementation Notes
+
+Added a startup and post-archive PATCH purge sweep for archived issues older than 14 days. The sweep deletes each eligible issue FK-safely by clearing `latest_run_id`, deleting Run rows, and deleting the Issue row in one transaction, then best-effort removes run log files and any lingering worktree. Added focused regression coverage for old/young/non-archived retention, startup/PATCH sweeps, missing log files, rollback on mid-purge failure, and defensive worktree cleanup including stale `worktree_active = FALSE` drift.
+
+Verification passed with `PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH" python3 -m pytest -q` (633 passed, 1 skipped). Fresh Ralph review returned `PASS`.
 
 ## Blocked by
 

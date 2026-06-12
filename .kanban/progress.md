@@ -66,3 +66,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Archived issues still receive completed Run rows, verdicts, summaries, comments, and context projections, but `issue.state` is terminal and never resurrected by post-run verdict transitions.
 **Conventions established:** Scheduler logs `archived_terminal issue_id=<id> run_id=<id>` when it skips a verdict transition because an issue was archived mid-run; idle archive PATCH removes persistent worktrees immediately, while active runs defer teardown to completion.
 **Notes for next iteration:** #036 can assume archived issues are terminal and worktrees should normally already be gone, but purge still needs defensive worktree removal for drift.
+
+## #036 Podium — 14-day archived-issue retention purge — 2026-06-12
+
+**What changed:** Added archived-issue purge sweeps at API startup and after archive PATCH transitions, deleting eligible issues older than 14 days with FK-safe per-issue transactions, post-commit run-log unlink, structured purge logging, and defensive worktree cleanup.
+**Files:** `web/api/main.py`, `web/api/tests/test_archive_purge.py`, `.kanban/issues/036-podium-archived-retention-purge.md`.
+**Decisions:** Purge uses hardcoded `PURGE_AFTER_DAYS = 14` and `updated_at` as the archive-age clock; no deletion WebSocket event is emitted, so purged issues disappear on next fetch.
+**Conventions established:** Archive purge is opportunistic API-process maintenance, not scheduler work; cleanup must check actual worktree existence, not only `worktree_active`, because purge also repairs drift.
+**Notes for next iteration:** No more archive-design issues remain pending on the local Ralph board.
