@@ -7,6 +7,8 @@ Create Date: 2026-06-12
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from alembic import op
 
 revision = "0004_archived_state"
@@ -59,8 +61,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Downgrade requires no archived rows exist — fails loudly otherwise.
-    result = op.execute(
-        "SELECT COUNT(*) FROM issue WHERE state = 'archived'"
+    result = cast(
+        Any, op.execute("SELECT COUNT(*) FROM issue WHERE state = 'archived'")
     ).fetchone()
     count = result[0] if result else 0
     if count and count > 0:
