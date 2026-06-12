@@ -1,7 +1,7 @@
 ---
 id: 032
 title: symphony-skills + symphony-models catalog maintenance skills
-status: in-progress
+status: review
 blocked_by: [028]
 parent: null
 priority: 1
