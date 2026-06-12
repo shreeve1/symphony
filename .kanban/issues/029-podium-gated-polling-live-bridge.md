@@ -1,7 +1,7 @@
 ---
 id: 029
 title: Podium — gated interval polling for engine-driven state freshness
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
@@ -54,11 +54,18 @@ just makes the WS event a no-op).
 
 ## Acceptance criteria
 
-- [ ] Board issue-list query polls at ~3s while any issue is queued/running, and backs off to ~10s / off when idle (verify the `refetchInterval` function logic in a component/unit test).
-- [ ] Run-detail run + log queries poll at ~3s while the run is non-terminal and stop once terminal.
-- [ ] Playwright proves polling **in isolation from the WebSocket** (a direct API write would fan out over WS and mask polling): either mutate the row via a path that does not publish (direct SQLite write, as the scheduler does) or assert the update arrives with the WS disconnected. Board reflects the new state within ~4s **without a manual reload**.
-- [ ] WebSocket optimistic-create / PATCH behavior from #017 still passes (`live-sync.spec.ts` unchanged and green).
-- [ ] `pnpm exec tsc --noEmit` passes.
+- [x] Board issue-list query polls at ~3s while any issue is queued/running, and backs off to ~10s / off when idle (verify the `refetchInterval` function logic in a component/unit test).
+- [x] Run-detail run + log queries poll at ~3s while the run is non-terminal and stop once terminal.
+- [x] Playwright proves polling **in isolation from the WebSocket** (a direct API write would fan out over WS and mask polling): either mutate the row via a path that does not publish (direct SQLite write, as the scheduler does) or assert the update arrives with the WS disconnected. Board reflects the new state within ~4s **without a manual reload**.
+- [x] WebSocket optimistic-create / PATCH behavior from #017 still passes (`live-sync.spec.ts` unchanged and green).
+- [x] `pnpm exec tsc --noEmit` passes.
+
+## Implementation Notes
+
+- Added shared polling helper functions for active Issue/Run detection and interval selection.
+- Enabled binding board polling at 3s while any issue/run is active and 10s while idle, with window-focus refresh preserved.
+- Enabled Run detail and Run log polling while the selected Run is queued/running, stopping after terminal state.
+- Added Playwright coverage that mutates SQLite directly to prove board and Run detail freshness without WebSocket fanout, while keeping the existing WebSocket sync spec green.
 
 ## Verification
 
