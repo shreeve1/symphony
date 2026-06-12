@@ -11,3 +11,21 @@ models:
   - id: glm-5.1:high
     agent: pi
     provider: zai
+  - id: deepseek-v4-flash
+    agent: pi
+    provider: deepseek
+  - id: deepseek-v4-pro
+    agent: pi
+    provider: deepseek
+  - id: gpt-5.3-codex-spark
+    agent: pi
+    provider: openai-codex
+  - id: gpt-5.4
+    agent: pi
+    provider: openai-codex
+  - id: gpt-5.4-mini
+    agent: pi
+    provider: openai-codex
+  - id: gpt-5.5
+    agent: pi
+    provider: openai-codex
