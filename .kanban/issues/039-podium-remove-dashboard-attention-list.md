@@ -1,11 +1,13 @@
 ---
 id: 039
 title: Podium — remove dashboard attention list (superseded by Inbox)
-status: pending
+status: in-progress
 blocked_by: [037]
 parent: null
 priority: 0
 created: 2026-06-12
+updated: 2026-06-12
+actor: ralph
 ---
 
 ## What to build
@@ -31,7 +33,7 @@ This slice is intentionally tiny: it is the second half of the "replace attentio
 ## Verification
 
 ```
-cd /home/james/symphony/web/frontend && pnpm test:e2e
+cd /home/james/symphony-ralph/web/frontend && PATH=/home/james/.local/bin:$PATH pnpm test:e2e
 ```
 
 ## Blocked by
