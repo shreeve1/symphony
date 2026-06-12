@@ -18,7 +18,7 @@ export interface PageProblems {
 // expectCleanConsole(problems, { ignore: [/.../] }) rather than widening this.
 const DEFAULT_IGNORE: RegExp[] = [
 	/favicon\.ico/i, // Next dev serves no favicon; browser logs a 404 for it
-	/\?_rsc=/, // App Router RSC prefetch: aborts on supersede + dev cold-compile 500s
+	/[?&]_rsc=/, // App Router RSC prefetch: aborts on supersede + dev cold-compile 500s
 ];
 
 export async function authenticate(page: Page) {

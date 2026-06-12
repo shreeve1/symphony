@@ -104,6 +104,7 @@ function LiveUpdates({
 						(old) => upsertIssue(old, row),
 					);
 					queryClient.setQueryData(["issue", row.id], row);
+					queryClient.invalidateQueries({ queryKey: ["inbox"] });
 				}
 				if (message.type === "issue.updated") {
 					const row = message.row as IssueDetail;
@@ -111,6 +112,7 @@ function LiveUpdates({
 					queryClient.setQueriesData<Issue[]>({ queryKey: ["issues"] }, (old) =>
 						upsertIssue(old, row),
 					);
+					queryClient.invalidateQueries({ queryKey: ["inbox"] });
 				}
 				if (message.type === "run.updated") {
 					const row = message.row as Run;

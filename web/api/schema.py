@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0004_archived_state"
+INITIAL_REVISION = "0005_inbox_dismissed_at"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS issue(
   approval_required BOOLEAN DEFAULT FALSE,
   approved BOOLEAN DEFAULT FALSE,
   scheduled_for TIMESTAMP NULL,
+  inbox_dismissed_at TIMESTAMP NULL,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 

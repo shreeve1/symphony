@@ -306,7 +306,7 @@ class ReplyCreate(BaseModel):
         return value
 
 
-# Issue states from which an operator reply re-dispatches the agent; any other
+
 # state (todo, running) returns 409.
 ALLOWED_REPLY_STATES = ("in_review", "blocked", "done")
 # Run states that mean a run is in flight; a reply during these races the run's
@@ -436,6 +436,32 @@ def list_binding_issues(
             """,
             (name, state),
         ).fetchall()
+    return [_row(row) for row in rows]
+
+
+@app.get("/api/inbox")
+def list_inbox_issues(
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT
+          i.id, i.binding_name, i.title, i.description, i.state, i.priority,
+          i.preferred_agent, i.preferred_model, i.preferred_skill,
+          i.reasoning_effort, i.worktree_active,
+          i.approval_required, i.approved, i.scheduled_for,
+          i.max_duration_seconds, i.base_branch, i.created_at, i.updated_at,
+          i.latest_run_id, i.latest_verdict, i.latest_run_state, i.last_event_at,
+          i.inbox_dismissed_at
+        FROM issue i
+        INNER JOIN binding b ON b.name = i.binding_name
+        WHERE i.state IN ('in_review', 'blocked')
+          AND b.archived != TRUE
+          AND (i.inbox_dismissed_at IS NULL
+               OR i.inbox_dismissed_at < COALESCE(i.last_event_at, i.updated_at))
+        ORDER BY COALESCE(i.last_event_at, i.updated_at) DESC, i.id DESC
+        """
+    ).fetchall()
     return [_row(row) for row in rows]
 
 

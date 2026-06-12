@@ -69,6 +69,36 @@ export interface Run {
 
 export type RunDetail = Run;
 
+// Inbox item — a cross-binding issue awaiting operator attention.
+export interface InboxItem {
+	id: number;
+	binding_name: string;
+	binding_type: string;
+	title: string;
+	description: string | null;
+	state: string;
+	priority: string | null;
+	preferred_agent: string | null;
+	preferred_model: string | null;
+	preferred_skill: string | null;
+	reasoning_effort: string | null;
+	worktree_active: boolean;
+	approval_required: boolean;
+	approved: boolean;
+	scheduled_for: string | null;
+	worktree_path: string;
+	worktree_branch: string;
+	max_duration_seconds: number | null;
+	base_branch: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+	latest_run_id: number | null;
+	latest_verdict: string | null;
+	latest_run_state: string | null;
+	last_event_at: string | null;
+	inbox_dismissed_at: string | null;
+}
+
 // CLI-refreshed skill catalog row (#015).
 export interface Skill {
 	name: string;
@@ -140,6 +170,8 @@ async function getJSON<T>(path: string): Promise<T> {
 export const fetchBindings = () => getJSON<Binding[]>("/api/bindings");
 
 export const fetchSkills = () => getJSON<Skill[]>("/api/skills");
+
+export const fetchInbox = () => getJSON<InboxItem[]>("/api/inbox");
 
 export const fetchBindingIssues = (name: string) =>
 	getJSON<Issue[]>(`/api/bindings/${encodeURIComponent(name)}/issues`);
