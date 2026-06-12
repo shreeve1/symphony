@@ -41,11 +41,11 @@ The seam that isolates each agent's dispatch shape behind a common interface —
 _Avoid_: "runner" (the engine is the runner; an adapter is one agent's dispatch implementation)
 
 **Done Marker**:
-A unique per-run nonce string the agent prints when it finishes, letting Symphony detect completion of a tmux session that has no process exit code.
+A unique per-run file the agent creates when it finishes, letting Symphony detect completion of a tmux session that has no process exit code. (Originally a printed nonce string scraped from the pane; amended to a file-based contract — see ADR-0001 amendment.)
 _Avoid_: "sentinel" (use Done Marker consistently)
 
 **Verdict**:
-The outcome of a single dispatch, declared by the agent via a `SYMPHONY_RESULT:` line whose value is one of **done** / **review** / **blocked** (mapping to the Plane states Done / In Review / Blocked). Last occurrence wins; unknown/absent falls through to a heuristic. The agent may also emit a `SYMPHONY_SUMMARY:` line for the human-readable Plane comment. For claude (tmux) the same lines are scraped from the pane before the Done Marker, backstopped by post-run side-effect inspection (commit present, plan artifact written).
+The outcome of a single dispatch, declared by the agent via a `SYMPHONY_RESULT:` line whose value is one of **done** / **review** / **blocked** (mapping to the Plane states Done / In Review / Blocked). Last occurrence wins; unknown/absent falls through to a heuristic. The agent may also emit a `SYMPHONY_SUMMARY:` line for the human-readable Plane comment. For claude (tmux) the same lines are read from the per-run result file written before the Done Marker; there is no side-effect inspection backstop (parity with pi).
 _Avoid_: "ok/failed" (the real vocabulary is done/review/blocked), "exit status" (that is one input, not the verdict itself)
 
 **Run**:

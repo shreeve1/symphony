@@ -1,13 +1,14 @@
 ---
 id: 040
 title: Wire a real Claude engine adapter (claude -p) behind the dispatch gate
-status: pending
+status: blocked
 blocked_by: []
 parent: null
 priority: 1
 created: 2026-06-12
 updated: 2026-06-12
 actor: ralph
+note: archived 2026-06-12 — deferred to a dedicated future session per James; Ralph attempt blocked on missing verification command (worktree d1def0a)
 ---
 
 ## What to build

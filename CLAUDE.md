@@ -39,8 +39,8 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 ## Env locations
 
 - `/home/james/symphony-host.env` — secret values (`PLANE_API_KEY`, etc.).
-- `symphony-host.service` `Environment=` — non-secret config (`PLANE_API_URL`, `PLANE_WORKSPACE_SLUG`, `PI_BIN`, `SYMPHONY_PI_PROVIDER`, `SYMPHONY_PI_MODEL`, `SYMPHONY_LOCK_PATH`, `PYTHONPATH`, `PYTHONUNBUFFERED`). Inspect with `systemctl show symphony-host.service --property=Environment`.
-- Dispatch model/provider for Podium bindings comes from repo-root `models.yml` (issue `preferred_model`, else the single `default: true` entry; `reasoning_effort` appends as a `:suffix`). `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` are a legacy Plane-path fallback only — safe to leave on the unit, no longer consulted for Podium dispatch.
+- `symphony-host.service` `Environment=` — non-secret config (`PLANE_API_URL`, `PLANE_WORKSPACE_SLUG`, `SYMPHONY_LOCK_PATH`, `PYTHONPATH`, `PYTHONUNBUFFERED`; `PI_BIN` lives in the `override.conf` drop-in). Inspect with `systemctl show symphony-host.service --property=Environment`.
+- Dispatch model/provider for Podium bindings comes from repo-root `models.yml` (issue `preferred_model`, else the single `default: true` entry; `reasoning_effort` appends as a `:suffix`). `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` were removed from the unit at the 2026-06-12 cleanup; if ever set again they act only as the legacy Plane-path fallback.
 - `WorkingDirectory=/home/james/symphony` — `bindings.yml` auto-discovered at cwd; `SYMPHONY_BINDINGS_PATH` not required.
 - `SYMPHONY_LOCK_PATH` — optional; if set, `config.py` uses it as the single-instance lock file path. Currently `/run/symphony/symphony.lock` on the unit.
 
@@ -55,7 +55,7 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 
 ## Dead config
 
-`Environment=OPENCODE_BIN=...` and `Environment=SYMPHONY_OPENCODE_AGENT=build` on `symphony-host.service` have zero references in current `.py` source and survive only as drift. Safe to leave; safe to remove at a future unit cleanup.
+Resolved 2026-06-12: the dead `OPENCODE_BIN`/`SYMPHONY_OPENCODE_AGENT` lines and the legacy `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` overrides were removed from the unit and its `override.conf` drop-in (backups: `*.bak.2026-06-12`). No dead env remains on the unit.
 
 ## Live bindings
 

@@ -363,3 +363,10 @@ Append entries with this format:
 - Inputs: forensics on `web/api/main.py` `ensure_schema` (blind `UPDATE alembic_version` on boot); commit `772e7ba`; `web/api/tests/test_ensure_schema.py` (4 regression tests); e2e suite 37 passed, python suite 659 passed.
 - Outputs: refined `wiki/analyses/podium-issue-dispatch-contract.md` root-cause paragraph; `wiki/CLAIMS.md` C-0147 added, C-0145 note refined; `wiki/ROUTING.md` keywords extended.
 - Notes: Confirmed mechanism for the 2026-06-12 stamp-vs-run drift. Boot now fails loud on missing columns instead of serving against a drifted schema. Stale glm reference in new-issue.spec.ts found already fixed by the Ralph batch; remaining glm string is decorative run-history fixture data. No secrets.
+
+## [2026-06-12] session-update | Unit env cleanup, #040 archived, CLI ensure_schema parity
+
+- Actor: agent (Claude Code)
+- Inputs: James request (archive claude-adapter ticket, unit cleanup, CLI ensure_schema parity); unit + override.conf edits with `*.bak.2026-06-12` backups; restart verification markers.
+- Outputs: `.kanban/issues/040` → `.kanban/archive/2026-06-12c/` (status blocked, deferral note; Ralph attempt had blocked on missing verification command); symphony-host unit cleaned of `OPENCODE_*` and `SYMPHONY_PI_*` env (drop-in keeps `PI_BIN`); `web/cli/podium_skills.py` `ensure_schema` now fresh-only (never touches existing DBs); CLAUDE.md env/dead-config sections rewritten; `wiki/sources/symphony-host-service-unit.md` note updated.
+- Notes: Post-cleanup restart clean on code_sha=81bfd8d — startup pi probe passed using the models.yml default (gpt-5.5/openai-codex), proving env removal safe. No secrets.

@@ -21,17 +21,28 @@ MANUAL_SOURCE = ""
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:
+    """Build a fresh Podium schema; leave existing databases untouched.
+
+    Mirrors `web.api.main.ensure_schema`'s never-re-stamp contract: running
+    SCHEMA_SQL against an old database would create newly-shipped tables at
+    head shape outside migrations, so an existing database (any
+    alembic_version row) is left for `alembic upgrade head`.
+    """
+    has_version_table = connection.execute(
+        "SELECT name FROM sqlite_schema WHERE type = 'table'"
+        " AND name = 'alembic_version'"
+    ).fetchone()
+    if has_version_table and connection.execute(
+        "SELECT version_num FROM alembic_version"
+    ).fetchone():
+        return
     connection.executescript(SCHEMA_SQL)
     connection.execute(
         "CREATE TABLE IF NOT EXISTS alembic_version(version_num VARCHAR(32) NOT NULL)"
     )
-    existing_revision = connection.execute(
-        "SELECT version_num FROM alembic_version"
-    ).fetchone()
-    if existing_revision is None:
-        connection.execute(
-            "INSERT INTO alembic_version(version_num) VALUES (?)", (INITIAL_REVISION,)
-        )
+    connection.execute(
+        "INSERT INTO alembic_version(version_num) VALUES (?)", (INITIAL_REVISION,)
+    )
     connection.commit()
 
 

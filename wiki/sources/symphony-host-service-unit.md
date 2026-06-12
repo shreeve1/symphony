@@ -81,4 +81,4 @@ Per CLAUDE.md restart ritual: ask James → `sudo systemctl restart` → verify 
 - [Runbook source](runbook-symphony.md)
 - [Plan history — pi-executor-swap](../analyses/symphony-plan-history.md)
 
-> **2026-06-12 update:** `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` on the unit are now legacy fallback only — Podium dispatch reads `models.yml`. Safe to leave; removable at a future unit cleanup. See [../analyses/podium-issue-dispatch-contract.md](../analyses/podium-issue-dispatch-contract.md).
+> **2026-06-12 update:** `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` were removed from the unit's `override.conf` drop-in and the dead `OPENCODE_*` lines from the unit itself (backups `*.bak.2026-06-12`; daemon-reload + restart verified, startup pi probe now exercises the `models.yml` default). Podium dispatch reads `models.yml`. See [../analyses/podium-issue-dispatch-contract.md](../analyses/podium-issue-dispatch-contract.md).
