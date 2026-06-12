@@ -114,6 +114,21 @@ def test_patch_multiple_fields_at_once(client: TestClient, issue_id: int) -> Non
     assert body["approval_required"] is True
 
 
+def test_list_issues_filters_archived_state(client: TestClient, issue_id: int) -> None:
+    response = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
+    assert response.status_code == 200
+
+    archived = client.get("/api/bindings/trading/issues?state=archived")
+    assert archived.status_code == 200
+    archived_issues = archived.json()
+    assert archived_issues
+    assert {issue["state"] for issue in archived_issues} == {"archived"}
+    assert issue_id in {issue["id"] for issue in archived_issues}
+
+    invalid = client.get("/api/bindings/trading/issues?state=invalid_state")
+    assert invalid.status_code == 422
+
+
 def test_patch_updated_at_increases_monotonically(
     client: TestClient, issue_id: int
 ) -> None:

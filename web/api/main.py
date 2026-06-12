@@ -398,23 +398,41 @@ def list_skills(
 @app.get("/api/bindings/{name}/issues")
 def list_binding_issues(
     name: str,
+    state: Literal["todo", "in_review", "running", "blocked", "done", "archived"]
+    | None = None,
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> list[dict[str, Any]]:
     _get_binding_or_404(connection, name)
-    rows = connection.execute(
-        """
-        SELECT
-          id, binding_name, title, description, state, priority, preferred_agent,
-          preferred_model, preferred_skill, reasoning_effort, worktree_active,
-          approval_required, approved, scheduled_for,
-          max_duration_seconds, base_branch, created_at, updated_at,
-          latest_run_id, latest_verdict, latest_run_state, last_event_at
-        FROM issue
-        WHERE binding_name = ?
-        ORDER BY updated_at DESC, id DESC
-        """,
-        (name,),
-    ).fetchall()
+    if state is None:
+        rows = connection.execute(
+            """
+            SELECT
+              id, binding_name, title, description, state, priority, preferred_agent,
+              preferred_model, preferred_skill, reasoning_effort, worktree_active,
+              approval_required, approved, scheduled_for,
+              max_duration_seconds, base_branch, created_at, updated_at,
+              latest_run_id, latest_verdict, latest_run_state, last_event_at
+            FROM issue
+            WHERE binding_name = ?
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (name,),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT
+              id, binding_name, title, description, state, priority, preferred_agent,
+              preferred_model, preferred_skill, reasoning_effort, worktree_active,
+              approval_required, approved, scheduled_for,
+              max_duration_seconds, base_branch, created_at, updated_at,
+              latest_run_id, latest_verdict, latest_run_state, last_event_at
+            FROM issue
+            WHERE binding_name = ? AND state = ?
+            ORDER BY updated_at DESC, id DESC
+            """,
+            (name, state),
+        ).fetchall()
     return [_row(row) for row in rows]
 
 
