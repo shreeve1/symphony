@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-12] session-update | #035 archived engine-terminal contract
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #035 implementation; commits `c8118c1`, `32c16d3`, `65cd128`; `.kanban/issues/035-podium-archive-engine-terminal-contract.md`; `.kanban/progress.md`; `tracker_podium.py`; `web/api/main.py`; `scheduler.py`; `tests/test_tracker_podium.py`; `web/api/tests/test_worktree_api.py`; `tests/test_trading_podium_dispatch.py`.
+- Outputs: updated `wiki/analyses/podium-issue-archive-design.md`; updated `wiki/CLAIMS.md` (C-0123/C-0124 superseded, C-0126..C-0127 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured #035 landing the archived terminal engine contract: guarded `transition_state`, idle archive PATCH worktree teardown, active-run deferral, explicit scheduler `archived_terminal` skip after run-row finalization, and #036 purge still pending. Verification passed: `PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH" python3 -m pytest -q` (622 passed, 1 skipped), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-11] session-update | #023c Podium homelab cutover + infra role projection
 
 - Actor: agent (Pi, Ralph + wiki update)
