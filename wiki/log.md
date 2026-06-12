@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-12] session-update | #038 Podium Inbox dismissal and resurface
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #038 implementation; commits `e7b0bd6`, `a0c3ebb`, `0344e78`; `.kanban/issues/038-podium-inbox-dismiss-resurface.md`; `.kanban/progress.md`; `web/api/main.py`; `tracker_podium.py`; `web/api/tests/test_inbox.py`; `tests/test_tracker_podium.py`; `web/frontend/components/Sidebar.tsx`; `web/frontend/lib/api.ts`; `web/frontend/tests/inbox.spec.ts`.
+- Outputs: new `wiki/analyses/podium-038-inbox-dismiss-resurface.md`; updated `wiki/CLAIMS.md` (C-0137..C-0139); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured state-preserving Inbox dismissal, guarded dismiss endpoint, WebSocket publish, resurface clearing on transitions into `in_review`/`blocked`, optimistic Sidebar dismiss UX, and follow-up that #039 can remove the dashboard attention list. Verification passed: `PATH=/home/james/.local/bin:$PATH uv run pytest -q` (652 passed, 1 skipped), `pnpm exec tsc --noEmit`, `pnpm test:e2e` (37 passed), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS_WITH_NOTES`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-12] session-update | Podium password rotation helper
 
 - Actor: agent (Pi)
