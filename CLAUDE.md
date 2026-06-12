@@ -114,8 +114,10 @@ Run from `/home/james/symphony`:
 
 ```bash
 git status --porcelain
-python3 -m pytest
+uv run pytest
 ```
+
+Use `uv run pytest` (or activate `.venv` first), not bare `python3 -m pytest`: the system interpreter lacks `alembic` and other deps, so a bare run fails at collection. The deps live in the uv-managed `.venv`.
 
 Run for the host-native Symphony service:
 
