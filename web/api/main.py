@@ -779,12 +779,20 @@ async def patch_issue(
     if merge_attempted:
         result = await _maybe_merge_worktree(issue_id, current, connection)
 
+    # Archive is engine-terminal. If an issue is archived while no run is
+    # active, tear down any persistent worktree immediately after publishing
+    # the archived row. In-flight runs keep their worktree until completion.
+    archive_attempted = "state" in changed and changed["state"] == "archived"
+    if archive_attempted and result.get("latest_run_state") not in ACTIVE_RUN_STATES:
+        result = await _maybe_teardown_archived_worktree(issue_id, result, connection)
+
     # Worktree toggle-off archive: toggling worktree_active from true -> false
     # while the worktree still exists appends an archive comment. If the same
-    # PATCH attempted a done merge, merge/block outcome wins to avoid double
-    # comments on failure.
+    # PATCH attempted a done merge or archive teardown, that outcome wins to
+    # avoid double comments or preserving a terminal archived worktree.
     if (
         not merge_attempted
+        and not archive_attempted
         and "worktree_active" in changed
         and changed["worktree_active"] is False
         and current.get("worktree_active") is True
@@ -932,6 +940,52 @@ async def _maybe_merge_worktree(
 
     # Merge succeeded: clean up worktree + branch.
     await asyncio.to_thread(cleanup_worktree, repo_path, binding_name, issue_str)
+    return _row(
+        connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    )
+
+
+async def _maybe_teardown_archived_worktree(
+    issue_id: int,
+    current: dict[str, Any],
+    connection: sqlite3.Connection,
+) -> dict[str, Any]:
+    """Remove an archived issue's idle worktree and clear worktree_active."""
+    try:
+        from web.api.worktree import remove_worktree, worktree_exists
+    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+        from worktree import remove_worktree, worktree_exists  # type: ignore[no-redef]
+
+    binding_name = current.get("binding_name", "")
+    issue_str = str(issue_id)
+    repo_path = _repo_path_for_binding(binding_name)
+    if not repo_path:
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    removed = False
+    if await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
+        await asyncio.to_thread(remove_worktree, repo_path, binding_name, issue_str)
+        removed = True
+
+    if removed or current.get("worktree_active") is True:
+        connection.execute(
+            "UPDATE issue SET worktree_active = FALSE, updated_at = ? WHERE id = ?",
+            (_next_updated_at(current.get("updated_at")), issue_id),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        result = _row(row)
+        await websocket_hub.publish(
+            {"type": "issue.updated", "id": issue_id, "row": result}
+        )
+        return result
+
     return _row(
         connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     )

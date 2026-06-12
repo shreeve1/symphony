@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,26 @@ def _config(tmp_path: Path) -> SymphonyConfig:
         tracker="podium",
     )
     return config.for_binding(binding)
+
+
+def _init_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-b", "main")
+    _git(path, "config", "user.email", "test@test")
+    _git(path, "config", "user.name", "Test")
+    (path / "README.md").write_text("# test", encoding="utf-8")
+    _git(path, "add", ".")
+    _git(path, "commit", "-m", "initial")
+
+
+def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(path), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
 
 
 def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
@@ -193,6 +214,77 @@ async def test_trading_podium_dispatch_records_worktree_metadata(
     )
     assert run["branch_name"] == f"podium/trading/{issue_id}"
     assert run["base_branch"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_archived_mid_run_skips_verdict_transition_and_tears_down_worktree(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, worktree_active=True)
+    (repo / "WORKFLOW.md").write_text(
+        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
+    )
+    config = _config(repo)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    from web.api.worktree import branch_name, create_worktree, worktree_dir
+
+    create_worktree(repo, "trading", str(issue_id), "main")
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        with adapter.connect() as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'archived' WHERE id = ?",
+                (issue_id,),
+            )
+            connection.commit()
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: archived mid-run",
+            stderr="",
+        )
+
+    with caplog.at_level("INFO", logger="scheduler"):
+        result = await scheduler.run_tick(
+            config,
+            cast(Any, adapter),
+            agent_runner=agent_runner,
+            render_prompt=lambda issue: main._render_candidate_prompt(
+                issue,
+                contract=adapter.contract,
+                repo_path=repo,
+                binding_type="coding",
+                tracker_kind="podium",
+            ),
+            repo_dirty=lambda path: False,
+            run_blocked_reconciler=False,
+            now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+        )
+    issue = await adapter.get_issue(str(issue_id))
+    run = await adapter.get_run(str(issue["latest_run_id"]))
+
+    assert result.dispatched is True
+    assert result.reason == "archived-terminal"
+    assert issue["state"] == "archived"
+    assert not issue["worktree_active"]
+    assert issue["latest_run_state"] == "succeeded"
+    assert issue["latest_verdict"] == "done"
+    assert run is not None
+    assert run["summary"] == "archived mid-run"
+    assert not worktree_dir(repo, "trading", str(issue_id)).is_dir()
+    branches = _git(repo, "branch", "--list").stdout
+    assert branch_name("trading", str(issue_id)) not in branches
+    assert "archived_terminal" in caplog.text
 
 
 @pytest.mark.asyncio

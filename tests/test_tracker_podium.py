@@ -14,7 +14,9 @@ TrackerAdapter = import_module("tracker_adapter").TrackerAdapter
 PodiumTrackerAdapter = import_module("tracker_podium").PodiumTrackerAdapter
 
 
-def _seed_db(path: Path, *, state: str = "todo", preferred_skill: str | None = "/dev-build") -> int:
+def _seed_db(
+    path: Path, *, state: str = "todo", preferred_skill: str | None = "/dev-build"
+) -> int:
     connection = sqlite3.connect(path)
     try:
         connection.executescript(SCHEMA_SQL)
@@ -78,6 +80,20 @@ async def test_get_issue_transition_and_label_noops(tmp_path: Path) -> None:
     assert unlabeled["state"] == "running"
     assert many_labeled["state"] == "running"
     assert many_unlabeled["state"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_transition_state_does_not_resurrect_archived_issue(
+    tmp_path: Path,
+) -> None:
+    issue_id = _seed_db(tmp_path / "podium.db", state="archived")
+    adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+    issue = await adapter.get_issue(str(issue_id))
+
+    assert updated["state"] == "archived"
+    assert issue["state"] == "archived"
 
 
 @pytest.mark.asyncio

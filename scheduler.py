@@ -9,8 +9,8 @@ import random
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from importlib import import_module
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -627,6 +627,56 @@ async def _finish_run_record(
             },
         )
     )
+
+
+async def _handle_archived_terminal(
+    adapter: TrackerAdapter,
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    run_id: str | None,
+    *,
+    binding: ProjectBinding | None = None,
+) -> bool:
+    """Return True when a completed Run's issue was archived mid-run.
+
+    Archived is terminal for engine verdict transitions: run rows still finish,
+    but issue.state is not resurrected and persistent worktrees are discarded.
+    """
+    issue = await _fetch_issue(adapter, candidate.id)
+    if str(issue.get("state") or "") != "archived":
+        return False
+
+    LOGGER.info(
+        "archived_terminal issue_id=%s run_id=%s",
+        candidate.id,
+        run_id or "",
+    )
+
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    binding_name = str(
+        getattr(candidate, "binding_name", "")
+        or (resolved_binding.name if resolved_binding is not None else "")
+    )
+    if not binding_name:
+        return True
+
+    try:
+        from web.api.worktree import remove_worktree, worktree_exists
+    except ImportError:  # pragma: no cover - supports web/api import path
+        from worktree import remove_worktree, worktree_exists  # type: ignore[no-redef]
+
+    issue_id = str(candidate.id)
+    if await asyncio.to_thread(
+        worktree_exists, config.homelab_repo_path, binding_name, issue_id
+    ):
+        await asyncio.to_thread(
+            remove_worktree, config.homelab_repo_path, binding_name, issue_id
+        )
+
+    update_columns = getattr(adapter, "_update_issue_columns", None)
+    if callable(update_columns) and issue.get("worktree_active"):
+        await _maybe_await(update_columns(candidate.id, {"worktree_active": False}))
+    return True
 
 
 class LockHeld(RuntimeError):
@@ -1331,6 +1381,12 @@ async def run_tick(
                         reason_code,
                     )
                 raise
+            if await _handle_archived_terminal(
+                adapter, config, candidate, run_id, binding=tick_binding
+            ):
+                return TickResult(
+                    True, "archived-terminal", candidate.id, mode=mode
+                )
             try:
                 await adapter.transition_state(
                     candidate.id, TrackerRole.STATE_IN_REVIEW

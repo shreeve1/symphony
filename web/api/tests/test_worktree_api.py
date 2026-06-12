@@ -328,6 +328,73 @@ def test_merge_on_done_noop_when_no_worktree(repo_and_db: tuple[Path, Path]) -> 
     assert response.json()["state"] == "done"
 
 
+# --- archive teardown tests ---
+
+
+def test_archive_idle_issue_removes_worktree_and_branch(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """State→archived with no active run tears down persistent worktree."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import branch_name, create_worktree, worktree_dir
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+    create_worktree(repo, "trading", issue_str, "main")
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(
+            f"/api/issues/{issue_id}",
+            json={"state": "archived"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "archived"
+    assert body["worktree_active"] is False
+    assert not worktree_dir(repo, "trading", issue_str).is_dir()
+    branches = _git(repo, "branch", "--list").stdout
+    assert branch_name("trading", issue_str) not in branches
+
+
+def test_archive_active_issue_leaves_worktree_until_run_completion(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """State→archived during queued/running run leaves live worktree intact."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import branch_name, create_worktree, worktree_dir
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+    create_worktree(repo, "trading", issue_str, "main")
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE issue SET latest_run_state = 'running' WHERE id = ?",
+            (issue_id,),
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(
+            f"/api/issues/{issue_id}",
+            json={"state": "archived"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["state"] == "archived"
+    assert body["worktree_active"] is True
+    assert worktree_dir(repo, "trading", issue_str).is_dir()
+    branches = _git(repo, "branch", "--list").stdout
+    assert branch_name("trading", issue_str) in branches
+
+
 # --- toggle-off archive tests ---
 
 

@@ -317,7 +317,11 @@ class PodiumTrackerAdapter:
     ) -> dict[str, Any]:
         with self.connect() as connection:
             connection.execute(
-                "UPDATE issue SET state = ?, updated_at = ? WHERE id = ?",
+                """
+                UPDATE issue
+                SET state = ?, updated_at = ?
+                WHERE id = ? AND state != 'archived'
+                """,
                 (self._state_value(state), _now(), issue_id),
             )
             connection.commit()
