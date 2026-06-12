@@ -14,6 +14,7 @@ import {
 	issueListRefetchIntervalMs,
 	runDetailRefetchIntervalMs,
 } from "../lib/polling";
+import { formatRunDuration } from "../lib/run-duration";
 
 const LIVE_SYNC_CARD = "Seed todo issue for homelab";
 
@@ -31,6 +32,26 @@ const waitForPatch = (page: Page) =>
 			res.request().method() === "PATCH" &&
 			res.ok(),
 	);
+
+test("running duration helper formats live and terminal states", async () => {
+	const started = "2026-06-12T00:00:00Z";
+	expect(
+		formatRunDuration(
+			{ state: "running", started_at: started, ended_at: null },
+			Date.parse("2026-06-12T00:04:12Z"),
+		),
+	).toBe("running 4m12s");
+	expect(
+		formatRunDuration({
+			state: "succeeded",
+			started_at: started,
+			ended_at: "2026-06-12T00:00:09Z",
+		}),
+	).toBe("9s");
+	expect(
+		formatRunDuration({ state: "succeeded", started_at: started, ended_at: null }),
+	).toBe("—");
+});
 
 test("polling interval helpers gate active and idle states", async () => {
 	expect(issueListRefetchIntervalMs([])).toBe(10_000);
@@ -135,14 +156,28 @@ test("run detail polling picks up terminal run metadata and log", async ({
 	await page.goto("/homelab");
 	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("run-row").first()).toContainText(/running \d+s/);
 	await page.getByTestId("run-row").first().click();
 	await expect(page.getByTestId("run-detail-flyout")).toBeVisible();
-	await expect(page.getByTestId("run-field-duration")).toContainText("—");
+	await expect(page.getByTestId("run-field-duration")).toContainText(
+		/running \d+s/,
+	);
+	const firstDuration = await page.getByTestId("run-field-duration").textContent();
+	await expect
+		.poll(
+			async () => page.getByTestId("run-field-duration").textContent(),
+			{ timeout: 2_500 },
+		)
+		.not.toBe(firstDuration);
 
 	finishRun(runId, "polling complete\n");
 	await expect(page.getByTestId("run-field-ended")).not.toContainText("—", {
 		timeout: 4_500,
 	});
+	await expect(page.getByTestId("run-field-duration")).not.toContainText(
+		"running",
+	);
+	await expect(page.getByTestId("run-field-duration")).toContainText(/\d+s/);
 	await expect(page.getByTestId("run-log-pane")).toContainText(
 		"polling complete",
 		{ timeout: 4_500 },

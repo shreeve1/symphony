@@ -1,18 +1,23 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchRun, fetchRunLog, type RunDetail } from "@/lib/api";
 import { runDetailRefetchIntervalMs } from "@/lib/polling";
+import { formatRunDuration, isLiveElapsedRun } from "@/lib/run-duration";
 
 function formatValue(value: string | number | null | undefined) {
 	return value == null || value === "" ? "—" : String(value);
 }
 
-function formatDuration(run: RunDetail | undefined) {
-	if (!run?.started_at || !run.ended_at) return "—";
-	const ms = Date.parse(run.ended_at) - Date.parse(run.started_at);
-	if (!Number.isFinite(ms) || ms < 0) return "—";
-	return `${Math.round(ms / 1000)}s`;
+function useLiveNow(run: RunDetail | undefined) {
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		if (!isLiveElapsedRun(run)) return;
+		setNow(Date.now());
+		const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+		return () => window.clearInterval(timer);
+	}, [run?.id, run?.state, run?.started_at, run?.ended_at]);
+	return now;
 }
 
 export function RunDetailPanel({
@@ -33,6 +38,7 @@ export function RunDetailPanel({
 		refetchInterval: () => runDetailRefetchIntervalMs(run.data),
 	});
 	const logRef = useRef<HTMLPreElement | null>(null);
+	const now = useLiveNow(run.data);
 
 	useEffect(() => {
 		const node = logRef.current;
@@ -51,7 +57,7 @@ export function RunDetailPanel({
 		],
 		["started", formatValue(run.data?.started_at)],
 		["ended", formatValue(run.data?.ended_at)],
-		["duration", formatDuration(run.data)],
+		["duration", formatRunDuration(run.data, now)],
 		["branch", formatValue(run.data?.branch_name)],
 		["worktree", formatValue(run.data?.worktree_path)],
 	];

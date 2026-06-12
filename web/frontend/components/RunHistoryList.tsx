@@ -1,6 +1,21 @@
+import { useEffect, useState } from "react";
+
 import type { Run } from "@/lib/api";
 import { formatAge } from "@/lib/issues";
+import { formatRunDuration, isLiveElapsedRun } from "@/lib/run-duration";
 import { VerdictPill } from "@/components/badges";
+
+function useLiveNow(runs: Run[]) {
+  const [now, setNow] = useState(() => Date.now());
+  const hasLiveRun = runs.some(isLiveElapsedRun);
+  useEffect(() => {
+    if (!hasLiveRun) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasLiveRun]);
+  return now;
+}
 
 // Run history for an issue: verdict + model + started_at only. Cost is
 // deliberately omitted — there is no `run-cost` element anywhere.
@@ -11,6 +26,7 @@ export function RunHistoryList({
   runs: Run[];
   onSelectRun: (id: number) => void;
 }) {
+  const now = useLiveNow(runs);
   if (!runs.length) {
     return <p className="text-xs text-muted-foreground">No runs yet.</p>;
   }
@@ -30,7 +46,15 @@ export function RunHistoryList({
                 {run.model ?? "—"}
               </span>
             </div>
-            <span className="text-muted-foreground">{formatAge(run.started_at)}</span>
+            <span className="text-muted-foreground">
+              {isLiveElapsedRun(run) ? (
+                <span data-testid="run-row-liveness">
+                  {formatRunDuration(run, now)}
+                </span>
+              ) : (
+                formatAge(run.started_at)
+              )}
+            </span>
           </button>
         </li>
       ))}
