@@ -25,3 +25,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Dismissal is state-preserving; transitions into `in_review`/`blocked` clear `inbox_dismissed_at`; newer `last_event_at` remains a secondary resurface path.
 **Conventions established:** Inbox dismiss buttons use optimistic removal with rollback and do not navigate the card.
 **Notes for next iteration:** #039 can remove the dashboard attention list now that Inbox read + dismiss flows are in place.
+
+## #039 Podium remove dashboard attention list — 2026-06-12
+
+**What changed:** Removed the Dashboard Needs attention section, deleted its attention computation and row component, and updated the dashboard Playwright spec to assert the legacy attention testids are absent.
+**Files:** `web/frontend/app/page.tsx`, `web/frontend/tests/dashboard.spec.ts`.
+**Decisions:** Sidebar Inbox is now the only operator-response surface; dashboard remains focused on global roll-up and per-binding cards.
+**Conventions established:** Dashboard specs should not depend on `dashboard-attention` or `attention-row`.
+**Notes for next iteration:** None.

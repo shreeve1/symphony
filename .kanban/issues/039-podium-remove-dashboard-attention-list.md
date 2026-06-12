@@ -1,7 +1,7 @@
 ---
 id: 039
 title: Podium — remove dashboard attention list (superseded by Inbox)
-status: review
+status: done
 blocked_by: [037]
 parent: null
 priority: 0
@@ -25,10 +25,14 @@ This slice is intentionally tiny: it is the second half of the "replace attentio
 
 ## Acceptance criteria
 
-- [ ] `app/page.tsx` contains no `dashboard-attention` or `attention-row` testids and no `attentionItems` computation; no orphaned imports or variables remain from the removal.
-- [ ] `grep -rn "attention" web/frontend/app web/frontend/components` returns no matches.
-- [ ] `tests/dashboard.spec.ts` passes with the section gone; no spec in the suite still expects the attention section.
-- [ ] Full e2e suite passes.
+- [x] `app/page.tsx` contains no `dashboard-attention` or `attention-row` testids and no `attentionItems` computation; no orphaned imports or variables remain from the removal.
+- [x] `grep -rn "attention" web/frontend/app web/frontend/components` returns no matches.
+- [x] `tests/dashboard.spec.ts` passes with the section gone; no spec in the suite still expects the attention section.
+- [x] Full e2e suite passes.
+
+## Implementation Notes
+
+Removed the dashboard Needs attention section now that Sidebar Inbox is the canonical operator-response surface. Deleted the attention computation, row component, lucide icons, and dashboard test click-through coverage; the dashboard spec now asserts the legacy attention testids are absent. Fresh review returned `RALPH_REVIEW: PASS`.
 
 ## Verification
 
