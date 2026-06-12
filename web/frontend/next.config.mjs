@@ -6,6 +6,9 @@
 const API_ORIGIN = process.env.PODIUM_API_ORIGIN ?? "http://127.0.0.1:8090";
 
 const nextConfig = {
+  // Build output dir. Defaults to .next; deploy.sh overrides it to a staging
+  // dir so a rebuild never overwrites the .next the running server serves from.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   async rewrites() {
     return [
       {
