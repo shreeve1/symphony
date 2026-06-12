@@ -81,10 +81,20 @@ def _build_binding_runtime(
 ) -> BindingRuntime:
     binding_config = config.for_binding(binding)
     if binding.default_agent == "pi":
+        probe_provider = binding_config.pi_provider
+        probe_model = binding_config.pi_model
+        if binding.tracker == "podium":
+            # Podium dispatch resolves provider/model from models.yml, so the
+            # startup probe must exercise the catalog default, not legacy env.
+            from model_catalog import load_models, resolve_model
+
+            entry = resolve_model(None, load_models())
+            probe_provider = str(entry["provider"])
+            probe_model = str(entry["id"])
         verify_pi_support(
             binding_config.pi_bin,
-            binding_config.pi_provider,
-            binding_config.pi_model,
+            probe_provider,
+            probe_model,
             binding_config.homelab_repo_path,
         )
     if binding.tracker == "podium":

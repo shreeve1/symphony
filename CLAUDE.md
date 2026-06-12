@@ -40,6 +40,7 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 
 - `/home/james/symphony-host.env` — secret values (`PLANE_API_KEY`, etc.).
 - `symphony-host.service` `Environment=` — non-secret config (`PLANE_API_URL`, `PLANE_WORKSPACE_SLUG`, `PI_BIN`, `SYMPHONY_PI_PROVIDER`, `SYMPHONY_PI_MODEL`, `SYMPHONY_LOCK_PATH`, `PYTHONPATH`, `PYTHONUNBUFFERED`). Inspect with `systemctl show symphony-host.service --property=Environment`.
+- Dispatch model/provider for Podium bindings comes from repo-root `models.yml` (issue `preferred_model`, else the single `default: true` entry; `reasoning_effort` appends as a `:suffix`). `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` are a legacy Plane-path fallback only — safe to leave on the unit, no longer consulted for Podium dispatch.
 - `WorkingDirectory=/home/james/symphony` — `bindings.yml` auto-discovered at cwd; `SYMPHONY_BINDINGS_PATH` not required.
 - `SYMPHONY_LOCK_PATH` — optional; if set, `config.py` uses it as the single-instance lock file path. Currently `/run/symphony/symphony.lock` on the unit.
 

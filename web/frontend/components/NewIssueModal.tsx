@@ -125,9 +125,15 @@ function FieldCombobox({
 	const [open, setOpen] = useState(false);
 	const [draft, setDraft] = useState(labelFor(options, value));
 	const normalizedDraft = draft.trim().toLowerCase();
+	// A draft that still mirrors the selected value (e.g. the preselected
+	// default model) is not a search: show the full list until the operator
+	// actually types.
+	const filterActive =
+		normalizedDraft !== labelFor(options, value).trim().toLowerCase();
 	const filtered = options.filter((option) => {
 		const label = option.label ?? option.value;
 		return (
+			!filterActive ||
 			!normalizedDraft ||
 			label.toLowerCase().includes(normalizedDraft) ||
 			option.value.toLowerCase().includes(normalizedDraft)
@@ -239,6 +245,15 @@ function NewIssueModal({
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
 	useEffect(() => titleRef.current?.focus(), []);
+
+	// Preselect the catalog's default: true model so the form shows what the
+	// scheduler will actually dispatch when the operator changes nothing.
+	const defaultModel = (options.data?.models ?? []).find(
+		(option: ModelOption) => option.default,
+	)?.id;
+	useEffect(() => {
+		if (defaultModel) setModel((current) => current || defaultModel);
+	}, [defaultModel]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();

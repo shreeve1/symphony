@@ -52,10 +52,10 @@ PY
      label: Example
    ```
 
-2. Required fields: `id`, `agent`.
-3. Optional fields: `provider`, `label`.
+2. Required fields: `id`, `agent`. `provider` is required when `agent: pi`.
+3. Optional fields: `provider` (claude entries), `label`, `default`.
 4. `agent` must be `pi` or `claude`.
-5. `id` must be unique.
+5. `id` must be unique, and exactly one entry catalog-wide must set `default: true` (the model the scheduler dispatches when an Issue has no `preferred_model`).
 6. Lint with the shared validator:
 
    ```bash
@@ -77,7 +77,8 @@ PY
 ## Operator notes
 
 - `models.yml` is git-tracked authored config. Commit intentional changes.
-- `preferred_model` remains free text server-side. Unlisted models still dispatch; the catalog only improves dropdown discovery.
+- The catalog is the dispatch contract, not a hint: the scheduler resolves `preferred_model` against it at dispatch time and moves the Issue to `blocked` when the model is absent. The `default: true` entry dispatches when `preferred_model` is unset. `SYMPHONY_PI_MODEL`/`SYMPHONY_PI_PROVIDER` env vars are a legacy Plane-path fallback only.
+- Removing the `default: true` entry without nominating a replacement breaks every dispatch (validator rejects the catalog). Always keep exactly one default.
 - Keep YAML stable and readable; do not sort or rewrite unrelated entries unless the requested edit requires it.
 
 ## Safety rules

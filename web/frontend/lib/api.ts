@@ -148,6 +148,8 @@ export interface ModelOption {
 	id: string;
 	agent: string;
 	label?: string;
+	provider?: string;
+	default?: boolean;
 }
 
 export interface IssueOptions {

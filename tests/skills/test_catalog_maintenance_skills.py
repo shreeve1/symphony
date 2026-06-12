@@ -35,7 +35,8 @@ def test_symphony_models_documents_list_add_remove_and_shared_validator() -> Non
     assert "_validate_models" in text
     assert "agent` must be `pi` or `claude`" in text
     assert "id` must be unique" in text
-    assert "preferred_model` remains free text" in text
+    assert "default: true" in text
+    assert "blocked" in text
     assert "No service restart" in text
     assert "No Plane API calls" in text
     assert "symphony-host.env" in text
