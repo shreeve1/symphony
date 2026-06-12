@@ -42,8 +42,8 @@ Pull-not-push with ~3s latency while active; each browser tab polls independentl
 
 ## Status note
 
-This ADR was authored during a `/grill-me` planning session for a Podium UX/observability tuning effort (searchable agent-filtered model dropdowns via `models.yml` + `symphony-models`/`symphony-skills` skills, run elapsed timer, board overview at `/`). Only the live-bridge decision is recorded as an ADR; the rest is implementation plan, not yet landed.
+This ADR was authored during a `/grill-me` planning session for a Podium UX/observability tuning effort (searchable agent-filtered model dropdowns via `models.yml` + `symphony-models`/`symphony-skills` skills, run elapsed timer, board overview at `/`). Only the live-bridge decision is recorded as an ADR. The model-catalog/dropdown slice later landed in #028 and is tracked separately in `podium-028-model-catalog-searchable-dropdowns.md`; polling, run elapsed timer, board overview, and maintenance skills remain separate slices. [source: wiki/analyses/podium-028-model-catalog-searchable-dropdowns.md]
 
 ## Claims
 
-C-0112, C-0113 in [CLAIMS.md](../CLAIMS.md). Closes the open question in C-0070.
+C-0112, C-0113 in [CLAIMS.md](../CLAIMS.md). Closes the open question in C-0070. Related implementation claims: C-0114, C-0115.

@@ -221,3 +221,10 @@ Append entries with this format:
 - Verified facts: `grep -c "run.updated" scheduler.py tracker_podium.py` = 0/0; only publish is API-startup seed at `main.py:126`. `agent_runner.py:272` `process.communicate(timeout=...)` blocks until exit (no incremental log). Landing `/` is a placeholder; no aggregate view exists.
 - Notes: No secrets, no `.env` contents, no transcript. Plan implementation (models.yml, skills, frontend comboboxes/timer/overview, polling) is future work — only the live-bridge architecture decision was promoted to an ADR.
 - Unresolved: none of the four plan items implemented yet; ADR-0006 + claims uncommitted (local working tree).
+
+## [2026-06-12] session-update | #028 models.yml catalog + searchable dropdowns
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #028 implementation; commits `99bd541`, `1773db9`, `8bda239`; `models.yml`; `web/api/main.py`; `web/api/tests/test_issue_create.py`; `web/frontend/lib/api.ts`; `web/frontend/components/NewIssueModal.tsx`; `web/frontend/tests/new-issue.spec.ts`; `.kanban/progress.md`.
+- Outputs: `wiki/analyses/podium-028-model-catalog-searchable-dropdowns.md`; updated `wiki/analyses/adr-0006-engine-state-polling.md`; updated `wiki/CLAIMS.md` (C-0114, C-0115; C-0056 superseded); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured model catalog source-of-truth move from `KNOWN_MODELS` to `models.yml`, shared `_validate_models()` contract, `/options` model-object shape, graceful invalid-catalog fallback, agent-filtered searchable comboboxes, free-text Agent/Model preservation, and #032 validator reuse note. Verification passed: `uv run pytest` (591 passed, 1 skipped), `pnpm exec tsc --noEmit`, `pnpm test:e2e` (16 passed), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS_WITH_NOTES` due an unrelated live-sync flake in the reviewer run. No secrets, no `.env` contents, no transcript.
