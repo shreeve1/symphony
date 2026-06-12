@@ -26,3 +26,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Active runs render as `running <elapsed>` while terminal runs use final wall-clock duration from `started_at`/`ended_at`; #029 polling remains the refresh-on-exit mechanism.
 **Conventions established:** Use `isLiveElapsedRun()` and `formatRunDuration()` for queued/running Run liveness affordances instead of local duration formatting.
 **Notes for next iteration:** #031 dashboard should continue keying board-level state counts off `issue.state`; active-run liveness now lives in run-specific UI only.
+
+## #031 Podium — board-level overview dashboard — 2026-06-12
+
+**What changed:** Replaced the root placeholder with a cross-binding dashboard, global roll-up, per-binding state summary cards, last-activity display, and a cross-binding attention list for blocked/failed issues.
+**Files:** `web/frontend/app/page.tsx`, `web/frontend/app/[binding]/page.tsx`, `web/frontend/components/KanbanBoard.tsx`, `web/frontend/tests/dashboard.spec.ts`, plus selector updates in existing Playwright specs.
+**Decisions:** Dashboard aggregation stays client-side from the existing issue-list payload; no backend aggregate endpoint was introduced for two active bindings.
+**Conventions established:** Board-level status counts continue to use `issue.state`; attention rows deep-link via `/<binding>?issue=<id>` and flyout close clears the query parameter.
+**Notes for next iteration:** #032 can proceed from the #028 model catalog validator; dashboard work did not change skill/model catalog contracts.

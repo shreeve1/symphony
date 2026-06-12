@@ -1,7 +1,7 @@
 ---
 id: 031
 title: Podium — board-level overview dashboard at /
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
@@ -67,12 +67,19 @@ dashboard is still correct on load / refocus.
 
 ## Acceptance criteria
 
-- [ ] `/` renders per-binding summary cards (archived bindings skipped) with queue/running/in_review/blocked/done counts keyed off `issue.state`, plus a global roll-up, computed from the issue-list payload (no new endpoint).
-- [ ] Attention list shows blocked + latest-run-failed issues across all bindings; empty state when none.
-- [ ] Clicking an attention row navigates to `/<binding>?issue=<id>` and opens that issue's flyout.
-- [ ] Each binding card shows a last-activity timestamp from `last_event_at`.
-- [ ] Playwright: seed mixed states across bindings → assert counts, attention list membership, and click-through-opens-flyout.
-- [ ] `pnpm exec tsc --noEmit` passes.
+- [x] `/` renders per-binding summary cards (archived bindings skipped) with queue/running/in_review/blocked/done counts keyed off `issue.state`, plus a global roll-up, computed from the issue-list payload (no new endpoint).
+- [x] Attention list shows blocked + latest-run-failed issues across all bindings; empty state when none.
+- [x] Clicking an attention row navigates to `/<binding>?issue=<id>` and opens that issue's flyout.
+- [x] Each binding card shows a last-activity timestamp from `last_event_at`.
+- [x] Playwright: seed mixed states across bindings → assert counts, attention list membership, and click-through-opens-flyout.
+- [x] `pnpm exec tsc --noEmit` passes.
+
+## Implementation Notes
+
+- Replaced the root landing placeholder with a client-side cross-binding dashboard built from existing binding and issue-list API calls.
+- Added per-binding and global state-count cards, last-activity timestamps, and a cross-binding attention list for blocked or failed-run issues.
+- Added issue deep-link support through `/<binding>?issue=<id>` and made flyout close clear the query parameter.
+- Added Playwright coverage for dashboard counts, attention rows, click-through flyout opening, and query cleanup.
 
 ## Verification
 
