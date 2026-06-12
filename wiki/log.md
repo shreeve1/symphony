@@ -299,6 +299,7 @@ Append entries with this format:
 - Outputs: `wiki/raw/sessions/2026-06-12-issue-archive-state-design.md`; `wiki/analyses/podium-issue-archive-design.md` (auto-promoted after lint); `wiki/CLAIMS.md` C-0123..C-0125; `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Design accepted, not implemented — sixth `archived` state (no new column), engine-terminal contract (no verdict transition post-run, deferred worktree teardown via `remove_worktree`), mid-run archive allowed, per-column board minimize with localStorage persistence, Archive button in flyout, 14-day opportunistic purge on `updated_at` with FK-safe delete order. Hazards recorded: `transition_state` resurrection bug, worktree-vs-issue "archive" terminology collision. C-0021/C-0064 (five states) left active — supersession deferred to the implementation pass. ADR offered, declined. No secrets, no env contents, no transcript.
 
+<<<<<<< Updated upstream
 ## [2026-06-12] session-update | #034 archived issue state core
 
 - Actor: agent (Pi, Ralph + wiki update)
@@ -326,3 +327,11 @@ Append entries with this format:
 - Inputs: James report of phantom dropdown entries; `podium.db` skill rows; `web/frontend/tests/skill-catalog.spec.ts`; `web/frontend/tests/fixtures.ts`; git history (`6d9f1c6`).
 - Outputs: deleted `catalog-alpha`/`catalog-bravo` rows from live `podium.db` (48 rows remain, zero manual rows); updated `wiki/analyses/podium-skills-catalog-refresh.md` resulting-state section; updated C-0136 note in `wiki/CLAIMS.md`.
 - Notes: Rows were leaked Playwright e2e fixtures — an older `seedSkills` wrote `source=''` into the live DB, which refresh's manual-row protection then preserved. Current `fixtures.ts` isolates via `PODIUM_DB_PATH` → `web/test-results/podium-e2e.db` and tags `source='e2e'` (self-healing: refresh deletes leaked `'e2e'` rows). No FK or code references existed at deletion. No secrets, no env contents.
+=======
+## [2026-06-12] session-update | Pi personal harness hardening pass
+
+- Actor: agent (Pi follow-up)
+- Inputs: `.pi/extensions/personal-harness.ts`; `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; `wiki/raw/sessions/2026-06-12-personal-harness-pi.md`; post-generation setup review findings.
+- Outputs: tracked `wiki/raw/personal-harness-pi-profile.md`; updated `.pi/extensions/personal-harness.ts`; updated `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; updated `wiki/analyses/personal-harness-pi-profile.md`; updated `wiki/CLAIMS.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Hardened bash secret-read blocking for `/home/james/symphony-host.env` and `.env`-like files, switched runtime roots to `PROFILE.targetRepo`, moved the durable profile reference into tracked wiki raw storage, changed automatic pytest beforeGit into a manual `uv run pytest -q` reminder, and replaced source-only dry checks with mocked-event verification coverage. No secrets or `.env` contents captured.
+>>>>>>> Stashed changes

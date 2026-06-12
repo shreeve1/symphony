@@ -6,10 +6,10 @@
 
 ## Durable Facts
 
-- Generated Harness Profile artifact: `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md` — Evidence: file written during this session.
+- Generated Harness Profile artifact: `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md` — Evidence: file written during this session. Tracked durable copy: `wiki/raw/personal-harness-pi-profile.md`.
 - Generated project-local Pi extension: `.pi/extensions/personal-harness.ts` — Evidence: file written during this session and load-smoked.
-- Selected harness posture: blocking afterWrite syntax checks for Python/JSON/JavaScript/shell; advisory Python Ruff lint; advisory deferred project checks for pytest, frontend `tsc --noEmit`, and `git diff --check`; manual Playwright listing only; safety blockers for secret paths, live service/systemd actions, Plane mutations, destructive DB/log deletion, Alembic downgrade, generated/vendor writes, and symlink escapes — Evidence: `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`, `.pi/extensions/personal-harness.ts`.
-- Verification passed: generated marker/default export checks; offline Pi load smoke; isolated offline Pi load smoke; syntax dry checks for `.py`, `.json`, `.mjs`, `.sh`; safety regex/path dry checks; source inspections for project-check trigger, manual scenario listing, and reference-mode guidance — Evidence: session commands `PI_OFFLINE=1 pi --no-session -e ./.pi/extensions/personal-harness.ts --list-models haiku`, `PI_OFFLINE=1 pi --no-session --no-extensions -e ./.pi/extensions/personal-harness.ts --list-models haiku`, temp-file syntax dry checks, and profile extraction checks.
+- Selected harness posture: blocking afterWrite syntax checks for Python/JSON/JavaScript/shell; advisory Python Ruff lint; advisory deferred project checks for frontend `tsc --noEmit` and `git diff --check`; manual `uv run pytest -q` and Playwright listing only; safety blockers for secret paths including bash shell readers, live service/systemd actions, Plane mutations, destructive DB/log deletion, Alembic downgrade, generated/vendor writes, and symlink escapes — Evidence: `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`, `.pi/extensions/personal-harness.ts`.
+- Verification passed: generated marker/default export checks; offline Pi load smoke; isolated offline Pi load smoke; syntax dry checks for `.py`, `.json`, `.mjs`, `.sh`; mocked safety regex/path dry checks; mocked project-check trigger and manual scenario listing checks; targetRepo root-resolution dry check; reference-mode guidance inspection — Evidence: session commands `PI_OFFLINE=1 pi --no-session -e ./.pi/extensions/personal-harness.ts --list-models haiku`, `PI_OFFLINE=1 pi --no-session --no-extensions -e ./.pi/extensions/personal-harness.ts --list-models haiku`, temp-file syntax dry checks, and profile extraction checks.
 
 ## Decisions
 
@@ -33,4 +33,4 @@
 ## Open Questions And Follow-Ups
 
 - Run `/reload` inside Pi from `/home/james/symphony` to load the generated extension.
-- If harness behavior is too aggressive, edit `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md` first and regenerate, or delete `.pi/extensions/personal-harness.ts`.
+- If harness behavior is too aggressive, edit tracked `wiki/raw/personal-harness-pi-profile.md` (and sync the local `.rpiv` artifact when regenerating), or delete `.pi/extensions/personal-harness.ts`.
