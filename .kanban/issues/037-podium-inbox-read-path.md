@@ -1,7 +1,7 @@
 ---
 id: 037
 title: Podium Inbox — read path: schema column, GET /api/inbox, sidebar section
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
