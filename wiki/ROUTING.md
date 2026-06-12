@@ -65,7 +65,7 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 ## Decisions
 
 - Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/adr-0002-generalize-symphony.md`, `analyses/adr-0003-worktree-per-run.md`, `analyses/adr-0004-tracker-contract.md`, `analyses/adr-0005-replace-plane-with-podium.md`, `analyses/brainstorm-pi-swap.md`, `analyses/pi-swap-review-specs.md`, `sources/symphony-context.md`
-- Keywords: ADR, CONTEXT.md, design rationale, tradeoffs, deprecation, sortie, build vs buy, adapter seam, role indirection, brainstorm, locked decisions, rejected designs, audit loop, retire Plane, Podium decision, Binding-is-Project, Skill subsumes Mode, Run first-class, worktree opt-in posture, tracker plane podium, ADR-0002 superseded, ADR-0001 ADR-0003 inert
+- Keywords: ADR, CONTEXT.md, design rationale, tradeoffs, deprecation, sortie, build vs buy, adapter seam, role indirection, brainstorm, locked decisions, rejected designs, audit loop, retire Plane, Podium decision, Binding-is-Project, Skill subsumes Mode, Run first-class, worktree opt-in posture, tracker plane podium, ADR-0002 superseded, ADR-0001 ADR-0003 inert, ADR-0006, gated polling, refetchInterval, scheduler separate process, WebSocket gap, in-process hub, engine state not pushed, communicate blocks log, no live tail, elapsed timer, board overview, models.yml, symphony-models, symphony-skills, searchable dropdown, agent-filtered models
 
 ## Plan History
 
