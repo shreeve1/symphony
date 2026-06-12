@@ -34,7 +34,8 @@ export function KanbanBoard({
 		try {
 			const raw = localStorage.getItem(storageKey);
 			if (!raw) {
-				setCollapsed(new Set());
+				// Default: archived column collapsed; others expanded.
+				setCollapsed(new Set(["archived"]));
 				return;
 			}
 			const parsed = JSON.parse(raw);

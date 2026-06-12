@@ -653,6 +653,17 @@ export function IssueFlyout({
 								onPatch={onPatch}
 							/>
 
+							{issue.state !== "archived" && (
+								<button
+									type="button"
+									data-testid="archive-issue"
+									onClick={() => onPatch({ state: "archived" })}
+									className="w-full rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+								>
+									Archive
+								</button>
+							)}
+
 							<div>
 								<div
 									className="flex gap-1 border-b"

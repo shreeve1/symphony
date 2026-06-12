@@ -244,7 +244,7 @@ class IssuePatch(BaseModel):
 
     title: str | None = Field(default=None, min_length=1)
     description: str | None = None
-    state: Literal["todo", "in_review", "running", "blocked", "done"] | None = None
+    state: Literal["todo", "in_review", "running", "blocked", "done", "archived"] | None = None
     priority: Literal["low", "med", "high", "urgent"] | None = None
     preferred_agent: str | None = None
     preferred_model: str | None = None

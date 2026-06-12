@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0003_infra_role_columns"
+INITIAL_REVISION = "0004_archived_state"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS issue(
   binding_name TEXT REFERENCES binding(name),
   title TEXT,
   description TEXT,
-  state TEXT NOT NULL CHECK (state IN ('todo','in_review','running','blocked','done')),
+  state TEXT NOT NULL CHECK (state IN ('todo','in_review','running','blocked','done','archived')),
   priority TEXT CHECK (priority IS NULL OR priority IN ('low','med','high','urgent')),
   preferred_agent TEXT,
   preferred_model TEXT,
