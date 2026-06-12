@@ -1,7 +1,7 @@
 ---
 id: 039
 title: Podium — remove dashboard attention list (superseded by Inbox)
-status: in-progress
+status: review
 blocked_by: [037]
 parent: null
 priority: 0
