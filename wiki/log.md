@@ -235,3 +235,10 @@ Append entries with this format:
 - Inputs: issue #031 implementation; commits `e95a394`, `c93500a`, `8387e6a`; `web/frontend/app/page.tsx`; `web/frontend/app/[binding]/page.tsx`; `web/frontend/components/KanbanBoard.tsx`; `web/frontend/tests/dashboard.spec.ts`; `.kanban/issues/031-podium-board-overview-dashboard.md`; `.kanban/progress.md`.
 - Outputs: `wiki/analyses/podium-031-board-overview-dashboard.md`; updated `wiki/CLAIMS.md` (C-0116); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
 - Notes: Captured root `/` cross-binding dashboard, client-side aggregation from existing issue-list payloads, global and per-binding `issue.state` roll-ups, last-activity timestamps, blocked/failed attention rows, and `/<binding>?issue=<id>` flyout deep-link behavior. Verification passed: `uv run pytest` (591 passed, 1 skipped), `pnpm exec tsc --noEmit`, `pnpm test:e2e` (21 passed), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+## [2026-06-12] session-update | #032 catalog maintenance skills
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #032 implementation; commits `e1744bc`, `6325bc1`, `4e83e1a`; `.claude/skills/symphony-skills/SKILL.md`; `.claude/skills/symphony-models/SKILL.md`; `tests/skills/test_catalog_maintenance_skills.py`; `.kanban/issues/032-symphony-skills-and-models-maintenance-skills.md`; `.kanban/progress.md`.
+- Outputs: updated `wiki/analyses/symphony-skills-index.md`; updated `wiki/CLAIMS.md` (C-0117); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured manual Skill-table refresh flow, direct `models.yml` list/add/remove maintenance, shared `_load_models()` / `_validate_models()` lint gate, no bespoke model helper, and safety rules forbidding service restarts, Plane calls, env-file reads, direct DB model edits, and secret printing. Verification passed: `uv run pytest tests/skills/` (15 passed), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.

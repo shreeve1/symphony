@@ -75,7 +75,7 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 ## Skills & Tooling
 
 - Pages: `analyses/symphony-skills-index.md`
-- Keywords: symphony-binding-scaffold, symphony-project-scaffold, symphony-workflow-author, symphony-restart, symphony-bindings-status, symphony-binding-smoke, symphony-plane-recover, symphony-onboard-project, symphony-troubleshooter, skill_migration.py, Podium skill migration, tracker: podium, POST /api/bindings/{name}/issues, GET /api/bindings, GET /api/issues/{issue_id}/runs, Plane retirement tool, typed-slug confirmation, dry-run preview, umbrella skill
+- Keywords: symphony-binding-scaffold, symphony-project-scaffold, symphony-workflow-author, symphony-restart, symphony-bindings-status, symphony-binding-smoke, symphony-plane-recover, symphony-onboard-project, symphony-troubleshooter, symphony-skills, symphony-models, skill_migration.py, Podium skill migration, Podium catalog maintenance, tracker: podium, POST /api/bindings/{name}/issues, GET /api/bindings, GET /api/issues/{issue_id}/runs, GET /api/skills, python -m web.cli.podium skills refresh, models.yml, _load_models, _validate_models, Plane retirement tool, typed-slug confirmation, dry-run preview, umbrella skill
 
 ## Podium Web UI
 

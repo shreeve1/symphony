@@ -3,7 +3,7 @@ title: Symphony skills index
 type: analysis
 status: promoted
 created: 2026-06-09
-updated: 2026-06-11
+updated: 2026-06-12
 sources:
   - .claude/skills/symphony-binding-scaffold/SKILL.md
   - .claude/skills/symphony-binding-smoke/SKILL.md
@@ -14,6 +14,8 @@ sources:
   - .claude/skills/symphony-restart/SKILL.md
   - .claude/skills/symphony-troubleshooter/SKILL.md
   - .claude/skills/symphony-workflow-author/SKILL.md
+  - .claude/skills/symphony-skills/SKILL.md
+  - .claude/skills/symphony-models/SKILL.md
   - skill_migration.py
   - tests/skills/
 confidence: high
@@ -22,7 +24,7 @@ tags: [skills, claude-code, onboarding, operations, scaffold, smoke, recovery, p
 
 # Symphony skills index
 
-Symphony now carries repo-local Podium-era `symphony-*` skill docs under `.claude/skills/` for the migrated operational suite. The previous dotfiles/global `~/.claude/skills/` copies remain historical/operator runtime context, but #027 made the Podium migration reviewable and testable inside this repository [source: .claude/skills/symphony-binding-scaffold/SKILL.md] [source: tests/skills/test_binding_scaffold.py].
+Symphony now carries repo-local Podium-era `symphony-*` skill docs under `.claude/skills/` for the migrated operational suite. The previous dotfiles/global `~/.claude/skills/` copies remain historical/operator runtime context, but #027 made the Podium migration reviewable and testable inside this repository [source: .claude/skills/symphony-binding-scaffold/SKILL.md] [source: tests/skills/test_binding_scaffold.py]. #032 extends the suite with manual catalog-maintenance skills for the Skill table and `models.yml` dropdown catalog [source: .claude/skills/symphony-skills/SKILL.md] [source: .claude/skills/symphony-models/SKILL.md] [source: tests/skills/test_catalog_maintenance_skills.py].
 
 ## Lifecycle map
 
@@ -38,6 +40,10 @@ operations / situational awareness:
   symphony-bindings-status
   symphony-restart
   symphony-troubleshooter
+
+manual catalog maintenance:
+  symphony-skills → refresh Podium skill table from .claude/skills
+  symphony-models → edit/lint models.yml with shared validator
 ```
 
 ## Podium migration summary (#027)
@@ -51,6 +57,14 @@ operations / situational awareness:
 - `symphony-onboard-project` now calls `symphony-binding-scaffold → symphony-workflow-author → symphony-restart → symphony-binding-smoke`, and explicitly does not call `symphony-project-scaffold` or `symphony-plane-recover` for normal Podium onboarding [source: .claude/skills/symphony-onboard-project/SKILL.md].
 
 ## Per-skill summary
+
+### `symphony-skills`
+
+Refreshes the Podium `skill` table from repo-local `.claude/skills/**/SKILL.md` files by wrapping `python -m web.cli.podium skills refresh`: dry-run first, operator confirmation, then live refresh. The skill explicitly forbids service restarts, Plane calls, env-file reads, and secret printing [source: .claude/skills/symphony-skills/SKILL.md] [source: tests/skills/test_catalog_maintenance_skills.py].
+
+### `symphony-models`
+
+Maintains repo-root `models.yml` as authored git-tracked config. It documents list/add/remove edits and lints via `web.api.main._load_models()` / `_validate_models()` so it reuses the #028 catalog contract (`agent` in `pi|claude`, required unique `id`, optional `provider`/`label`) instead of adding bespoke helper code. The skill reminds operators that `preferred_model` remains free text and forbids service restarts, Plane calls, env-file reads, direct DB edits, and secret printing [source: .claude/skills/symphony-models/SKILL.md] [source: tests/skills/test_catalog_maintenance_skills.py].
 
 ### `symphony-binding-scaffold`
 
@@ -86,7 +100,7 @@ These operational skills were not part of #027's code migration. They remain rel
 
 ## Safety pattern after Podium migration
 
-Migrated skills avoid Plane API endpoints and `plane_adapter` imports. Tests under `tests/skills/` assert the Podium endpoint strings and no legacy workspace endpoint coupling for migrated docs, while `skill_migration.py` provides testable helper seams [source: tests/skills/test_binding_scaffold.py] [source: tests/skills/test_binding_smoke.py] [source: tests/skills/test_bindings_status.py].
+Migrated skills avoid Plane API endpoints and `plane_adapter` imports. Tests under `tests/skills/` assert the Podium endpoint strings and no legacy workspace endpoint coupling for migrated docs, while `skill_migration.py` provides testable helper seams [source: tests/skills/test_binding_scaffold.py] [source: tests/skills/test_binding_smoke.py] [source: tests/skills/test_bindings_status.py]. Catalog-maintenance skill tests also assert no Plane workspace strings, no service restart posture, and reuse of the shared model validator for `models.yml` edits [source: tests/skills/test_catalog_maintenance_skills.py].
 
 ## Related
 
