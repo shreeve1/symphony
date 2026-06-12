@@ -8,6 +8,8 @@ sources:
   - wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md
   - web/frontend/deploy.sh
   - web/frontend/next.config.mjs
+  - web/frontend/playwright.config.ts
+  - web/frontend/package.json
   - web/frontend/components/AppShell.tsx
   - web/frontend/components/IssueCard.tsx
 confidence: high
@@ -26,7 +28,15 @@ A cosmetic frontend change request (collapsible left sidebar, simplified issue-c
 
 `next build` overwrites `.next` in place. While the old server keeps serving the previous in-memory HTML (which references the old chunk hashes), the on-disk static chunks have new hashes, so asset requests in that window 400 with `text/html` MIME — the browser refuses the stylesheet/script and the app hangs at "Checking session…". Observed live: the served HTML referenced `296af0bbdbe2ffd4.css` while the disk had rebuilt to `47857b3ee08e2d46.css` [source: wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md#durable-facts].
 
-Recovery is a `sudo systemctl restart podium-web.service` (loads the new build cleanly) plus a browser **hard refresh** to drop stale cached HTML.
+Recovery is a `sudo systemctl restart podium-web.service` (loads the new build cleanly) plus a browser **hard refresh** to drop stale cached HTML — **but only if a valid production `.next` exists on disk** (see next section).
+
+## Second trigger: Playwright e2e clobbers the live `.next`
+
+`pnpm test:e2e` → `playwright test`, whose `webServer` runs `next dev`. `next dev` writes a **development** `.next` (no `BUILD_ID`, dev chunk hashes) into the same `web/frontend/.next` that `podium-web.service`'s `next start` serves from. So running the frontend e2e suite against the repo dir silently overwrites the live production build [source: web/frontend/package.json, web/frontend/playwright.config.ts].
+
+This is more dangerous than a plain in-place rebuild: while the original `next start` process keeps running it serves fine from its **in-memory** build, masking the damage. The breakage only surfaces on the *next* `podium-web` restart — `next start` then finds a dev `.next` with no `BUILD_ID`, errors `Could not find a production build in the '.next' directory`, and **crash-loops** (`auto-restart`, `NRestarts` climbing). Observed 2026-06-12: a `/dev-build` run executed `playwright test reply.spec.ts` at ~05:04, overwriting `.next`; the frontend kept serving until an unrelated `podium-web` restart ~07:51+ killed the good in-memory process and the service crash-looped. A simple restart could **not** recover it — only a fresh production build could.
+
+Recovery from the crash-loop is `web/frontend/deploy.sh` (rebuilds a valid production `.next` via staging swap), not a bare restart. Prevention: do **not** run the frontend e2e suite against the live `web/frontend` dir during an automated build, or always finish such a build with `deploy.sh` to restore a clean production `.next`.
 
 ## Fix: atomic staging-swap deploy
 
@@ -38,7 +48,7 @@ Chosen prevention (Option A) keeps the live site up through the slow build, then
 
 Why atomic swap over a bundled `pnpm build && restart`: the failure window is the *build* itself (live `.next` overwritten in place); building to staging removes that window entirely, leaving only the ~3s stop/swap/start. Note `next build` also rewrites `tsconfig.json` (array reformat + transient `<distDir>/types` include) — machine noise the script reverts.
 
-Validated build-only: the staging build produced a distinct `BUILD_ID` while live `.next` stayed put. The stop/swap/start path is untested on a real deploy as of capture.
+Validated build-only at first capture; **first real end-to-end run 2026-06-12**: `deploy.sh` recovered the frontend from the `next dev` crash-loop above — staging build compiled, `tsconfig.json` churn auto-reverted (tree clean after), stop/swap/start completed, `is-active` + root 200 verified, and the previously-400ing chunks (`904e0d82087b0725.css`, `webpack-*.js`) returned 200 with correct MIME. The stop/swap/start path is now proven.
 
 ## UI cosmetic decisions (operator-requested)
 
@@ -49,5 +59,6 @@ The card reads the issue's *pinned preference* (`preferred_agent`/`preferred_mod
 
 ## Follow-ups
 
-- Commit the five working-tree changes (latest commit at capture: `eef75d1`).
-- First real `deploy.sh` run will exercise stop/swap/start live.
+- Commit the five working-tree changes (latest commit at capture: `eef75d1`). (Done.)
+- ~~First real `deploy.sh` run will exercise stop/swap/start live.~~ Done 2026-06-12 (see Fix section).
+- Isolate frontend e2e from the live build dir: point Playwright's `webServer` / `NEXT_DIST_DIR` at a throwaway dir, or gate `test:e2e` out of automated `/dev-build` runs, so a test run can never overwrite the production `.next` that `podium-web` serves. Until then, any build that runs `playwright test` must end with `deploy.sh`.
