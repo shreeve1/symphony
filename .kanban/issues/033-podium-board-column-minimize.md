@@ -1,7 +1,7 @@
 ---
 id: 033
 title: Podium — per-column board minimize with localStorage persistence
-status: in-progress
+status: review
 blocked_by: []
 updated: 2026-06-12
 actor: ralph
