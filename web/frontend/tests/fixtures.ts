@@ -70,8 +70,18 @@ export { expect };
 
 const E2E_DB_PATH = path.resolve(__dirname, "../test-results/podium-e2e.db");
 
+function runDbScript<T>(script: string): T {
+	const stdout = execFileSync("uv", ["run", "python", "-c", script], {
+		cwd: path.resolve(__dirname, "../../.."),
+		env: { ...process.env, PODIUM_DB_PATH: E2E_DB_PATH },
+		stdio: "pipe",
+	});
+	return JSON.parse(stdout.toString() || "null") as T;
+}
+
 export function seedSkills(skills: { name: string; description?: string }[]) {
 	const script = `
+import json
 from web.api.db import connect
 from web.cli.podium_skills import ensure_schema
 skills = ${JSON.stringify(skills)}
@@ -83,12 +93,143 @@ with connect() as connection:
         [(skill["name"], skill.get("description", "")) for skill in skills],
     )
     connection.commit()
+print(json.dumps(True))
 `;
-	execFileSync("uv", ["run", "python", "-c", script], {
-		cwd: path.resolve(__dirname, "../../.."),
-		env: { ...process.env, PODIUM_DB_PATH: E2E_DB_PATH },
-		stdio: "pipe",
-	});
+	runDbScript<boolean>(script);
+}
+
+export function seedIssue(binding: string, title: string, state = "todo") {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+binding = ${JSON.stringify(binding)}
+title = ${JSON.stringify(title)}
+state = ${JSON.stringify(state)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    cursor = connection.execute(
+        """
+        INSERT INTO issue(
+          binding_name, title, description, state, priority, preferred_agent,
+          reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+          created_at, updated_at, last_event_at
+        ) VALUES (?, ?, ?, ?, 'med', 'pi', 'high', FALSE, 'main', '', '', ?, ?, ?)
+        """,
+        (binding, title, f"E2E polling fixture for {binding}.", state, now, now, now),
+    )
+    connection.commit()
+    print(json.dumps({"issueId": cursor.lastrowid}))
+`;
+	return runDbScript<{ issueId: number }>(script);
+}
+
+export function updateIssueState(issueId: number, state: string) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+issue_id = ${issueId}
+state = ${JSON.stringify(state)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    connection.execute(
+        "UPDATE issue SET state = ?, updated_at = ?, last_event_at = ? WHERE id = ?",
+        (state, now, now, issue_id),
+    )
+    connection.commit()
+print(json.dumps(True))
+`;
+	runDbScript<boolean>(script);
+}
+
+export function seedRunningRunIssue(binding: string, title: string) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from web.api.db import connect
+binding = ${JSON.stringify(binding)}
+title = ${JSON.stringify(title)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+log_dir = Path(${JSON.stringify(path.resolve(__dirname, "../test-results"))})
+log_dir.mkdir(parents=True, exist_ok=True)
+with connect() as connection:
+    issue_cursor = connection.execute(
+        """
+        INSERT INTO issue(
+          binding_name, title, description, state, priority, preferred_agent,
+          reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+          created_at, updated_at, last_event_at
+        ) VALUES (?, ?, ?, 'running', 'med', 'pi', 'high', FALSE, 'main', '', '', ?, ?, ?)
+        """,
+        (binding, title, f"E2E running run fixture for {binding}.", now, now, now),
+    )
+    issue_id = issue_cursor.lastrowid
+    run_cursor = connection.execute(
+        """
+        INSERT INTO run(
+          issue_id, agent, provider, model, state, verdict, summary, exit_code,
+          cost_usd, input_tokens, output_tokens, worktree_path, branch_name,
+          base_branch, log_path, skill_invoked, started_at, ended_at
+        ) VALUES (?, 'pi', 'e2e', 'glm-5.1:high', 'running', NULL, NULL, NULL,
+          NULL, NULL, NULL, NULL, NULL, 'main', NULL, NULL, ?, NULL)
+        """,
+        (issue_id, now),
+    )
+    run_id = run_cursor.lastrowid
+    log_path = log_dir / f"polling-run-{run_id}.log"
+    connection.execute("UPDATE run SET log_path = ? WHERE id = ?", (str(log_path), run_id))
+    connection.execute(
+        """
+        UPDATE issue
+        SET latest_run_id = ?, latest_run_state = 'running', latest_verdict = NULL
+        WHERE id = ?
+        """,
+        (run_id, issue_id),
+    )
+    connection.commit()
+    print(json.dumps({"issueId": issue_id, "runId": run_id, "logPath": str(log_path)}))
+`;
+	return runDbScript<{ issueId: number; runId: number; logPath: string }>(script);
+}
+
+export function finishRun(runId: number, logText: string) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from web.api.db import connect
+run_id = ${runId}
+log_text = ${JSON.stringify(logText)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    row = connection.execute("SELECT issue_id, log_path FROM run WHERE id = ?", (run_id,)).fetchone()
+    path = Path(row["log_path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(log_text, encoding="utf-8")
+    connection.execute(
+        """
+        UPDATE run
+        SET state = 'succeeded', verdict = 'review', summary = 'E2E polling finished',
+            exit_code = 0, ended_at = ?
+        WHERE id = ?
+        """,
+        (now, run_id),
+    )
+    connection.execute(
+        """
+        UPDATE issue
+        SET state = 'in_review', latest_run_state = 'succeeded', latest_verdict = 'review',
+            updated_at = ?, last_event_at = ?
+        WHERE id = ?
+        """,
+        (now, now, row["issue_id"]),
+    )
+    connection.commit()
+print(json.dumps(True))
+`;
+	runDbScript<boolean>(script);
 }
 
 export function expectCleanConsole(

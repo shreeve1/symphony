@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchRun, fetchRunLog, type RunDetail } from "@/lib/api";
+import { runDetailRefetchIntervalMs } from "@/lib/polling";
 
 function formatValue(value: string | number | null | undefined) {
 	return value == null || value === "" ? "—" : String(value);
@@ -24,10 +25,12 @@ export function RunDetailPanel({
 	const run = useQuery({
 		queryKey: ["run", runId],
 		queryFn: () => fetchRun(runId),
+		refetchInterval: (query) => runDetailRefetchIntervalMs(query.state.data),
 	});
 	const log = useQuery({
 		queryKey: ["run-log", runId],
 		queryFn: () => fetchRunLog(runId),
+		refetchInterval: () => runDetailRefetchIntervalMs(run.data),
 	});
 	const logRef = useRef<HTMLPreElement | null>(null);
 
@@ -84,7 +87,11 @@ export function RunDetailPanel({
 						className="grid grid-cols-2 gap-2 text-xs"
 					>
 						{fields.map(([label, value]) => (
-							<div key={label} className="rounded-md border p-2">
+							<div
+								key={label}
+								data-testid={`run-field-${label}`}
+								className="rounded-md border p-2"
+							>
 								<div className="uppercase tracking-wide text-muted-foreground">
 									{label}
 								</div>

@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchBindingIssues } from "@/lib/api";
+import { issueListRefetchIntervalMs } from "@/lib/polling";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { NewIssueButton } from "@/components/NewIssueModal";
 
@@ -14,6 +15,8 @@ export default function BindingPage() {
     queryKey: ["issues", binding],
     queryFn: () => fetchBindingIssues(binding),
     enabled: Boolean(binding),
+    refetchInterval: (query) => issueListRefetchIntervalMs(query.state.data),
+    refetchOnWindowFocus: true,
   });
 
   return (
