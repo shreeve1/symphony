@@ -312,3 +312,17 @@ Append entries with this format:
 - Inputs: issue #036 implementation; commits `b589cef`, `cb079c4`, `6cf44b9`; `.kanban/issues/036-podium-archived-retention-purge.md`; `.kanban/progress.md`; `web/api/main.py`; `web/api/tests/test_archive_purge.py`.
 - Outputs: updated `wiki/analyses/podium-issue-archive-design.md`; updated `wiki/CLAIMS.md` (C-0127 superseded, C-0128 added); updated `wiki/index.md`; updated `wiki/log.md`.
 - Notes: Captured #036 landing the archived retention purge: API startup + post-archive PATCH sweeps, hardcoded 14-day `updated_at` window, FK-safe per-issue delete order, best-effort run-log unlink, rollback behavior, and filesystem-based defensive worktree cleanup even when `worktree_active` is stale. Verification passed: `PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH" python3 -m pytest -q` (633 passed, 1 skipped), touched-file LSP diagnostics clean, `git diff --check` clean, secret scan clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+## [2026-06-12] session-update | First live Podium skill catalog refresh
+
+- Actor: agent (Claude Code, symphony-skills + wiki-update)
+- Inputs: live `python -m web.cli.podium skills refresh` run (dry-run → FK failure → repoint → success); `web/cli/podium_skills.py`; `web/cli/podium.py`; `web/api/seed.py`; `.claude/skills/symphony-skills/SKILL.md`; in-session DB inspections of `podium.db`.
+- Outputs: new `wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md`; new `wiki/analyses/podium-skills-catalog-refresh.md` (candidate created, linted, auto-promoted); `wiki/CLAIMS.md` C-0133..C-0136 added, C-0055 marked superseded (by C-0136); `wiki/index.md` and `wiki/ROUTING.md` updated.
+- Notes: Captured three durable refresh-CLI behaviors: dry-run prints catalog TSV not a diff (SKILL.md step 2 wrong — follow-up to fix wording); single-source scan contract (default `~/.claude/skills` dotfiles symlink; repo-local `symphony-*` skills not cataloged; two `--source` runs clobber); `issue.preferred_skill` FK blocks stale-row delete with clean whole-run rollback, and manual-row protection is deletion-only (manual `diagnose` row converted to file-backed by upsert). James approved live refresh and repointing 12 e2e issues from `/diagnose` to `diagnose`. Result: 50-row catalog, zero pending diff, catalog maintenance skill tests 6 passed. Skill seeding confirmed retired in `web/api/seed.py` → C-0055 superseded. No secrets, no env contents, no transcript.
+
+## [2026-06-12] session-update | catalog-alpha/bravo fixture leak cleanup
+
+- Actor: agent (Claude Code)
+- Inputs: James report of phantom dropdown entries; `podium.db` skill rows; `web/frontend/tests/skill-catalog.spec.ts`; `web/frontend/tests/fixtures.ts`; git history (`6d9f1c6`).
+- Outputs: deleted `catalog-alpha`/`catalog-bravo` rows from live `podium.db` (48 rows remain, zero manual rows); updated `wiki/analyses/podium-skills-catalog-refresh.md` resulting-state section; updated C-0136 note in `wiki/CLAIMS.md`.
+- Notes: Rows were leaked Playwright e2e fixtures — an older `seedSkills` wrote `source=''` into the live DB, which refresh's manual-row protection then preserved. Current `fixtures.ts` isolates via `PODIUM_DB_PATH` → `web/test-results/podium-e2e.db` and tags `source='e2e'` (self-healing: refresh deletes leaked `'e2e'` rows). No FK or code references existed at deletion. No secrets, no env contents.

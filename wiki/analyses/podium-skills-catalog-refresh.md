@@ -42,7 +42,9 @@ Manual-row protection (`source = ''`) covers deletion only; the upsert overwrite
 
 ## Resulting catalog state (2026-06-12)
 
-50 rows: 44 added from dotfiles, 4 updated (`blueprint`, `code-review`, `diagnose`, `tdd`), `/diagnose` seed removed, manual rows `catalog-alpha`/`catalog-bravo` untouched. Post-run: zero pending diff vs scan; `uv run pytest tests/skills/test_catalog_maintenance_skills.py` 6 passed. [source: wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md]
+50 rows after refresh: 44 added from dotfiles, 4 updated (`blueprint`, `code-review`, `diagnose`, `tdd`), `/diagnose` seed removed, manual rows `catalog-alpha`/`catalog-bravo` initially untouched. Post-run: zero pending diff vs scan; `uv run pytest tests/skills/test_catalog_maintenance_skills.py` 6 passed. [source: wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md]
+
+Same evening, James flagged `catalog-alpha`/`catalog-bravo` in the dropdown: they were leaked Playwright e2e fixtures, not operator rows. An older `seedSkills` version wrote them with `source=''` into the live DB (fixture strings traceable to `web/frontend/tests/skill-catalog.spec.ts`, commit `6d9f1c6`), and the `source=''` value made the refresh treat them as protected manual rows. Deleted after confirming zero FK references — final state 48 rows, zero manual rows. Current `web/frontend/tests/fixtures.ts` is isolated: `PODIUM_DB_PATH` → `web/test-results/podium-e2e.db`, rows tagged `source='e2e'` (which a live refresh would auto-delete if ever leaked, since `'e2e'` is neither manual nor in scan). [source: web/frontend/tests/fixtures.ts] [source: web/frontend/tests/skill-catalog.spec.ts]
 
 ## Follow-ups
 
