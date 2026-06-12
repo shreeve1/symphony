@@ -1,11 +1,13 @@
 ---
 id: 037
 title: Podium Inbox — read path: schema column, GET /api/inbox, sidebar section
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-12
+updated: 2026-06-12
+actor: ralph
 ---
 
 ## What to build
@@ -35,13 +37,17 @@ No dismiss button in this slice (that is #038). Cards leave the Inbox only via s
 
 ## Acceptance criteria
 
-- [ ] Alembic revision `0005_inbox_dismissed_at` exists with working `upgrade()`/`downgrade()`; `SCHEMA_SQL` includes `inbox_dismissed_at TIMESTAMP`; `INITIAL_REVISION` is `0005_inbox_dismissed_at`; `python3 -m pytest tests/test_alembic_baseline.py` passes.
-- [ ] `GET /api/inbox` returns only `in_review` and `blocked` issues, across multiple bindings, sorted by `COALESCE(last_event_at, updated_at) DESC, id DESC`; excludes archived-binding issues; requires auth (401/403 when unauthenticated, matching existing endpoints).
-- [ ] API test proves a row with `inbox_dismissed_at >= last_event_at` is excluded and a row with `inbox_dismissed_at < last_event_at` is included (seed values directly in the test DB).
-- [ ] Sidebar renders the Inbox section below Bindings with count header; section absent from the DOM when the inbox is empty (Playwright asserts both states).
-- [ ] Card shows binding dot, truncated title, state badge, relative age; clicking navigates to `/{binding}?issue={id}` and opens the flyout (Playwright).
-- [ ] Posting an operator reply to an inboxed issue removes its card without a manual page reload (Playwright, via live update or refetch).
-- [ ] Full backend and e2e suites pass.
+- [x] Alembic revision `0005_inbox_dismissed_at` exists with working `upgrade()`/`downgrade()`; `SCHEMA_SQL` includes `inbox_dismissed_at TIMESTAMP`; `INITIAL_REVISION` is `0005_inbox_dismissed_at`; `python3 -m pytest tests/test_alembic_baseline.py` passes.
+- [x] `GET /api/inbox` returns only `in_review` and `blocked` issues, across multiple bindings, sorted by `COALESCE(last_event_at, updated_at) DESC, id DESC`; excludes archived-binding issues; requires auth (401/403 when unauthenticated, matching existing endpoints).
+- [x] API test proves a row with `inbox_dismissed_at >= last_event_at` is excluded and a row with `inbox_dismissed_at < last_event_at` is included (seed values directly in the test DB).
+- [x] Sidebar renders the Inbox section below Bindings with count header; section absent from the DOM when the inbox is empty (Playwright asserts both states).
+- [x] Card shows binding dot, truncated title, state badge, relative age; clicking navigates to `/{binding}?issue={id}` and opens the flyout (Playwright).
+- [x] Posting an operator reply to an inboxed issue removes its card without a manual page reload (Playwright, via live update or refetch).
+- [x] Full backend and e2e suites pass.
+
+## Implementation Notes
+
+Implemented the Podium Inbox read path: `inbox_dismissed_at` schema/migration, authenticated `GET /api/inbox`, backend inbox coverage, Sidebar Inbox cards with polling/live invalidation, and Playwright coverage for empty, populated, navigation, and operator-reply removal states. Fresh review returned `RALPH_REVIEW: PASS_WITH_NOTES`; notes were unrelated environment/model-catalog drift, with all #037-specific backend and e2e tests passing.
 
 ## Verification
 
