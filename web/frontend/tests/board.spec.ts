@@ -1,13 +1,13 @@
+import { STATES } from "../lib/issues";
 import { expect, expectCleanConsole, test } from "./fixtures";
-import { STATES } from "@/lib/issues";
 
-test("board renders five columns and opens a flyout on card click", async ({
+test("board renders state columns and opens a flyout on card click", async ({
 	page,
 	problems,
 }) => {
 	await page.goto("/trading");
 
-	// Five columns in fixed order: Todo, In Review, Running, Blocked, Done.
+	// Columns render in the fixed order declared by STATES.
 	for (const state of STATES) {
 		await expect(page.getByTestId(`column-${state.key}`)).toBeVisible();
 	}

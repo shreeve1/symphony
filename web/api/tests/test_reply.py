@@ -75,6 +75,14 @@ def test_reply_on_todo_returns_409(client: TestClient, issue_id: int) -> None:
 
 
 # [5.4]
+def test_reply_on_archived_returns_409(client: TestClient, issue_id: int) -> None:
+    _set_state(client, issue_id, "archived")
+
+    response = client.post(f"/api/issues/{issue_id}/reply", json={"body": "restore?"})
+    assert response.status_code == 409
+
+
+# [5.4]
 @pytest.mark.parametrize("run_state", ["running", "queued"])
 def test_reply_blocked_by_active_run_state(
     client: TestClient, issue_id: int, run_state: str
