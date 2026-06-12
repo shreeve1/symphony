@@ -23,7 +23,10 @@ test("archive button moves issue to archived column", async ({
 	await page.goto("/trading");
 
 	// Open flyout.
-	await page.getByTestId("issue-card").filter({ hasText: "Archive me" }).click();
+	await page
+		.getByTestId("issue-card")
+		.filter({ hasText: "Archive me" })
+		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
 	// Click Archive button.
@@ -39,7 +42,10 @@ test("archive button moves issue to archived column", async ({
 
 	// Card moved out of todo.
 	await expect(
-		page.getByTestId("column-todo").getByTestId("issue-card").filter({ hasText: "Archive me" }),
+		page
+			.getByTestId("column-todo")
+			.getByTestId("issue-card")
+			.filter({ hasText: "Archive me" }),
 	).not.toBeVisible();
 
 	// Close flyout so it doesn't block the expand button.
@@ -87,7 +93,8 @@ test("state chip restores archived issue", async ({ page, problems }) => {
 
 	// Card is now in todo column.
 	await expect(
-		page.getByTestId("column-todo")
+		page
+			.getByTestId("column-todo")
 			.getByTestId("issue-card")
 			.filter({ hasText: "Restore me" }),
 	).toBeVisible();

@@ -244,7 +244,9 @@ class IssuePatch(BaseModel):
 
     title: str | None = Field(default=None, min_length=1)
     description: str | None = None
-    state: Literal["todo", "in_review", "running", "blocked", "done", "archived"] | None = None
+    state: (
+        Literal["todo", "in_review", "running", "blocked", "done", "archived"] | None
+    ) = None
     priority: Literal["low", "med", "high", "urgent"] | None = None
     preferred_agent: str | None = None
     preferred_model: str | None = None
@@ -639,7 +641,9 @@ async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
     binding_name = str(row["binding_name"] or "")
-    binding = next((item for item in config.bindings if item.name == binding_name), None)
+    binding = next(
+        (item for item in config.bindings if item.name == binding_name), None
+    )
     if binding is None:
         raise HTTPException(
             status_code=422,
