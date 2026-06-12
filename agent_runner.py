@@ -241,22 +241,33 @@ def run_agent(
             }
         )
 
+        # Provider/model are resolved per-issue from models.yml by the
+        # scheduler's dispatch gate; the config values are the legacy
+        # Plane-path fallback only.
+        provider = getattr(issue, "resolved_provider", "") or config.pi_provider
+        model = getattr(issue, "resolved_model", "") or config.pi_model
         command = [
             config.pi_bin,
             "--print",
             "--no-session",
             "--provider",
-            config.pi_provider,
+            provider,
             "--model",
-            config.pi_model,
-            rendered_prompt,
+            model,
         ]
+        skill_source = getattr(issue, "skill_source", "")
+        if skill_source:
+            # pi does not discover ~/.claude/skills on its own; load the
+            # issue's preferred skill explicitly (directory form keeps any
+            # skill assets alongside SKILL.md available).
+            command += ["--skill", str(Path(skill_source).parent)]
+        command.append(rendered_prompt)
         cwd = str(worktree_path or config.homelab_repo_path)
         LOGGER.info(
             "pi_dispatch issue_id=%s provider=%s model=%s cwd=%s",
             issue.id,
-            config.pi_provider,
-            config.pi_model,
+            provider,
+            model,
             cwd,
         )
         process = popen_factory(

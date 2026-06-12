@@ -52,6 +52,14 @@ MODELS_PATH = BINDINGS_PATH.parent / "models.yml"
 _load_bindings = _seed._load_bindings
 seed_if_empty = _seed.seed_if_empty
 
+try:
+    _model_catalog = import_module("model_catalog")
+except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    _model_catalog = import_module("model_catalog")
+
 
 class WebSocketHub:
     """Small in-process fanout hub for Podium's single-worker API."""
@@ -259,7 +267,6 @@ class IssuePatch(BaseModel):
     approval_required: bool | None = None
     approved: bool | None = None
     scheduled_for: str | None = None
-    max_duration_seconds: int | None = Field(default=None, ge=1)
     base_branch: str | None = None
     comments_md: str | None = None
     context_md: str | None = None
@@ -412,7 +419,7 @@ def list_binding_issues(
               id, binding_name, title, description, state, priority, preferred_agent,
               preferred_model, preferred_skill, reasoning_effort, worktree_active,
               approval_required, approved, scheduled_for,
-              max_duration_seconds, base_branch, created_at, updated_at,
+              base_branch, created_at, updated_at,
               latest_run_id, latest_verdict, latest_run_state, last_event_at
             FROM issue
             WHERE binding_name = ?
@@ -427,7 +434,7 @@ def list_binding_issues(
               id, binding_name, title, description, state, priority, preferred_agent,
               preferred_model, preferred_skill, reasoning_effort, worktree_active,
               approval_required, approved, scheduled_for,
-              max_duration_seconds, base_branch, created_at, updated_at,
+              base_branch, created_at, updated_at,
               latest_run_id, latest_verdict, latest_run_state, last_event_at
             FROM issue
             WHERE binding_name = ? AND state = ?
@@ -449,7 +456,7 @@ def list_inbox_issues(
           i.preferred_agent, i.preferred_model, i.preferred_skill,
           i.reasoning_effort, i.worktree_active,
           i.approval_required, i.approved, i.scheduled_for,
-          i.max_duration_seconds, i.base_branch, i.created_at, i.updated_at,
+          i.base_branch, i.created_at, i.updated_at,
           i.latest_run_id, i.latest_verdict, i.latest_run_state, i.last_event_at,
           i.inbox_dismissed_at
         FROM issue i
@@ -465,48 +472,18 @@ def list_inbox_issues(
 
 
 # Agents mirror the scheduler's validation set (config.py `_validate_agent`).
-# Models are authored config in models.yml; preferred_model remains free text.
-KNOWN_AGENTS = ["pi", "claude"]
+# Models are authored config in models.yml; the scheduler resolves
+# preferred_model against the catalog at dispatch and fails loudly on
+# unknown ids, so the dropdown is the contract, not a hint.
+KNOWN_AGENTS = _model_catalog.KNOWN_AGENTS
+
+# Kept as module-level names: the symphony-models skill and tests import
+# _load_models/_validate_models from web.api.main.
+_validate_models = _model_catalog.validate_models
 
 
-def _validate_models(data: Any) -> list[dict[str, str]]:
-    """Validate the git-tracked model catalog shared by /options and tools."""
-    if not isinstance(data, dict):
-        raise ValueError("models.yml must contain a mapping")
-    models = data.get("models") or []
-    if not isinstance(models, list):
-        raise ValueError("models must be a list")
-
-    seen: set[str] = set()
-    result: list[dict[str, str]] = []
-    for index, item in enumerate(models):
-        if not isinstance(item, dict):
-            raise ValueError(f"models[{index}] must be a mapping")
-        model_id = item.get("id")
-        agent = item.get("agent")
-        if not isinstance(model_id, str) or not model_id.strip():
-            raise ValueError(f"models[{index}].id is required")
-        if model_id in seen:
-            raise ValueError(f"duplicate model id: {model_id}")
-        if agent not in KNOWN_AGENTS:
-            raise ValueError(f"models[{index}].agent must be one of {KNOWN_AGENTS}")
-
-        entry = {"id": model_id, "agent": str(agent)}
-        for key in ("provider", "label"):
-            value = item.get(key)
-            if value is not None:
-                if not isinstance(value, str) or not value.strip():
-                    raise ValueError(f"models[{index}].{key} must be a string")
-                entry[key] = value
-        result.append(entry)
-        seen.add(model_id)
-    return result
-
-
-def _load_models(path: Path | None = None) -> list[dict[str, str]]:
-    catalog_path = path or MODELS_PATH
-    data = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
-    return _validate_models(data)
+def _load_models(path: Path | None = None) -> list[dict[str, Any]]:
+    return _model_catalog.load_models(path or MODELS_PATH)
 
 
 @app.get("/api/bindings/{name}/options")

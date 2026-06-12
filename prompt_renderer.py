@@ -40,7 +40,7 @@ class IssueData:
 @dataclass
 class WorkflowConfig:
     poll_interval_ms: int = 30000
-    run_timeout_ms: int = 1800000
+    run_timeout_ms: int = 3600000
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -64,7 +64,7 @@ def load_workflow(path: Path) -> tuple[WorkflowConfig, str]:
     meta, body = _parse_frontmatter(raw)
     cfg = WorkflowConfig(
         poll_interval_ms=int(meta.get("poll_interval_ms", 30000)),
-        run_timeout_ms=int(meta.get("run_timeout_ms", 1800000)),
+        run_timeout_ms=int(meta.get("run_timeout_ms", 3600000)),
     )
     return cfg, body
 
@@ -207,4 +207,16 @@ def render_prompt(
         f"</issue>"
     )
 
-    return f"{rendered.strip()}\n\n{issue_block}"
+    prompt = f"{rendered.strip()}\n\n{issue_block}"
+
+    # The operator's skill choice is a directive, not metadata: the scheduler
+    # loads the skill into pi via --skill, and this line makes the agent
+    # actually invoke it. Prepended so it is the first instruction read.
+    if tracker_kind == "podium" and issue.preferred_skill:
+        skill = issue.preferred_skill.lstrip("/")
+        prompt = (
+            f"First, invoke the `{skill}` skill and follow its "
+            f"instructions for this issue.\n\n{prompt}"
+        )
+
+    return prompt

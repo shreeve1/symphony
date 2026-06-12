@@ -50,7 +50,7 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.pi_provider == "zai"
     assert config.pi_model == "glm-5.1:high"
     assert config.poll_interval_ms == 30_000
-    assert config.run_timeout_ms == 1_800_000
+    assert config.run_timeout_ms == 3_600_000
     assert config.blocked_reconciler_interval_ms == 1_800_000
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
 

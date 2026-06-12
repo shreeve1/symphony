@@ -21,7 +21,6 @@ from schedule import (  # noqa: E402  (sys.path manipulation above)
     CANCELLATION_PREFIX,
     CandidateComment,
     SCHEDULE_PREFIX,
-    ScheduleEvent,
     ScheduleEventType,
     ScheduleParseError,
     format_cancellation_comment,

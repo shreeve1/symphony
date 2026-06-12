@@ -60,12 +60,16 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
+    skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True, exist_ok=True)
+    skill_file.write_text("---\nname: dev-build\n---\nbuild it\n", encoding="utf-8")
     connection = sqlite3.connect(path)
     try:
         connection.executescript(SCHEMA_SQL)
         connection.execute("INSERT INTO binding(name) VALUES ('trading')")
         connection.execute(
-            "INSERT INTO skill(name, description, source) VALUES ('/dev-build', '', 'test')"
+            "INSERT INTO skill(name, description, source) VALUES ('/dev-build', '', ?)",
+            (str(skill_file),),
         )
         cursor = connection.execute(
             """
@@ -151,7 +155,7 @@ async def test_trading_podium_dispatch_records_run_log_and_context(
     assert run["summary"] == "trading podium dispatch ok"
     assert run["agent"] == "pi"
     assert run["provider"] == "openai-codex"
-    assert run["model"] == "gpt-5.5"
+    assert run["model"] == "gpt-5.5:high"
     assert run["cost_usd"] == 0.0123
     assert run["input_tokens"] == 123
     assert run["output_tokens"] == 45

@@ -128,7 +128,7 @@ class SymphonyConfig:
     pi_provider: str = "zai"
     pi_model: str = "glm-5.1:high"
     poll_interval_ms: int = 30_000
-    run_timeout_ms: int = 1_800_000
+    run_timeout_ms: int = 3_600_000
     run_cap: int = 2
     lock_path: Path | None = None
     telegram_bot_token: str | None = field(default=None, repr=False)
@@ -199,7 +199,7 @@ class SymphonyConfig:
             pi_provider=source.get("SYMPHONY_PI_PROVIDER", "zai"),
             pi_model=source.get("SYMPHONY_PI_MODEL", "glm-5.1:high"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
-            run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "1800000")),
+            run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "3600000")),
             run_cap=int(source.get("SYMPHONY_RUN_CAP", "2")),
             lock_path=Path(source["SYMPHONY_LOCK_PATH"]) if source.get("SYMPHONY_LOCK_PATH") else None,
             telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),

@@ -203,6 +203,7 @@ def test_options_returns_agents_models_and_branches(
         "  - id: glm-5.1:high\n"
         "    agent: pi\n"
         "    provider: zai\n"
+        "    default: true\n"
     )
     monkeypatch.setattr(main, "MODELS_PATH", models)
 
@@ -212,16 +213,24 @@ def test_options_returns_agents_models_and_branches(
     assert body["agents"] == ["pi", "claude"]
     assert body["models"] == [
         {"id": "claude-fable-5", "agent": "claude"},
-        {"id": "glm-5.1:high", "agent": "pi", "provider": "zai"},
+        {"id": "glm-5.1:high", "agent": "pi", "provider": "zai", "default": True},
     ]
     assert body["branches"] == ["develop", "main"]
 
 
 def test_models_validator_rejects_invalid_catalogs() -> None:
     assert main._validate_models(
-        {"models": [{"id": "claude-fable-5", "agent": "claude"}]}
-    ) == [{"id": "claude-fable-5", "agent": "claude"}]
+        {"models": [{"id": "claude-fable-5", "agent": "claude", "default": True}]}
+    ) == [{"id": "claude-fable-5", "agent": "claude", "default": True}]
 
+    with pytest.raises(ValueError, match="exactly one model"):
+        main._validate_models(
+            {"models": [{"id": "claude-fable-5", "agent": "claude"}]}
+        )
+    with pytest.raises(ValueError, match="provider is required for pi models"):
+        main._validate_models(
+            {"models": [{"id": "glm-5.1:high", "agent": "pi", "default": True}]}
+        )
     with pytest.raises(ValueError, match="id is required"):
         main._validate_models({"models": [{"agent": "claude"}]})
     with pytest.raises(ValueError, match="agent must be one of"):

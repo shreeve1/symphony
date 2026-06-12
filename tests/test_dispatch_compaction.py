@@ -45,6 +45,11 @@ def _config(tmp_path: Path) -> SymphonyConfig:
 
 
 def _seed_db(path: Path) -> int:
+    # The dispatch gate verifies the skill source exists on disk, so the
+    # seeded row must point at a real SKILL.md.
+    skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True, exist_ok=True)
+    skill_file.write_text("---\nname: dev-build\n---\nbuild it\n", encoding="utf-8")
     connection = sqlite3.connect(path)
     try:
         connection.executescript(SCHEMA_SQL)
@@ -58,7 +63,8 @@ def _seed_db(path: Path) -> int:
             """
         )
         connection.execute(
-            "INSERT INTO skill(name, description, source) VALUES ('/dev-build', '', 'test')"
+            "INSERT INTO skill(name, description, source) VALUES ('/dev-build', '', ?)",
+            (str(skill_file),),
         )
         cursor = connection.execute(
             """

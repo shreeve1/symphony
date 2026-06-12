@@ -46,7 +46,6 @@ function useCreateIssue(binding: string) {
 				scheduled_for: body.scheduled_for ?? null,
 				worktree_path: "",
 				worktree_branch: "",
-				max_duration_seconds: null,
 				base_branch: body.base_branch ?? null,
 				created_at: null,
 				updated_at: null,

@@ -21,8 +21,12 @@ SKILL_TO_MODE: dict[str, Mode] = {
 
 
 def mode_for_skill(preferred_skill: str | None) -> Mode:
-    """Return the legacy renderer Mode for a Podium preferred Skill."""
+    """Return the legacy renderer Mode for a Podium preferred Skill.
+
+    The skill catalog stores slash-less names (``dev-plan``) while the map
+    keys keep the historical slash form, so lookup normalizes to ``/name``.
+    """
 
     if preferred_skill is None:
         return "execute"
-    return SKILL_TO_MODE.get(preferred_skill, "execute")
+    return SKILL_TO_MODE.get("/" + preferred_skill.lstrip("/"), "execute")

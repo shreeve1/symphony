@@ -58,6 +58,15 @@ class CandidateIssue:
     worktree_active: bool = False
     base_branch: str = ""
     binding_name: str = ""
+    preferred_model: str | None = None
+    reasoning_effort: str = "high"
+    # Absolute SKILL.md path from the skill catalog row; empty when the issue
+    # has no preferred_skill or the catalog row is missing (dispatch blocks).
+    skill_source: str = ""
+    # Set by the scheduler's dispatch gate after models.yml resolution; the
+    # agent runner passes these to the pi CLI verbatim.
+    resolved_provider: str = ""
+    resolved_model: str = ""
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -158,9 +167,18 @@ class PodiumTrackerAdapter:
         binding = self.contract.optional_label_binding(role)
         return bool(binding and binding.name in set(labels))
 
+    def skill_source(self, skill_name: str) -> str:
+        """Absolute SKILL.md path for a catalog skill, or "" when unknown."""
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT source FROM skill WHERE name = ?", (skill_name,)
+            ).fetchone()
+        return str(row["source"]) if row and row["source"] else ""
+
     async def list_candidates(self) -> list[CandidateIssue]:
         candidates = []
         for issue in await self.list_issues_by_state(TrackerRole.STATE_TODO):
+            preferred_skill = issue.get("preferred_skill")
             candidates.append(
                 CandidateIssue(
                     id=str(issue["id"]),
@@ -171,10 +189,17 @@ class PodiumTrackerAdapter:
                     created_at=str(issue.get("created_at") or ""),
                     comments_md=str(issue.get("comments_md") or ""),
                     context_md=str(issue.get("context_md") or ""),
-                    preferred_skill=issue.get("preferred_skill"),
+                    preferred_skill=preferred_skill,
                     worktree_active=bool(issue.get("worktree_active") or False),
                     base_branch=str(issue.get("base_branch") or ""),
                     binding_name=self.binding_name or "",
+                    preferred_model=issue.get("preferred_model"),
+                    reasoning_effort=str(issue.get("reasoning_effort") or "high"),
+                    skill_source=(
+                        self.skill_source(str(preferred_skill))
+                        if preferred_skill
+                        else ""
+                    ),
                 )
             )
         return candidates

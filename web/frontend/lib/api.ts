@@ -27,7 +27,6 @@ export interface Issue {
 	scheduled_for: string | null;
 	worktree_path: string;
 	worktree_branch: string;
-	max_duration_seconds: number | null;
 	base_branch: string | null;
 	created_at: string | null;
 	updated_at: string | null;
@@ -88,7 +87,6 @@ export interface InboxItem {
 	scheduled_for: string | null;
 	worktree_path: string;
 	worktree_branch: string;
-	max_duration_seconds: number | null;
 	base_branch: string | null;
 	created_at: string | null;
 	updated_at: string | null;
@@ -120,7 +118,6 @@ export interface IssuePatch {
 	approval_required?: boolean;
 	approved?: boolean;
 	scheduled_for?: string | null;
-	max_duration_seconds?: number | null;
 	base_branch?: string | null;
 	comments_md?: string;
 	context_md?: string;

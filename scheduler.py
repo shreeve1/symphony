@@ -38,6 +38,7 @@ from schedule import (
     ScheduleParseError,
     latest_event,
 )
+from model_catalog import load_models, resolve_model
 from prompt_renderer import render_previous_comments_block
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from web.api.db import resolve_run_log_root
@@ -527,6 +528,57 @@ async def _maybe_compact_context(
     )
 
 
+def _apply_dispatch_gate(
+    candidate: CandidateIssue, binding: ProjectBinding | None
+) -> tuple[CandidateIssue, str | None]:
+    """Resolve agent, model, and skill for a Podium dispatch.
+
+    Returns the candidate annotated with the resolved pi provider/model, or an
+    error message describing why dispatch must block. Fail-loud contract: an
+    unwired agent, an unknown model, or a missing skill never falls back to
+    defaults silently.
+    """
+    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    if agent != "pi":
+        return candidate, (
+            f"Dispatch blocked: agent `{agent}` engine is not wired (pi only). "
+            "Clear preferred_agent or set it to `pi`."
+        )
+    try:
+        entry = resolve_model(
+            getattr(candidate, "preferred_model", None), load_models()
+        )
+    except Exception as exc:
+        return candidate, f"Dispatch blocked: model resolution failed: {exc}"
+    if entry["agent"] != "pi":
+        return candidate, (
+            f"Dispatch blocked: model `{entry['id']}` requires agent "
+            f"`{entry['agent']}`, which is not wired."
+        )
+    skill = getattr(candidate, "preferred_skill", None)
+    if skill:
+        skill_source = getattr(candidate, "skill_source", "")
+        if not skill_source:
+            return candidate, (
+                f"Dispatch blocked: skill `{skill}` is not in the Podium "
+                "skill catalog. Refresh the catalog or clear preferred_skill."
+            )
+        if not Path(skill_source).is_file():
+            return candidate, (
+                f"Dispatch blocked: skill source for `{skill}` is missing "
+                f"on disk: {skill_source}"
+            )
+    effort = getattr(candidate, "reasoning_effort", "") or "high"
+    return (
+        replace(
+            candidate,
+            resolved_provider=str(entry["provider"]),
+            resolved_model=f"{entry['id']}:{effort}",
+        ),
+        None,
+    )
+
+
 async def _start_run_record(
     adapter: TrackerAdapter,
     config: SymphonyConfig,
@@ -550,8 +602,10 @@ async def _start_run_record(
     run_payload = {
         "issue_id": candidate.id,
         "agent": agent,
-        "provider": config.pi_provider,
-        "model": config.pi_model,
+        # Resolved by the dispatch gate from models.yml; config values are the
+        # legacy Plane-path fallback only.
+        "provider": getattr(candidate, "resolved_provider", "") or config.pi_provider,
+        "model": getattr(candidate, "resolved_model", "") or config.pi_model,
         "state": "queued",
         "base_branch": base_branch,
         "skill_invoked": getattr(candidate, "preferred_skill", None),
@@ -1019,6 +1073,27 @@ async def run_tick(
                     "build-plan-missing-returned-to-plan",
                     candidate.id,
                     mode=mode,
+                )
+
+        # Dispatch gate (Podium only): resolve agent, model, and skill before
+        # any state transition or compaction spend. Anything unresolvable
+        # blocks loudly instead of silently dispatching different settings.
+        if getattr(adapter, "stores_context", False):
+            candidate, gate_error = _apply_dispatch_gate(candidate, tick_binding)
+            if gate_error is not None:
+                _iu, _du = _build_urls(config, candidate.id)
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    gate_error,
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
+                )
+                return TickResult(
+                    False, "dispatch-gate-blocked", candidate.id, mode=mode
                 )
 
         try:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0005_inbox_dismissed_at"
+INITIAL_REVISION = "0006_drop_max_duration_seconds"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS issue(
   preferred_skill TEXT REFERENCES skill(name),
   reasoning_effort TEXT DEFAULT 'high',
   worktree_active BOOLEAN DEFAULT FALSE,
-  max_duration_seconds INTEGER,
   base_branch TEXT,
   comments_md TEXT DEFAULT '',
   context_md TEXT DEFAULT '',
