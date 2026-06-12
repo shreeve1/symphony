@@ -42,3 +42,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** `symphony-models` stays doc-driven and reuses `web.api.main._load_models()` / `_validate_models()` instead of adding bespoke add/remove code.
 **Conventions established:** Catalog maintenance skills must document no service restart, no Plane API calls, no env-file reads, and no secret printing.
 **Notes for next iteration:** Full `tests/skills/` coverage remains the verification gate for repo-local `symphony-*` skill docs.
+
+## #033 Podium — per-column board minimize with localStorage persistence — 2026-06-12
+
+**What changed:** Added minimize/expand controls to every board column, collapsed-column strips with live counts, per-binding `podium.collapsed.<binding>` persistence with corrupt-value fallback, Playwright e2e isolation via `NEXT_DIST_DIR=.next.e2e`, and board-minimize e2e coverage.
+**Files:** `web/frontend/components/KanbanBoard.tsx`, `web/frontend/playwright.config.ts`, `web/frontend/.gitignore`, `web/frontend/tests/board-minimize.spec.ts`, `.kanban/issues/033-podium-board-column-minimize.md`.
+**Decisions:** Column collapse state stores state keys as a JSON array per binding; missing or invalid storage falls back to all columns expanded for #033.
+**Conventions established:** Frontend e2e must run Next dev against `.next.e2e` so tests do not clobber the production `.next` served by `podium-web.service`.
+**Notes for next iteration:** #034 can add the `archived` state and then set archived-column default-collapse behavior on top of this collapse mechanism.

@@ -1,7 +1,7 @@
 ---
 id: 033
 title: Podium — per-column board minimize with localStorage persistence
-status: review
+status: done
 blocked_by: []
 updated: 2026-06-12
 actor: ralph
@@ -36,18 +36,24 @@ parse with fallback).
 
 ## Acceptance criteria
 
-- [ ] Every board column header shows a minimize control; clicking it collapses the column to a narrow strip showing the state dot, issue count, and an expand control; clicking expand restores the full column.
-- [ ] Collapsed columns still reflect live issue counts.
-- [ ] Collapse state round-trips through localStorage key `podium.collapsed.<binding>` and survives a page reload; bindings have independent collapse sets.
-- [ ] Corrupt or missing localStorage value falls back to all-expanded without throwing.
-- [ ] `web/frontend/playwright.config.ts` web-server command sets `NEXT_DIST_DIR=.next.e2e`; `.next.e2e` is gitignored; running the e2e suite leaves the production `web/frontend/.next` untouched (no `BUILD_ID` overwrite).
-- [ ] New `web/frontend/tests/board-minimize.spec.ts` covers: collapse, expand, reload persistence, and per-binding independence.
+- [x] Every board column header shows a minimize control; clicking it collapses the column to a narrow strip showing the state dot, issue count, and an expand control; clicking expand restores the full column.
+- [x] Collapsed columns still reflect live issue counts.
+- [x] Collapse state round-trips through localStorage key `podium.collapsed.<binding>` and survives a page reload; bindings have independent collapse sets.
+- [x] Corrupt or missing localStorage value falls back to all-expanded without throwing.
+- [x] `web/frontend/playwright.config.ts` web-server command sets `NEXT_DIST_DIR=.next.e2e`; `.next.e2e` is gitignored; running the e2e suite leaves the production `web/frontend/.next` untouched (no `BUILD_ID` overwrite).
+- [x] New `web/frontend/tests/board-minimize.spec.ts` covers: collapse, expand, reload persistence, and per-binding independence.
 
 ## Verification
 
 ```
 cd /home/james/symphony/web/frontend && pnpm test:e2e
 ```
+
+## Implementation Notes
+
+Implemented per-column minimize/expand controls in `KanbanBoard`, persisted collapsed state per binding with `podium.collapsed.<binding>`, added corrupt-storage fallback coverage, and isolated Playwright Next dev output with `NEXT_DIST_DIR=.next.e2e`. Verified production `.next/BUILD_ID` remains present after e2e.
+
+Review returned `PASS_WITH_NOTES`: reviewer observed one unrelated e2e network-abort flake in `editing.spec.ts`; the full suite passed before review and all new board-minimize tests passed in both runs.
 
 ## Blocked by
 
