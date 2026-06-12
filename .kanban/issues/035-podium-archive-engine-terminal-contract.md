@@ -1,7 +1,7 @@
 ---
 id: 035
 title: Podium — archived is engine-terminal: resurrection guard + worktree teardown
-status: in-progress
+status: review
 blocked_by: [034]
 updated: 2026-06-12
 actor: ralph
