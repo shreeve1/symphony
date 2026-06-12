@@ -34,3 +34,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Dashboard aggregation stays client-side from the existing issue-list payload; no backend aggregate endpoint was introduced for two active bindings.
 **Conventions established:** Board-level status counts continue to use `issue.state`; attention rows deep-link via `/<binding>?issue=<id>` and flyout close clears the query parameter.
 **Notes for next iteration:** #032 can proceed from the #028 model catalog validator; dashboard work did not change skill/model catalog contracts.
+
+## #032 symphony-skills + symphony-models catalog maintenance skills — 2026-06-12
+
+**What changed:** Added repo-local operator skill docs for refreshing the Podium Skill catalog and maintaining the git-tracked model catalog, plus regression coverage for the documented contracts.
+**Files:** `.claude/skills/symphony-skills/SKILL.md`, `.claude/skills/symphony-models/SKILL.md`, `tests/skills/test_catalog_maintenance_skills.py`, `.kanban/issues/032-symphony-skills-and-models-maintenance-skills.md`.
+**Decisions:** `symphony-models` stays doc-driven and reuses `web.api.main._load_models()` / `_validate_models()` instead of adding bespoke add/remove code.
+**Conventions established:** Catalog maintenance skills must document no service restart, no Plane API calls, no env-file reads, and no secret printing.
+**Notes for next iteration:** Full `tests/skills/` coverage remains the verification gate for repo-local `symphony-*` skill docs.

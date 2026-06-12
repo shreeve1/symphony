@@ -1,7 +1,7 @@
 ---
 id: 032
 title: symphony-skills + symphony-models catalog maintenance skills
-status: review
+status: done
 blocked_by: [028]
 parent: null
 priority: 1
@@ -51,11 +51,17 @@ unless it simplifies the skill.
 
 ## Acceptance criteria
 
-- [ ] `.claude/skills/symphony-skills/SKILL.md` exists; documents dry-run → confirm → live `podium skills refresh` flow; no restart/Plane/env-read.
-- [ ] `.claude/skills/symphony-models/SKILL.md` exists; documents list/add/remove against `models.yml` with agent validation and YAML lint.
-- [ ] `symphony-models` reuses the shared #028 `models.yml` validator; if any add/remove helper is added it has `tests/skills/` coverage (bad agent rejected, duplicate id rejected, round-trip preserves valid YAML).
-- [ ] An edit made per the `symphony-models` SKILL.md leaves `models.yml` loadable by the `/options` loader from #028 (cross-check test).
-- [ ] Neither skill writes secrets, calls Plane, or restarts a service.
+- [x] `.claude/skills/symphony-skills/SKILL.md` exists; documents dry-run → confirm → live `podium skills refresh` flow; no restart/Plane/env-read.
+- [x] `.claude/skills/symphony-models/SKILL.md` exists; documents list/add/remove against `models.yml` with agent validation and YAML lint.
+- [x] `symphony-models` reuses the shared #028 `models.yml` validator; if any add/remove helper is added it has `tests/skills/` coverage (bad agent rejected, duplicate id rejected, round-trip preserves valid YAML).
+- [x] An edit made per the `symphony-models` SKILL.md leaves `models.yml` loadable by the `/options` loader from #028 (cross-check test).
+- [x] Neither skill writes secrets, calls Plane, or restarts a service.
+
+## Implementation Notes
+
+- Added `.claude/skills/symphony-skills/SKILL.md` documenting the Podium `skills refresh` dry-run, confirmation, live refresh, catalog reporting, and safety posture.
+- Added `.claude/skills/symphony-models/SKILL.md` documenting list/add/remove edits for `models.yml` and requiring the shared `_load_models()` / `_validate_models()` lint gate.
+- Added `tests/skills/test_catalog_maintenance_skills.py` covering both skill docs, current catalog loadability, edit round-trip validation, and bad-agent / duplicate-id rejection through the shared validator.
 
 ## Verification
 
