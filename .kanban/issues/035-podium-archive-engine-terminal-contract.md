@@ -1,7 +1,7 @@
 ---
 id: 035
 title: Podium — archived is engine-terminal: resurrection guard + worktree teardown
-status: review
+status: done
 blocked_by: [034]
 updated: 2026-06-12
 actor: ralph
@@ -49,12 +49,12 @@ in the bound checkout: nothing to tear down, agent commits stay — by design.
 
 ## Acceptance criteria
 
-- [ ] `transition_state` on an archived issue is a no-op for `issue.state` (test: archive, call `transition_state(..., DONE)`, state stays `archived`); non-archived issues transition exactly as before (regression).
-- [ ] PATCH to `archived` with no active run and an existing worktree removes the worktree directory and its `podium/<binding>/<issue_id>` branch and sets `worktree_active` to false (test against a temp git repo, following `web/api/tests/test_worktree_api.py` fixtures).
-- [ ] PATCH to `archived` while `latest_run_state` is `queued`/`running` succeeds and leaves the worktree untouched.
-- [ ] Simulated run completion on an issue archived mid-run: issue stays `archived`, no verdict state transition, worktree and branch removed, `worktree_active` false, structured skip line logged.
-- [ ] Run-row finalization (run state, verdict, summary) still completes for runs whose issue was archived.
-- [ ] Merge-on-done behavior (main.py:750) unchanged (regression).
+- [x] `transition_state` on an archived issue is a no-op for `issue.state` (test: archive, call `transition_state(..., DONE)`, state stays `archived`); non-archived issues transition exactly as before (regression).
+- [x] PATCH to `archived` with no active run and an existing worktree removes the worktree directory and its `podium/<binding>/<issue_id>` branch and sets `worktree_active` to false (test against a temp git repo, following `web/api/tests/test_worktree_api.py` fixtures).
+- [x] PATCH to `archived` while `latest_run_state` is `queued`/`running` succeeds and leaves the worktree untouched.
+- [x] Simulated run completion on an issue archived mid-run: issue stays `archived`, no verdict state transition, worktree and branch removed, `worktree_active` false, structured skip line logged.
+- [x] Run-row finalization (run state, verdict, summary) still completes for runs whose issue was archived.
+- [x] Merge-on-done behavior (main.py:750) unchanged (regression).
 
 ## Verification
 
@@ -62,6 +62,12 @@ in the bound checkout: nothing to tear down, agent commits stay — by design.
 cd /home/james/symphony && python3 -m pytest
 ```
 
+## Implementation Notes
+
+Made archived terminal for engine state transitions. `PodiumTrackerAdapter.transition_state` now leaves archived issues archived while still returning the current row. API PATCH to archived tears down idle issue worktrees and branches while deferring active-run teardown. Scheduler run completion now explicitly detects archived issues after run-row finalization, logs `archived_terminal`, removes persistent worktrees, clears `worktree_active`, and skips verdict state resurrection.
+
+Verification passed with `PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH" python3 -m pytest -q` (622 passed, 1 skipped). Fresh Ralph review returned `PASS`.
+
 ## Blocked by
 
-- Blocked by #034 (`archived` state must exist in schema and API).
+None — #034 completed before this issue started.

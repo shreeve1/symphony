@@ -58,3 +58,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** `archived` is visible in Podium UI but remains outside reply redispatch states; live DB migration/application stays an operator step outside this slice.
 **Conventions established:** New bindings with no collapse localStorage default to `archived` collapsed; existing stored collapse sets are respected.
 **Notes for next iteration:** #035 must make archived engine-terminal; #036 can implement 14-day purge after #034.
+
+## #035 Podium — archived is engine-terminal — 2026-06-12
+
+**What changed:** Added the archived terminal engine guard, idle archive worktree teardown, deferred mid-run archive teardown, and regression coverage for run finalization plus merge-on-done preservation.
+**Files:** `tracker_podium.py`, `web/api/main.py`, `scheduler.py`, `tests/test_tracker_podium.py`, `web/api/tests/test_worktree_api.py`, `tests/test_trading_podium_dispatch.py`, `.kanban/issues/035-podium-archive-engine-terminal-contract.md`.
+**Decisions:** Archived issues still receive completed Run rows, verdicts, summaries, comments, and context projections, but `issue.state` is terminal and never resurrected by post-run verdict transitions.
+**Conventions established:** Scheduler logs `archived_terminal issue_id=<id> run_id=<id>` when it skips a verdict transition because an issue was archived mid-run; idle archive PATCH removes persistent worktrees immediately, while active runs defer teardown to completion.
+**Notes for next iteration:** #036 can assume archived issues are terminal and worktrees should normally already be gone, but purge still needs defensive worktree removal for drift.
