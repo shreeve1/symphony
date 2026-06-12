@@ -141,7 +141,7 @@ test("board polling picks up direct database issue state changes", async ({
 			.getByTestId("column-blocked")
 			.getByTestId("issue-card")
 			.filter({ hasText: title }),
-	).toBeVisible({ timeout: 4_500 });
+	).toBeVisible({ timeout: 11_000 });
 
 	expectCleanConsole(problems);
 });

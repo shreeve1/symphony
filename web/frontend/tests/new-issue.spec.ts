@@ -68,7 +68,9 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 
 	await page.getByTestId("new-issue-model").click();
 	await expect(
-		page.getByTestId("new-issue-model-option").filter({ hasText: "glm-5.1:high" }),
+		page
+			.getByTestId("new-issue-model-option")
+			.filter({ hasText: "gpt-5.3-codex-spark" }),
 	).toBeVisible();
 	await page.getByTestId("new-issue-agent").fill("claude");
 	await page.getByTestId("new-issue-model").click();
@@ -76,12 +78,16 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 		page.getByTestId("new-issue-model-option").filter({ hasText: "claude-fable-5" }),
 	).toBeVisible();
 	await expect(
-		page.getByTestId("new-issue-model-option").filter({ hasText: "glm-5.1:high" }),
+		page
+			.getByTestId("new-issue-model-option")
+			.filter({ hasText: "gpt-5.3-codex-spark" }),
 	).toHaveCount(0);
 	await page.getByTestId("new-issue-agent").fill("pi");
 	await page.getByTestId("new-issue-model").click();
 	await expect(
-		page.getByTestId("new-issue-model-option").filter({ hasText: "glm-5.1:high" }),
+		page
+			.getByTestId("new-issue-model-option")
+			.filter({ hasText: "gpt-5.3-codex-spark" }),
 	).toBeVisible();
 	await expect(
 		page.getByTestId("new-issue-model-option").filter({ hasText: "claude-fable-5" }),

@@ -34,7 +34,6 @@ from tracker_contract import (
 )
 from web.api.db import resolve_db_path
 
-
 PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
 
@@ -315,15 +314,26 @@ class PodiumTrackerAdapter:
     async def transition_state(
         self, issue_id: str, state: PlaneState | TrackerRole
     ) -> dict[str, Any]:
+        next_state = self._state_value(state)
         with self.connect() as connection:
-            connection.execute(
-                """
-                UPDATE issue
-                SET state = ?, updated_at = ?
-                WHERE id = ? AND state != 'archived'
-                """,
-                (self._state_value(state), _now(), issue_id),
-            )
+            if next_state in ("in_review", "blocked"):
+                connection.execute(
+                    """
+                    UPDATE issue
+                    SET state = ?, inbox_dismissed_at = NULL, updated_at = ?
+                    WHERE id = ? AND state != 'archived'
+                    """,
+                    (next_state, _now(), issue_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE issue
+                    SET state = ?, updated_at = ?
+                    WHERE id = ? AND state != 'archived'
+                    """,
+                    (next_state, _now(), issue_id),
+                )
             connection.commit()
         return await self.get_issue(issue_id)
 
@@ -465,7 +475,8 @@ class PodiumTrackerAdapter:
                     connection.execute(
                         """
                         UPDATE issue
-                        SET state = 'blocked', comments_md = ?, updated_at = ?
+                        SET state = 'blocked', comments_md = ?,
+                            inbox_dismissed_at = NULL, updated_at = ?
                         WHERE id = ?
                         """,
                         (updated_comments, timestamp, row["issue_id"]),

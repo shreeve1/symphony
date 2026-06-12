@@ -1,11 +1,13 @@
 ---
 id: 038
 title: Podium Inbox — dismiss endpoint, card dismiss button, resurface-on-activity
-status: pending
+status: in-progress
 blocked_by: [037]
 parent: null
 priority: 0
 created: 2026-06-12
+updated: 2026-06-12
+actor: ralph
 ---
 
 ## What to build

@@ -81,6 +81,43 @@ test.describe
 			expectCleanConsole(problems);
 		});
 
+		test("dismiss button removes card without navigating", async ({
+			page,
+			problems,
+		}) => {
+			const title = `e2e inbox dismiss ${Date.now()}`;
+			seedIssue("homelab", title, "in_review");
+
+			await openPage(page);
+
+			const card = page.getByTestId("inbox-card").filter({ hasText: title });
+			await expect(card).toBeVisible({ timeout: 15_000 });
+			await card.hover();
+
+			const dismiss = card.getByTestId("inbox-dismiss");
+			await expect(dismiss).toHaveCSS("opacity", "1");
+			const beforeUrl = page.url();
+			const dismissed = page.waitForResponse(
+				(res) =>
+					/\/api\/issues\/\d+\/dismiss$/.test(res.url()) &&
+					res.request().method() === "POST" &&
+					res.ok(),
+			);
+			await dismiss.click();
+			await dismissed;
+
+			await expect(page).toHaveURL(beforeUrl);
+			await expect(
+				page.getByTestId("inbox-card").filter({ hasText: title }),
+			).not.toBeVisible({ timeout: 15_000 });
+
+			await page.goto("/homelab");
+			const boardCard = page.getByTestId("issue-card").filter({ hasText: title });
+			await expect(boardCard).toBeVisible();
+
+			expectCleanConsole(problems);
+		});
+
 		test("operator reply removes inbox card", async ({ page, problems }) => {
 			const title = `e2e inbox reply remove ${Date.now()}`;
 			seedIssue("homelab", title, "in_review");

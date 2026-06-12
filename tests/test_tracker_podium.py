@@ -97,6 +97,47 @@ async def test_transition_state_does_not_resurrect_archived_issue(
 
 
 @pytest.mark.asyncio
+async def test_transition_state_to_inbox_state_clears_dismissal(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, state="todo")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET inbox_dismissed_at = ? WHERE id = ?",
+            ("2026-06-11T00:00:00+00:00", issue_id),
+        )
+        connection.commit()
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_IN_REVIEW)
+
+    assert updated["state"] == "in_review"
+    assert updated["inbox_dismissed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_transition_state_to_non_inbox_state_keeps_dismissal(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, state="blocked")
+    dismissed = "2026-06-11T00:00:00+00:00"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET inbox_dismissed_at = ? WHERE id = ?",
+            (dismissed, issue_id),
+        )
+        connection.commit()
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_RUNNING)
+
+    assert updated["state"] == "running"
+    assert updated["inbox_dismissed_at"] == dismissed
+
+
+@pytest.mark.asyncio
 async def test_comments_context_and_comment_listing(tmp_path: Path) -> None:
     issue_id = _seed_db(tmp_path / "podium.db")
     adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
