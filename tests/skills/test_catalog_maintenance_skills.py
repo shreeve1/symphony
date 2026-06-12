@@ -47,11 +47,12 @@ def test_models_catalog_is_loadable_by_options_validator() -> None:
     loaded = main._load_models(MODELS_PATH)
 
     assert {item["id"] for item in loaded} >= {
-        "claude-opus-4-8",
-        "claude-fable-5",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "glm-5.1:high",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "gpt-5.3-codex-spark",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.5",
     }
     assert all(item["agent"] in {"pi", "claude"} for item in loaded)
 

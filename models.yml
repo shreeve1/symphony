@@ -1,16 +1,4 @@
 models:
-  - id: claude-opus-4-8
-    agent: claude
-    label: Opus 4.8
-  - id: claude-fable-5
-    agent: claude
-  - id: claude-sonnet-4-6
-    agent: claude
-  - id: claude-haiku-4-5
-    agent: claude
-  - id: glm-5.1:high
-    agent: pi
-    provider: zai
   - id: deepseek-v4-flash
     agent: pi
     provider: deepseek
