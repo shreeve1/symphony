@@ -18,13 +18,14 @@ sources:
   - .claude/skills/symphony-models/SKILL.md
   - skill_migration.py
   - tests/skills/
+  - tests/skills/test_restart_troubleshooter.py
 confidence: high
 tags: [skills, claude-code, onboarding, operations, scaffold, smoke, recovery, podium]
 ---
 
 # Symphony skills index
 
-Symphony now carries repo-local Podium-era `symphony-*` skill docs under `.claude/skills/` for the migrated operational suite. The previous dotfiles/global `~/.claude/skills/` copies remain historical/operator runtime context, but #027 made the Podium migration reviewable and testable inside this repository [source: .claude/skills/symphony-binding-scaffold/SKILL.md] [source: tests/skills/test_binding_scaffold.py]. #032 extends the suite with manual catalog-maintenance skills for the Skill table and `models.yml` dropdown catalog [source: .claude/skills/symphony-skills/SKILL.md] [source: .claude/skills/symphony-models/SKILL.md] [source: tests/skills/test_catalog_maintenance_skills.py].
+Symphony now carries repo-local Podium-era `symphony-*` skill docs under `.claude/skills/` for the migrated operational suite. #027 made the Podium migration reviewable and testable inside this repository [source: .claude/skills/symphony-binding-scaffold/SKILL.md] [source: tests/skills/test_binding_scaffold.py]. #032 extends the suite with manual catalog-maintenance skills for the Skill table and `models.yml` dropdown catalog [source: .claude/skills/symphony-skills/SKILL.md] [source: .claude/skills/symphony-models/SKILL.md] [source: tests/skills/test_catalog_maintenance_skills.py]. The remaining operational skills, `symphony-restart` and `symphony-troubleshooter`, are now repo-local and Podium-aware instead of living only in the dotfiles/global skill tree [source: .claude/skills/symphony-restart/SKILL.md] [source: .claude/skills/symphony-troubleshooter/SKILL.md] [source: tests/skills/test_restart_troubleshooter.py].
 
 ## Lifecycle map
 
@@ -96,11 +97,11 @@ Umbrella for Podium onboarding. It composes binding scaffold, workflow authoring
 
 ### `symphony-restart` and `symphony-troubleshooter`
 
-These operational skills were not part of #027's code migration. They remain relevant for service restart ritual and incident diagnosis; consult their SKILL.md sources before use [source: .claude/skills/symphony-restart/SKILL.md] [source: .claude/skills/symphony-troubleshooter/SKILL.md].
+These operational skills are now tracked in the repo. `symphony-restart` remains the gated `symphony-host.service` restart ritual: pre-sanity, explicit James approval, restart, then `symphony_started` / reconcile / dispatch log verification. `symphony-troubleshooter` is read-only and Podium-era: it correlates `symphony-host.service`, Podium services, `/api/bindings` reads, SQLite Issue/Run rows, journal lifecycle lines, and hands mutations to the proper skill [source: .claude/skills/symphony-restart/SKILL.md] [source: .claude/skills/symphony-troubleshooter/SKILL.md] [source: tests/skills/test_restart_troubleshooter.py].
 
 ## Safety pattern after Podium migration
 
-Migrated skills avoid Plane API endpoints and `plane_adapter` imports. Tests under `tests/skills/` assert the Podium endpoint strings and no legacy workspace endpoint coupling for migrated docs, while `skill_migration.py` provides testable helper seams [source: tests/skills/test_binding_scaffold.py] [source: tests/skills/test_binding_smoke.py] [source: tests/skills/test_bindings_status.py]. Catalog-maintenance skill tests also assert no Plane workspace strings, no service restart posture, and reuse of the shared model validator for `models.yml` edits [source: tests/skills/test_catalog_maintenance_skills.py].
+Migrated skills avoid Plane API endpoints and `plane_adapter` imports. Tests under `tests/skills/` assert the Podium endpoint strings and no legacy workspace endpoint coupling for migrated docs, while `skill_migration.py` provides testable helper seams [source: tests/skills/test_binding_scaffold.py] [source: tests/skills/test_binding_smoke.py] [source: tests/skills/test_bindings_status.py]. Catalog-maintenance skill tests also assert no Plane workspace strings, no service restart posture, and reuse of the shared model validator for `models.yml` edits [source: tests/skills/test_catalog_maintenance_skills.py]. Operational-skill tests assert `symphony-restart` keeps the approval gate and `symphony-troubleshooter` uses Podium-era read-only paths without stale Plane scaffold language [source: tests/skills/test_restart_troubleshooter.py].
 
 ## Related
 

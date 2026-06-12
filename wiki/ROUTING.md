@@ -74,8 +74,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Skills & Tooling
 
-- Pages: `analyses/symphony-skills-index.md`, `analyses/personal-harness-pi-profile.md`
-- Keywords: symphony-binding-scaffold, symphony-project-scaffold, symphony-workflow-author, symphony-restart, symphony-bindings-status, symphony-binding-smoke, symphony-plane-recover, symphony-onboard-project, symphony-troubleshooter, symphony-skills, symphony-models, skill_migration.py, Podium skill migration, Podium catalog maintenance, tracker: podium, POST /api/bindings/{name}/issues, GET /api/bindings, GET /api/issues/{issue_id}/runs, GET /api/skills, python -m web.cli.podium skills refresh, models.yml, _load_models, _validate_models, Plane retirement tool, typed-slug confirmation, dry-run preview, umbrella skill, personal-harness-pi, Pi personal harness, .pi/extensions/personal-harness.ts, Harness Profile, afterWrite syntax, beforeGit project checks, safety blockers
+- Pages: `analyses/symphony-skills-index.md`, `analyses/personal-harness-pi-profile.md`, `analyses/claude-code-harness-profile.md`
+- Keywords: symphony-binding-scaffold, symphony-project-scaffold, symphony-workflow-author, symphony-restart, symphony-bindings-status, symphony-binding-smoke, symphony-plane-recover, symphony-onboard-project, symphony-troubleshooter, symphony-skills, symphony-models, skill_migration.py, Podium skill migration, Podium catalog maintenance, tracker: podium, POST /api/bindings/{name}/issues, GET /api/bindings, GET /api/issues/{issue_id}/runs, GET /api/skills, python -m web.cli.podium skills refresh, models.yml, _load_models, _validate_models, Plane retirement tool, typed-slug confirmation, dry-run preview, umbrella skill, personal-harness-pi, Pi personal harness, .pi/extensions/personal-harness.ts, Harness Profile, afterWrite syntax, beforeGit project checks, safety blockers, personalize-harness, Claude Code harness, .claude/settings.json, .claude/hooks, validate-syntax.sh, block-bash-pattern.sh, pre-git-checks.sh, reinject-rules.sh, PostToolUse, PreToolUse, SessionStart compact, hook exit 2, staged ruff check, uv run pytest gate, rm -rf guard, pip install block, uv pip allowed, uv add allowed, no tool.ruff config, changed-files-only ruff
 
 ## Podium Web UI
 
@@ -85,4 +85,4 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 ## Tests
 
 - Pages: `analyses/symphony-tests-index.md`
-- Keywords: pytest, test_scheduler, test_schedule, test_plane_cli, FakeTransport, validation contract, 435 tests, coverage map, py_compile, pytest 8, pytest-asyncio 0, test_alembic_baseline, alembic baseline
+- Keywords: pytest, test_scheduler, test_schedule, test_plane_cli, FakeTransport, validation contract, 435 tests, coverage map, py_compile, pytest 8, pytest-asyncio 0, test_alembic_baseline, alembic baseline, uv run pytest, bare python3 -m pytest fails, system python3 lacks alembic, .venv project venv, uv.lock, alembic project-only, do not install alembic system-wide, PATH venv bin pytest, 615 passed

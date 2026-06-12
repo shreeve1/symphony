@@ -11,6 +11,20 @@ Append entries with this format:
 
 ---
 
+## [2026-06-12] session-update | Claude Code hook harness personalization (re-applied)
+
+- Actor: agent (Claude, `personalize-harness` skill + wiki update)
+- Inputs: current session; `pyproject.toml`, `uv.lock`, `.venv`, `CLAUDE.md`; generated `.claude/settings.json` + `.claude/hooks/{validate-syntax,block-bash-pattern,pre-git-checks,reinject-rules}.sh`; ruff/pytest baseline measurements; `~/.claude/skills/personalize-harness/SKILL.md` (global skill edit, outside repo).
+- Outputs: `wiki/raw/sessions/2026-06-12-claude-code-harness.md`; `wiki/analyses/claude-code-harness-profile.md`; `wiki/CLAIMS.md` C-0130..C-0131; `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`; corrected `CLAUDE.md` "Quick Checks" (`python3 -m pytest` → `uv run pytest`).
+- Notes: Team-layer Claude Code harness — 4 hooks (blocking syntax-validate afterWrite, blocking bash guard, blocking pre-git ruff-on-staged + `uv run pytest`, advisory compact reinject). Decisions: ruff at commit-time/changed-files-only (no `[tool.ruff]` config → repo-wide baseline red 38/82 + 5 lint); test gate is `uv run pytest` not bare `python3 -m pytest` (system python3 lacks alembic, .venv has it, 615 passed/1 skip/53s) — drove the `CLAUDE.md` quick-check correction; alembic stays project-only (declared dep, locked, in `.venv` 1.18.4), do not install system-wide. Path guard + Stop self-review skipped by operator choice. Live bug caught + fixed: rm guard matched safe `/tmp` deletes, re-anchored to root/home boundaries. Skill hardened with mandatory baseline-verification/runner-resolution step. **This update was first written then wiped by concurrent Ralph #033–#036 archive work (which reclaimed claim IDs C-0126/C-0127); re-applied here with claims renumbered to C-0130/C-0131.** Sibling of the Pi harness (C-0121/C-0122). No secrets, no env contents, no transcript.
+
+## [2026-06-12] session-update | repo-local Symphony operational skills
+
+- Actor: agent (Pi)
+- Inputs: operator request to reconcile Symphony skills into `/home/james/symphony/.claude/`; dotfiles copies of `symphony-restart` and `symphony-troubleshooter`; repo-local `.claude/skills/symphony-*`; `tests/skills/`.
+- Outputs: added `.claude/skills/symphony-restart/SKILL.md`; added `.claude/skills/symphony-troubleshooter/SKILL.md`; added `tests/skills/test_restart_troubleshooter.py`; updated `wiki/analyses/symphony-skills-index.md`; updated `wiki/CLAIMS.md` (C-0129); updated `wiki/log.md`.
+- Notes: Project-local consolidation kept existing Podium-era skills canonical, did not overwrite them with stale dotfiles copies, did not copy non-Symphony `debug-hermes`, and did not delete dotfiles/global copies. Verification covered skill tests and stale Plane scaffold strings; no secrets or `.env` contents read.
+
 ## [2026-06-12] session-update | #035 archived engine-terminal contract
 
 - Actor: agent (Pi, Ralph + wiki update)
