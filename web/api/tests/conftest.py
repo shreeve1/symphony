@@ -7,6 +7,9 @@ from typing import Any, cast
 import pytest
 from fastapi.testclient import TestClient
 
+main = import_module("web.api.main")
+app = cast(Any, main.app)
+
 TEST_PASSWORD = "secret"
 TEST_PASSWORD_HASH = "$2b$12$ZjUmIMBDipXIftuigS2s0O3SSJzKwkSHWsrHmauOcytbDU.K3e1k2"
 TEST_SESSION_SECRET = "test-session-secret"
@@ -28,3 +31,28 @@ def auth_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 def login(client: TestClient, password: str = TEST_PASSWORD) -> None:
     response = client.post("/api/auth/login", json={"password": password})
     assert response.status_code == 200
+
+
+@pytest.fixture()
+def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    with TestClient(app) as test_client:
+        login(test_client)
+        with main.connect(db_path) as connection:
+            connection.executemany(
+                "INSERT INTO skill(name, description, source) VALUES (?, ?, '')",
+                [
+                    ("blueprint", "Blueprint fixture skill"),
+                    ("code-review", "Code review fixture skill"),
+                    ("tdd", "TDD fixture skill"),
+                ],
+            )
+            connection.commit()
+        yield test_client
+
+
+@pytest.fixture()
+def issue_id(client: TestClient) -> int:
+    issues = client.get("/api/bindings/trading/issues").json()
+    return issues[0]["id"]

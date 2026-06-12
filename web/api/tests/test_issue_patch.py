@@ -1,42 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from datetime import datetime
-from importlib import import_module
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-
-main = import_module("web.api.main")
-app = cast(Any, main.app)
-login = cast(Any, import_module("web.api.tests.conftest")).login
-
-
-@pytest.fixture()
-def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
-    db_path = tmp_path / "podium.db"
-    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
-    with TestClient(app) as test_client:
-        login(test_client)
-        with main.connect(db_path) as connection:
-            connection.executemany(
-                "INSERT INTO skill(name, description, source) VALUES (?, ?, '')",
-                [
-                    ("blueprint", "Blueprint fixture skill"),
-                    ("code-review", "Code review fixture skill"),
-                    ("tdd", "TDD fixture skill"),
-                ],
-            )
-            connection.commit()
-        yield test_client
-
-
-@pytest.fixture()
-def issue_id(client: TestClient) -> int:
-    issues = client.get("/api/bindings/trading/issues").json()
-    return issues[0]["id"]
-
 
 # (field, valid value) — one happy-path case per editable field.
 HAPPY_CASES = [

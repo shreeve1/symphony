@@ -60,6 +60,43 @@ def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(tmp_p
     assert "mode=execute" in missing
 
 
+_OPERATOR_REPLY_DIRECTIVE = "Blocks headed `### Operator Reply` are the operator's directives"
+
+
+def test_operator_reply_directive_present_only_when_flagged() -> None:
+    text = "### Operator Reply (2026-06-12T00:00:00+00:00)\n\nDo the thing."
+
+    flagged = render_previous_comments_block(text, flag_operator_replies=True)
+    default = render_previous_comments_block(text)
+
+    assert _OPERATOR_REPLY_DIRECTIVE in flagged
+    assert _OPERATOR_REPLY_DIRECTIVE not in default
+
+
+def test_render_prompt_operator_reply_directive_podium_only(tmp_path: Path) -> None:
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
+    comments = "### Operator Reply (2026-06-12T00:00:00+00:00)\n\nDo the thing."
+
+    podium = render_prompt(
+        IssueData(
+            identifier="POD-9",
+            comments_md=comments,
+            preferred_skill="/dev-build",
+        ),
+        path=workflow,
+        tracker_kind="podium",
+    )
+    plane = render_prompt(
+        IssueData(identifier="AUTO-9", comments_md=comments),
+        path=workflow,
+        tracker_kind="plane",
+    )
+
+    assert _OPERATOR_REPLY_DIRECTIVE in podium
+    assert _OPERATOR_REPLY_DIRECTIVE not in plane
+
+
 def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(tmp_path: Path) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")

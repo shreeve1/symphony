@@ -32,6 +32,7 @@
 | [concepts/schedule-comment-grammar.md](concepts/schedule-comment-grammar.md) | `Symphony-Schedule:` / `Symphony-Schedule-Cancelled:` grammar, hard invariants, sort precedence, HTML normalisation | `schedule.py` | 2026-06-09 |
 | [concepts/blocked-reconciler-implementation.md](concepts/blocked-reconciler-implementation.md) | `blocked_reconciler.py` — caps, regexes, `ReconcileRule` shape, default rule, skip conditions, log markers | `blocked_reconciler.py` | 2026-06-09 |
 | [concepts/podium-tracker.md](concepts/podium-tracker.md) | Podium tracker impl — schema/state enums, db path, PATCH contract, seeding, and #019 SQLite TrackerAdapter + scheduler context writes | `web/api/schema.py`, `web/api/db.py`, `web/api/main.py`, `tracker_podium.py`, `tracker_adapter.py` | 2026-06-11 |
+| [concepts/operator-reply.md](concepts/operator-reply.md) | Operator reply comments — `POST /api/issues/{id}/reply` appends an attributed `### Operator Reply` block and atomically flips `state` to `todo` (re-dispatch), prompt-renderer directive, ReplyComposer, transcript-re-feed continuity | `web/api/main.py`, `prompt_renderer.py`, `web/frontend/components/IssueFlyout.tsx`, `web/api/tests/test_reply.py` | 2026-06-12 |
 
 ## Analyses
 

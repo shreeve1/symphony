@@ -216,3 +216,20 @@ export async function patchIssue(
 	}
 	return res.json() as Promise<IssueDetail>;
 }
+
+export async function postReply(
+	id: number,
+	body: string,
+): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/reply`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ body }),
+	});
+	if (!res.ok) {
+		throw new Error(
+			`POST /api/issues/${id}/reply -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}

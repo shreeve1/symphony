@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
@@ -281,6 +281,32 @@ class IssueCreate(BaseModel):
     approved: bool = False
     scheduled_for: str | None = None
     base_branch: str | None = None
+
+
+class ReplyCreate(BaseModel):
+    """Operator reply payload. The single `body` field is the markdown reply
+    appended as an attributed `### Operator Reply` block. extra="forbid" turns
+    unknown keys into validation errors (mapped to HTTP 400); the validator
+    rejects empty/whitespace-only bodies."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1)
+
+    @field_validator("body")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("body cannot be empty or whitespace-only")
+        return value
+
+
+# Issue states from which an operator reply re-dispatches the agent; any other
+# state (todo, running) returns 409.
+ALLOWED_REPLY_STATES = ("in_review", "blocked", "done")
+# Run states that mean a run is in flight; a reply during these races the run's
+# own comments_md append, so the reply endpoint rejects them too.
+ACTIVE_RUN_STATES = ("queued", "running")
 
 
 # Fields whose column is conceptually NOT NULL for an operator edit: explicit
@@ -743,6 +769,74 @@ async def patch_issue(
     ):
         result = await _maybe_archive_worktree(issue_id, current, connection)
 
+    return result
+
+
+@app.post("/api/issues/{issue_id}/reply")
+async def reply_to_issue(
+    issue_id: int,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    # No migration needed: this touches only the existing comments_md, state,
+    # and updated_at columns — no new column, table, or Alembic revision.
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
+
+    # Hand-validate (like patch_issue): an unknown key is 400, an invalid value
+    # (e.g. empty body) is 422. FastAPI would flatten both into 422.
+    try:
+        reply = ReplyCreate.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        # A field_validator that raises ValueError leaves the raw exception in
+        # `ctx`, which is not JSON-serializable; drop ctx so the detail encodes.
+        for error in errors:
+            error.pop("ctx", None)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+    now = _next_updated_at(current["updated_at"])
+    appended = f"\n\n### Operator Reply ({now})\n\n{reply.body.strip()}"
+
+    # One atomic conditional UPDATE: append + state flip + bump, all server-side.
+    # COALESCE guards a legacy NULL comments_md (NULL || text yields NULL, which
+    # would silently drop the reply). The WHERE clause carries the state and
+    # run-state guard so the write is gated atomically; rowcount disambiguates.
+    cursor = connection.execute(
+        """
+        UPDATE issue
+           SET comments_md = COALESCE(comments_md, '') || ?,
+               state = 'todo',
+               updated_at = ?
+         WHERE id = ?
+           AND state IN ('in_review', 'blocked', 'done')
+           AND (latest_run_state IS NULL
+                OR latest_run_state NOT IN ('queued', 'running'))
+        """,
+        (appended, now, issue_id),
+    )
+    connection.commit()
+
+    if cursor.rowcount == 0:
+        # Row exists (checked above), so the guard failed.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"reply not allowed in state {current['state']} "
+                f"(run {current['latest_run_state']})"
+            ),
+        )
+
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
     return result
 
 

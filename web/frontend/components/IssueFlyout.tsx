@@ -8,10 +8,12 @@ import {
 	fetchIssueRuns,
 	fetchSkills,
 	patchIssue,
+	postReply,
 	type IssueDetail,
 	type IssuePatch,
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
+import { isActiveRunState } from "@/lib/polling";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
@@ -406,6 +408,73 @@ function MarkdownEditor({
 	);
 }
 
+// Operator reply composer: appends an attributed reply to the comment thread
+// and flips the issue back to todo so the agent re-runs (server-side, atomic).
+// Distinct from the raw-blob MarkdownEditor above, which still allows free
+// restructuring of the whole thread.
+function ReplyComposer({ issue }: { issue: IssueDetail }) {
+	const queryClient = useQueryClient();
+	const [draft, setDraft] = useState("");
+	const reply = useMutation({
+		mutationFn: (body: string) => postReply(issue.id, body),
+		onSuccess: () => {
+			setDraft("");
+			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+			queryClient.invalidateQueries({
+				queryKey: ["issues", issue.binding_name],
+			});
+		},
+	});
+
+	// Gate on run-state: a live or queued run can't honor a mid-run reply, and a
+	// todo issue is already queued. isActiveRunState mirrors the board gating.
+	const runningOrActive =
+		issue.state === "running" || isActiveRunState(issue.latest_run_state);
+	const isTodo = issue.state === "todo";
+	const replyDisabled = runningOrActive || isTodo;
+	const hint = runningOrActive
+		? "Agent is running — reply when it parks for review."
+		: "Already queued to run.";
+
+	return (
+		<div className="mt-3 space-y-2 border-t pt-3" data-testid="reply-composer">
+			<textarea
+				data-testid="reply-input"
+				value={draft}
+				rows={4}
+				placeholder="Write a reply to the agent…"
+				disabled={replyDisabled}
+				onChange={(e) => setDraft(e.target.value)}
+				className="w-full rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
+			/>
+			{replyDisabled && (
+				<p
+					data-testid="reply-disabled-hint"
+					className="text-xs text-muted-foreground"
+				>
+					{hint}
+				</p>
+			)}
+			{reply.isError && (
+				<p data-testid="reply-error" className="text-xs text-red-500">
+					Reply failed — the issue may have changed state. Try again.
+				</p>
+			)}
+			<div className="flex justify-end">
+				<button
+					type="button"
+					data-testid="reply-send"
+					disabled={replyDisabled || reply.isPending || draft.trim() === ""}
+					onClick={() => reply.mutate(draft)}
+					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
+				>
+					Send
+				</button>
+			</div>
+		</div>
+	);
+}
+
 const TABS = ["comments", "context"] as const;
 type Tab = (typeof TABS)[number];
 
@@ -570,6 +639,7 @@ export function IssueFlyout({
 										readOnly={tab === "comments"}
 										onPatch={onPatch}
 									/>
+									{tab === "comments" && <ReplyComposer issue={issue} />}
 								</div>
 							</div>
 

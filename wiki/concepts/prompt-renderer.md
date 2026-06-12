@@ -3,7 +3,7 @@ title: Prompt renderer
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-06-11
+updated: 2026-06-12
 sources:
   - prompt_renderer.py
   - skill_mode_map.py
@@ -30,7 +30,7 @@ Variable substitution currently maps only the legacy template variables (`id`, `
 
 `_escape_issue_content` prevents `</issue>` from closing the rendered issue block [source: prompt_renderer.py#72-73]. `_escape_untrusted_block` escapes `</issue>`, `</previous_comments>`, and `</issue_context>` for comment/context blocks [source: prompt_renderer.py#76-81].
 
-`render_previous_comments_block(comments_text, truncate=True)` preserves Plane behavior by default: it strips empty input, tail-truncates to `_PREVIOUS_COMMENTS_MAX_CHARS = 12000`, prepends `[Earlier previous comments truncated]` when truncating, and wraps content in `<previous_comments>` [source: prompt_renderer.py#19,109-124]. Podium calls the same helper with `truncate=False`, because engine-built compaction owns Podium size control [source: prompt_renderer.py#182-185].
+`render_previous_comments_block(comments_text, *, truncate=True, flag_operator_replies=False)` preserves Plane behavior by default: it strips empty input, tail-truncates to `_PREVIOUS_COMMENTS_MAX_CHARS = 12000`, prepends `[Earlier previous comments truncated]` when truncating, and wraps content in `<previous_comments>` [source: prompt_renderer.py#19,109-124]. Podium calls the same helper with `truncate=False`, because engine-built compaction owns Podium size control [source: prompt_renderer.py#182-185]. The keyword-only `flag_operator_replies` (Podium path only) appends, after the untrusted-context caveat, a directive that blocks headed `### Operator Reply` are the operator's directives and the most recent one is the current request to act on, while other comment text stays untrusted; the Plane path leaves it `False` and is byte-for-byte unchanged [source: prompt_renderer.py#109-124,182-185]. See [Operator reply comments](operator-reply.md).
 
 `render_issue_context_block(context_text)` wraps Podium Issue Context in a dedicated `## Issue Context` / `<issue_context>` block and escapes closing tags [source: prompt_renderer.py#127-138].
 
