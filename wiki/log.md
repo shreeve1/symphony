@@ -356,3 +356,10 @@ Append entries with this format:
 - Inputs: grill-me decisions Q1–Q8; commits `0912016`, `2343bf2`, `ea449b5`; smoke issue 20 / run 13; journalctl drift tracebacks; pi v0.78.1 `--help` and package `docs/skills.md`.
 - Outputs: new `wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md`; promoted `wiki/analyses/podium-issue-dispatch-contract.md` (lint passed, auto-promotion); supersession notes on `analyses/podium-014-new-issue-flow.md`, `analyses/podium-028-model-catalog-searchable-dropdowns.md`, `concepts/prompt-renderer.md`, `concepts/thin-engine-v2.md`, `sources/symphony-host-service-unit.md`; `wiki/CLAIMS.md` C-0141..C-0146 added, C-0058 marked superseded, C-0114 drift note; `wiki/index.md` + `wiki/ROUTING.md` updated.
 - Notes: Six dispatch-contract decisions implemented and live-verified same session. Root cause captured: live podium.db alembic stamp-vs-run drift (0005 stamped, column missing) broke transition_state post Ralph #037/#038 merge; fixed manually + pragma parity check. Follow-up: kanban #040 (claude adapter), startup schema-parity check idea, stale glm reference in new-issue.spec.ts. No secrets, no transcript.
+
+## [2026-06-12] session-update | ensure_schema stamp-drift root cause + boot guard
+
+- Actor: agent (Claude Code, follow-up to dispatch-contract session)
+- Inputs: forensics on `web/api/main.py` `ensure_schema` (blind `UPDATE alembic_version` on boot); commit `772e7ba`; `web/api/tests/test_ensure_schema.py` (4 regression tests); e2e suite 37 passed, python suite 659 passed.
+- Outputs: refined `wiki/analyses/podium-issue-dispatch-contract.md` root-cause paragraph; `wiki/CLAIMS.md` C-0147 added, C-0145 note refined; `wiki/ROUTING.md` keywords extended.
+- Notes: Confirmed mechanism for the 2026-06-12 stamp-vs-run drift. Boot now fails loud on missing columns instead of serving against a drifted schema. Stale glm reference in new-issue.spec.ts found already fixed by the Ralph batch; remaining glm string is decorative run-history fixture data. No secrets.

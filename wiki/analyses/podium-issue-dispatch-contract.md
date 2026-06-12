@@ -45,7 +45,7 @@ Global run timeout is 60 min (`config.py` default `3_600_000`, env `SYMPHONY_RUN
 
 ## Live verification
 
-Smoke issue 20 / run 13 (homelab): run row `pi / openai-codex / gpt-5.5:low / skill_invoked=question`, exit 0, verdict `done` in 67s; summary echoed the new 3600000 timeout [source: wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md#evidence]. The post-run transition initially failed on live-DB drift — `alembic_version` was stamped `0005` but `inbox_dismissed_at` never existed; fixed with the 0005 DDL manually plus a pragma diff parity check (stamp-vs-run drift is a standing hazard of `ensure_schema`'s stamp path) [source: wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md#durable-facts].
+Smoke issue 20 / run 13 (homelab): run row `pi / openai-codex / gpt-5.5:low / skill_invoked=question`, exit 0, verdict `done` in 67s; summary echoed the new 3600000 timeout [source: wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md#evidence]. The post-run transition initially failed on live-DB drift — `alembic_version` was stamped `0005` but `inbox_dismissed_at` never existed; fixed with the 0005 DDL manually plus a pragma diff parity check [source: wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md#durable-facts]. Root cause (confirmed post-session): `web/api/main.py` `ensure_schema` UPDATEd `alembic_version` to the code's `INITIAL_REVISION` on every boot, recording migrations that never ran. Fixed in commit `772e7ba`: existing databases are never re-stamped; startup runs a pragma drift check — missing columns raise before the API serves, extra columns (pending drop migration) warn [source: web/api/main.py; web/api/tests/test_ensure_schema.py].
 
 ## Supersedes
 

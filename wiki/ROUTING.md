@@ -95,4 +95,4 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 ## Dispatch contract (models, effort, skills, claude gate)
 
 - Pages: `analyses/podium-issue-dispatch-contract.md`
-- Keywords: dispatch gate, _apply_dispatch_gate, model catalog, models.yml default true, gpt-5.5 default, preferred_model blocks, reasoning_effort suffix, --skill loading, skill directive, claude not wired, kanban 040, run row provider model, 60min timeout, max_duration_seconds dropped, migration 0006, alembic stamp drift, inbox_dismissed_at missing, pragma diff parity
+- Keywords: dispatch gate, _apply_dispatch_gate, model catalog, models.yml default true, gpt-5.5 default, preferred_model blocks, reasoning_effort suffix, --skill loading, skill directive, claude not wired, kanban 040, run row provider model, 60min timeout, max_duration_seconds dropped, migration 0006, alembic stamp drift, inbox_dismissed_at missing, pragma diff parity, ensure_schema never re-stamp, schema drift check at boot, missing column raises
