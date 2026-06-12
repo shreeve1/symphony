@@ -1,7 +1,7 @@
 ---
 id: 038
 title: Podium Inbox — dismiss endpoint, card dismiss button, resurface-on-activity
-status: review
+status: done
 blocked_by: [037]
 parent: null
 priority: 0
@@ -36,19 +36,24 @@ Transitions into other states (`todo`, `running`, `done`, `archived`) leave `inb
 
 ## Acceptance criteria
 
-- [ ] `POST /api/issues/{id}/dismiss` sets `inbox_dismissed_at`, bumps `updated_at`, returns the updated row, and publishes `issue.updated` (API test asserts the WS broadcast, following `test_websocket.py` patterns).
-- [ ] Dismiss returns 409 when the issue state is not `in_review`/`blocked`, and 404 for a nonexistent id.
-- [ ] After dismiss, `GET /api/inbox` no longer returns the issue (API test).
-- [ ] Resurface via run activity: a dismissed issue whose run projection later writes a newer `last_event_at` reappears in `GET /api/inbox` (API test seeding the projection update).
-- [ ] Resurface via transition: `transition_state()` into `in_review` or `blocked`, and a `PATCH` setting state to `in_review`/`blocked`, each clear `inbox_dismissed_at` (tests at both write sites); transitions to other states leave it untouched.
-- [ ] Playwright: hovering an Inbox card reveals the dismiss button; clicking it removes the card without navigating, and the issue remains visible in its board column.
-- [ ] Full backend and e2e suites pass.
+- [x] `POST /api/issues/{id}/dismiss` sets `inbox_dismissed_at`, bumps `updated_at`, returns the updated row, and publishes `issue.updated` (API test asserts the WS broadcast, following `test_websocket.py` patterns).
+- [x] Dismiss returns 409 when the issue state is not `in_review`/`blocked`, and 404 for a nonexistent id.
+- [x] After dismiss, `GET /api/inbox` no longer returns the issue (API test).
+- [x] Resurface via run activity: a dismissed issue whose run projection later writes a newer `last_event_at` reappears in `GET /api/inbox` (API test seeding the projection update).
+- [x] Resurface via transition: `transition_state()` into `in_review` or `blocked`, and a `PATCH` setting state to `in_review`/`blocked`, each clear `inbox_dismissed_at` (tests at both write sites); transitions to other states leave it untouched.
+- [x] Playwright: hovering an Inbox card reveals the dismiss button; clicking it removes the card without navigating, and the issue remains visible in its board column.
+- [x] Full backend and e2e suites pass.
+
+## Implementation Notes
+
+Implemented Inbox dismissal end-to-end: `POST /api/issues/{id}/dismiss` writes `inbox_dismissed_at`, bumps `updated_at`, returns the updated issue, and publishes `issue.updated`; Sidebar cards now expose a hover/focus dismiss button with optimistic removal and rollback; transition paths into `in_review` or `blocked` clear the dismissal so cards resurface. Fresh review returned `RALPH_REVIEW: PASS_WITH_NOTES`; notes were unrelated test maintenance drift (`new-issue` model fixture, polling timeout, and aborted-request ignore) with all acceptance criteria satisfied.
 
 ## Verification
 
 ```
-cd /home/james/symphony && python3 -m pytest
-cd /home/james/symphony/web/frontend && pnpm test:e2e
+PATH=/home/james/.local/bin:$PATH uv run pytest -q
+cd /home/james/symphony-ralph/web/frontend && pnpm exec tsc --noEmit
+cd /home/james/symphony-ralph/web/frontend && PATH=/home/james/.local/bin:$PATH pnpm test:e2e
 ```
 
 ## Blocked by
