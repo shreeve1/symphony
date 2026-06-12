@@ -1,7 +1,7 @@
 ---
 id: 034
 title: Podium — sixth `archived` issue state: migration, API, board column, Archive button
-status: review
+status: done
 blocked_by: [033]
 parent: null
 priority: 0
@@ -53,13 +53,13 @@ restart services or touch the live DB.
 
 ## Acceptance criteria
 
-- [ ] Alembic revision `0004_archived_state` exists with working `upgrade()` and `downgrade()` (downgrade restores the five-value CHECK; document that downgrade requires no archived rows present and fails loudly otherwise).
-- [ ] `SCHEMA_SQL` CHECK includes `archived`; `INITIAL_REVISION` is `0004_archived_state`; `python3 -m pytest tests/test_alembic_baseline.py` passes.
-- [ ] `PATCH /api/issues/{id}` accepts `state: "archived"` from every other state and returns the updated row; `GET /api/bindings/{name}/issues?state=archived` filters correctly; invalid states still 422.
-- [ ] `POST /api/issues/{id}/reply` on an archived issue returns 409 (existing guard, regression-tested).
-- [ ] Board renders an Archived column rightmost; it is collapsed by default for a binding with no stored collapse set, expandable via #033 controls.
-- [ ] Flyout Archive button archives without confirmation; the card moves to the archived column; the state chip restores it; the button is hidden on already-archived issues.
-- [ ] New e2e spec covers archive-via-button, default-collapsed archived column, and restore-via-chip.
+- [x] Alembic revision `0004_archived_state` exists with working `upgrade()` and `downgrade()` (downgrade restores the five-value CHECK; document that downgrade requires no archived rows present and fails loudly otherwise).
+- [x] `SCHEMA_SQL` CHECK includes `archived`; `INITIAL_REVISION` is `0004_archived_state`; `python3 -m pytest tests/test_alembic_baseline.py` passes.
+- [x] `PATCH /api/issues/{id}` accepts `state: "archived"` from every other state and returns the updated row; `GET /api/bindings/{name}/issues?state=archived` filters correctly; invalid states still 422.
+- [x] `POST /api/issues/{id}/reply` on an archived issue returns 409 (existing guard, regression-tested).
+- [x] Board renders an Archived column rightmost; it is collapsed by default for a binding with no stored collapse set, expandable via #033 controls.
+- [x] Flyout Archive button archives without confirmation; the card moves to the archived column; the state chip restores it; the button is hidden on already-archived issues.
+- [x] New e2e spec covers archive-via-button, default-collapsed archived column, and restore-via-chip.
 
 ## Verification
 
@@ -67,6 +67,12 @@ restart services or touch the live DB.
 cd /home/james/symphony && python3 -m pytest
 cd /home/james/symphony/web/frontend && pnpm test:e2e
 ```
+
+## Implementation Notes
+
+Added the `archived` issue state across Alembic/runtime schema, API validation and filtering, board state vocabulary, flyout Archive action, and e2e coverage. Archived is the rightmost board column and defaults collapsed when a binding has no stored collapse set. Reply-to-archived returns 409 via the reply-state guard.
+
+Verification passed: `PATH="$PWD/.venv/bin:$HOME/.local/bin:$PATH" python3 -m pytest -q`, `pnpm exec tsc --noEmit`, and `PATH="$HOME/.local/bin:$PATH" pnpm test:e2e`. Fresh Ralph review returned `PASS_WITH_NOTES` for minor stale-test-title/doc coverage notes; follow-up commits added explicit archived reply guard coverage and refreshed the stale board test title.
 
 ## Blocked by
 

@@ -17,7 +17,7 @@ tags: [podium, archive, board-ui, retention, design-decision]
 
 # Podium issue archive ("delete button") design
 
-Design accepted 2026-06-12 in a grill-me session; **not yet implemented**. Resolves how Podium disposes of junk issues without overloading Done — Done is load-bearing for infra issues with `worktree_active` (PATCH to done fires FF-merge + teardown) [source: web/api/main.py#L750].
+Design accepted 2026-06-12 in a grill-me session. #034 has implemented the schema/API/UI portion: `archived` is now a sixth Issue state, `GET /api/bindings/{name}/issues?state=archived` filters server-side, the Archived board column renders rightmost and defaults collapsed, and `IssueFlyout` has a no-confirm Archive button [source: .kanban/issues/034-podium-archived-state-core.md] [source: web/api/schema.py] [source: web/api/main.py] [source: web/frontend/lib/issues.ts] [source: web/frontend/components/IssueFlyout.tsx]. Engine-terminal handling (#035) and retention purge (#036) remain pending. The design resolves how Podium disposes of junk issues without overloading Done — Done is load-bearing for infra issues with `worktree_active` (PATCH to done fires FF-merge + teardown) [source: web/api/main.py#L750].
 
 ## Decisions
 

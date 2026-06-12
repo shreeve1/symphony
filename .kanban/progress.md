@@ -50,3 +50,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Column collapse state stores state keys as a JSON array per binding; missing or invalid storage falls back to all columns expanded for #033.
 **Conventions established:** Frontend e2e must run Next dev against `.next.e2e` so tests do not clobber the production `.next` served by `podium-web.service`.
 **Notes for next iteration:** #034 can add the `archived` state and then set archived-column default-collapse behavior on top of this collapse mechanism.
+
+## #034 Podium — sixth archived issue state — 2026-06-12
+
+**What changed:** Added Alembic/runtime schema support for `archived`, API state validation/filter coverage, reply-guard regression coverage, rightmost Archived board column, default-collapsed archived column behavior, flyout Archive button, and archive/restore e2e coverage.
+**Files:** `web/api/migrations/versions/0004_archived_state.py`, `web/api/schema.py`, `web/api/main.py`, `web/api/tests/test_issue_patch.py`, `web/api/tests/test_reply.py`, `web/frontend/lib/issues.ts`, `web/frontend/components/KanbanBoard.tsx`, `web/frontend/components/IssueFlyout.tsx`, `web/frontend/tests/archive.spec.ts`, `web/frontend/tests/board.spec.ts`, `.kanban/issues/034-podium-archived-state-core.md`.
+**Decisions:** `archived` is visible in Podium UI but remains outside reply redispatch states; live DB migration/application stays an operator step outside this slice.
+**Conventions established:** New bindings with no collapse localStorage default to `archived` collapsed; existing stored collapse sets are respected.
+**Notes for next iteration:** #035 must make archived engine-terminal; #036 can implement 14-day purge after #034.
