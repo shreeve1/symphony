@@ -1,3 +1,9 @@
+# ⚠️ HISTORICAL SNAPSHOT — DRIFT NOTE (added 2026-06-12, body unchanged below)
+# Live drift: #023d (2026-06-12) changed `Environment=HOST=127.0.0.1` to
+# `Environment=HOST=10.20.20.16` so the frontend listens on the LAN interface
+# for the podium.testytech.net reverse proxy. The line below still reads
+# 127.0.0.1. See wiki/sources/podium-systemd-units.md and claims C-0109/C-0103.
+# Backup of the pre-change live unit: podium-web.service.bak.2026-06-12.
 [Unit]
 Description=Podium Next.js
 After=network.target podium-api.service

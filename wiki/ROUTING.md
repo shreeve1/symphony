@@ -15,7 +15,7 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 ## Operations
 
 - Pages: `concepts/symphony-operations.md`, `sources/runbook-symphony.md`, `sources/symphony-host-service-unit.md`, `sources/podium-systemd-units.md`, `analyses/symphony-skills-index.md`, `analyses/trading-smoke-rate-limit-debugging.md`, `analyses/podium-023b-alembic-backup.md`
-- Keywords: systemd, symphony-host.service, podium-api.service, podium-web.service, restart ritual, env file, lock file, journalctl, telegram-alert, telegram-alert@.service, send-telegram-systemd-alert, OnFailure, wiring-only alert verification, symphony-host.env, status check, smoke evidence, common failure pointers, 401, 404, 429, worktree_dirty, healthcheck remediation, EnvironmentFile, OPENCODE_BIN drift, RuntimeDirectory, Plane rate limit, retained worktree, dirty-worktree smoke, podium backup, /backup/podium, /etc/cron.d/podium-backup, sqlite .backup, restore drill
+- Keywords: systemd, symphony-host.service, podium-api.service, podium-web.service, restart ritual, env file, lock file, journalctl, telegram-alert, telegram-alert@.service, send-telegram-systemd-alert, OnFailure, wiring-only alert verification, symphony-host.env, status check, smoke evidence, common failure pointers, 401, 404, 429, worktree_dirty, healthcheck remediation, EnvironmentFile, OPENCODE_BIN drift, RuntimeDirectory, Plane rate limit, retained worktree, dirty-worktree smoke, podium backup, /backup/podium, /etc/cron.d/podium-backup, sqlite .backup, restore drill, HOST bind address, HOST=10.20.20.16, podium.testytech.net, 10.20.20.16:8091, reverse proxy upstream, Authelia gate, LAN bind, next start -H, frontend not reachable
 
 ## Bindings & Repos
 

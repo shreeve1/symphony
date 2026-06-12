@@ -3,13 +3,14 @@ title: "Podium #023d — trading Plane archive + reverse-proxy docs"
 type: analysis
 status: promoted
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-12
 sources:
   - wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md
   - .kanban/issues/023d-podium-plane-archive.md
   - bindings.yml
   - CONTEXT.md
   - web/README.md
+  - /etc/systemd/system/podium-web.service
 confidence: high
 tags: [podium, plane, archive, trading, bindings, reverse-proxy, authelia, 023d, soak-gate, deferred]
 ---
@@ -74,14 +75,29 @@ session; the homelab Plane archive was deferred to a follow-up issue.
 | homelab rollback contract | retained (commented block in `bindings.yml`) |
 | #023d status | `in-review` (operator-pending items remain) |
 
-## Operator-pending before #023d → Done
+## Reverse-proxy bring-up (2026-06-12)
 
-1. Apply the Authelia/reverse-proxy rule from `web/README.md`, reload the proxy
-   (live infra edit, outside this repo).
-2. Confirm Podium reachable through the Authelia gate at the documented URL.
-3. (Not blocking #023d) `symphony-host.service` not restarted — bindings change
-   inert for the podium path; restart at convenience via `symphony-restart`. No
-   git commit performed yet.
+The operator chose FQDN `https://podium.testytech.net`, proxy upstream
+`10.20.20.16:8091` (LAN, not loopback). Bring-up steps done this session:
+
+- `symphony-host.service` restarted onto #023d code (sha `82462e6`, bindings=2,
+  both reconcile clean, dispatch loop alive).
+- `podium-web.service` rebinding: the frontend listened on `127.0.0.1:8091`
+  only (`HOST=127.0.0.1`, `start` = `next start -H ${HOST:-0.0.0.0}`), so the
+  LAN proxy could not reach it. Changed the unit to `HOST=10.20.20.16` (backup
+  `.bak.2026-06-12`), `daemon-reload` + restart. Verified `10.20.20.16:8091` →
+  HTTP 200; loopback `127.0.0.1:8091` no longer answers; API stays loopback on
+  `8090`. This exposes the unauthenticated port on the LAN — Authelia is the
+  intended gate; firewall the raw port if needed (C-0109).
+- DNS + reverse proxy applied by the operator.
+
+### Still operator-pending before #023d → Done
+
+1. Confirm `https://podium.testytech.net` loads through the Authelia gate
+   end-to-end, then check the last acceptance box and move #023d to Done.
+
+(`git commit` performed this session: `a24d229`, `82462e6` — `main` ahead,
+unpushed.)
 
 ## Follow-ups
 

@@ -195,3 +195,11 @@ Append entries with this format:
 - Notes: Captured the operator-waived soak gate, the irreversible trading Plane archive (HTTP 204, `archived_at: 2026-06-11T22:42:15Z`), the live `tracker_contract` removal → `DEFAULT_CONTRACT` fallback, the README Authelia reverse-proxy snippet, and the deferred homelab archive. No secrets, no `.env` contents (PLANE_API_KEY only echoed as char-count during env sourcing), no transcript.
 - Unresolved: homelab Plane archive follow-up issue (e.g. 023e) not yet created; Authelia/proxy live edit + Podium reachability confirmation operator-pending; no git commit yet.
 - Addendum: added a non-destructive drift banner to `wiki/raw/bindings.yml` (immutable snapshot) flagging it predates #023c/#023d; body preserved verbatim, still valid YAML. Raw immutability honored — flag, never silently rewrite.
+
+## [2026-06-12] session-update | #023d reverse-proxy bring-up (podium-web LAN bind)
+
+- Actor: agent (Claude, interactive session + wiki update)
+- Inputs: operator-chosen FQDN `podium.testytech.net` + proxy upstream `10.20.20.16:8091`; `podium-web.service` unit edit (`HOST=127.0.0.1`→`HOST=10.20.20.16`, backup `.bak.2026-06-12`, daemon-reload + restart); reachability verification (`10.20.20.16:8091`→200, loopback→000); `symphony-host.service` restart onto sha `82462e6`; `web/frontend/package.json` start script.
+- Outputs: updated `web/README.md` (FQDN + LAN upstream + bind requirement, commit `82462e6`); `wiki/CLAIMS.md` (added C-0109; annotated C-0065, C-0103; C-0109 marked applied/verified); `wiki/sources/podium-systemd-units.md`; `wiki/raw/podium-web.service` (drift banner, immutable body); `wiki/analyses/podium-023d-trading-plane-archive.md` (bring-up section); `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
+- Notes: Frontend `start` is `next start -H ${HOST:-0.0.0.0}`, so the unit `HOST` env selects the bind interface; loopback-only was why the LAN proxy 404'd. LAN bind exposes the unauthenticated port 8091 — Authelia stays the gate, firewall optional. No secrets, no `.env` contents, no transcript.
+- Unresolved: end-to-end `https://podium.testytech.net` via Authelia not yet confirmed (last #023d acceptance box); homelab archive follow-up issue (023e) not created; commits `a24d229`/`82462e6` unpushed.
