@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-12] session-update | #038 Podium Inbox dismissal and resurface
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #038 implementation; commits `e7b0bd6`, `a0c3ebb`, `0344e78`; `.kanban/issues/038-podium-inbox-dismiss-resurface.md`; `.kanban/progress.md`; `web/api/main.py`; `tracker_podium.py`; `web/api/tests/test_inbox.py`; `tests/test_tracker_podium.py`; `web/frontend/components/Sidebar.tsx`; `web/frontend/lib/api.ts`; `web/frontend/tests/inbox.spec.ts`.
+- Outputs: new `wiki/analyses/podium-038-inbox-dismiss-resurface.md`; updated `wiki/CLAIMS.md` (C-0137..C-0139); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured state-preserving Inbox dismissal, guarded dismiss endpoint, WebSocket publish, resurface clearing on transitions into `in_review`/`blocked`, optimistic Sidebar dismiss UX, and follow-up that #039 can remove the dashboard attention list. Verification passed: `PATH=/home/james/.local/bin:$PATH uv run pytest -q` (652 passed, 1 skipped), `pnpm exec tsc --noEmit`, `pnpm test:e2e` (37 passed), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS_WITH_NOTES`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-12] session-update | Podium password rotation helper
 
 - Actor: agent (Pi)
@@ -299,6 +306,7 @@ Append entries with this format:
 - Outputs: `wiki/raw/sessions/2026-06-12-issue-archive-state-design.md`; `wiki/analyses/podium-issue-archive-design.md` (auto-promoted after lint); `wiki/CLAIMS.md` C-0123..C-0125; `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Design accepted, not implemented — sixth `archived` state (no new column), engine-terminal contract (no verdict transition post-run, deferred worktree teardown via `remove_worktree`), mid-run archive allowed, per-column board minimize with localStorage persistence, Archive button in flyout, 14-day opportunistic purge on `updated_at` with FK-safe delete order. Hazards recorded: `transition_state` resurrection bug, worktree-vs-issue "archive" terminology collision. C-0021/C-0064 (five states) left active — supersession deferred to the implementation pass. ADR offered, declined. No secrets, no env contents, no transcript.
 
+<<<<<<< Updated upstream
 ## [2026-06-12] session-update | #034 archived issue state core
 
 - Actor: agent (Pi, Ralph + wiki update)
@@ -326,3 +334,18 @@ Append entries with this format:
 - Inputs: James report of phantom dropdown entries; `podium.db` skill rows; `web/frontend/tests/skill-catalog.spec.ts`; `web/frontend/tests/fixtures.ts`; git history (`6d9f1c6`).
 - Outputs: deleted `catalog-alpha`/`catalog-bravo` rows from live `podium.db` (48 rows remain, zero manual rows); updated `wiki/analyses/podium-skills-catalog-refresh.md` resulting-state section; updated C-0136 note in `wiki/CLAIMS.md`.
 - Notes: Rows were leaked Playwright e2e fixtures — an older `seedSkills` wrote `source=''` into the live DB, which refresh's manual-row protection then preserved. Current `fixtures.ts` isolates via `PODIUM_DB_PATH` → `web/test-results/podium-e2e.db` and tags `source='e2e'` (self-healing: refresh deletes leaked `'e2e'` rows). No FK or code references existed at deletion. No secrets, no env contents.
+=======
+## [2026-06-12] session-update | Pi personal harness hardening pass
+
+- Actor: agent (Pi follow-up)
+- Inputs: `.pi/extensions/personal-harness.ts`; `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; `wiki/raw/sessions/2026-06-12-personal-harness-pi.md`; post-generation setup review findings.
+- Outputs: tracked `wiki/raw/personal-harness-pi-profile.md`; updated `.pi/extensions/personal-harness.ts`; updated `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; updated `wiki/analyses/personal-harness-pi-profile.md`; updated `wiki/CLAIMS.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Hardened bash secret-read blocking for `/home/james/symphony-host.env` and `.env`-like files, switched runtime roots to `PROFILE.targetRepo`, moved the durable profile reference into tracked wiki raw storage, changed automatic pytest beforeGit into a manual `uv run pytest -q` reminder, and replaced source-only dry checks with mocked-event verification coverage. No secrets or `.env` contents captured.
+>>>>>>> Stashed changes
+
+## [2026-06-12] session-update | #039 dashboard attention list removal
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #039 implementation; commits `1ca6fe2`, `5d6918f`, `c91bdcc`; `.kanban/issues/039-podium-remove-dashboard-attention-list.md`; `.kanban/progress.md`; `web/frontend/app/page.tsx`; `web/frontend/tests/dashboard.spec.ts`.
+- Outputs: updated `wiki/analyses/podium-031-board-overview-dashboard.md`; updated `wiki/CLAIMS.md` (C-0116 note, C-0140 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured #039 removal of the Dashboard Needs attention list after Sidebar Inbox became canonical. Verification passed: `PATH=/home/james/.local/bin:$PATH pnpm test:e2e` (37 passed), `pnpm exec tsc --noEmit`, touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.

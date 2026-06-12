@@ -172,6 +172,16 @@ export const fetchSkills = () => getJSON<Skill[]>("/api/skills");
 
 export const fetchInbox = () => getJSON<InboxItem[]>("/api/inbox");
 
+export async function dismissIssue(id: number): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/dismiss`, { method: "POST" });
+	if (!res.ok) {
+		throw new Error(
+			`POST /api/issues/${id}/dismiss -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}
+
 export const fetchBindingIssues = (name: string) =>
 	getJSON<Issue[]>(`/api/bindings/${encodeURIComponent(name)}/issues`);
 

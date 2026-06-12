@@ -757,6 +757,10 @@ async def patch_issue(
     # No-op guard: an empty body or a patch echoing stored values must not bump
     # updated_at — the board orders by it, so a blind bump reorders cards.
     changed = {name: value for name, value in fields.items() if current[name] != value}
+    if fields.get("state") in ("in_review", "blocked") and current.get(
+        "inbox_dismissed_at"
+    ) is not None:
+        changed["inbox_dismissed_at"] = None
     if not changed:
         return current
 
@@ -810,6 +814,43 @@ async def patch_issue(
     ):
         result = await _maybe_archive_worktree(issue_id, current, connection)
 
+    return result
+
+
+@app.post("/api/issues/{issue_id}/dismiss")
+async def dismiss_issue(
+    issue_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
+
+    now = _next_updated_at(current["updated_at"])
+    cursor = connection.execute(
+        """
+        UPDATE issue
+           SET inbox_dismissed_at = ?, updated_at = ?
+         WHERE id = ? AND state IN ('in_review', 'blocked')
+        """,
+        (now, now, issue_id),
+    )
+    connection.commit()
+
+    if cursor.rowcount == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"dismiss not allowed in state {current['state']}",
+        )
+
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
     return result
 
 
@@ -1079,7 +1120,12 @@ async def _append_blocked_and_publish(
     updated_comments = f"{existing}\n\n{message}".strip() if existing else message
     now = _next_updated_at(latest["updated_at"])
     connection.execute(
-        "UPDATE issue SET state = 'blocked', comments_md = ?, updated_at = ? WHERE id = ?",
+        """
+        UPDATE issue
+        SET state = 'blocked', comments_md = ?, inbox_dismissed_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
         (updated_comments, now, issue_id),
     )
     connection.commit()

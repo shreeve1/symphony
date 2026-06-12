@@ -458,12 +458,12 @@ const PROFILE: HarnessProfile = {
   "gitReminder": {
     "enabled": true,
     "posture": "advisory",
-    "text": "Before git commit/push: inspect diff, ensure no secrets, run git diff --check. Run python3 -m pytest -q manually for Python changes and pnpm exec tsc --noEmit for frontend changes when relevant; Playwright stays manual for UI flows."
+    "text": "Before git commit/push: inspect diff, ensure no secrets, run git diff --check. Run uv run pytest -q manually for Python changes and pnpm exec tsc --noEmit for frontend changes when relevant; Playwright stays manual for UI flows."
   },
   "gitPreflight": {
     "enabled": true,
     "posture": "advisory",
-    "text": "Before git commit/push: inspect diff, ensure no secrets, run git diff --check. Run python3 -m pytest -q manually for Python changes and pnpm exec tsc --noEmit for frontend changes when relevant; Playwright stays manual for UI flows.",
+    "text": "Before git commit/push: inspect diff, ensure no secrets, run git diff --check. Run uv run pytest -q manually for Python changes and pnpm exec tsc --noEmit for frontend changes when relevant; Playwright stays manual for UI flows.",
     "runProjectChecks": true
   },
   "smokeTests": {

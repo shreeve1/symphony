@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AlertCircle, ArrowRight } from "lucide-react";
-
 import { fetchBindingIssues, fetchBindings, type Issue } from "@/lib/api";
 import { STATES } from "@/lib/issues";
 import { cn } from "@/lib/utils";
@@ -49,14 +47,6 @@ function lastActivity(issues: Issue[]): string | null {
 		.filter((t): t is string => t != null);
 	if (!timestamps.length) return null;
 	return timestamps.sort().reverse()[0] ?? null;
-}
-
-function isAttention(issue: Issue): boolean {
-	return (
-		issue.state === "blocked" ||
-		issue.latest_verdict === "blocked" ||
-		issue.latest_run_state === "failed"
-	);
 }
 
 function StateBadge({
@@ -109,28 +99,6 @@ function BindingCard({ summary }: { summary: BindingSummary }) {
 	);
 }
 
-function AttentionRow({ issue, binding }: { issue: Issue; binding: string }) {
-	return (
-		<Link
-			key={issue.id}
-			href={`/${binding}?issue=${issue.id}`}
-			data-testid="attention-row"
-			className="flex items-center gap-3 rounded-md border bg-card px-3 py-2 text-sm transition hover:shadow-sm"
-		>
-			<AlertCircle className="size-4 shrink-0 text-red-500" />
-			<span className="flex-1 truncate font-medium">{issue.title}</span>
-			<span className="shrink-0 text-xs text-muted-foreground">
-				{issue.state === "blocked"
-					? "blocked"
-					: issue.latest_verdict === "blocked"
-						? "verdict: blocked"
-						: "run failed"}
-			</span>
-			<ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
-		</Link>
-	);
-}
-
 export default function DashboardPage() {
 	const bindingsQuery = useQuery({
 		queryKey: ["bindings"],
@@ -174,17 +142,6 @@ export default function DashboardPage() {
 	})();
 	const globalTotal = summaries.reduce((a, s) => a + s.total, 0);
 
-	// Attention list: blocked or verdict=blocked or run=failed across all bindings
-	const attentionItems: { issue: Issue; binding: string }[] = [];
-	for (let i = 0; i < activeBindings.length; i++) {
-		const issues = issuesQueries[i]?.data ?? [];
-		for (const issue of issues) {
-			if (isAttention(issue)) {
-				attentionItems.push({ issue, binding: activeBindings[i].name });
-			}
-		}
-	}
-
 	return (
 		<div className="mx-auto max-w-4xl space-y-8">
 			<div>
@@ -217,31 +174,6 @@ export default function DashboardPage() {
 								))}
 							</div>
 						</div>
-					</div>
-
-					{/* Attention list */}
-					<div data-testid="dashboard-attention" className="space-y-2">
-						<h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-							Needs attention
-						</h3>
-						{attentionItems.length === 0 ? (
-							<p
-								data-testid="attention-empty"
-								className="text-sm text-muted-foreground"
-							>
-								Nothing needs attention
-							</p>
-						) : (
-							<div className="space-y-1.5">
-								{attentionItems.map(({ issue, binding }) => (
-									<AttentionRow
-										key={issue.id}
-										issue={issue}
-										binding={binding}
-									/>
-								))}
-							</div>
-						)}
 					</div>
 
 					{/* Per-binding cards */}

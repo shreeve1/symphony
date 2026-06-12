@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { fetchBindings, fetchInbox, type InboxItem } from "@/lib/api";
+import {
+	dismissIssue,
+	fetchBindings,
+	fetchInbox,
+	type InboxItem,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 function relativeAge(iso: string | null | undefined): string {
@@ -30,39 +35,55 @@ function InboxCard({
 	item,
 	color,
 	active,
+	onDismiss,
 }: {
 	item: InboxItem;
 	color: string;
 	active: boolean;
+	onDismiss: (id: number) => void;
 }) {
 	const badge = stateBadge(item.state);
 	return (
-		<Link
-			href={`/${item.binding_name}?issue=${item.id}`}
+		<div
 			data-testid="inbox-card"
 			className={cn(
-				"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
+				"group flex items-center rounded-md text-sm transition-colors hover:bg-sidebar-accent",
 				active && "bg-sidebar-accent font-medium",
 			)}
 		>
-			<span
-				aria-hidden
-				className="size-2 shrink-0 rounded-full"
-				style={{ backgroundColor: color }}
-			/>
-			<span className="flex-1 truncate">{item.title}</span>
-			<span
-				className={cn(
-					"shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none",
-					badge.className,
-				)}
+			<Link
+				href={`/${item.binding_name}?issue=${item.id}`}
+				className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5"
 			>
-				{badge.label}
-			</span>
-			<span className="shrink-0 text-[10px] text-sidebar-foreground/50">
-				{relativeAge(item.last_event_at ?? item.updated_at)}
-			</span>
-		</Link>
+				<span
+					aria-hidden
+					className="size-2 shrink-0 rounded-full"
+					style={{ backgroundColor: color }}
+				/>
+				<span className="flex-1 truncate">{item.title}</span>
+				<span
+					className={cn(
+						"shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none",
+						badge.className,
+					)}
+				>
+					{badge.label}
+				</span>
+				<span className="shrink-0 text-[10px] text-sidebar-foreground/50">
+					{relativeAge(item.last_event_at ?? item.updated_at)}
+				</span>
+			</Link>
+			<button
+				type="button"
+				aria-label={`Dismiss ${item.title} from inbox`}
+				data-testid="inbox-dismiss"
+				onClick={() => onDismiss(item.id)}
+				className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-xs opacity-0 transition-opacity hover:bg-sidebar-accent group-hover:opacity-100 focus:opacity-100"
+				title="Dismiss from Inbox"
+			>
+				✓
+			</button>
+		</div>
 	);
 }
 
@@ -83,6 +104,27 @@ export function Sidebar() {
 		queryKey: ["inbox"],
 		queryFn: fetchInbox,
 		refetchInterval: 10_000,
+	});
+
+	const queryClient = useQueryClient();
+	const dismissMutation = useMutation({
+		mutationFn: dismissIssue,
+		onMutate: async (id: number) => {
+			await queryClient.cancelQueries({ queryKey: ["inbox"] });
+			const previous = queryClient.getQueryData<InboxItem[]>(["inbox"]);
+			queryClient.setQueryData<InboxItem[]>(["inbox"], (old) =>
+				old?.filter((item) => item.id !== id),
+			);
+			return { previous };
+		},
+		onError: (_error, _id, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(["inbox"], context.previous);
+			}
+		},
+		onSettled: () => {
+			queryClient.invalidateQueries({ queryKey: ["inbox"] });
+		},
 	});
 
 	const colorMap = new Map(bindings?.map((b) => [b.name, b.color]) ?? []);
@@ -145,6 +187,7 @@ export function Sidebar() {
 								item={item}
 								color={colorMap.get(item.binding_name) ?? "#888888"}
 								active={false}
+								onDismiss={(id) => dismissMutation.mutate(id)}
 							/>
 						))}
 					</>

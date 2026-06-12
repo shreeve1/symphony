@@ -1,14 +1,12 @@
 import { expect, expectCleanConsole, seedIssue, test } from "./fixtures";
 
-const BLOCKED_TITLE = `Dashboard blocked issue ${Date.now()}`;
 const QUEUED_TITLE = `Dashboard queued issue ${Date.now()}`;
 
-test("dashboard shows per-binding cards, global roll-up, and attention list with click-through", async ({
+test("dashboard shows per-binding cards and global roll-up", async ({
 	page,
 	problems,
 }) => {
-	// Seed extra issues across bindings so every state has at least one entry.
-	seedIssue("homelab", BLOCKED_TITLE, "blocked");
+	// Seed an extra issue so the dashboard has fresh data to roll up.
 	seedIssue("trading", QUEUED_TITLE, "todo");
 
 	await page.goto("/");
@@ -30,26 +28,8 @@ test("dashboard shows per-binding cards, global roll-up, and attention list with
 	await expect(homelabCard).toContainText("Blocked");
 	await expect(tradingCard).toContainText("Todo");
 
-	// Attention list shows the blocked issue.
-	await expect(page.getByTestId("dashboard-attention")).toBeVisible();
-	await expect(page.getByTestId("attention-row")).toContainText(BLOCKED_TITLE);
-
-	// Clicking an attention row navigates to the binding with ?issue=.
-	await page
-		.getByTestId("attention-row")
-		.filter({ hasText: BLOCKED_TITLE })
-		.click();
-	await expect(page).toHaveURL(/\/homelab\?issue=\d+/);
-	await expect(page.getByTestId("issue-flyout")).toBeVisible();
-
-	// Close the flyout — the ?issue= param should be cleared.
-	await page.getByTestId("flyout-backdrop").click({ position: { x: 5, y: 5 } });
-	/**
-	 * After race window the flyout closes and router.replace clears ?issue=.
-	 * We assert the flyout is gone; trying to assert the URL exactly is prone
-	 * to Next router timing, so we only check the flyout is hidden.
-	 */
-	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+	await expect(page.getByTestId("dashboard-attention")).toHaveCount(0);
+	await expect(page.getByTestId("attention-row")).toHaveCount(0);
 
 	expectCleanConsole(problems, {
 		ignore: [/ERR_ABORTED/],
