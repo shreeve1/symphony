@@ -1,6 +1,7 @@
 /node_modules
 /.next
 /.next.staging
+/.next.e2e
 /.next.prev
 /out
 /build

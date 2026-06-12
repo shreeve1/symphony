@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 // dnd-kit is wired in here as a placeholder for drag-and-drop in a later slice
 // (#012c installs it; no drag handlers are attached yet).
 import { DndContext } from "@dnd-kit/core";
@@ -24,9 +24,48 @@ export function KanbanBoard({
 	const [selected, setSelected] = useState<number | null>(
 		initialIssueId ?? null,
 	);
+
+	// Per-binding collapse state persisted in localStorage.
+	const storageKey = `podium.collapsed.${binding ?? ""}`;
+	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+	useEffect(() => {
+		if (!binding) return;
+		try {
+			const raw = localStorage.getItem(storageKey);
+			if (!raw) {
+				setCollapsed(new Set());
+				return;
+			}
+			const parsed = JSON.parse(raw);
+			setCollapsed(Array.isArray(parsed) ? new Set(parsed) : new Set());
+		} catch {
+			setCollapsed(new Set());
+		}
+	}, [binding, storageKey]);
+
+	const toggleCollapse = useCallback(
+		(key: string) => {
+			setCollapsed((prev) => {
+				const next = new Set(prev);
+				if (next.has(key)) {
+					next.delete(key);
+				} else {
+					next.add(key);
+				}
+				try {
+					localStorage.setItem(storageKey, JSON.stringify([...next]));
+				} catch {
+					// Storage full or unavailable — ignore
+				}
+				return next;
+			});
+		},
+		[storageKey],
+	);
+
 	const closeFlyout = useCallback(() => {
 		setSelected(null);
-		// Clear the ?issue= query param when closing via deep-link.
 		if (binding) {
 			router.replace(`/${binding}`);
 		}
@@ -38,6 +77,37 @@ export function KanbanBoard({
 				<div className="flex h-full gap-4 overflow-x-auto pb-2">
 					{STATES.map((col) => {
 						const cards = issues.filter((i) => i.state === col.key);
+						const isCollapsed = collapsed.has(col.key);
+
+						if (isCollapsed) {
+							return (
+								<div
+									key={col.key}
+									data-testid={`column-${col.key}`}
+									data-collapsed="true"
+									className="flex w-10 shrink-0 flex-col items-center gap-2 pt-2"
+								>
+									<span className={cn("size-2 rounded-full", col.dot)} />
+									<span
+										data-testid={`count-${col.key}`}
+										className="text-xs text-muted-foreground"
+									>
+										{cards.length}
+									</span>
+									<button
+										type="button"
+										aria-label={`Expand ${col.label}`}
+										data-testid={`expand-${col.key}`}
+										onClick={() => toggleCollapse(col.key)}
+										className="flex size-6 items-center justify-center rounded text-sm hover:bg-muted"
+										title={`Expand ${col.label}`}
+									>
+										+
+									</button>
+								</div>
+							);
+						}
+
 						return (
 							<div
 								key={col.key}
@@ -50,6 +120,16 @@ export function KanbanBoard({
 									<span className="text-xs text-muted-foreground">
 										{cards.length}
 									</span>
+									<button
+										type="button"
+										aria-label={`Minimize ${col.label}`}
+										data-testid={`minimize-${col.key}`}
+										onClick={() => toggleCollapse(col.key)}
+										className="ml-auto flex size-5 items-center justify-center rounded text-sm hover:bg-muted"
+										title={`Minimize ${col.label}`}
+									>
+										−
+									</button>
 								</div>
 								<div className="flex flex-1 flex-col gap-2 rounded-lg bg-muted/40 p-2">
 									{cards.map((issue) => (

@@ -37,7 +37,7 @@ export default defineConfig({
 		},
 		{
 			command:
-				`PODIUM_API_ORIGIN=${E2E_API_ORIGIN} ` +
+				`NEXT_DIST_DIR=.next.e2e PODIUM_API_ORIGIN=${E2E_API_ORIGIN} ` +
 				`NEXT_PUBLIC_PODIUM_API_ORIGIN=${E2E_API_ORIGIN} ` +
 				`pnpm exec next dev -H 127.0.0.1 -p ${E2E_WEB_PORT}`,
 			url: E2E_WEB_ORIGIN,
