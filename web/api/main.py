@@ -20,6 +20,8 @@ from starlette.websockets import WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
+PURGE_AFTER_DAYS = 14
+
 if __package__:
     _auth = import_module(f"{__package__}.auth")
     _db = import_module(f"{__package__}.db")
@@ -121,6 +123,7 @@ async def lifespan(_app: FastAPI):
     try:
         ensure_schema(connection)
         seeded_run_ids = seed_if_empty(connection)
+        _purge_archived_issues(connection)
         seeded_runs = _rows_by_id(connection, "run", seeded_run_ids)
     finally:
         connection.close()
@@ -786,6 +789,12 @@ async def patch_issue(
     if archive_attempted and result.get("latest_run_state") not in ACTIVE_RUN_STATES:
         result = await _maybe_teardown_archived_worktree(issue_id, result, connection)
 
+    # Purge archived issues older than PURGE_AFTER_DAYS after archiving.
+    # Runs inline so PATCH response is unaffected — the purge targets other
+    # (older) archived issues, never the one just transitioned.
+    if archive_attempted:
+        _purge_archived_issues(connection)
+
     # Worktree toggle-off archive: toggling worktree_active from true -> false
     # while the worktree still exists appends an archive comment. If the same
     # PATCH attempted a done merge or archive teardown, that outcome wins to
@@ -1104,6 +1113,90 @@ def _repo_path_for_binding(name: str) -> Path | None:
             repo = binding.get("repo_path")
             return Path(repo) if repo else None
     return None
+
+
+def _purge_archived_issues(connection: sqlite3.Connection) -> None:
+    """Hard-delete archived issues whose ``updated_at`` is > 14 days old.
+
+    FK-safe per-issue transaction:
+      1. Collect run log_path values.
+      2. NULL issue.latest_run_id.
+      3. DELETE FROM run WHERE issue_id = ?.
+      4. DELETE FROM issue WHERE id = ?.
+    After commit, best-effort unlink collected log files and defensively
+    remove any persistent worktree.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(days=PURGE_AFTER_DAYS)).isoformat()
+
+    eligible = connection.execute(
+        "SELECT id, binding_name, worktree_active FROM issue "
+        "WHERE state = 'archived' AND updated_at < ?",
+        (cutoff,),
+    ).fetchall()
+
+    purged = 0
+    for row in eligible:
+        issue_id = int(row["id"])
+        binding_name = str(row["binding_name"] or "")
+        worktree_active = bool(row["worktree_active"] or False)
+
+        # Collect run info before mutation.
+        runs = connection.execute(
+            "SELECT id, log_path FROM run WHERE issue_id = ?", (issue_id,)
+        ).fetchall()
+        log_paths = [str(r["log_path"]) for r in runs if r["log_path"]]
+
+        try:
+            connection.execute(
+                "UPDATE issue SET latest_run_id = NULL WHERE id = ?", (issue_id,)
+            )
+            connection.execute("DELETE FROM run WHERE issue_id = ?", (issue_id,))
+            connection.execute("DELETE FROM issue WHERE id = ?", (issue_id,))
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            logger.exception("archive_purge_rollback issue_id=%d", issue_id)
+            continue
+
+        # Post-commit: best-effort unlink log files.
+        for log_path_str in log_paths:
+            try:
+                Path(log_path_str).unlink(missing_ok=True)
+            except Exception:
+                logger.warning("archive_purge_log_unlink_failed path=%s", log_path_str)
+
+        # Post-commit: defensive worktree removal. Check the filesystem, not
+        # only worktree_active, because archive cleanup is also a drift sweep.
+        try:
+            from web.api.worktree import remove_worktree, worktree_exists
+        except ImportError:  # pragma: no cover
+            from worktree import (  # type: ignore[no-redef]
+                remove_worktree,
+                worktree_exists,
+            )
+
+        repo_path = _repo_path_for_binding(binding_name)
+        if repo_path is not None:
+            try:
+                if worktree_exists(repo_path, binding_name, str(issue_id)):
+                    remove_worktree(repo_path, binding_name, str(issue_id))
+                elif worktree_active:
+                    logger.warning(
+                        "archive_purge_worktree_missing issue_id=%d binding=%s",
+                        issue_id,
+                        binding_name,
+                    )
+            except Exception:
+                logger.warning(
+                    "archive_purge_worktree_remove_failed issue_id=%d binding=%s",
+                    issue_id,
+                    binding_name,
+                )
+
+        purged += 1
+
+    if purged > 0:
+        logger.info("archive_purge purged=%d", purged)
 
 
 def _next_updated_at(previous: str | None) -> str:
