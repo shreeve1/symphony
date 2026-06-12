@@ -227,23 +227,90 @@ async def websocket_events(websocket: WebSocket) -> None:
     await websocket_hub.stream(websocket)
 
 
+def _expected_columns() -> dict[str, set[str]]:
+    """Table -> column-name set from the runtime SCHEMA_SQL."""
+    with contextlib.closing(sqlite3.connect(":memory:")) as reference:
+        reference.executescript(SCHEMA_SQL)
+        tables = [
+            row[0]
+            for row in reference.execute(
+                "SELECT name FROM sqlite_schema WHERE type = 'table'"
+                " AND name NOT LIKE 'sqlite_%' AND name != 'alembic_version'"
+            )
+        ]
+        return {
+            table: {row[1] for row in reference.execute(f"PRAGMA table_info({table})")}
+            for table in tables
+        }
+
+
+def _schema_drift(connection: sqlite3.Connection) -> tuple[list[str], list[str]]:
+    """Return (missing, extra) `table.column` entries vs the runtime schema."""
+    missing: list[str] = []
+    extra: list[str] = []
+    for table, expected in _expected_columns().items():
+        live = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if not live:
+            missing.append(f"{table} (entire table)")
+            continue
+        missing.extend(f"{table}.{name}" for name in sorted(expected - live))
+        extra.extend(f"{table}.{name}" for name in sorted(live - expected))
+    return missing, extra
+
+
 def ensure_schema(connection: sqlite3.Connection) -> None:
-    connection.executescript(SCHEMA_SQL)
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS alembic_version(version_num VARCHAR(32) NOT NULL)"
-    )
-    existing_revision = connection.execute(
-        "SELECT version_num FROM alembic_version"
+    """Create a fresh Podium schema, or verify an existing one.
+
+    Fresh databases are built from SCHEMA_SQL and stamped at INITIAL_REVISION
+    (they already have the head schema). Existing databases are NEVER
+    re-stamped: a revision that disagrees with the code means pending
+    migrations, and stamping over it is how the 2026-06-12 stamp-vs-run drift
+    happened (alembic_version said 0005 while inbox_dismissed_at did not
+    exist). Instead, missing columns fail startup loudly and extra columns
+    (a pending column-drop migration) only warn.
+    """
+    existing_revision = None
+    has_version_table = connection.execute(
+        "SELECT name FROM sqlite_schema WHERE type = 'table'"
+        " AND name = 'alembic_version'"
     ).fetchone()
+    if has_version_table:
+        existing_revision = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+
     if existing_revision is None:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS alembic_version(version_num VARCHAR(32) NOT NULL)"
+        )
         connection.execute(
             "INSERT INTO alembic_version(version_num) VALUES (?)", (INITIAL_REVISION,)
         )
-    elif existing_revision["version_num"] != INITIAL_REVISION:
-        connection.execute(
-            "UPDATE alembic_version SET version_num = ?", (INITIAL_REVISION,)
+        connection.commit()
+        return
+
+    revision = str(existing_revision["version_num"])
+    if revision != INITIAL_REVISION:
+        logger.warning(
+            "podium_schema_revision_mismatch db=%s code=%s; refusing to stamp"
+            " — run `uv run alembic upgrade head`",
+            revision,
+            INITIAL_REVISION,
         )
-    connection.commit()
+    missing, extra = _schema_drift(connection)
+    if missing:
+        raise RuntimeError(
+            f"Podium DB schema drift: missing columns {missing}"
+            f" (alembic_version={revision}, code expects {INITIAL_REVISION});"
+            " run `uv run alembic upgrade head` before starting the API"
+        )
+    if extra:
+        logger.warning(
+            "podium_schema_extra_columns columns=%s — pending drop migration?"
+            " run `uv run alembic upgrade head`",
+            extra,
+        )
 
 
 class IssuePatch(BaseModel):
