@@ -1,7 +1,7 @@
 ---
 id: 038
 title: Podium Inbox — dismiss endpoint, card dismiss button, resurface-on-activity
-status: in-progress
+status: review
 blocked_by: [037]
 parent: null
 priority: 0
