@@ -1,7 +1,7 @@
 ---
 id: 030
 title: Podium — run liveness elapsed timer + refresh-on-exit
-status: review
+status: done
 blocked_by: [029]
 parent: null
 priority: 0
@@ -46,11 +46,17 @@ polled terminal row.
 
 ## Acceptance criteria
 
-- [ ] A `running` run with a `started_at` and null `ended_at` shows a ticking elapsed timer in the detail panel; it advances over time (Playwright with a fixture running run).
-- [ ] On terminal state the timer is replaced by the final `formatDuration` value (no double-render, no stuck timer).
-- [ ] `RunHistoryList` shows a running indicator for non-terminal runs.
-- [ ] Component/unit test covers the elapsed-format function for running vs terminal states.
-- [ ] `pnpm exec tsc --noEmit` passes.
+- [x] A `running` run with a `started_at` and null `ended_at` shows a ticking elapsed timer in the detail panel; it advances over time (Playwright with a fixture running run).
+- [x] On terminal state the timer is replaced by the final `formatDuration` value (no double-render, no stuck timer).
+- [x] `RunHistoryList` shows a running indicator for non-terminal runs.
+- [x] Component/unit test covers the elapsed-format function for running vs terminal states.
+- [x] `pnpm exec tsc --noEmit` passes.
+
+## Implementation Notes
+
+- Added shared `formatRunDuration()` / `isLiveElapsedRun()` helpers for active and terminal Run duration rendering.
+- Added 1s live elapsed timers in the Run detail panel and Run history rows for queued/running runs.
+- Updated Playwright coverage to prove the detail timer advances, terminal duration handoff occurs, and Run history shows the running indicator.
 
 ## Verification
 

@@ -18,3 +18,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Engine-driven state freshness remains frontend polling per ADR-0006; WebSocket behavior stays unchanged for API-process optimistic updates.
 **Conventions established:** Use `issue.state === "running"` or `latest_run_state in {"queued", "running"}` for board activity; use Run `state in {"queued", "running"}` for Run detail/log polling.
 **Notes for next iteration:** #030 can rely on Run detail refetch-on-terminal behavior and only needs elapsed timer rendering/hand-off.
+
+## #030 Podium — run liveness elapsed timer + refresh-on-exit — 2026-06-12
+
+**What changed:** Added shared Run duration helpers, ticking elapsed timers in the Run detail panel, running indicators in Run history rows, and Playwright coverage for timer advancement plus terminal handoff.
+**Files:** `web/frontend/lib/run-duration.ts`, `web/frontend/components/RunDetailPanel.tsx`, `web/frontend/components/RunHistoryList.tsx`, `web/frontend/tests/live-sync.spec.ts`.
+**Decisions:** Active runs render as `running <elapsed>` while terminal runs use final wall-clock duration from `started_at`/`ended_at`; #029 polling remains the refresh-on-exit mechanism.
+**Conventions established:** Use `isLiveElapsedRun()` and `formatRunDuration()` for queued/running Run liveness affordances instead of local duration formatting.
+**Notes for next iteration:** #031 dashboard should continue keying board-level state counts off `issue.state`; active-run liveness now lives in run-specific UI only.
