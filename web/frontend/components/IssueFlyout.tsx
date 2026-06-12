@@ -410,11 +410,24 @@ function MarkdownEditor({
 
 // Operator reply composer: appends an attributed reply to the comment thread
 // and flips the issue back to todo so the agent re-runs (server-side, atomic).
-// Distinct from the raw-blob MarkdownEditor above, which still allows free
-// restructuring of the whole thread.
+// Sits at the top of the comments tab, above the thread, so it never gets
+// buried as Runs accumulate. Distinct from the raw-blob MarkdownEditor, which
+// still allows free restructuring of the whole thread (context tab).
 function ReplyComposer({ issue }: { issue: IssueDetail }) {
 	const queryClient = useQueryClient();
 	const [draft, setDraft] = useState("");
+	const taRef = useRef<HTMLTextAreaElement>(null);
+
+	// Auto-grow: start small (one row) and expand to fit the draft up to a cap,
+	// after which it scrolls. Resync height whenever the draft changes (typing,
+	// or the reset to "" after a successful send).
+	useEffect(() => {
+		const el = taRef.current;
+		if (!el) return;
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight}px`;
+	}, [draft]);
+
 	const reply = useMutation({
 		mutationFn: (body: string) => postReply(issue.id, body),
 		onSuccess: () => {
@@ -437,15 +450,16 @@ function ReplyComposer({ issue }: { issue: IssueDetail }) {
 		: "Already queued to run.";
 
 	return (
-		<div className="mt-3 space-y-2 border-t pt-3" data-testid="reply-composer">
+		<div className="space-y-2" data-testid="reply-composer">
 			<textarea
+				ref={taRef}
 				data-testid="reply-input"
 				value={draft}
-				rows={4}
+				rows={1}
 				placeholder="Write a reply to the agent…"
 				disabled={replyDisabled}
 				onChange={(e) => setDraft(e.target.value)}
-				className="w-full rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
+				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
 			/>
 			{replyDisabled && (
 				<p
@@ -471,6 +485,51 @@ function ReplyComposer({ issue }: { issue: IssueDetail }) {
 					Send
 				</button>
 			</div>
+		</div>
+	);
+}
+
+// Comments are stored as one chronological markdown blob; each entry is an
+// appended block headed `### Operator Reply (…)` or `### Symphony AI Summary`.
+// Split on those headings so the thread can render newest-first without
+// mutating the stored order. Leading text with no heading (rare bare-note
+// appends) stays as its own oldest entry.
+function splitCommentEntries(md: string): string[] {
+	const text = md.trim();
+	if (!text) return [];
+	return text
+		.split(/\n(?=#{1,6} )/g)
+		.map((p) => p.trim())
+		.filter(Boolean);
+}
+
+// Read-only comment thread, newest entry first, directly under the reply
+// composer. Keeps the `view-comments_md` testid as the container so existing
+// coverage (text presence) still holds.
+function CommentsThread({ source }: { source: string }) {
+	const entries = splitCommentEntries(source);
+	return (
+		<div
+			data-testid="view-comments_md"
+			className="max-h-[60vh] space-y-3 overflow-y-auto"
+		>
+			{entries.length === 0 ? (
+				<p className="rounded-md border p-2 text-xs text-muted-foreground">
+					No comments yet.
+				</p>
+			) : (
+				entries
+					.map((entry, i) => (
+						<div
+							key={i}
+							data-testid="comment-entry"
+							className="rounded-md border p-2"
+						>
+							<Markdown source={entry} />
+						</div>
+					))
+					.reverse()
+			)}
 		</div>
 	);
 }
@@ -628,18 +687,23 @@ export function IssueFlyout({
 									className="pt-3"
 									data-testid={`tabpanel-${tab}`}
 								>
-									{/* key resets the draft when switching tabs or issues, so an
-                      uncommitted comments draft can't bleed into context. */}
-									<MarkdownEditor
-										key={`${issue.id}-${tab}`}
-										field={tab === "comments" ? "comments_md" : "context_md"}
-										value={
-											tab === "comments" ? issue.comments_md : issue.context_md
-										}
-										readOnly={tab === "comments"}
-										onPatch={onPatch}
-									/>
-									{tab === "comments" && <ReplyComposer issue={issue} />}
+									{tab === "comments" ? (
+										// Reply composer on top so it never gets buried as Runs
+										// accumulate; thread below renders newest-first.
+										<div className="space-y-3">
+											<ReplyComposer issue={issue} />
+											<CommentsThread source={issue.comments_md} />
+										</div>
+									) : (
+										// key resets the draft when switching issues, so an
+										// uncommitted context draft can't bleed across issues.
+										<MarkdownEditor
+											key={`${issue.id}-context`}
+											field="context_md"
+											value={issue.context_md}
+											onPatch={onPatch}
+										/>
+									)}
 								</div>
 							</div>
 
