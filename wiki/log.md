@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | Claude dispatch path — first live #046 E2E + three tmux fixes (C-0154 closed)
+
+- Actor: agent (Claude Code)
+- Inputs: James asked for a handoff to verify #046 on the Claude path and to run a live Claude E2E. Wrote `/tmp/handoff-claude-046-contract.md`, filed Claude-routed homelab smokes (issues 6-10), reproduced manually, root-caused three bugs, implemented fixes + tests, and re-verified live after James restarted `symphony-host`.
+- Outputs: code — `claude_runner.py` `_paste_and_submit` (settle + re-send Enter while `_paste_pending`), `_read_result_with_grace` (done-but-empty grace re-poll), pane capture on the 137 branch, and `_wrap_prompt` completion-protocol hardening (Write tool not heredoc + create done only after non-empty result); constants `PASTE_SETTLE_SECONDS`/`SUBMIT_RETRY_ATTEMPTS`/`RESULT_GRACE_SECONDS`; 4 new/updated tests in `tests/test_claude_runner.py`. Wiki — new raw capture `wiki/raw/sessions/2026-06-13-claude-path-046-e2e-and-fixes.md`; C-0174 added; section added to `wiki/analyses/podium-042-claude-tmux-adapter.md`; `wiki/index.md` #042 row + `wiki/ROUTING.md` Executor route updated; this log entry.
+- Notes: Three bugs across issues 6-9 — paste/Enter race (prompt never submitted → 60-min idle), done-but-empty instant-137 with no diagnostics, and the real blocker: claude's Bash-heredoc result write broke on shell-special content (`command not found: bat`) yet it touched done anyway. The pane-capture fix surfaced bug 3. **Live + verified 2026-06-13 ~06:54 UTC** after a `symphony-host` restart (`2e8ff42`): Claude smoke issue 10 → Run 8 `succeeded`/`done`/exit 0, verbatim `**Symphony completed:**` block (backtick-heavy content literal, no header/Timeline/claim comment), `provider=''`/bare `claude-opus-4-8` — **C-0154 confirmed on a successful scheduler Claude run**. `symphony-host.service` `PrivateTmp=yes` (sockets in private /tmp; nsenter to observe). `uv run pytest` 716 passed, 1 skipped; ruff clean. Fix uncommitted — James to merge. No secrets read.
+
+---
+
 ## [2026-06-13] session-update | Per-model reasoning-effort validation (fix for C-0167)
 
 - Actor: agent (Claude Code)
@@ -437,3 +446,19 @@ Append entries with this format:
 - Inputs: full review of all 11 repo-local `symphony-*` skills against current source after #042–#046/Podium churn; verified referenced functions, API endpoints (loopback 8090), test files, and SQLite column names.
 - Outputs: fixed two stale SQLite fallback queries in `.claude/skills/symphony-troubleshooter/SKILL.md` (binding `repo_path`/`default_agent` → `name, display_name, archived`; run `updated_at` → `started_at`/`ended_at`, order by `id desc`); raw capture `wiki/raw/sessions/2026-06-13-symphony-skills-audit.md`; claim C-0168 (refines C-0129); maintenance edit + date bump on `wiki/analyses/symphony-skills-index.md`; this log entry.
 - Notes: Doc-only fix; no code or service change. Other 10 skills verified clean. James approved the edit. No secrets read; review read-only except the single skill-doc edit. Follow-up: when ADR-0008 `preferred_skill` consume-on-dispatch is committed, decide whether any operator skill should mention it.
+
+## [2026-06-13] session-update | symphony-binding-scaffold accuracy review + live symphony self-binding
+
+- Actor: agent (Claude Code)
+- Inputs: accuracy review of `.claude/skills/symphony-binding-scaffold/SKILL.md` against `skill_migration.py` / `web/api/db.py` / `scheduler.py`; ran `uv run pytest tests/skills/test_binding_scaffold.py` (2 passed); James approved binding the Symphony repo itself live.
+- Outputs: hardened SKILL.md (exact `PodiumBindingScaffoldRequest` call, `db_path`/`bindings_path` resolution, `default_agent`/`binding_type` enums, live DB+yaml verification block, `plane_project_id`/restart notes); created live `symphony` binding (DB row + `binding_settings` in `/home/james/symphony/podium.db`, appended to `bindings.yml`); raw capture `wiki/raw/sessions/2026-06-13-symphony-self-binding-scaffold.md`; promoted `wiki/entities/binding-symphony.md` + `wiki/analyses/analysis-session-symphony-self-binding-scaffold.md`; claims C-0170 (binding live), C-0171 (comment-stripping side effect), C-0172 (is_coding per-binding); marked C-0066 superseded; refined C-0099 note; index/routing updates.
+- Notes: Verified side effect — `scaffold_podium_binding` strips all `bindings.yml` comments via `yaml.safe_load`/`safe_dump` round-trip (deleted 77 lines of Plane rollback comment blocks; data-identical, recoverable from git); James chose to leave them removed. Self-binding is highest-risk (agents can edit scheduler source). Binding NOT live until a James-approved `symphony-host.service` restart; no real `WORKFLOW.md` authored yet. No secrets read; `symphony-host.env` untouched.
+- Unresolved: restart to activate binding; author symphony `WORKFLOW.md` before smoke; consider hardening `_append_binding` against comment loss.
+
+## [2026-06-13] session-update | symphony binding WORKFLOW.md authored + restart-activated
+
+- Actor: agent (Claude Code)
+- Inputs: continuation of the symphony self-binding session; activated the binding via `symphony-restart` (James-approved) and authored its `WORKFLOW.md` via `symphony-workflow-author`. Operator chose edit-and-commit-to-`main` autonomy for the self-binding.
+- Outputs: restart verified (new pid 944137, code_sha d24921a, `bindings=3`, all three reconcile_startup_done, dispatch loop alive, 0 errors); authored + committed `WORKFLOW.md` (`2e8ff42`, target-repo-only commit); render-tested against `prompt_renderer.py`; `uv run pytest tests/skills/test_workflow_author.py` passed; claim C-0173 added; C-0170 follow-ups marked resolved; `wiki/entities/binding-symphony.md` updated (WORKFLOW section + live status).
+- Notes: `WORKFLOW.md` is read per-dispatch, so effective without a further restart. Live-Infrastructure Safety Boundary keeps restart/unit/bindings.yml/podium.db/Plane/worktree mutations operator-gated despite commit freedom. Unrelated working-tree changes (`claude_runner.py`, `tests/test_claude_runner.py`, `wiki/analyses/podium-042-claude-tmux-adapter.md`) are James working in a parallel session — left untouched; the WORKFLOW.md commit was surgical (1 file). No secrets read.
+- Unresolved: optional `_append_binding` comment-preservation hardening (C-0171). `symphony-binding-smoke` now available to exercise the binding end-to-end if desired.

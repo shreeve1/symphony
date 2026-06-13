@@ -23,6 +23,19 @@ LOGGER = logging.getLogger(__name__)
 READY_TIMEOUT_SECONDS = 30.0
 CLAUDE_PROBE_TIMEOUT_SECONDS = 30.0
 READY_PATTERN = "bypass permissions on|shift+tab to cycle"
+# A large pasted prompt is not instantly settled in Claude's input box, so an
+# Enter sent immediately after paste-buffer is sometimes absorbed into the paste
+# and the prompt is never submitted (the pane keeps a `[Pasted text …]`
+# placeholder). Settle before the first Enter, then re-send while the
+# placeholder persists.
+PASTE_SETTLE_SECONDS = 1.0
+SUBMIT_RETRY_ATTEMPTS = 3
+SUBMIT_RETRY_INTERVAL_SECONDS = 1.0
+# Claude writes the result file then touches the done file as separate actions;
+# poll a short grace window for the result to become non-empty before treating a
+# done-but-empty result as a failure.
+RESULT_GRACE_SECONDS = 3.0
+RESULT_GRACE_STEP_SECONDS = 0.5
 _CLAUDE_PROBE_FAILURE_REASON: str | None = None
 
 
@@ -258,23 +271,22 @@ def run_claude_agent(
             _wrap_prompt(rendered_prompt, result_file, done_file, issue),
             encoding="utf-8",
         )
-        _tmux(run_func, socket_path, "load-buffer", str(prompt_file))
-        _tmux(run_func, socket_path, "paste-buffer", "-t", session_name)
-        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Enter")
+        _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
 
         deadline = started + (config.run_timeout_ms / 1000)
         while clock() <= deadline:
             if done_file.exists():
-                if (
-                    not result_file.exists()
-                    or not result_file.read_text(encoding="utf-8").strip()
-                ):
+                stdout = _read_result_with_grace(result_file, sleep=sleep)
+                if not stdout.strip():
                     duration_ms = int((clock() - started) * 1000)
+                    pane = _capture_pane_tail(
+                        socket_path, session_name, run_func=run_func
+                    )
                     stderr = (
-                        "claude done file exists but result file is missing or empty"
+                        "claude done file exists but result file is missing or "
+                        f"empty after {RESULT_GRACE_SECONDS:g}s grace\n{pane}"
                     )
                     return _logged_result(issue, 137, duration_ms, False, "", stderr)
-                stdout = result_file.read_text(encoding="utf-8")
                 stderr = _capture_pane_full(
                     socket_path, session_name, run_func=run_func
                 )
@@ -336,12 +348,16 @@ def _wrap_prompt(
         f"\nInvoke the `{skill}` skill by name before doing the work." if skill else ""
     )
     return f"""You are running unattended for Symphony. Nobody can respond to questions.
-Never ask questions. Never end your turn awaiting operator input. If genuinely blocked, write `SYMPHONY_RESULT: blocked` and still touch the done file.{skill_directive}
+Never ask questions. Never end your turn awaiting operator input. If genuinely blocked, still complete the two steps below with `SYMPHONY_RESULT: blocked` as the result content.{skill_directive}
 
-Write your full final output, including the `SYMPHONY_RESULT` line and the `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block described in the Symphony output contract below, to this literal result file path using Bash:
+Completion protocol — follow exactly, in order:
+1. Write your full final output — the `SYMPHONY_RESULT` line and the `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block described in the Symphony output contract below — to this literal result file path:
 {result_file}
-Write the result file FIRST. Then touch this literal done file path:
+   Use your file-writing (Write) tool, NOT a shell heredoc or `cat <<EOF`, so backticks and other shell-special characters in your summary are written literally and the write cannot be broken by the shell.
+2. Confirm the result file exists and is non-empty (e.g. `test -s {result_file}`).
+3. ONLY after that confirmation, create this literal done file path:
 {done_file}
+   This done file signals completion. Do NOT create it if the result file is missing or empty — an empty result is treated as a failed run.
 
 Rendered issue prompt follows unchanged:
 
@@ -409,6 +425,61 @@ def _capture_pane_tail(
     except OSError:
         return ""
     return _strip_ansi(result.stdout or result.stderr or "")
+
+
+def _paste_and_submit(
+    run_func: Callable[..., CompletedLike],
+    socket_path: Path,
+    session_name: str,
+    prompt_file: Path,
+    *,
+    sleep: Callable[[float], object],
+) -> None:
+    """Paste the prompt and submit it, tolerating the tmux paste/Enter race.
+
+    Settle after paste-buffer before the first Enter, then re-send Enter while
+    the pane still shows the unsubmitted `[Pasted text …]` placeholder (up to
+    ``SUBMIT_RETRY_ATTEMPTS``). Once the placeholder clears, the prompt was
+    submitted; a stray Enter on the already-submitted prompt is harmless.
+    """
+    _tmux(run_func, socket_path, "load-buffer", str(prompt_file))
+    _tmux(run_func, socket_path, "paste-buffer", "-t", session_name)
+    sleep(PASTE_SETTLE_SECONDS)
+    for _ in range(SUBMIT_RETRY_ATTEMPTS):
+        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Enter")
+        sleep(SUBMIT_RETRY_INTERVAL_SECONDS)
+        pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
+        if not _paste_pending(pane):
+            return
+
+
+def _paste_pending(pane: str) -> bool:
+    """True when the pane still shows an unsubmitted pasted-prompt placeholder."""
+    return "pasted text" in pane.lower()
+
+
+def _read_result_with_grace(
+    result_file: Path,
+    *,
+    sleep: Callable[[float], object],
+    grace_s: float = RESULT_GRACE_SECONDS,
+    step_s: float = RESULT_GRACE_STEP_SECONDS,
+) -> str:
+    """Read the result file, re-polling a short grace window for it to fill.
+
+    The agent writes the result file and touches the done file as separate
+    steps, so the result can lag the done marker by a beat. Returns the result
+    text as soon as it is non-empty, or the final (possibly empty) read after
+    the grace window. Iteration-bounded so it terminates under a frozen clock.
+    """
+    steps = max(1, int(grace_s / step_s))
+    for _ in range(steps):
+        if result_file.exists():
+            text = result_file.read_text(encoding="utf-8")
+            if text.strip():
+                return text
+        sleep(step_s)
+    return result_file.read_text(encoding="utf-8") if result_file.exists() else ""
 
 
 def _session_alive(

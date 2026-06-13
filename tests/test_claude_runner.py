@@ -81,9 +81,7 @@ class TmuxFake:
         if "load-buffer" in command:
             self.prompt_path = Path(command[-1])
             prompt = self.prompt_path.read_text(encoding="utf-8")
-            self.result_file = _path_after(
-                prompt, "literal result file path using Bash:"
-            )
+            self.result_file = _path_after(prompt, "literal result file path:")
             self.done_file = _path_after(prompt, "literal done file path:")
             return Completed()
         if "send-keys" in command and self.result_text is not None:
@@ -306,6 +304,136 @@ def test_claude_done_with_missing_or_empty_result_is_loud(
     assert "result file is missing or empty" in result.stderr
 
 
+class _SubmitRaceTmux:
+    """Pane keeps the unsubmitted `[Pasted text …]` placeholder until the 2nd
+    Enter, mimicking a large paste whose first Enter is absorbed."""
+
+    def __init__(self, result_text: str = "SYMPHONY_RESULT: done"):
+        self.calls: list[list[str]] = []
+        self.enters = 0
+        self.pasted = False
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.result_text = result_text
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            return Completed()
+        if "paste-buffer" in command:
+            self.pasted = True
+            return Completed()
+        if "send-keys" in command:
+            self.enters += 1
+            if self.enters >= 2 and self.result_file and self.done_file:
+                self.result_file.write_text(self.result_text, encoding="utf-8")
+                self.done_file.write_text("", encoding="utf-8")
+            return Completed()
+        if "capture-pane" in command:
+            if self.pasted and self.enters < 2:
+                return Completed(stdout="❯ [Pasted text #1 +200 lines]")
+            return Completed(stdout="bypass permissions on")
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_resubmits_when_paste_not_yet_submitted(tmp_path: Path) -> None:
+    fake = _SubmitRaceTmux()
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    enters = sum(1 for command in fake.calls if "send-keys" in command)
+    assert enters == 2  # first Enter absorbed; re-sent once the placeholder cleared
+    assert result.exit_code == 0
+
+
+class _DoneNoResultTmux:
+    """Touches the done file on Enter but never writes the result, so the result
+    must fill during the grace window (driven by the test's sleep)."""
+
+    def __init__(self, pane: str = "bypass permissions on"):
+        self.pane = pane
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+
+    def __call__(self, command, **kwargs):
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            return Completed()
+        if "send-keys" in command and self.done_file is not None:
+            self.done_file.write_text("", encoding="utf-8")
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout=self.pane)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_done_empty_result_fills_during_grace_succeeds(tmp_path: Path) -> None:
+    fake = _DoneNoResultTmux()
+    state = {"filled": False}
+
+    def fake_sleep(secs):
+        # Fill the result on the first grace-window poll (step-sized sleep),
+        # decoupled from the paste/submit settle sleeps.
+        if secs == claude_runner.RESULT_GRACE_STEP_SECONDS and not state["filled"]:
+            state["filled"] = True
+            assert fake.result_file is not None
+            fake.result_file.write_text("SYMPHONY_RESULT: done\nbody", encoding="utf-8")
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=fake_sleep,
+    )
+
+    assert result.exit_code == 0
+    assert "SYMPHONY_RESULT: done" in result.stdout
+
+
+def test_claude_done_empty_failure_captures_pane(tmp_path: Path) -> None:
+    fake = TmuxFake(pane="shift+tab to cycle\nclaude error MODEL_UNAVAILABLE")
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    assert result.exit_code == 137
+    # Pane tail is captured into stderr for post-hoc diagnosis (was previously lost).
+    assert "MODEL_UNAVAILABLE" in result.stderr
+
+
 def test_claude_timeout_kills_session_and_marks_timed_out(tmp_path: Path) -> None:
     fake = TmuxFake(result_text=None)  # type: ignore[arg-type]
     times = chain([0.0, 0.0, 0.0, 0.0, 1.0], repeat(1.0))
@@ -378,6 +506,11 @@ def test_claude_preamble_contains_paths_unattended_and_skill_directive(
     assert str(fake.result_file) in prompt
     assert str(fake.done_file) in prompt
     assert "Invoke the `dev-build` skill by name" in prompt
+    # Completion protocol (C-0174): robust Write-tool result write and
+    # done-only-after-non-empty-result gating.
+    assert "Write) tool" in prompt
+    assert "NOT a shell heredoc" in prompt
+    assert "Do NOT create it if the result file is missing or empty" in prompt
 
 
 def test_claude_preamble_omits_skill_directive_when_absent(tmp_path: Path) -> None:
