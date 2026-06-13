@@ -1,7 +1,7 @@
 ---
 id: 041
 title: Agent-aware model catalog with per-agent defaults
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 1
