@@ -9,6 +9,8 @@ sources:
   - prompt_renderer.py
   - web/frontend/components/IssueFlyout.tsx
   - web/api/tests/test_reply.py
+  - web/api/wake_signal.py
+  - scheduler.py
   - plans/feature-operator-reply-comments.md
 confidence: high
 tags: [operator-reply, comments_md, re-dispatch, todo-flip, podium, prompt-renderer, issue-flyout]
@@ -29,7 +31,7 @@ On success it performs four effects in one transaction:
 3. Bumps `updated_at` (monotonic, via `_next_updated_at`).
 4. Publishes an `issue.updated` WebSocket event and returns the updated row.
 
-[source: web/api/main.py] [source: web/api/tests/test_reply.py]
+After the durable write and publish, #054 touches the scheduler wake sentinel so re-dispatch can happen within the short sentinel check interval instead of the full poll interval. Failed guarded replies do not touch the sentinel. [source: web/api/main.py] [source: web/api/wake_signal.py] [source: web/api/tests/test_reply.py]
 
 ### Atomic write and guards
 
@@ -53,7 +55,7 @@ Allowed source states are `in_review`, `blocked`, `done` only, AND the issue's `
 
 ## Re-dispatch by `todo`-flip
 
-The endpoint only sets `todo`; it does not dispatch directly. The next scheduler tick picks the issue up via the existing candidate scan and re-runs the agent, so re-dispatch obeys the binding's existing approval/schedule gates — no second dispatch path is introduced. **The durable new fact is that posting an operator reply carries a `todo` state-flip side effect.** [source: web/api/main.py] [source: tracker_podium.py]
+The endpoint only sets `todo`; it does not dispatch directly. The scheduler still picks the issue up via the existing candidate scan and re-runs the agent, so re-dispatch obeys the binding's existing approval/schedule gates — no second dispatch path is introduced. #054 speeds this up by touching a filesystem sentinel (`SYMPHONY_WAKE_SENTINEL_PATH`, else `SYMPHONY_RUNTIME_DIR/reply-wake`, else `/tmp/symphony/reply-wake`) that `scheduler.run_loop` consumes during its sleep wait, clears, and uses to immediately start another scan. **The durable new fact is that posting an operator reply carries a `todo` state-flip side effect plus a wake-sentinel side effect.** [source: web/api/main.py] [source: web/api/wake_signal.py] [source: scheduler.py] [source: tracker_podium.py]
 
 A reply on a `done` issue silently reopens it (→ `todo`). No new worktree code is needed: `create_worktree` already reuses an orphan branch unconditionally, so a reopened worktree-active issue re-provisions through the existing path [source: web/api/worktree.py:39-63] [source: web/api/tests/test_worktree.py].
 
