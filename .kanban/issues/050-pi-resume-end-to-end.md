@@ -1,7 +1,7 @@
 ---
 id: 050
 title: Pi RPC dispatch + resume end-to-end (Slice A)
-status: in-progress
+status: review
 blocked_by: [047, 048, 049]
 parent: null
 priority: 0
