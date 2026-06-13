@@ -501,8 +501,9 @@ def test_claude_preamble_contains_paths_unattended_and_skill_directive(
 
     assert fake.prompt_path is not None
     prompt = fake.prompt_path.read_text(encoding="utf-8")
-    assert "Nobody can respond to questions" in prompt
-    assert "Never ask questions" in prompt
+    assert "Nobody can respond live" in prompt
+    assert "SYMPHONY_QUESTION_BEGIN" in prompt
+    assert "Never ask questions" not in prompt
     assert str(fake.result_file) in prompt
     assert str(fake.done_file) in prompt
     assert "Invoke the `dev-build` skill by name" in prompt

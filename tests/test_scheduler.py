@@ -2178,6 +2178,39 @@ async def test_marker_blocked_blocks_issue(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_question_marker_parks_issue_in_review(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = (
+        "SYMPHONY_QUESTION_BEGIN\n"
+        "Should I restart the service now or wait for maintenance?\n"
+        "SYMPHONY_QUESTION_END\n"
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-question-park"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+    question_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert question_comment.startswith("**Symphony question:**")
+    assert "Should I restart the service now" in question_comment
+    assert "SYMPHONY_QUESTION" not in question_comment
+
+
+@pytest.mark.asyncio
 async def test_marker_last_occurrence_wins(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")

@@ -32,7 +32,9 @@ def test_render_prompt_uses_workflow_md_variables_and_mode(tmp_path: Path) -> No
     )
 
     assert "Repo policy for AUTO-1." in prompt
-    assert "mode=build labels=security, infra schedule=2026-05-08T20:00:00+00:00" in prompt
+    assert (
+        "mode=build labels=security, infra schedule=2026-05-08T20:00:00+00:00" in prompt
+    )
     assert "## Schedule Context" in prompt
     assert "MODE:" not in prompt
     assert "Domain Instructions" not in prompt
@@ -42,6 +44,7 @@ def test_render_prompt_uses_workflow_md_variables_and_mode(tmp_path: Path) -> No
     assert "## Symphony output contract" in prompt
     assert "SYMPHONY_SUMMARY_BEGIN" in prompt
     assert "SYMPHONY_RESULT: done" in prompt
+    assert "SYMPHONY_QUESTION_BEGIN" in prompt
 
 
 def test_render_prompt_omits_conversation_context_by_default(tmp_path: Path) -> None:
@@ -59,7 +62,9 @@ def test_render_prompt_omits_conversation_context_by_default(tmp_path: Path) -> 
     assert "Do not mutate live systems" not in prompt
 
 
-def test_render_prompt_includes_scheduled_reboot_policy_and_context(tmp_path: Path) -> None:
+def test_render_prompt_includes_scheduled_reboot_policy_and_context(
+    tmp_path: Path,
+) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text(
         "Reboots are allowed only when the ticket is scheduled for the current maintenance window.\n"

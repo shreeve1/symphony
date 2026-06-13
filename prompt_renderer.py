@@ -25,20 +25,28 @@ _PREVIOUS_COMMENTS_MAX_CHARS = 12000
 OUTPUT_CONTRACT = """\
 ## Symphony output contract
 
-End every run by emitting these markers on their own lines in your output:
+End every run by emitting exactly one terminal outcome:
 
-- Exactly one verdict line: `SYMPHONY_RESULT: done`, `SYMPHONY_RESULT: review`,
-  or `SYMPHONY_RESULT: blocked`.
-- A summary block carrying your natural end-of-turn message — what you did, what
-  you found, and any questions or decisions for the operator. Symphony posts this
-  block verbatim as the issue comment, so write it for a human reader (markdown
-  is fine). Emit the two marker lines at the START of a line (no indentation):
+- Completed or needs review: emit `SYMPHONY_RESULT: done` or
+  `SYMPHONY_RESULT: review`, plus a summary block.
+- Blocked on an error: emit `SYMPHONY_RESULT: blocked`, plus a summary block.
+- Needs operator clarification: emit a question block instead of
+  `SYMPHONY_RESULT`:
+
+  SYMPHONY_QUESTION_BEGIN
+  <one clear question for the operator>
+  SYMPHONY_QUESTION_END
+
+For result outcomes, the summary block carries your natural end-of-turn message —
+what you did, what you found, and any decisions for the operator. Symphony posts
+this block verbatim as the issue comment, so write it for a human reader
+(markdown is fine). Emit marker lines at the START of a line (no indentation):
 
   SYMPHONY_SUMMARY_BEGIN
   <your summary here>
   SYMPHONY_SUMMARY_END
 
-Keep the summary focused; it is bounded to ~4000 characters when posted."""
+Keep summaries and questions focused; they are bounded to ~4000 characters when posted."""
 
 
 @dataclass

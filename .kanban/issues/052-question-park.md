@@ -1,12 +1,13 @@
 ---
 id: 052
 title: Question Park — agent may park to ask the operator
-status: pending
+status: in-progress
 blocked_by: [050, 051]
 parent: null
 priority: 0
 created: 2026-06-13
 updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build

@@ -147,6 +147,7 @@ def test_resume_prompt_contains_wrapper_and_newest_operator_reply_only(
     assert "## Symphony output contract" in prompt
     assert "SYMPHONY_SUMMARY_BEGIN" in prompt
     assert "SYMPHONY_RESULT: done" in prompt
+    assert "SYMPHONY_QUESTION_BEGIN" in prompt
 
     # Contains newest operator reply
     assert "Roll back to staging first" in prompt
@@ -197,6 +198,7 @@ def test_resume_prompt_empty_when_no_operator_reply(tmp_path: Path) -> None:
     # Still has the output contract
     assert "## Symphony output contract" in prompt
     assert "SYMPHONY_RESULT: done" in prompt
+    assert "SYMPHONY_QUESTION_BEGIN" in prompt
 
     # No previous_comments block because there's no operator reply
     assert "<previous_comments>" not in prompt

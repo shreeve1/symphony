@@ -26,7 +26,6 @@ from notifier import (
     format_blocked_message,
     format_review_message,
 )
-
 from plane_adapter import (
     CandidateIssue,
     CommentPayload,
@@ -188,6 +187,13 @@ _RESULT_MARKER_RE = re.compile(
     r"^[ \t]*SYMPHONY_RESULT:[ \t]*(done|review|blocked)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
+# SYMPHONY_QUESTION_BEGIN/END block: agents use this instead of SYMPHONY_RESULT
+# when deliberately parking a Run for operator clarification. Markers must sit at
+# the start of a line so echoed contract examples remain inert.
+_QUESTION_BLOCK_RE = re.compile(
+    r"^SYMPHONY_QUESTION_BEGIN[ \t]*\n(.*?)\nSYMPHONY_QUESTION_END[ \t]*$",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
 # SYMPHONY_SUMMARY marker: agents may emit `SYMPHONY_SUMMARY: <one short line>`
 # on its own line in stdout (or stderr — both are checked) to provide a
 # human-readable result line for the Plane completion comment. Last occurrence
@@ -219,6 +225,10 @@ _SUMMARY_BLOCK_RE = re.compile(
 # never surface in the human comment.
 _MARKER_LINE_RE = re.compile(
     r"^[ \t]*SYMPHONY_(?:RESULT|SUMMARY|COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_QUESTION_MARKER_LINE_RE = re.compile(
+    r"^SYMPHONY_QUESTION_(?:BEGIN|END)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 SUMMARY_BLOCK_MAX_CHARS = 4000
@@ -317,6 +327,27 @@ def _parse_summary_block(*streams: str) -> str | None:
     # Return unbounded: bounding happens in _extract_summary *after* secret
     # redaction so a secret straddling the truncation boundary cannot leak a
     # surviving fragment.
+    return cleaned
+
+
+def _parse_question_block(*streams: str) -> str | None:
+    """Return the last SYMPHONY_QUESTION_BEGIN/END block across streams."""
+
+    block: str | None = None
+    for stream in streams:
+        if not stream:
+            continue
+        matches = _QUESTION_BLOCK_RE.findall(stream)
+        if matches:
+            block = matches[-1]
+    if block is None:
+        return None
+    cleaned = _ANSI_ESCAPE_RE.sub("", block)
+    cleaned = _MARKER_LINE_RE.sub("", cleaned)
+    cleaned = _QUESTION_MARKER_LINE_RE.sub("", cleaned)
+    cleaned = cleaned.strip("\n").strip()
+    if not cleaned:
+        return None
     return cleaned
 
 
@@ -471,6 +502,21 @@ def _extract_summary(
     return summary
 
 
+def _extract_question(
+    result: AgentResult, secrets: Sequence[str], *, include_stderr: bool = True
+) -> str | None:
+    """Pull SYMPHONY_QUESTION from raw streams and apply secret redaction."""
+
+    streams = (result.stdout, result.stderr) if include_stderr else (result.stdout,)
+    question = _parse_question_block(*streams)
+    if question is None:
+        return None
+    for secret in secrets:
+        if secret:
+            question = question.replace(secret, _REDACTED)
+    return _bound_summary_block(question)
+
+
 def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
@@ -526,7 +572,6 @@ def _worktree_run_fields(
         "branch_name": branch_name(binding_name, issue_id),
         "base_branch": base_branch,
     }
-
 
 
 def _render_candidate_prompt(
@@ -1470,7 +1515,9 @@ async def run_tick(
                             started_at=claim_time,
                         )
                         claim_dt = datetime.fromisoformat(claim_time)
-                        result = await asyncio.to_thread(agent_runner, candidate, prompt)
+                        result = await asyncio.to_thread(
+                            agent_runner, candidate, prompt
+                        )
                     except Exception as fallback_exc:
                         exc = fallback_exc
                     else:
@@ -1510,8 +1557,14 @@ async def run_tick(
                 result.duration_ms,
                 str(result.timed_out).lower(),
             )
-            if getattr(candidate, "resumed", False) and result.exit_code != 0 and not result.timed_out:
-                resume_summary = f"resume_failed: exit code {result.exit_code}; fell_back=true"
+            if (
+                getattr(candidate, "resumed", False)
+                and result.exit_code != 0
+                and not result.timed_out
+            ):
+                resume_summary = (
+                    f"resume_failed: exit code {result.exit_code}; fell_back=true"
+                )
                 await _finish_run_record(
                     adapter,
                     run_id,
@@ -1729,6 +1782,7 @@ async def run_tick(
 
             verdict = _parse_result_marker(stdout)
             summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+            question = _extract_question(result, secrets, include_stderr=parse_stderr)
 
             def _completion_body() -> str:
                 if summary:
@@ -1768,6 +1822,83 @@ async def run_tick(
                     dashboard_url=_du,
                 )
                 return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
+
+            if question:
+                question_body = f"**Symphony question:**\n\n{question}"
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=stdout,
+                    stderr=stderr,
+                    state="succeeded",
+                    verdict="question",
+                    summary=question,
+                    ended_at=now().isoformat(),
+                )
+                try:
+                    await adapter.add_comment(
+                        candidate.id,
+                        CommentPayload(body=question_body),
+                    )
+                    if getattr(adapter, "stores_context", False):
+                        context_parts = []
+                        if stdout:
+                            context_parts.append(
+                                f"## Agent stdout\n\n```\n{stdout}\n```"
+                            )
+                        if stderr:
+                            context_parts.append(
+                                f"## Agent stderr\n\n```\n{stderr}\n```"
+                            )
+                        if context_parts:
+                            await adapter.append_context(
+                                candidate.id, "\n\n".join(context_parts)
+                            )
+                except PlaneRateLimitError:
+                    if dispatch_state is not None:
+                        dispatch_state.pending_review_issue_ids.add(candidate.id)
+                        dispatch_state.pending_completion_bodies[candidate.id] = (
+                            question_body
+                        )
+                        LOGGER.info(
+                            "pending_review_queued issue_id=%s reason=agent-question-park (post-agent comment/context rate-limited)",
+                            candidate.id,
+                        )
+                    raise
+                if await _handle_archived_terminal(
+                    adapter, config, candidate, run_id, binding=tick_binding
+                ):
+                    return TickResult(
+                        True, "archived-terminal", candidate.id, mode=mode
+                    )
+                try:
+                    await adapter.transition_state(
+                        candidate.id, TrackerRole.STATE_IN_REVIEW
+                    )
+                except PlaneRateLimitError:
+                    if dispatch_state is not None:
+                        dispatch_state.pending_review_issue_ids.add(candidate.id)
+                        LOGGER.info(
+                            "pending_review_queued issue_id=%s reason=agent-question-park (post-agent transition rate-limited)",
+                            candidate.id,
+                        )
+                    raise
+                LOGGER.info(
+                    "state_transitioned issue_id=%s state=in-review reason=agent-question-park",
+                    candidate.id,
+                )
+                _iu, _du = _build_urls(config, candidate.id)
+                await _notify_review(
+                    notifier,
+                    candidate.name,
+                    candidate.identifier,
+                    reason="Operator question parked",
+                    issue_url=_iu,
+                    dashboard_url=_du,
+                )
+                return TickResult(True, "agent-question-park", candidate.id, mode=mode)
 
             if not is_coding:
                 after_agent = await _fetch_issue(adapter, candidate.id)

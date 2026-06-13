@@ -221,7 +221,9 @@ def run_claude_agent(
         cwd = _resolve_cwd(config, issue, create_worktree_func=create_worktree_func)
         source_env = dict(os.environ) if environ is None else environ
         env = _claude_env(issue, source_env)
-        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
+        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(
+            issue.id
+        )
         resume_requested = bool(getattr(issue, "resumed", False))
         session_arg = "--resume" if resume_requested else "--session-id"
         LOGGER.info(
@@ -355,11 +357,11 @@ def _wrap_prompt(
     skill_directive = (
         f"\nInvoke the `{skill}` skill by name before doing the work." if skill else ""
     )
-    return f"""You are running unattended for Symphony. Nobody can respond to questions.
-Never ask questions. Never end your turn awaiting operator input. If genuinely blocked, still complete the two steps below with `SYMPHONY_RESULT: blocked` as the result content.{skill_directive}
+    return f"""You are running unattended for Symphony. Nobody can respond live.
+If you need operator clarification, park the turn with the `SYMPHONY_QUESTION_BEGIN`/`SYMPHONY_QUESTION_END` protocol from the rendered Symphony output contract. If genuinely blocked on an error, still complete the two steps below with `SYMPHONY_RESULT: blocked` as the result content.{skill_directive}
 
 Completion protocol — follow exactly, in order:
-1. Write your full final output — the `SYMPHONY_RESULT` line and the `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block described in the Symphony output contract below — to this literal result file path:
+1. Write your full final output — either the `SYMPHONY_RESULT` line plus the `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block, or the `SYMPHONY_QUESTION_BEGIN`/`SYMPHONY_QUESTION_END` block described in the Symphony output contract below — to this literal result file path:
 {result_file}
    Use your file-writing (Write) tool, NOT a shell heredoc or `cat <<EOF`, so backticks and other shell-special characters in your summary are written literally and the write cannot be broken by the shell.
 2. Confirm the result file exists and is non-empty (e.g. `test -s {result_file}`).
