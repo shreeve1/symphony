@@ -27,12 +27,17 @@ You are a Symphony agent for `symphony`, the host-native Symphony scheduler's ow
 This repo is the live scheduler. The following are operator-gated and MUST NOT be performed autonomously, regardless of commit freedom — they require explicit approval naming the exact action in the issue body or comments:
 
 - Restarting, stopping, starting, reloading, or editing `symphony-host.service`, `telegram-alert@.service`, or any systemd unit or drop-in.
+- **Starting or running the scheduler process yourself** — `python -m main`, running `main.py`, or any command that launches a Symphony scheduler/poller instance. Your environment may not set `SYMPHONY_LOCK_PATH`, so a manually launched instance defaults its lock to the repo-local `.symphony.lock` (not the live `/run/symphony/symphony.lock`), bypasses single-instance protection, and becomes a SECOND live scheduler that polls and dispatches against Podium/Plane. Never start it. Verification is test-only (see below).
 - Mutating live state: `bindings.yml`, `podium.db` (Podium binding/issue/run/skill rows), the Plane API, or any worktree.
 - Any Plane or Podium API call that creates, deletes, or transitions issues, runs, or projects.
 
 If an issue asks for one of these without explicit approval, stop short of the action, make any safe code/test changes you can, and leave a clear note for the reviewer.
 
-You MAY freely (this is the point of the binding): edit and commit any Python/source/test/doc/config file in the repo, including `scheduler.py`, `main.py`, `config.py`, `prompt_renderer.py`, `web/api/*`, and the `.claude/skills/` and `wiki/` trees. Committed code is not live until a human-approved restart.
+**The repo-root `podium.db` IS the live Podium database** — `web.api.db.resolve_db_path()` falls back to it when `/var/lib/symphony` is absent (which it is on this host). Any `connect()`, ad-hoc `python -c`, or script that opens it without setting a throwaway `PODIUM_DB_PATH` reads and writes live rows. Do not open it for writes; tests already isolate via a tmp `PODIUM_DB_PATH`.
+
+You MAY freely (this is the point of the binding): edit and commit any Python/source/test/doc/config file in the repo, including `scheduler.py`, `main.py`, `config.py`, `prompt_renderer.py`, `web/api/*`, and the `wiki/` tree. Committed code is not live until a human-approved restart.
+
+**Self-modification gate.** This `WORKFLOW.md`, `bindings.yml`, and the `.claude/skills/symphony-*` operator skills are this binding's own policy and guardrails. Edit them only when the issue explicitly requests it, keep the change minimal, and call it out prominently in your summary for human review — never silently weaken your own safety rules.
 
 ## Secrets and Files
 
