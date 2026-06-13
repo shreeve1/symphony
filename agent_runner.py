@@ -158,7 +158,6 @@ def verify_pi_support(
         )
 
 
-
 def _agent_env(
     config: SymphonyConfig,
     issue: CandidateIssue,
@@ -343,7 +342,6 @@ def run_agent(
         remove_tree(temp_dir)
 
 
-
 def run_pi_rpc_agent(
     config: SymphonyConfig,
     issue: CandidateIssue,
@@ -377,7 +375,9 @@ def run_pi_rpc_agent(
         env = _agent_env(config, issue, temp_dir, source_env)
         provider = getattr(issue, "resolved_provider", "") or config.pi_provider
         model = getattr(issue, "resolved_model", "") or config.pi_model
-        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
+        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(
+            issue.id
+        )
         command = [
             config.pi_bin,
             "--mode",
@@ -411,7 +411,9 @@ def run_pi_rpc_agent(
             cwd=cwd,
             start_new_session=True,
         )
-        process.stdin.write(json.dumps({"type": "prompt", "message": rendered_prompt}) + "\n")
+        process.stdin.write(
+            json.dumps({"type": "prompt", "message": rendered_prompt}) + "\n"
+        )
         process.stdin.flush()
 
         assistant_parts: list[str] = []
@@ -420,68 +422,92 @@ def run_pi_rpc_agent(
         event_exit_code: int | None = None
         deadline = started + (config.run_timeout_ms / 1000)
 
-        while True:
-            remaining = deadline - clock()
-            if remaining <= 0:
-                _send_rpc_abort(process)
-                stdout, stderr = _terminate_process_group(
-                    process,
-                    kill_process_group=kill_process_group,
-                )
-                if stdout:
-                    assistant_parts.append(_rpc_text_from_raw(stdout))
-                if stderr:
-                    stderr_parts.append(stderr)
-                duration_ms = int((clock() - started) * 1000)
-                return AgentResult(
-                    -1,
-                    duration_ms,
-                    True,
-                    "".join(assistant_parts),
-                    "".join(stderr_parts),
-                )
+        # pi RPC is a persistent session server: it streams its event burst then
+        # stays alive idle, so stdout never reaches EOF on a normal completion.
+        # The reader must therefore drain every buffered line on each poll and
+        # detect completion from the `agent_end` event, never from EOF. (The old
+        # selectors-on-fd + buffered-readline reader missed buffered lines once
+        # the fd went quiet and spun to the timeout — see #050 / C-0188.)
+        read_line, close_reader = _rpc_line_reader(process)
+        try:
+            while True:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    _send_rpc_abort(process)
+                    _, stderr = _terminate_process_group(
+                        process,
+                        kill_process_group=kill_process_group,
+                    )
+                    if stderr:
+                        stderr_parts.append(stderr)
+                    duration_ms = int((clock() - started) * 1000)
+                    return AgentResult(
+                        -1,
+                        duration_ms,
+                        True,
+                        "".join(assistant_parts),
+                        "".join(stderr_parts),
+                    )
 
-            line = _read_rpc_line(process, timeout=remaining)
-            if line == "":
-                if process.poll() is not None:
-                    event_exit_code = process.returncode
+                line, eof = read_line(remaining)
+                if eof:
+                    # stdout closed: process exited on its own (crash / fake).
+                    if process.poll() is not None:
+                        event_exit_code = process.returncode
                     break
-                continue
+                if line is None:
+                    continue  # no complete line within the poll window
 
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                stderr_parts.append(line)
-                continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # banner / non-JSON noise on stdout
 
-            event_type = str(event.get("type") or "")
-            text = _event_text(event)
-            if text:
-                assistant_parts.append(text)
-            if event_type == "error":
-                error_seen = True
-                message = event.get("message") or event.get("error") or text
-                if message:
-                    stderr_parts.append(str(message))
-            if event_type == "agent_end":
-                if "exit_code" in event:
+                event_type = str(event.get("type") or "")
+                delta = _assistant_delta(event)
+                if delta:
+                    assistant_parts.append(delta)
+
+                if event_type == "extension_error":
+                    err = event.get("error")
+                    if err:
+                        stderr_parts.append(str(err))
+                elif event_type == "response" and event.get("success") is False:
+                    # A rejected prompt yields no agent_end; fail fast.
+                    error_seen = True
+                    err = event.get("error")
+                    if err:
+                        stderr_parts.append(str(err))
+                    if event.get("command") == "prompt":
+                        break
+                elif event_type == "message_update":
+                    ame = event.get("assistantMessageEvent")
+                    if (
+                        isinstance(ame, dict)
+                        and ame.get("type") == "error"
+                        and ame.get("reason") != "aborted"
+                    ):
+                        error_seen = True
+                        reason = ame.get("reason") or ame.get("error")
+                        if reason:
+                            stderr_parts.append(str(reason))
+                elif event_type == "agent_end":
+                    raw_code = event.get("exit_code", 0)
                     try:
-                        event_exit_code = int(event["exit_code"])
+                        event_exit_code = int(raw_code)
                     except (TypeError, ValueError):
                         event_exit_code = 0
-                else:
-                    event_exit_code = 0
-                break
+                    break
+        finally:
+            close_reader()
 
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
         except subprocess.TimeoutExpired:
-            stdout, stderr = _terminate_process_group(
+            _, stderr = _terminate_process_group(
                 process,
                 kill_process_group=kill_process_group,
             )
-            if stdout:
-                assistant_parts.append(_rpc_text_from_raw(stdout))
             if stderr:
                 stderr_parts.append(stderr)
         else:
@@ -489,7 +515,11 @@ def run_pi_rpc_agent(
             if leftover_stderr:
                 stderr_parts.append(leftover_stderr)
         duration_ms = int((clock() - started) * 1000)
-        exit_code = int(event_exit_code if event_exit_code is not None else (process.returncode or 0))
+        exit_code = int(
+            event_exit_code
+            if event_exit_code is not None
+            else (process.returncode or 0)
+        )
         if error_seen and exit_code == 0:
             exit_code = 1
         return AgentResult(
@@ -540,7 +570,6 @@ class RoutingAgentAdapter:
         raise AgentRunnerError(f"No agent adapter configured for `{agent}`")
 
 
-
 def _send_rpc_abort(process: RpcProcessLike) -> None:
     try:
         process.stdin.write(json.dumps({"type": "abort"}) + "\n")
@@ -549,56 +578,79 @@ def _send_rpc_abort(process: RpcProcessLike) -> None:
         return
 
 
-def _read_rpc_line(process: RpcProcessLike, *, timeout: float) -> str:
+def _rpc_line_reader(
+    process: RpcProcessLike,
+) -> tuple[Callable[[float], tuple[str | None, bool]], Callable[[], None]]:
+    """Return ``(read_line, close)`` for pi's JSONL stdout.
+
+    ``read_line(timeout)`` returns ``(line, eof)``: a complete LF-delimited line
+    (with no trailing CR/LF) and ``eof=False``; ``(None, False)`` when no full
+    line arrived within ``timeout``; ``(None, True)`` at stream end. Buffered
+    lines are drained before the fd is polled again, so a terminal ``agent_end``
+    sitting in the buffer is never stranded once pi goes idle. Reads the raw fd
+    directly (not the buffered TextIO wrapper) to avoid a read-ahead split.
+    A stream with no real fd (e.g. an ``io.StringIO`` test fake) falls back to
+    synchronous ``readline``.
+    """
     stdout = process.stdout
     try:
         fd = stdout.fileno()
-    except (AttributeError, OSError):
-        return stdout.readline()
+    except (AttributeError, OSError, ValueError):
+        fd = None
+
+    if fd is None:
+
+        def read_line(timeout: float) -> tuple[str | None, bool]:
+            line = stdout.readline()
+            if line == "":
+                return None, True
+            return line.rstrip("\r\n"), False
+
+        return read_line, lambda: None
+
     selector = selectors.DefaultSelector()
-    try:
-        selector.register(fd, selectors.EVENT_READ)
-        events = selector.select(timeout=max(0.0, timeout))
-        if not events:
-            return ""
-        return stdout.readline()
-    finally:
-        selector.close()
+    selector.register(fd, selectors.EVENT_READ)
+    buf = bytearray()
+
+    def read_line(timeout: float) -> tuple[str | None, bool]:
+        while True:
+            newline = buf.find(b"\n")
+            if newline != -1:
+                raw = bytes(buf[:newline])
+                del buf[: newline + 1]
+                return raw.decode("utf-8", "replace").rstrip("\r"), False
+            if not selector.select(timeout=max(0.0, timeout)):
+                return None, False
+            data = os.read(fd, 65536)
+            if data == b"":
+                if buf:
+                    raw = bytes(buf)
+                    buf.clear()
+                    return raw.decode("utf-8", "replace").rstrip("\r"), False
+                return None, True
+            buf.extend(data)
+
+    return read_line, selector.close
 
 
-def _event_text(event: dict[str, object]) -> str:
-    for key in ("delta", "text", "content", "message", "result", "stdout"):
-        value = event.get(key)
-        text = _stringify_event_text(value)
-        if text:
-            return text
-    return ""
+def _assistant_delta(event: dict[str, object]) -> str:
+    """Extract only streamed assistant text from a `message_update` event.
 
-
-def _stringify_event_text(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        for key in ("delta", "text", "content", "message"):
-            text = _stringify_event_text(value.get(key))
-            if text:
-                return text
-    if isinstance(value, list):
-        return "".join(_stringify_event_text(item) for item in value)
-    return ""
-
-
-def _rpc_text_from_raw(raw: str) -> str:
-    parts: list[str] = []
-    for line in raw.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        text = _event_text(event)
-        if text:
-            parts.append(text)
-    return "".join(parts)
+    Real pi nests it as `assistantMessageEvent.type == "text_delta"`; the
+    simplified test fakes put a top-level `delta`. Thinking/tool-call deltas and
+    every non-`message_update` event (extension banners, prompt echoes, status
+    notifications) are excluded so they cannot pollute the SYMPHONY_RESULT scrape.
+    """
+    if event.get("type") != "message_update":
+        return ""
+    ame = event.get("assistantMessageEvent")
+    if isinstance(ame, dict):
+        if ame.get("type") == "text_delta":
+            delta = ame.get("delta")
+            return delta if isinstance(delta, str) else ""
+        return ""
+    delta = event.get("delta")
+    return delta if isinstance(delta, str) else ""
 
 
 def _read_remaining(stream: TextIOBase) -> str:

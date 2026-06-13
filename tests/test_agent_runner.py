@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -9,7 +10,15 @@ from pathlib import Path
 import pytest
 
 import agent_runner as agent_runner_module
-from agent_runner import AgentResult, AgentRunnerError, PiAgentAdapter, RoutingAgentAdapter, run_agent, run_pi_rpc_agent, verify_pi_support
+from agent_runner import (
+    AgentResult,
+    AgentRunnerError,
+    PiAgentAdapter,
+    RoutingAgentAdapter,
+    run_agent,
+    run_pi_rpc_agent,
+    verify_pi_support,
+)
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
 
@@ -19,8 +28,6 @@ class Completed:
         self.stdout = stdout
         self.stderr = stderr
         self.returncode = returncode
-
-
 
 
 class FakeRpcProcess:
@@ -102,7 +109,9 @@ def _issue() -> CandidateIssue:
 def _init_git_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "-C", str(path), "init", "-b", "main"], check=True)
-    subprocess.run(["git", "-C", str(path), "config", "user.email", "test@test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "test@test"], check=True
+    )
     subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
     (path / "README.md").write_text("# test\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(path), "add", "."], check=True)
@@ -123,14 +132,23 @@ def test_verify_pi_support_checks_help_and_probe_with_cwd(tmp_path: Path) -> Non
     assert calls[0][0] == ["pi", "--help"]
     assert calls[0][1]["timeout"] == 30
     assert calls[1][0] == [
-        "pi", "--print", "--no-session", "--provider", "zai", "--model", "glm-5.1:high", "ping",
+        "pi",
+        "--print",
+        "--no-session",
+        "--provider",
+        "zai",
+        "--model",
+        "glm-5.1:high",
+        "ping",
     ]
     assert calls[1][1]["cwd"] == str(tmp_path)
     assert calls[1][1]["timeout"] == 30
 
 
 @pytest.mark.parametrize("help_text", ["usage: pi --no-session", "usage: pi --print"])
-def test_verify_pi_support_requires_print_and_no_session(help_text: str, tmp_path: Path) -> None:
+def test_verify_pi_support_requires_print_and_no_session(
+    help_text: str, tmp_path: Path
+) -> None:
     with pytest.raises(AgentRunnerError, match="--print --no-session"):
         verify_pi_support(
             "pi",
@@ -142,27 +160,41 @@ def test_verify_pi_support_requires_print_and_no_session(help_text: str, tmp_pat
 
 
 def test_verify_pi_support_rejects_probe_nonzero(tmp_path: Path) -> None:
-    responses = iter([
-        Completed(stdout="usage: pi --print --no-session"),
-        Completed(stderr="bad auth", returncode=2),
-    ])
+    responses = iter(
+        [
+            Completed(stdout="usage: pi --print --no-session"),
+            Completed(stderr="bad auth", returncode=2),
+        ]
+    )
 
     with pytest.raises(AgentRunnerError, match="exit code 2"):
         verify_pi_support(
-            "pi", "zai", "glm-5.1:high", tmp_path, run_func=lambda *a, **k: next(responses)
+            "pi",
+            "zai",
+            "glm-5.1:high",
+            tmp_path,
+            run_func=lambda *a, **k: next(responses),
         )
 
 
 @pytest.mark.parametrize("stdout", ["", "   \n"])
-def test_verify_pi_support_rejects_empty_probe_stdout(stdout: str, tmp_path: Path) -> None:
-    responses = iter([
-        Completed(stdout="usage: pi --print --no-session"),
-        Completed(stdout=stdout),
-    ])
+def test_verify_pi_support_rejects_empty_probe_stdout(
+    stdout: str, tmp_path: Path
+) -> None:
+    responses = iter(
+        [
+            Completed(stdout="usage: pi --print --no-session"),
+            Completed(stdout=stdout),
+        ]
+    )
 
     with pytest.raises(AgentRunnerError, match="empty stdout"):
         verify_pi_support(
-            "pi", "zai", "glm-5.1:high", tmp_path, run_func=lambda *a, **k: next(responses)
+            "pi",
+            "zai",
+            "glm-5.1:high",
+            tmp_path,
+            run_func=lambda *a, **k: next(responses),
         )
 
 
@@ -183,10 +215,12 @@ def test_verify_pi_support_wraps_help_timeout(tmp_path: Path) -> None:
 
 
 def test_verify_pi_support_wraps_probe_timeout(tmp_path: Path) -> None:
-    responses = iter([
-        Completed(stdout="usage: pi --print --no-session"),
-        subprocess.TimeoutExpired(["pi"], 30),
-    ])
+    responses = iter(
+        [
+            Completed(stdout="usage: pi --print --no-session"),
+            subprocess.TimeoutExpired(["pi"], 30),
+        ]
+    )
 
     def fake_run(*args, **kwargs):
         response = next(responses)
@@ -213,8 +247,6 @@ def test_pi_agent_adapter_delegates_to_pi_runner(monkeypatch, tmp_path: Path) ->
 
     assert result == "agent-result"
     assert calls["args"] == (config, issue, "rendered prompt")
-
-
 
 
 def test_routing_agent_adapter_routes_by_resolved_agent(tmp_path: Path) -> None:
@@ -378,7 +410,9 @@ def test_run_agent_uses_worktree_cwd_when_issue_opted_in(tmp_path: Path) -> None
     assert "podium/trading/42" in branches
 
 
-def test_run_agent_uses_configured_provider_model_and_logs(caplog, tmp_path: Path) -> None:
+def test_run_agent_uses_configured_provider_model_and_logs(
+    caplog, tmp_path: Path
+) -> None:
     caplog.set_level("INFO", logger="agent_runner")
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"
@@ -409,7 +443,10 @@ def test_run_agent_uses_configured_provider_model_and_logs(caplog, tmp_path: Pat
         "test-model:high",
         "rendered prompt",
     ]
-    assert "pi_dispatch issue_id=issue-123 provider=test-provider model=test-model:high" in caplog.text
+    assert (
+        "pi_dispatch issue_id=issue-123 provider=test-provider model=test-model:high"
+        in caplog.text
+    )
 
 
 def test_run_agent_silent_zero_exit_becomes_failure(tmp_path: Path) -> None:
@@ -479,7 +516,6 @@ def test_run_agent_timeout_terminates_then_kills_process_group(tmp_path: Path) -
     assert not temp_dir.exists()
 
 
-
 def test_run_pi_rpc_agent_sends_prompt_and_returns_final_text(tmp_path: Path) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"
@@ -487,8 +523,10 @@ def test_run_pi_rpc_agent_sends_prompt_and_returns_final_text(tmp_path: Path) ->
     captured: dict[str, object] = {}
     process = FakeRpcProcess(
         [
-            json.dumps({"type": "message_update", "delta": "SYMPHONY_RESULT: done\n"}) + "\n",
-            json.dumps({"type": "message_update", "delta": "SYMPHONY_SUMMARY: ok"}) + "\n",
+            json.dumps({"type": "message_update", "delta": "SYMPHONY_RESULT: done\n"})
+            + "\n",
+            json.dumps({"type": "message_update", "delta": "SYMPHONY_SUMMARY: ok"})
+            + "\n",
             json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
         ]
     )
@@ -558,3 +596,108 @@ def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:
     commands = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
     assert commands[-1] == {"type": "abort"}
     assert signals == [signal.SIGTERM]
+
+
+def test_run_pi_rpc_agent_extracts_only_assistant_text_deltas(tmp_path: Path) -> None:
+    """Real pi event shape: only `message_update` text_deltas are captured;
+    thinking deltas, extension banners, and prompt echoes are excluded."""
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "agent_start"}) + "\n",
+            json.dumps({"type": "response", "command": "prompt", "success": True})
+            + "\n",
+            json.dumps(
+                {
+                    "type": "extension_ui_request",
+                    "method": "setStatus",
+                    "statusText": "Advisor restored",
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_delta",
+                        "delta": "pondering",
+                    },
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_delta",
+                        "delta": "SYMPHONY_RESULT: done\n",
+                    },
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_delta",
+                        "delta": "SYMPHONY_SUMMARY: ok",
+                    },
+                }
+            )
+            + "\n",
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+
+    result = run_pi_rpc_agent(
+        _config(tmp_path),
+        _issue(),
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(temp_dir),
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ={"PATH": "/usr/bin"},
+    )
+
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    # only the two text_deltas — no banner, no thinking, no prompt echo
+    assert result.stdout == "SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: ok"
+
+
+@pytest.mark.skipif(
+    not os.environ.get("SYMPHONY_RPC_PARITY"),
+    reason="real-pi parity check; set SYMPHONY_RPC_PARITY=1 to run (ADR-0010 Slice A)",
+)
+def test_run_pi_rpc_agent_real_pi_completion_parity(tmp_path: Path) -> None:
+    """In-app Slice A gate: drive REAL `pi --mode rpc` to completion and confirm
+    the adapter detects `agent_end` (not a timeout) and returns clean text.
+
+    Opt-in only (hits a live provider/model). Run with:
+        SYMPHONY_RPC_PARITY=1 uv run pytest tests/test_agent_runner.py -k real_pi -q
+    """
+    pi_bin = os.environ.get("PI_BIN", "/home/james/.npm-global/bin/pi")
+    cfg = SymphonyConfig(
+        plane_api_url="",
+        plane_api_key="",
+        plane_workspace_slug="",
+        plane_project_id="",
+        homelab_repo_path=tmp_path,
+        pi_bin=pi_bin,
+        pi_provider=os.environ.get("SYMPHONY_RPC_PARITY_PROVIDER", "openai-codex"),
+        pi_model=os.environ.get("SYMPHONY_RPC_PARITY_MODEL", "gpt-5.4-mini"),
+        run_timeout_ms=120_000,
+    )
+    result = run_pi_rpc_agent(
+        cfg, _issue(), "Reply with exactly the token PARITY_OK and nothing else."
+    )
+
+    assert result.timed_out is False, (
+        "adapter must detect agent_end, not hang to timeout"
+    )
+    assert result.exit_code == 0
+    assert "PARITY_OK" in result.stdout
