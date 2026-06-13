@@ -32,15 +32,3 @@ bindings:
     enabled: false
   landing:
     mode: local
-- name: rpcsoak
-  plane_project_id: rpcsoak
-  tracker: podium
-  type: coding
-  repo_path: /home/james/rpc-soak
-  base_branch: main
-  default_agent: pi
-  pi_mode: rpc
-  approval:
-    enabled: false
-  landing:
-    mode: local
