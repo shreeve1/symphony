@@ -1,11 +1,13 @@
 ---
 id: 049
 title: Delta-only resume prompt rendering
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
@@ -25,12 +27,12 @@ Symphony still WRITES `comments_md`/`context_md` as today (for UI + the re-feed 
 
 ## Acceptance criteria
 
-- [ ] A render function/flag produces a resume prompt = mechanical wrapper + newest operator-reply block only.
-- [ ] Resume prompt contains NO issue description, NO full comments blob, NO context blob, NO WORKFLOW.md content.
-- [ ] Fresh (non-resume) rendering is unchanged — full prompt still produced for fresh/fallback runs.
-- [ ] When multiple operator replies exist historically, only the newest block is included.
-- [ ] Mechanical wrapper (result-file/done-marker protocol) is still present in resume mode.
-- [ ] When the issue has a `preferred_skill` on a resume run, the skill-invoke directive is still prepended to the delta prompt; when it has none, the resume prompt is wrapper + reply block only.
+- [x] A render function/flag produces a resume prompt = mechanical wrapper + newest operator-reply block only.
+- [x] Resume prompt contains NO issue description, NO full comments blob, NO context blob, NO WORKFLOW.md content.
+- [x] Fresh (non-resume) rendering is unchanged — full prompt still produced for fresh/fallback runs.
+- [x] When multiple operator replies exist historically, only the newest block is included.
+- [x] Mechanical wrapper (result-file/done-marker protocol) is still present in resume mode.
+- [x] When the issue has a `preferred_skill` on a resume run, the skill-invoke directive is still prepended to the delta prompt; when it has none, the resume prompt is wrapper + reply block only.
 
 ## Verification
 
@@ -39,3 +41,7 @@ Symphony still WRITES `comments_md`/`context_md` as today (for UI + the re-feed 
 ## Blocked by
 
 None — can start immediately (parallel with #048).
+
+## Implementation Notes
+
+Added a `resume` render flag in `prompt_renderer.render_prompt()` that returns the shared output contract plus only the newest `### Operator Reply` block. The resume path omits WORKFLOW.md policy, issue body, full comments, and issue context, while preserving the `preferred_skill` invoke directive for Podium resume dispatch. Added focused Podium renderer tests for newest-reply extraction, omission guarantees, skill directive behavior, empty-reply fallback, and fresh render preservation.

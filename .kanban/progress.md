@@ -23,3 +23,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Used derived UUIDv5 ids from `symphony.issue:<issue_id>` and kept this slice free of scheduler, subprocess, and network imports. Pi session lookup honors `PI_CODING_AGENT_SESSION_DIR` and finds timestamp-prefixed session files.
 **Conventions established:** Resume decision reasons are stable string constants (`agent-mismatch`, `cwd-missing`, `session-absent`, `sha-drift`) suitable for future scheduler log markers.
 **Notes for next iteration:** #049 can build the delta-only prompt independently; #050/#051 should consume `derive_session_id`, `session_file_path`, and `evaluate_resume_eligibility` rather than duplicating predicate logic.
+
+## #049 Delta-only resume prompt rendering — 2026-06-13
+
+**What changed:** Added resume-mode prompt rendering so resumed runs receive only the shared output contract plus the newest `### Operator Reply` delta.
+**Files:** `prompt_renderer.py`, `tests/test_prompt_renderer_podium.py`, `.kanban/issues/049-delta-only-resume-prompt.md`.
+**Decisions:** Resume prompts intentionally omit WORKFLOW.md, issue description, full comments, and issue context; the Podium `preferred_skill` directive still prepends resume prompts when set.
+**Conventions established:** Fresh prompt rendering remains the default (`resume=False`); downstream #050/#051 should opt into `resume=True` only after resume eligibility succeeds.
+**Notes for next iteration:** #050/#051 must pass the resume flag from scheduler/adapter wiring and still handle `--skill` loading outside prompt rendering.
