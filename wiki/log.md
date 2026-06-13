@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #053 Live Session Tail
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #053 implementation; commits `967c081`, `c2a8957`, `7971cd5`; `.kanban/issues/053-live-session-tail.md`; `.kanban/progress.md`; `web/api/main.py`; `web/api/tests/test_session_tail.py`; `web/frontend/components/IssueFlyout.tsx`; `web/frontend/components/QueryProvider.tsx`; `web/frontend/components/SessionTailPanel.tsx`; `web/frontend/playwright.config.ts`; `web/frontend/tests/fixtures.ts`; `web/frontend/tests/session-tail.spec.ts`; existing ADR-0009 Session Resume wiki pages.
+- Outputs: updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/analyses/adr-0009-session-resume-continuity.md`; updated `wiki/CLAIMS.md` (C-0186 added; C-0176 note updated); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured API-process `_SessionTailer`, read-only byte-range JSONL session reads, `run.tail` WebSocket event payloads, absent/empty/unreadable file no-op behavior, Session flyout tab, and shared `QueryProvider` tail-event filtering. Verification passed: `uv run pytest web/api/tests/ -q` (178 passed, 1 skipped), `cd web/frontend && npm run test:e2e -- session-tail.spec.ts` (2 passed), full `uv run pytest -q` (744 passed, 1 skipped), `cd web/frontend && pnpm exec tsc --noEmit`, touched-file LSP diagnostics clean, `git diff --check`, secret-pattern scan, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-13] session-update | #052 Question Park
 
 - Actor: agent (Pi, Ralph + wiki update)

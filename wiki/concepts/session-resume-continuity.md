@@ -12,6 +12,7 @@ sources:
   - .kanban/issues/050-pi-resume-end-to-end.md
   - .kanban/issues/051-claude-resume-end-to-end.md
   - .kanban/issues/052-question-park.md
+  - .kanban/issues/053-live-session-tail.md
   - agent_runner.py
   - claude_runner.py
   - scheduler.py
@@ -20,13 +21,18 @@ sources:
   - tests/test_dispatch_compaction.py
   - tests/test_scheduler.py
   - tests/test_prompt_renderer.py
+  - web/api/main.py
+  - web/api/tests/test_session_tail.py
+  - web/frontend/components/SessionTailPanel.tsx
+  - web/frontend/components/QueryProvider.tsx
+  - web/frontend/tests/session-tail.spec.ts
 confidence: high
 tags: [session-resume, continuity, re-feed, question-park, session-tail, design-stage, partially-implemented, podium]
 ---
 
 # Session Resume continuity
 
-> **Partially implemented as of 2026-06-13.** Schema columns (#047), the pure decision core (#048), delta-only prompt rendering (#049), **pi RPC resume wiring (#050)**, **Claude resume wiring (#051)**, and **Question Park (#052)** have landed. Live tail (#053), fast redispatch (#054), and checkpointed exploration (#055) remain pending.
+> **Partially implemented as of 2026-06-13.** Schema columns (#047), the pure decision core (#048), delta-only prompt rendering (#049), **pi RPC resume wiring (#050)**, **Claude resume wiring (#051)**, **Question Park (#052)**, and **Live Session Tail (#053)** have landed. Fast redispatch (#054) and checkpointed exploration (#055) remain pending.
 
 ## The two continuity modes
 
@@ -54,7 +60,7 @@ A session persists the **conversation, not the filesystem** — resume restores 
 ## Paired CLI-fidelity features (same design)
 
 - **Question Park** — landed in #052. The agent may park to `in_review` carrying a clarifying question via `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END`, and the operator reply resumes the session with the answer. Turn-taking; only useful because resume preserves the thread. [source: CONTEXT.md] [source: scheduler.py] [source: .kanban/issues/052-question-park.md]
-- **Session Tail** — tail the live-appended session `.jsonl` and stream over the WS hub (#017) for in-flight visibility, without changing the separate-process scheduler model (ADR-0006). [source: CONTEXT.md]
+- **Session Tail (#053)** — the web/API process tails live-appended pi/Claude session `.jsonl` files for running issues and publishes appended lines as `run.tail` events over the existing in-process WS hub (#017), without changing the separate-process scheduler model (ADR-0006). `_SessionTailer` resolves the derived session path, reads byte ranges in `rb` mode only, tracks cursor/inode per issue, emits existing content on first detection, and treats missing/empty/locked files as no event. The flyout's Session tab renders lines from the shared `QueryProvider` WebSocket stream and filters by issue id. [source: web/api/main.py] [source: web/api/tests/test_session_tail.py] [source: web/frontend/components/SessionTailPanel.tsx] [source: web/frontend/components/QueryProvider.tsx] [source: web/frontend/tests/session-tail.spec.ts]
 - **Fast re-dispatch** — reply writes a wake sentinel the scheduler watches; round-trip minutes → seconds.
 - **Checkpointed exploration** — WORKFLOW/Skill policy: bounded step then park, leaning on resume + Question Park.
 - **Steering** (pi-only, live mid-run) — operator input injected into a *running* pi Run via the RPC `steer` command, distinct from the between-Run Question Park reply loop. Decided by **ADR-0010** (dispatch pi via `pi --mode rpc`); in-scope as #056/#057/#058. [source: CONTEXT.md] [source: docs/adr/0010-pi-rpc-dispatch-for-live-steering.md]
@@ -62,7 +68,7 @@ A session persists the **conversation, not the filesystem** — resume restores 
 
 ## Backlog
 
-`.kanban/issues/047`–`055` plus ADR-0010 steering/RPC follow-ups. Status: 047 (run columns), 048 (decision core), 049 (delta renderer), **050 (pi RPC dispatch + resume wiring)**, **051 (Claude resume wiring)**, and **052 (Question Park)** are done; 053 Session Tail, 054 fast re-dispatch, and 055 checkpointed exploration remain pending; #056/#057/#058 cover pi RPC steering. [source: .kanban/issues/047-run-session-tracking-columns.md] [source: .kanban/issues/048-continuity-decision-core.md] [source: .kanban/issues/049-delta-only-resume-prompt.md] [source: .kanban/issues/050-pi-resume-end-to-end.md] [source: .kanban/issues/051-claude-resume-end-to-end.md] [source: .kanban/issues/052-question-park.md]
+`.kanban/issues/047`–`055` plus ADR-0010 steering/RPC follow-ups. Status: 047 (run columns), 048 (decision core), 049 (delta renderer), **050 (pi RPC dispatch + resume wiring)**, **051 (Claude resume wiring)**, **052 (Question Park)**, and **053 (Live Session Tail)** are done; 054 fast re-dispatch and 055 checkpointed exploration remain pending; #056/#057/#058 cover pi RPC steering. [source: .kanban/issues/047-run-session-tracking-columns.md] [source: .kanban/issues/048-continuity-decision-core.md] [source: .kanban/issues/049-delta-only-resume-prompt.md] [source: .kanban/issues/050-pi-resume-end-to-end.md] [source: .kanban/issues/051-claude-resume-end-to-end.md] [source: .kanban/issues/052-question-park.md] [source: .kanban/issues/053-live-session-tail.md]
 
 ## Relation to existing knowledge
 
@@ -70,4 +76,4 @@ This conditionally reverses the "transcript re-feed, not session resume" stance 
 
 ## Claims
 
-C-0175, C-0176, C-0177, C-0178, C-0180, C-0181, C-0182, C-0183, C-0184, and C-0185 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0176, C-0177, C-0178, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, and C-0186 in [CLAIMS.md](../CLAIMS.md).

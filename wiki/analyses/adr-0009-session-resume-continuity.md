@@ -11,10 +11,17 @@ sources:
   - .kanban/issues/050-pi-resume-end-to-end.md
   - .kanban/issues/051-claude-resume-end-to-end.md
   - .kanban/issues/052-question-park.md
+  - .kanban/issues/053-live-session-tail.md
   - scheduler.py
   - agent_runner.py
   - claude_runner.py
   - prompt_renderer.py
+  - web/api/main.py
+  - web/api/tests/test_session_tail.py
+  - web/frontend/components/IssueFlyout.tsx
+  - web/frontend/components/QueryProvider.tsx
+  - web/frontend/components/SessionTailPanel.tsx
+  - web/frontend/tests/session-tail.spec.ts
 confidence: high
 tags: [adr, session-resume, continuity, re-feed, decision, design-stage, partially-implemented]
 ---
@@ -47,8 +54,8 @@ Continuity now depends on hidden filesystem state (`~/.claude/projects`, `~/.pi/
 
 ## Scope note
 
-`accepted` and **partially implemented** as of 2026-06-13. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`), #050 pi RPC dispatch/resume wiring, #051 Claude tmux resume wiring, and #052 Question Park. Pi RPC and Claude runs can now take the Session Resume path when eligibility passes; non-RPC Pi, ineligible, and runtime-failed paths still fall back to re-feed. Question Park adds a `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` outcome that parks the issue to `in_review`, posts the question, and relies on the existing operator-reply redispatch/resume path for the answer. Remaining backlog `.kanban/issues/053`–`055` covers Session Tail, fast re-dispatch, and checkpointed exploration; #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
+`accepted` and **partially implemented** as of 2026-06-13. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`), #050 pi RPC dispatch/resume wiring, #051 Claude tmux resume wiring, #052 Question Park, and #053 Live Session Tail. Pi RPC and Claude runs can now take the Session Resume path when eligibility passes; non-RPC Pi, ineligible, and runtime-failed paths still fall back to re-feed. Question Park adds a `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` outcome that parks the issue to `in_review`, posts the question, and relies on the existing operator-reply redispatch/resume path for the answer. Session Tail adds a web/API-process read-only JSONL tailer that emits `run.tail` WebSocket events to the flyout without changing the scheduler process model. Remaining backlog `.kanban/issues/054`–`055` covers fast re-dispatch and checkpointed exploration; #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
 
 ## Claims
 
-C-0175, C-0177, C-0180, C-0181, C-0182, C-0183, C-0184, and C-0185 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0177, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, and C-0186 in [CLAIMS.md](../CLAIMS.md).
