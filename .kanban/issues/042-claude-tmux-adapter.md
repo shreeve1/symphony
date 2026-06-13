@@ -1,11 +1,13 @@
 ---
 id: 042
 title: ClaudeAgentAdapter — tmux send-keys engine (fake-driven, unrouted)
-status: pending
+status: in-progress
 blocked_by: []
 parent: null
 priority: 1
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
