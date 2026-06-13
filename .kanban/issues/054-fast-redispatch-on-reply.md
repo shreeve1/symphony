@@ -1,7 +1,7 @@
 ---
 id: 054
 title: Fast re-dispatch on operator reply
-status: in-progress
+status: review
 blocked_by: [047]
 updated: 2026-06-13
 parent: null
