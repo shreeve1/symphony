@@ -1,7 +1,7 @@
 ---
 id: 053
 title: Live Session Tail — stream the running agent's session file to the flyout
-status: review
+status: done
 blocked_by: [050, 051]
 parent: null
 priority: 0
@@ -21,11 +21,11 @@ Give the operator an in-flight, read-only view of a running Run by tailing the a
 
 ## Acceptance criteria
 
-- [ ] A backend endpoint/event resolves the running issue's session file and emits appended JSONL events over the WS hub as they are written.
-- [ ] No change to the scheduler process model; tailing is performed by the web/API process reading the file.
-- [ ] Frontend flyout panel renders incoming tail events live for the open issue and rebinds correctly on issue switch.
-- [ ] Absent/locked/empty session file degrades to an empty, non-erroring panel.
-- [ ] Tail is strictly read-only (no writes to the session file).
+- [x] A backend endpoint/event resolves the running issue's session file and emits appended JSONL events over the WS hub as they are written.
+- [x] No change to the scheduler process model; tailing is performed by the web/API process reading the file.
+- [x] Frontend flyout panel renders incoming tail events live for the open issue and rebinds correctly on issue switch.
+- [x] Absent/locked/empty session file degrades to an empty, non-erroring panel.
+- [x] Tail is strictly read-only (no writes to the session file).
 
 ## Verification
 
@@ -34,3 +34,7 @@ Give the operator an in-flight, read-only view of a running Run by tailing the a
 ## Blocked by
 
 - Blocked by #050, #051
+
+## Implementation Notes
+
+Implemented a web/API-process session tailer that polls running issue session JSONL files, publishes appended lines as `run.tail` WebSocket events, and reads files strictly read-only. Added a Session flyout tab backed by the existing WebSocket provider and e2e coverage that appends a synthetic session line and verifies it appears live.

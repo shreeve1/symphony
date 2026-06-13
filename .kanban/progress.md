@@ -55,3 +55,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Implemented Question Park as a scheduler verdict/comment/state mapping, not a new state machine; operator replies continue to use the existing `in_review` redispatch and #050/#051 resume path.
 **Conventions established:** Agents must use `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` instead of interactive questions when they need operator clarification.
 **Notes for next iteration:** #055 can build checkpointed exploration on this park-and-reply behavior; #056 remains separate live steering for Pi RPC.
+
+## #053 Live Session Tail — 2026-06-13
+
+**What changed:** Added an API-process session tailer that reads running issue session JSONL files and publishes appended lines as `run.tail` WebSocket events; added a Session flyout tab that renders tail lines live.
+**Files:** `web/api/main.py`, `web/api/tests/test_session_tail.py`, `web/frontend/components/IssueFlyout.tsx`, `web/frontend/components/QueryProvider.tsx`, `web/frontend/components/SessionTailPanel.tsx`, `web/frontend/playwright.config.ts`, `web/frontend/tests/fixtures.ts`, `web/frontend/tests/session-tail.spec.ts`, `.kanban/issues/053-live-session-tail.md`.
+**Decisions:** Kept live tail entirely in the web/API process and left the scheduler process model unchanged per ADR-0006. Tail reads are byte-range `rb` reads only; absent/empty/locked files degrade to no event and an empty panel.
+**Conventions established:** `run.tail` WebSocket payloads use `{ type: "run.tail", issue_id, lines }`; frontend tail rendering consumes the shared `QueryProvider` WebSocket connection and filters by issue id.
+**Notes for next iteration:** #057 can build a richer tail/steer UI on the Session tab; #056 remains the pi RPC steering channel and does not need to replace JSONL tailing.
