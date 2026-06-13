@@ -41,3 +41,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Missing or broken Claude support no longer fails Symphony boot; it blocks only Claude dispatch until the install is fixed and the service restarts.
 **Conventions established:** Startup cleanup of Claude tmux sockets runs exactly once globally before per-binding reconcile; probe checks use `claude --version` only and never launch a live Claude session.
 **Notes for next iteration:** #045 is frontend-only and should keep Playwright manual for UI flows unless explicitly requested.
+
+## #045 Agent-aware default model preselect in NewIssueModal — 2026-06-13
+
+**What changed:** Made new-issue model default preselection follow the selected agent, clear when that agent has no default, and avoid silent cross-agent default mismatches.
+**Files:** web/frontend/components/NewIssueModal.tsx, web/frontend/tests/new-issue.spec.ts, .kanban/issues/045-frontend-agent-aware-default-preselect.md
+**Decisions:** Agent changes intentionally replace stale model selections with the new agent default or empty state; this matches dispatch-gate compatibility over preserving a cross-agent stale value.
+**Conventions established:** Frontend default-model flows must filter `default: true` by selected agent before preselecting.
+**Notes for next iteration:** No follow-up issue is unblocked by #045 in the current board.

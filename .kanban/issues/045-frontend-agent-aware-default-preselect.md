@@ -1,7 +1,7 @@
 ---
 id: 045
 title: Agent-aware default model preselect in NewIssueModal
-status: review
+status: done
 updated: 2026-06-13
 actor: ralph
 blocked_by: [041]
@@ -23,15 +23,23 @@ Make preselection agent-aware:
 
 ## Acceptance criteria
 
-- [ ] With fixture defaults `gpt-5.5` (pi) and `claude-opus-4-8` (claude): modal opens with agent pi → model field shows `gpt-5.5`.
-- [ ] Switching agent to claude → model field shows `claude-opus-4-8`; switching back to pi → `gpt-5.5`.
-- [ ] Fixture variant where claude has no default: switching to claude leaves the model field empty/placeholder, not a pi model.
-- [ ] Existing new-issue specs still pass.
-- [ ] `cd web/frontend && npm run test:e2e -- new-issue.spec.ts` green.
+- [x] With fixture defaults `gpt-5.5` (pi) and `claude-opus-4-8` (claude): modal opens with agent pi → model field shows `gpt-5.5`.
+- [x] Switching agent to claude → model field shows `claude-opus-4-8`; switching back to pi → `gpt-5.5`.
+- [x] Fixture variant where claude has no default: switching to claude leaves the model field empty/placeholder, not a pi model.
+- [x] Existing new-issue specs still pass.
+- [x] `cd web/frontend && npm run test:e2e -- new-issue.spec.ts` green.
 
 ## Verification
 
 `cd /home/james/symphony/web/frontend && npm run test:e2e -- new-issue.spec.ts`
+
+## Implementation Notes
+
+- Made `NewIssueModal` preselect the default model whose `agent` matches the selected agent.
+- Cleared the model field when the selected agent has no default to avoid silent cross-agent mismatches.
+- Added Playwright coverage for Pi default, Claude default, switching back, and no-default clearing.
+- Verification passed: `cd web/frontend && npm run test:e2e -- new-issue.spec.ts`; `cd web/frontend && pnpm exec tsc --noEmit`; critical LSP diagnostics showed no errors for touched frontend files.
+- Fresh Ralph review passed.
 
 ## Blocked by
 
