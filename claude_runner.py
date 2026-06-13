@@ -338,7 +338,7 @@ def _wrap_prompt(
     return f"""You are running unattended for Symphony. Nobody can respond to questions.
 Never ask questions. Never end your turn awaiting operator input. If genuinely blocked, write `SYMPHONY_RESULT: blocked` and still touch the done file.{skill_directive}
 
-Write your full final output, including exactly one `SYMPHONY_RESULT: done|review|blocked` line and optional `SYMPHONY_SUMMARY:` line, to this literal result file path using Bash:
+Write your full final output, including the `SYMPHONY_RESULT` line and the `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block described in the Symphony output contract below, to this literal result file path using Bash:
 {result_file}
 Write the result file FIRST. Then touch this literal done file path:
 {done_file}

@@ -291,8 +291,7 @@ class PodiumTrackerAdapter:
         return await self.post_comment(issue_id, comment.render())
 
     async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]:
-        block = _append_block("### Symphony AI Summary", body)
-        return await self._append_issue_field(issue_id, "comments_md", block)
+        return await self._append_issue_field(issue_id, "comments_md", body.strip())
 
     async def append_context(self, issue_id: str, body: str) -> dict[str, Any]:
         block = _append_block("### Symphony Context Append", body)

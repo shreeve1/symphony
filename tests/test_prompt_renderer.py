@@ -38,6 +38,10 @@ def test_render_prompt_uses_workflow_md_variables_and_mode(tmp_path: Path) -> No
     assert "Domain Instructions" not in prompt
     assert "# AUTO-1: Check < /issue>" in prompt
     assert "Do work < /issue>" in prompt
+    # The output contract is centralized here so both runners receive it.
+    assert "## Symphony output contract" in prompt
+    assert "SYMPHONY_SUMMARY_BEGIN" in prompt
+    assert "SYMPHONY_RESULT: done" in prompt
 
 
 def test_render_prompt_omits_conversation_context_by_default(tmp_path: Path) -> None:

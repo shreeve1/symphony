@@ -18,6 +18,28 @@ from skill_mode_map import mode_for_skill
 
 _PREVIOUS_COMMENTS_MAX_CHARS = 12000
 
+# Symphony-owned output contract, appended to every rendered prompt so both the
+# pi and claude runners receive identical instructions from one source. This
+# replaces the SYMPHONY_RESULT/SYMPHONY_SUMMARY boilerplate that previously lived
+# duplicated across _wrap_prompt and each binding's WORKFLOW.md.
+OUTPUT_CONTRACT = """\
+## Symphony output contract
+
+End every run by emitting these markers on their own lines in your output:
+
+- Exactly one verdict line: `SYMPHONY_RESULT: done`, `SYMPHONY_RESULT: review`,
+  or `SYMPHONY_RESULT: blocked`.
+- A summary block carrying your natural end-of-turn message — what you did, what
+  you found, and any questions or decisions for the operator. Symphony posts this
+  block verbatim as the issue comment, so write it for a human reader (markdown
+  is fine):
+
+  SYMPHONY_SUMMARY_BEGIN
+  <your summary here>
+  SYMPHONY_SUMMARY_END
+
+Keep the summary focused; it is bounded to ~4000 characters when posted."""
+
 
 @dataclass
 class IssueData:
@@ -207,7 +229,7 @@ def render_prompt(
         f"</issue>"
     )
 
-    prompt = f"{rendered.strip()}\n\n{issue_block}"
+    prompt = f"{rendered.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
 
     # The operator's skill choice is a directive, not metadata: the scheduler
     # loads the skill into pi via --skill, and this line makes the agent

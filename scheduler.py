@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo
 from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
 from claude_runner import claude_probe_failure_reason
-from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
 from notifier import (
@@ -55,11 +54,10 @@ _POLL_INTERVAL_S = 0.0  # retained for _fallback_dispatch_state
 _IN_FLIGHT_ISSUE_IDS: set[str] = set()
 _IN_FLIGHT_LOCK: asyncio.Lock | None = None
 _PLANE_COOLDOWN_UNTIL: datetime | None = None
+# Legacy claim-time fallback: kept so ``_claimed_at`` can still parse claim
+# timestamps from comments on adapters without a Run store (Plane) and from
+# historical issues. New claim time comes from the Run record's ``started_at``.
 CLAIM_PREFIX = "Symphony claimed at "
-# Resolved once at import time. The ``_claimed_at`` parser at line ~1212 splits
-# the body on CLAIM_PREFIX and takes the first whitespace token after it, so
-# appending ``code_sha=<sha>`` after the timestamp is backwards-compatible.
-_CODE_SHA = resolve_code_sha()
 REPORT_MAX_BYTES = 2048
 STDERR_SUMMARY_MAX_LINES = 8
 STDERR_SUMMARY_MAX_CHARS = 900
@@ -197,6 +195,24 @@ _METRIC_MARKER_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 SUMMARY_MAX_CHARS = 500
+# SYMPHONY_SUMMARY_BEGIN/END block: agents emit their full natural end-of-turn
+# summary (markdown, multi-line) between these markers. Posted verbatim as the
+# terminal-state comment. Bounded so a runaway agent cannot dump its whole
+# transcript into the comment stream (comments are re-injected into the next
+# prompt as untrusted context).
+_SUMMARY_BLOCK_RE = re.compile(
+    r"^[ \t]*SYMPHONY_SUMMARY_BEGIN[ \t]*\n(.*?)\n?[ \t]*SYMPHONY_SUMMARY_END[ \t]*$",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+# Machine marker lines stripped from a summary block before display so they
+# never surface in the human comment.
+_MARKER_LINE_RE = re.compile(
+    r"^[ \t]*SYMPHONY_(?:RESULT|SUMMARY|COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+SUMMARY_BLOCK_MAX_CHARS = 4000
+SUMMARY_BLOCK_HEAD_CHARS = 2500
+SUMMARY_BLOCK_TAIL_CHARS = 1200
 _PERMISSION_GATE_RE = re.compile(
     r"permission requested:|auto-rejecting|user rejected permission",
     re.IGNORECASE,
@@ -245,6 +261,46 @@ def _parse_summary_marker(*streams: str) -> str | None:
     if len(cleaned) > SUMMARY_MAX_CHARS:
         cleaned = cleaned[: SUMMARY_MAX_CHARS - 1].rstrip() + "…"
     return cleaned
+
+
+def _bound_summary_block(text: str) -> str:
+    """Bound a multi-line summary block, keeping head and tail on overflow."""
+
+    if len(text) <= SUMMARY_BLOCK_MAX_CHARS:
+        return text
+    head = text[:SUMMARY_BLOCK_HEAD_CHARS].rstrip()
+    tail = text[-SUMMARY_BLOCK_TAIL_CHARS:].lstrip()
+    return (
+        f"{head}\n\n"
+        f"[Summary truncated from {len(text)} characters for comment readability.]\n\n"
+        f"{tail}"
+    )
+
+
+def _parse_summary_block(*streams: str) -> str | None:
+    """Return the last SYMPHONY_SUMMARY_BEGIN/END block across streams, or None.
+
+    Markdown and newlines are preserved (unlike the single-line marker). ANSI is
+    stripped, machine marker lines are removed, and the result is bounded by
+    ``_bound_summary_block`` so a runaway agent cannot smuggle its whole
+    transcript into a completion comment.
+    """
+
+    block: str | None = None
+    for stream in streams:
+        if not stream:
+            continue
+        matches = _SUMMARY_BLOCK_RE.findall(stream)
+        if matches:
+            block = matches[-1]
+    if block is None:
+        return None
+    cleaned = _ANSI_ESCAPE_RE.sub("", block)
+    cleaned = _MARKER_LINE_RE.sub("", cleaned)
+    cleaned = cleaned.strip("\n").strip()
+    if not cleaned:
+        return None
+    return _bound_summary_block(cleaned)
 
 
 def _parse_run_metrics(stdout: str) -> dict[str, Any]:
@@ -332,36 +388,6 @@ def _format_report(result: AgentResult, secrets: Sequence[str]) -> tuple[str, st
     return stdout, stderr
 
 
-def _format_timeline(
-    claim_dt: datetime,
-    now: Callable[[], datetime],
-    *,
-    duration_ms: int | None = None,
-    verdict: str,
-) -> str:
-    """Render the terminal-state timeline appended to every closing comment.
-
-    Compact one-line format using ISO-8601 UTC timestamps so log/diff tooling
-    can correlate against ``Symphony claimed at <ts>`` claim comments without
-    parsing prose.
-    """
-    finished_dt = now()
-    delta_ms = int((finished_dt - claim_dt).total_seconds() * 1000)
-    if duration_ms is not None and duration_ms > 0:
-        agent_part = f"agent: {duration_ms}ms"
-    else:
-        agent_part = "agent: unmeasured"
-    parts = [
-        f"claimed: {claim_dt.isoformat()}",
-        f"finished: {finished_dt.isoformat()}",
-        agent_part,
-        f"total: {delta_ms}ms",
-        f"verdict: {verdict}",
-        f"sha: {_CODE_SHA}",
-    ]
-    return "**Timeline** — " + " | ".join(parts)
-
-
 def _format_stderr_summary(stderr: str) -> str:
     """Return a bounded, human-readable stderr summary for Plane comments."""
 
@@ -412,7 +438,9 @@ def _extract_summary(
     """
 
     streams = (result.stdout, result.stderr) if include_stderr else (result.stdout,)
-    summary = _parse_summary_marker(*streams)
+    summary = _parse_summary_block(*streams)
+    if summary is None:
+        summary = _parse_summary_marker(*streams)
     if summary is None:
         return None
     for secret in secrets:
@@ -1186,10 +1214,8 @@ async def run_tick(
                 run_log_path,
                 started_at=claim_time,
             )
-            await adapter.add_comment(
-                candidate.id,
-                CommentPayload(body=f"{CLAIM_PREFIX}{claim_time}"),
-            )
+            # Claim time is persisted by the Run record (started_at) above; no
+            # claim comment is posted so the human comment stream stays clean.
             claim_dt = datetime.fromisoformat(claim_time)
             LOGGER.info(
                 "issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time
@@ -1245,12 +1271,6 @@ async def run_tick(
                 summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
-                msg += "\n\n" + _format_timeline(
-                    claim_dt,
-                    now,
-                    duration_ms=result.duration_ms,
-                    verdict="timeout",
-                )
                 await _finish_run_record(
                     adapter,
                     run_id,
@@ -1281,12 +1301,6 @@ async def run_tick(
                 summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
-                msg += "\n\n" + _format_timeline(
-                    claim_dt,
-                    now,
-                    duration_ms=result.duration_ms,
-                    verdict="nonzero",
-                )
                 await _finish_run_record(
                     adapter,
                     run_id,
@@ -1396,32 +1410,18 @@ async def run_tick(
             verdict = _parse_result_marker(stdout)
             summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
 
-            def _completion_body(verdict_label: str) -> str:
+            def _completion_body() -> str:
                 if summary:
-                    body = f"**Symphony completed:** {summary}"
-                else:
-                    body = "**Symphony completed:** Agent finished without a summary."
-                body += "\n\n" + _format_timeline(
-                    claim_dt,
-                    now,
-                    duration_ms=result.duration_ms,
-                    verdict=verdict_label,
-                )
-                return body
+                    return f"**Symphony completed:** {summary}"
+                return "**Symphony completed:** Agent finished without a summary."
 
             if verdict == "blocked":
                 if summary:
-                    msg = f"Agent reported a blocked result: {summary}"
+                    msg = summary
                 else:
                     msg = "Agent reported a blocked result."
-                if stderr:
-                    msg += f"\n\n{_format_stderr_summary(stderr)}"
-                msg += "\n\n" + _format_timeline(
-                    claim_dt,
-                    now,
-                    duration_ms=result.duration_ms,
-                    verdict="agent-marker-blocked",
-                )
+                    if stderr:
+                        msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _finish_run_record(
                     adapter,
                     run_id,
@@ -1459,7 +1459,7 @@ async def run_tick(
                 if verdict in {"review", "done"}
                 else "agent-clean-review"
             )
-            completion_body = _completion_body(reason_code)
+            completion_body = _completion_body()
             await _finish_run_record(
                 adapter,
                 run_id,
@@ -2328,7 +2328,40 @@ async def _fetch_issue_comment_bodies(
     return bodies
 
 
+def _parse_iso(raw: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+async def _run_started_at(adapter: TrackerAdapter, issue_id: str) -> datetime | None:
+    """Claim time from the latest Run record's ``started_at``, or None.
+
+    Authoritative source since the claim comment was removed. Returns None for
+    adapters without a Run store (e.g. Plane) so callers fall back to comments.
+    """
+
+    get_run = getattr(adapter, "get_run", None)
+    if not callable(get_run):
+        return None
+    try:
+        issue = await adapter.get_issue(issue_id)
+    except (KeyError, LookupError):
+        return None
+    run_id = str(issue.get("latest_run_id") or "")
+    if not run_id:
+        return None
+    run = await _maybe_await(get_run(run_id))
+    if not run:
+        return None
+    return _parse_iso(str(run.get("started_at") or ""))
+
+
 async def _claimed_at(adapter: TrackerAdapter, issue_id: str) -> datetime | None:
+    started = await _run_started_at(adapter, issue_id)
+    if started is not None:
+        return started
     claim_times: list[datetime] = []
     for comment in await adapter.list_comments(issue_id):
         body = str(comment.get("comment_html") or comment.get("body") or "")

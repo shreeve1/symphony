@@ -49,3 +49,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Agent changes intentionally replace stale model selections with the new agent default or empty state; this matches dispatch-gate compatibility over preserving a cross-agent stale value.
 **Conventions established:** Frontend default-model flows must filter `default: true` by selected agent before preselecting.
 **Notes for next iteration:** No follow-up issue is unblocked by #045 in the current board.
+
+## #046 Unify Symphony agent output contract — 2026-06-13
+
+**What changed:** Centralized the agent output contract in one `OUTPUT_CONTRACT` block appended to every prompt (pi + claude from one source), introduced the multi-line `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block (single-line marker kept as fallback), posted summaries verbatim, and removed the machine `Timeline` footer and the `Symphony claimed at` claim comment.
+**Files:** prompt_renderer.py, scheduler.py, tracker_podium.py, claude_runner.py, tests/test_scheduler.py, tests/test_prompt_renderer.py, tests/test_tracker_podium.py, tests/test_engine_against_podium.py, .kanban/issues/046-unified-output-contract.md; plus homelab/WORKFLOW.md and crypto-trading-agents/WORKFLOW.md in their own repos.
+**Decisions:** Claim time now reads from the Run record `started_at` (`_run_started_at`) with Plane comment-parse fallback; the summary block is bounded (4000 chars, head 2500 / tail 1200) so the re-injected comment stream cannot absorb a runaway transcript. Blocked-path stderr summary appends only when no summary block is present.
+**Conventions established:** Agents emit one verdict line plus a verbatim multi-line summary block; comments carry no Timeline/claim machine noise.
+**Notes for next iteration:** Binding WORKFLOW.md files now defer the output contract to the engine; future binding edits should not re-add `SYMPHONY_*` boilerplate.

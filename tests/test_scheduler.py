@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import threading
+from collections import defaultdict
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,7 +27,10 @@ from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState, RoleBindi
 class FakeTransport:
     def __init__(self) -> None:
         self.issues: dict[str, dict[str, Any]] = {}
-        self.comments: dict[str, list[dict[str, Any]]] = {}
+        # defaultdict so tests that append a schedule comment from the agent
+        # callback work without the (now removed) claim comment first
+        # initializing the per-issue list.
+        self.comments: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     async def get(self, path: str) -> dict[str, Any]:
         if "/comments" in path:
@@ -265,13 +269,13 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
     assert result.reason == "agent-clean-review"
     assert seen == ["older"]
     assert transport.issues["older"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    completion_comment = transport.comments["older"][1]["comment_html"]
+    completion_comment = transport.comments["older"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
 
 
 @pytest.mark.asyncio
-async def test_claim_comment_includes_timestamp(tmp_path: Path, monkeypatch) -> None:
-    """Claim comments carry ISO timestamp so stale-running detection can parse it."""
+async def test_no_claim_comment_posted(tmp_path: Path) -> None:
+    """No claim comment is posted; claim time is persisted by the Run record."""
     transport = FakeTransport()
     transport.issues["i1"] = _issue("i1")
 
@@ -285,13 +289,10 @@ async def test_claim_comment_includes_timestamp(tmp_path: Path, monkeypatch) -> 
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    claim_body = transport.comments["i1"][0]["comment_html"]
-    assert claim_body.startswith("Symphony claimed at ")
-    # The parser at scheduler._claimed_at takes the first
-    # whitespace token after CLAIM_PREFIX. It must be a parseable ISO timestamp.
-    after_prefix = claim_body.split("Symphony claimed at", 1)[1].strip()
-    first_token = after_prefix.split()[0]
-    datetime.fromisoformat(first_token.replace("Z", "+00:00"))
+    bodies = [c["comment_html"] for c in transport.comments["i1"]]
+    assert not any(b.startswith("Symphony claimed at ") for b in bodies)
+    # Only the completion comment lands on the stream.
+    assert any("Symphony completed" in b for b in bodies)
 
 
 @pytest.mark.asyncio
@@ -312,7 +313,7 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(tmp_path: Path
 
     assert result.reason == "agent-clean-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Jellyfin: OK" not in completion_comment
 
@@ -334,7 +335,7 @@ async def test_run_tick_omits_secret_bearing_stdout(tmp_path: Path) -> None:
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "fake-plane-key-for-tests" not in completion_comment
     assert "***REDACTED***" not in completion_comment
     assert "All good" not in completion_comment
@@ -451,7 +452,7 @@ async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> N
 
         assert tick.reason == reason
         assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-        assert len(transport.comments["issue-1"]) == 2
+        assert len(transport.comments["issue-1"]) == 1
 
 
 @pytest.mark.asyncio
@@ -472,7 +473,7 @@ async def test_run_tick_omits_stdout_in_blocked_comments(tmp_path: Path) -> None
             repo_dirty=lambda path: False,
         )
 
-        blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+        blocked_comment = transport.comments["issue-1"][0]["comment_html"]
         assert "Agent Output:" not in blocked_comment
         assert agent_result.stdout not in blocked_comment
 
@@ -492,7 +493,7 @@ async def test_run_tick_summarizes_long_stderr_in_blocked_comments(tmp_path: Pat
         repo_dirty=lambda path: False,
     )
 
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "**Stderr summary:**" in blocked_comment
     assert "earlier lines omitted" in blocked_comment
     assert "- trace line 1\n" not in blocked_comment
@@ -520,7 +521,7 @@ async def test_run_tick_strips_ansi_from_stderr_summary(tmp_path: Path) -> None:
         repo_dirty=lambda path: False,
     )
 
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "permission denied" in blocked_comment
     assert "\x1b" not in blocked_comment
 
@@ -1108,7 +1109,7 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(tmp_path:
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "done output" not in completion_comment
     assert "Stderr:" not in completion_comment
@@ -1129,7 +1130,7 @@ async def test_run_tick_stderr_appears_in_blocked_timeout_comment(tmp_path: Path
         repo_dirty=lambda path: False,
     )
 
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Agent Output:" not in blocked_comment
     assert "partial" not in blocked_comment
     assert "Stderr summary:" in blocked_comment
@@ -1152,7 +1153,7 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "done output" not in completion_comment
     assert "Stderr:" not in completion_comment
@@ -1177,7 +1178,7 @@ async def test_run_tick_stderr_secrets_are_redacted(tmp_path: Path) -> None:
     )
 
     assert result.reason == "nonzero"
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "fake-plane-key-for-tests" not in blocked_comment
     assert "***REDACTED***" in blocked_comment
     assert "Stderr summary:" in blocked_comment
@@ -1202,7 +1203,7 @@ async def test_run_tick_redacts_zai_api_key_from_stderr(monkeypatch, tmp_path: P
     )
 
     assert result.reason == "nonzero"
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "secret-zai-key-for-tests" not in blocked_comment
     assert "***REDACTED***" in blocked_comment
 
@@ -1226,7 +1227,7 @@ async def test_run_tick_redacts_legacy_cliproxy_api_key_from_stderr(monkeypatch,
     )
 
     assert result.reason == "nonzero"
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "secret-cliproxy-key-for-tests" not in blocked_comment
     assert "***REDACTED***" in blocked_comment
 
@@ -1250,7 +1251,7 @@ async def test_run_tick_strips_ansi_escapes_from_failure_stderr(tmp_path: Path) 
         repo_dirty=lambda path: False,
     )
 
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Stderr summary:" in blocked_comment
     assert "\x1b" not in blocked_comment
     assert "[0m" not in blocked_comment
@@ -1284,7 +1285,7 @@ async def test_run_tick_summary_marker_appears_in_success_comment(tmp_path: Path
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Jellyfin CT106 healthy. HTTP 200, mounts OK." in completion_comment
     # No raw stdout dump.
@@ -1310,7 +1311,7 @@ async def test_run_tick_summary_marker_last_occurrence_wins(tmp_path: Path) -> N
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "final summary" in completion_comment
     assert "draft summary" not in completion_comment
 
@@ -1336,15 +1337,13 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    # Comment is "**Symphony completed:** <summary>\n\n**Timeline**...".
-    # The summary portion (head) must be bounded; the timeline block is
-    # always appended (Phase 3 #6) but its length is small + fixed.
-    head, sep, _ = completion_comment.partition("\n\n**Timeline**")
-    assert sep == "\n\n**Timeline**"
-    assert len(head) < 1000
-    summary_head = head.split("\n\n**Run branch:**", 1)[0]
-    assert "…" in summary_head
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    # Comment is "**Symphony completed:** <summary>". The single-line summary
+    # fallback is bounded to SUMMARY_MAX_CHARS; no Timeline block is appended.
+    assert completion_comment.startswith("**Symphony completed:**")
+    assert "**Timeline**" not in completion_comment
+    assert len(completion_comment) < 1000
+    assert "…" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -1369,7 +1368,7 @@ async def test_run_tick_summary_marker_falls_back_to_stderr(tmp_path: Path) -> N
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "From stderr stream." in completion_comment
     # Stderr block itself stays suppressed on success.
     assert "Stderr:" not in completion_comment
@@ -1394,7 +1393,7 @@ async def test_run_tick_summary_marker_strips_ansi(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "green result line" in completion_comment
     assert "\x1b" not in completion_comment
     assert "[32m" not in completion_comment
@@ -1416,21 +1415,18 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert completion_comment.startswith("**Symphony completed:**")
-    # Body is the summary line followed by the one-line timeline block.
-    head, sep, tail = completion_comment.partition("\n\n**Timeline**")
-    assert sep == "\n\n**Timeline**"
-    assert head.strip().startswith("**Symphony completed:**")
-    assert "**Run branch:**" not in head
-    assert "verdict: agent-clean-review" in tail
-    assert "sha:" in tail
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    # No summary marker/block emitted: body falls back to the no-summary line,
+    # with no Timeline block appended.
+    assert completion_comment == "**Symphony completed:** Agent finished without a summary."
+    assert "**Timeline**" not in completion_comment
 
 
 @pytest.mark.asyncio
 async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path) -> None:
-    # When the agent emits SYMPHONY_RESULT: blocked, any SYMPHONY_SUMMARY is
-    # hoisted into the blocked comment, before the stderr summary.
+    # When the agent emits SYMPHONY_RESULT: blocked, the SYMPHONY_SUMMARY becomes
+    # the blocked comment body verbatim; the stderr summary is suppressed because
+    # the agent's own message is present.
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
 
@@ -1448,11 +1444,100 @@ async def test_run_tick_summary_marker_in_blocked_marker_comment(tmp_path: Path)
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
-    assert "Agent reported a blocked result: Backup target offline." in blocked_comment
-    # Stderr is still surfaced on failure paths.
-    assert "Stderr summary:" in blocked_comment
-    assert "ssh: connection refused" in blocked_comment
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert blocked_comment == "Backup target offline."
+    # Agent summary present, so the raw stderr summary is not appended.
+    assert "Stderr summary:" not in blocked_comment
+    assert "ssh: connection refused" not in blocked_comment
+
+
+# --- SYMPHONY_SUMMARY block tests ---
+
+
+@pytest.mark.asyncio
+async def test_summary_block_posted_verbatim_in_completion_comment(tmp_path: Path) -> None:
+    # The multi-line SYMPHONY_SUMMARY_BEGIN/END block is posted verbatim,
+    # preserving markdown/newlines, as the human comment body.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    block = (
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        "## What I did\n\n"
+        "- Restarted prowlarr-host.service\n"
+        "- Verified HTTP 200\n\n"
+        "**Question:** should I enable auto-restart?\n"
+        "SYMPHONY_SUMMARY_END"
+    )
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=f"chatter\n{block}\nSYMPHONY_RESULT: review\n"
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert completion_comment.startswith("**Symphony completed:**")
+    assert "## What I did" in completion_comment
+    assert "- Restarted prowlarr-host.service" in completion_comment
+    assert "**Question:** should I enable auto-restart?" in completion_comment
+    # Markers and surrounding chatter are stripped.
+    assert "SYMPHONY_SUMMARY_BEGIN" not in completion_comment
+    assert "SYMPHONY_RESULT" not in completion_comment
+    assert "chatter" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_summary_block_bounded_on_overflow(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    huge = "X" * 6000
+    block = f"SYMPHONY_SUMMARY_BEGIN\n{huge}\nSYMPHONY_SUMMARY_END"
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=block),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert "[Summary truncated from 6000 characters" in completion_comment
+    # Bounded well under the raw 6000 chars (head + tail + notice + prefix).
+    assert len(completion_comment) < 4200
+
+
+@pytest.mark.asyncio
+async def test_summary_block_redacts_secrets(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    block = (
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        "Connected with key fake-plane-key-for-tests and finished.\n"
+        "SYMPHONY_SUMMARY_END"
+    )
+
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=block),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert "fake-plane-key-for-tests" not in completion_comment
+    assert "***REDACTED***" in completion_comment
 
 
 # --- Config lock_path tests ---
@@ -1675,7 +1760,7 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "secret-telegram-token-12345" not in completion_comment
     assert "***REDACTED***" not in completion_comment
 
@@ -1706,7 +1791,7 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
 
     assert result.reason == "agent-marker-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Health check OK" not in completion_comment
 
@@ -1729,7 +1814,7 @@ async def test_marker_review_transitions_to_in_review(tmp_path: Path) -> None:
 
     assert result.reason == "agent-marker-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Found ambiguity" not in completion_comment
 
 
@@ -1751,7 +1836,7 @@ async def test_marker_blocked_blocks_issue(tmp_path: Path) -> None:
 
     assert result.reason == "agent-marker-blocked"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    blocked_comment = transport.comments["issue-1"][1]["comment_html"]
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Agent reported a blocked result" in blocked_comment
     assert "SYMPHONY_RESULT: blocked" not in blocked_comment
     assert "missing dependency" not in blocked_comment
@@ -1919,7 +2004,7 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
 
     assert result.reason == "agent-clean-review"
     assert transport.issues["issue-1"]["state"] == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
-    completion_comment = transport.comments["issue-1"][1]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
 
 
@@ -3148,14 +3233,13 @@ async def test_post_agent_comment_429_stores_pending_data_and_propagates(tmp_pat
     adapter = _adapter(transport)
 
     call_count = 0
-    original = adapter.add_comment
 
     async def fake_add_comment(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        if call_count >= 2:
-            raise PlaneRateLimitError("rate limited", retry_after_s=42)
-        return await original(*args, **kwargs)
+        # The completion comment is now the first add_comment call (the claim
+        # comment was removed), so fail on the first call.
+        raise PlaneRateLimitError("rate limited", retry_after_s=42)
 
     monkeypatch.setattr(adapter, "add_comment", fake_add_comment)
 
@@ -3174,7 +3258,7 @@ async def test_post_agent_comment_429_stores_pending_data_and_propagates(tmp_pat
     assert state.cooldown_attempts == 1
     assert issue_id in state.pending_review_issue_ids
     assert "Symphony completed" in state.pending_completion_bodies.get(issue_id, "")
-    assert call_count == 2
+    assert call_count == 1
 
 
 @pytest.mark.asyncio

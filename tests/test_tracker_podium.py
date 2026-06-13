@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import scheduler
 from plane_adapter import CommentPayload
 from tracker_contract import PlaneLabel, TrackerRole
 from web.api.schema import SCHEMA_SQL
@@ -148,11 +149,28 @@ async def test_comments_context_and_comment_listing(tmp_path: Path) -> None:
     comments = await adapter.list_comments(str(issue_id))
     issue = await adapter.get_issue(str(issue_id))
 
-    assert "### Symphony AI Summary" in issue["comments_md"]
+    assert "### Symphony AI Summary" not in issue["comments_md"]
     assert "**Outcome:** done" in issue["comments_md"]
     assert "second summary" in comments[0]["body"]
     assert "### Symphony Context Append" in issue["context_md"]
     assert "full output blob" in issue["context_md"]
+
+
+@pytest.mark.asyncio
+async def test_claimed_at_reads_run_record_started_at(tmp_path: Path) -> None:
+    # With the claim comment removed, _claimed_at must source claim time from
+    # the latest Run record's started_at (no comment fallback needed).
+    issue_id = _seed_db(tmp_path / "podium.db", state="running")
+    adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
+
+    run = await adapter.record_run({"issue_id": issue_id, "agent": "pi", "state": "queued"})
+    await adapter.update_run(
+        run["id"], {"state": "running", "started_at": "2026-06-11T01:02:03+00:00"}
+    )
+
+    claimed = await scheduler._claimed_at(adapter, str(issue_id))
+    assert claimed is not None
+    assert claimed.isoformat() == "2026-06-11T01:02:03+00:00"
 
 
 @pytest.mark.asyncio

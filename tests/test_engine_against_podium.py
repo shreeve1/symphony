@@ -107,7 +107,7 @@ async def test_engine_dispatch_cycle_against_podium(tmp_path: Path) -> None:
     assert result.dispatched is True
     assert result.issue_id == str(issue_id)
     assert issue["state"] == "in_review"
-    assert "Symphony claimed at" in issue["comments_md"]
+    assert "Symphony claimed at" not in issue["comments_md"]
     assert "podium dispatch ok" in issue["comments_md"]
     assert "full output" in issue["context_md"]
     assert "mode=build" in prompts[0]
