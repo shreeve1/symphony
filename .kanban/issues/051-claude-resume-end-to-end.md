@@ -1,7 +1,7 @@
 ---
 id: 051
 title: Claude resume end-to-end
-status: in-progress
+status: review
 blocked_by: [047, 048, 049, 050]
 parent: null
 priority: 0
