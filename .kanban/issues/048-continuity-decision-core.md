@@ -1,7 +1,7 @@
 ---
 id: 048
 title: Continuity decision core (derive session id + resume eligibility)
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
