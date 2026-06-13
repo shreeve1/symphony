@@ -16,3 +16,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Zero defaults for an agent remain valid at load time; dispatch blocks only when that agent needs an implicit default.
 **Conventions established:** Explicit preferred models remain agent-agnostic in `resolve_model`; scheduler mismatch gate owns agent/model compatibility errors.
 **Notes for next iteration:** #043 can remove the non-`pi` engine block and rely on the mismatch gate and per-agent catalog defaults.
+
+## #042 ClaudeAgentAdapter tmux send-keys engine — 2026-06-13
+
+**What changed:** Added `claude_runner.py` with a Python-native tmux send-keys Claude adapter, file-based result/done completion, ready-pattern polling, allowlisted environment, worktree-aware cwd selection, and idempotent cleanup.
+**Files:** claude_runner.py, tests/test_claude_runner.py, .kanban/issues/042-claude-tmux-adapter.md
+**Decisions:** Kept routing out of scope; the adapter requires a pre-resolved Claude model and fails before tmux launch if `issue.resolved_model` is empty.
+**Conventions established:** Claude adapter stdout is authoritative result-file content; pane capture is ANSI-stripped stderr diagnostics only. Tests should drive tmux behavior through fake `run_func`/clock/sleep/tempdir seams.
+**Notes for next iteration:** #043 can wire `RoutingAgentAdapter` to choose `ClaudeAgentAdapter` for resolved Claude issues and keep `reasoning_effort` suffixes out of Claude model argv.

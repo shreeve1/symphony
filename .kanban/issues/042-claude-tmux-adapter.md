@@ -1,7 +1,7 @@
 ---
 id: 042
 title: ClaudeAgentAdapter — tmux send-keys engine (fake-driven, unrouted)
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 1
@@ -31,15 +31,15 @@ Contract:
 
 ## Acceptance criteria
 
-- [ ] Fake-driven unit tests cover all six lifecycle mappings, asserting exit code, `timed_out`, stdout source (result file) and stderr source (pane) for each.
-- [ ] Artifact paths in the issued tmux commands match `symphony-claude-<issue.id>-<nonce>` naming; nonce differs across two runs of the same issue.
-- [ ] Preamble written to the prompt file contains the literal result-file and done-file paths, the never-ask instruction, and the skill directive when `preferred_skill` is set (absent when not).
-- [ ] Env passed to the launch call contains only the allowlisted keys + `SYMPHONY_ISSUE_ID`; no TERM/NO_COLOR overrides.
-- [ ] Worktree case: when `issue.worktree_active` is true the cwd is the created worktree path (fake `create_worktree`), else the binding repo path.
-- [ ] Cleanup runs on every path including exceptions (assert kill+remove called after a fake raising mid-poll), and a second cleanup call does not raise.
-- [ ] Empty `resolved_model` raises `AgentRunnerError` without launching tmux.
-- [ ] No production code path invokes `engine.sh` or `claude -p`.
-- [ ] `uv run pytest` green.
+- [x] Fake-driven unit tests cover all six lifecycle mappings, asserting exit code, `timed_out`, stdout source (result file) and stderr source (pane) for each.
+- [x] Artifact paths in the issued tmux commands match `symphony-claude-<issue.id>-<nonce>` naming; nonce differs across two runs of the same issue.
+- [x] Preamble written to the prompt file contains the literal result-file and done-file paths, the never-ask instruction, and the skill directive when `preferred_skill` is set (absent when not).
+- [x] Env passed to the launch call contains only the allowlisted keys + `SYMPHONY_ISSUE_ID`; no TERM/NO_COLOR overrides.
+- [x] Worktree case: when `issue.worktree_active` is true the cwd is the created worktree path (fake `create_worktree`), else the binding repo path.
+- [x] Cleanup runs on every path including exceptions (assert kill+remove called after a fake raising mid-poll), and a second cleanup call does not raise.
+- [x] Empty `resolved_model` raises `AgentRunnerError` without launching tmux.
+- [x] No production code path invokes `engine.sh` or `claude -p`.
+- [x] `uv run pytest` green.
 
 ## Verification
 
@@ -48,3 +48,7 @@ Contract:
 ## Blocked by
 
 None - can start immediately
+
+## Implementation Notes
+
+Created `claude_runner.py` with a tmux-backed `ClaudeAgentAdapter`, injectable run/clock/sleep/tempdir/worktree seams, allowlisted environment, file-based completion gate, ready-timeout handling, and idempotent cleanup. Added fake-driven tests for lifecycle mappings, namespace/nonce behavior, preamble content, env filtering, worktree cwd selection, cleanup, empty-model guard, and no `engine.sh` / `claude -p` production path.
