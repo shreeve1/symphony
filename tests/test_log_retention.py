@@ -182,6 +182,7 @@ async def test_run_loop_schedules_log_retention_every_24h(
     async def fake_sleep(seconds):
         raise StopLoop
 
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
     monkeypatch.setattr(scheduler, "LOG_RETENTION_INTERVAL", timedelta(0))
     monkeypatch.setattr(scheduler, "run_log_retention", fake_log_retention)
     monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)

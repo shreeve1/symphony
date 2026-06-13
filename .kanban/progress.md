@@ -63,3 +63,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept live tail entirely in the web/API process and left the scheduler process model unchanged per ADR-0006. Tail reads are byte-range `rb` reads only; absent/empty/locked files degrade to no event and an empty panel.
 **Conventions established:** `run.tail` WebSocket payloads use `{ type: "run.tail", issue_id, lines }`; frontend tail rendering consumes the shared `QueryProvider` WebSocket connection and filters by issue id.
 **Notes for next iteration:** #057 can build a richer tail/steer UI on the Session tab; #056 remains the pi RPC steering channel and does not need to replace JSONL tailing.
+
+## #054 Fast re-dispatch on operator reply — 2026-06-13
+
+**What changed:** Added a cross-process wake sentinel for operator reply re-dispatch and made the scheduler break out of poll sleeps within one short interval.
+**Files:** `web/api/wake_signal.py`, `web/api/main.py`, `scheduler.py`, `web/api/tests/test_reply.py`, `tests/test_scheduler.py`, `.kanban/issues/054-fast-redispatch-on-reply.md`.
+**Decisions:** Used a filesystem sentinel (`SYMPHONY_WAKE_SENTINEL_PATH`, else `SYMPHONY_RUNTIME_DIR/reply-wake`, else `/tmp/symphony/reply-wake`) instead of an API push path, preserving ADR-0006 separate-process boundaries.
+**Conventions established:** Any successful API-side action that flips an issue back to `todo` for scheduler re-dispatch should touch the wake sentinel after the durable DB commit.
+**Notes for next iteration:** #056/#057 steering can rely on faster between-run reply pickup; this does not add live mid-run steering.
