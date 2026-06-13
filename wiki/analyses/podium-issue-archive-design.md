@@ -3,9 +3,10 @@ title: Podium issue archive ("delete button") design
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-13
 sources:
   - wiki/raw/sessions/2026-06-12-issue-archive-state-design.md
+  - wiki/raw/sessions/2026-06-13-remove-flyout-archive-button.md
   - CONTEXT.md
   - .kanban/issues/036-podium-archived-retention-purge.md
   - web/api/schema.py
@@ -22,7 +23,7 @@ tags: [podium, archive, board-ui, retention, design-decision]
 
 # Podium issue archive ("delete button") design
 
-Design accepted 2026-06-12 in a grill-me session. #034 implemented the schema/API/UI portion: `archived` is now a sixth Issue state, `GET /api/bindings/{name}/issues?state=archived` filters server-side, the Archived board column renders rightmost and defaults collapsed, and `IssueFlyout` has a no-confirm Archive button [source: .kanban/issues/034-podium-archived-state-core.md] [source: web/api/schema.py] [source: web/api/main.py] [source: web/frontend/lib/issues.ts] [source: web/frontend/components/IssueFlyout.tsx]. #035 implemented engine-terminal handling: `transition_state` no-ops for archived issues, idle archive PATCH tears down issue worktrees, and run completion logs `archived_terminal` before skipping verdict state transitions and tearing down deferred worktrees [source: .kanban/issues/035-podium-archive-engine-terminal-contract.md] [source: tracker_podium.py] [source: web/api/main.py] [source: scheduler.py]. #036 implemented retention purge: API startup and post-archive PATCH sweeps hard-delete archived issues older than 14 days, delete dependent Run rows FK-safely, unlink run logs best-effort, and remove lingering worktrees including stale `worktree_active = FALSE` drift [source: .kanban/issues/036-podium-archived-retention-purge.md] [source: web/api/main.py] [source: web/api/tests/test_archive_purge.py]. The design resolves how Podium disposes of junk issues without overloading Done — Done is load-bearing for infra issues with `worktree_active` (PATCH to done fires FF-merge + teardown) [source: web/api/main.py#L750].
+Design accepted 2026-06-12 in a grill-me session. #034 implemented the schema/API/UI portion: `archived` is now a sixth Issue state, `GET /api/bindings/{name}/issues?state=archived` filters server-side, the Archived board column renders rightmost and defaults collapsed, and `IssueFlyout` originally carried a no-confirm Archive button [source: .kanban/issues/034-podium-archived-state-core.md] [source: web/api/schema.py] [source: web/api/main.py] [source: web/frontend/lib/issues.ts] [source: web/frontend/components/IssueFlyout.tsx]. #035 implemented engine-terminal handling: `transition_state` no-ops for archived issues, idle archive PATCH tears down issue worktrees, and run completion logs `archived_terminal` before skipping verdict state transitions and tearing down deferred worktrees [source: .kanban/issues/035-podium-archive-engine-terminal-contract.md] [source: tracker_podium.py] [source: web/api/main.py] [source: scheduler.py]. #036 implemented retention purge: API startup and post-archive PATCH sweeps hard-delete archived issues older than 14 days, delete dependent Run rows FK-safely, unlink run logs best-effort, and remove lingering worktrees including stale `worktree_active = FALSE` drift [source: .kanban/issues/036-podium-archived-retention-purge.md] [source: web/api/main.py] [source: web/api/tests/test_archive_purge.py]. The design resolves how Podium disposes of junk issues without overloading Done — Done is load-bearing for infra issues with `worktree_active` (PATCH to done fires FF-merge + teardown) [source: web/api/main.py#L750].
 
 ## Decisions
 
@@ -33,7 +34,7 @@ Design accepted 2026-06-12 in a grill-me session. #034 implemented the schema/AP
 | Engine contract | Archived is never an engine Role. Engine never selects archived work; post-run honors archived as terminal: no verdict state transition, worktree torn down, output discarded [source: CONTEXT.md#tracker-contract] [source: scheduler.py] |
 | Mid-run archive | Allowed; session runs to completion; deferred worktree teardown at run completion via `remove_worktree` [source: web/api/worktree.py#L83] [source: scheduler.py]. Coding bindings: agent keeps committing to bound checkout until session end; commits stay (accepted) |
 | Board UI | General per-column minimize (−/+ collapse to strip) on all columns; archived column rightmost; collapse state in localStorage per binding; archived collapsed by default |
-| Button | "Archive" button in IssueFlyout near metadata chips, no confirm; state chip is the restore path. Card-hover affordance deferred |
+| Button | ~~"Archive" button in IssueFlyout near metadata chips, no confirm~~ — **removed 2026-06-13** (working tree); archiving now goes through the state chip (`edit-state` select, which already offers `archived` via `STATES`). State chip remains the restore path. Card-hover affordance deferred [source: wiki/raw/sessions/2026-06-13-remove-flyout-archive-button.md] [source: web/frontend/components/IssueFlyout.tsx] |
 | Retention | Implemented in #036: opportunistic sweep on archive PATCH + API startup; `state='archived' AND updated_at < now − 14 days` (hardcoded); delete order null `latest_run_id` → delete runs → delete issue, one transaction; best-effort unlink run `log_path` files; defensive worktree cleanup checks actual filesystem state, not only `worktree_active` [source: web/api/main.py] [source: web/api/tests/test_archive_purge.py] |
 
 ## Why sixth state beat a flag column
@@ -50,3 +51,4 @@ The board, counts, and flyout state chip all derive from the `STATES` array [sou
 
 - Card-hover archive affordance (separate work).
 - ADR offered for archived-as-state; declined.
+- 2026-06-13: flyout Archive button removed (state chip is now the sole archive path); change is in the working tree, not committed/deployed — needs a frontend rebuild + `deploy.sh` staging swap to go live. See C-0164.

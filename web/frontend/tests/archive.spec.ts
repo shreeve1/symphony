@@ -14,7 +14,7 @@ test("archived column is collapsed by default on fresh binding", async ({
 	expectCleanConsole(problems);
 });
 
-test("archive button moves issue to archived column", async ({
+test("state chip moves issue to archived column", async ({
 	page,
 	problems,
 }) => {
@@ -29,8 +29,8 @@ test("archive button moves issue to archived column", async ({
 		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
-	// Click Archive button.
-	await page.getByTestId("archive-issue").click();
+	// Archive via the state chip.
+	await page.getByTestId("edit-state").selectOption("archived");
 
 	// Wait for the PATCH to settle.
 	await page.waitForResponse(
@@ -98,28 +98,6 @@ test("state chip restores archived issue", async ({ page, problems }) => {
 			.getByTestId("issue-card")
 			.filter({ hasText: "Restore me" }),
 	).toBeVisible();
-
-	expectCleanConsole(problems);
-});
-
-test("archive button hidden on already archived issue", async ({
-	page,
-	problems,
-}) => {
-	seedIssue("trading", "Already archived", "archived");
-
-	await page.goto("/trading");
-
-	// Expand archived column and open the issue.
-	await page.getByTestId("expand-archived").click();
-	await page
-		.getByTestId("issue-card")
-		.filter({ hasText: "Already archived" })
-		.click();
-	await expect(page.getByTestId("issue-flyout")).toBeVisible();
-
-	// Archive button should not exist.
-	await expect(page.getByTestId("archive-issue")).toBeHidden();
 
 	expectCleanConsole(problems);
 });
