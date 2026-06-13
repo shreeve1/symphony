@@ -1,7 +1,7 @@
 ---
 id: 044
 title: Claude startup probe + orphan tmux socket reaper
-status: review
+status: done
 blocked_by: [042, 043]
 parent: null
 priority: 2
@@ -20,11 +20,11 @@ Startup hardening for the claude engine, per the ADR-0001 amendment (`docs/adr/0
 
 ## Acceptance criteria
 
-- [ ] Probe success path: fake `run_func` returning 0 for `claude --version` → flag clear, claude dispatch gate passes (with #043 wiring).
-- [ ] Probe failure paths (binary missing → OSError; non-zero exit; timeout): startup completes without raising, loud log emitted, subsequent claude dispatch blocks with the probe-failure message, pi dispatch unaffected.
-- [ ] Reaper test with fake glob + fake tmux runner: two stale sockets → two kill-server invocations + both socket files removed + summary log; zero sockets → no tmux calls; kill-server failure on one socket does not abort reaping the other.
-- [ ] Reaper invoked exactly once per process start (not once per binding) — assert call count with two bindings configured.
-- [ ] `uv run pytest` green.
+- [x] Probe success path: fake `run_func` returning 0 for `claude --version` → flag clear, claude dispatch gate passes (with #043 wiring).
+- [x] Probe failure paths (binary missing → OSError; non-zero exit; timeout): startup completes without raising, loud log emitted, subsequent claude dispatch blocks with the probe-failure message, pi dispatch unaffected.
+- [x] Reaper test with fake glob + fake tmux runner: two stale sockets → two kill-server invocations + both socket files removed + summary log; zero sockets → no tmux calls; kill-server failure on one socket does not abort reaping the other.
+- [x] Reaper invoked exactly once per process start (not once per binding) — assert call count with two bindings configured.
+- [x] `uv run pytest` green.
 
 ## Verification
 
@@ -34,3 +34,7 @@ Startup hardening for the claude engine, per the ADR-0001 amendment (`docs/adr/0
 
 - Blocked by #042
 - Blocked by #043
+
+## Implementation Notes
+
+Added fail-soft `verify_claude_support` startup probing, module-level Claude probe failure state, and a dispatch-gate block that affects Claude issues only. Added a startup orphan socket reaper for `/tmp/symphony-claude-*.sock`, wired probe + reaper once globally before per-binding startup reconcile, and covered probe, reaper, dispatch-gate, and multi-binding startup behavior with tests. Verification passed with `uv run pytest -q` (690 passed, 1 skipped), full `uv run pytest` (690 passed, 1 skipped), diff-check, secret grep, and fresh Ralph review.

@@ -5,7 +5,8 @@ This file tracks implementation notes across Ralph iterations.
 # Conventions & Decisions
 
 - `models.yml` allows at most one `default: true` entry per agent. Missing per-agent defaults are valid at catalog load time but block dispatch when an issue for that agent lacks `preferred_model`.
-- Until Claude dispatch wiring lands, `_apply_dispatch_gate` still blocks non-`pi` agents before model mismatch checks.
+- Claude dispatch is wired. A startup Claude probe failure blocks only Claude issues at the dispatch gate; Pi dispatch remains unaffected.
+- Claude startup runs one global orphan tmux socket reaper for `/tmp/symphony-claude-*.sock` before per-binding reconcile.
 
 # Iteration Log
 
@@ -32,3 +33,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Claude post-run parsing treats pane stderr as diagnostics only because it can echo prompt vocabulary; Pi continues scanning stdout+stderr. Context compaction remains engine housekeeping through Pi defaults even for Claude issues.
 **Conventions established:** Non-Pi Run rows keep resolved provider/model verbatim; Claude resolved models never receive reasoning-effort suffixes.
 **Notes for next iteration:** #044 can add Claude startup probe and orphan socket reaping now that real Claude dispatch routing exists.
+
+## #044 Claude startup probe + orphan socket reaper — 2026-06-13
+
+**What changed:** Added fail-soft Claude startup probing, module-level probe failure state, Claude-only dispatch blocking on probe failure, and a startup orphan tmux socket reaper.
+**Files:** claude_runner.py, scheduler.py, main.py, tests/conftest.py, tests/test_claude_runner.py, tests/test_dispatch_gate.py, tests/test_main.py, .kanban/issues/044-claude-startup-probe-and-socket-reaper.md
+**Decisions:** Missing or broken Claude support no longer fails Symphony boot; it blocks only Claude dispatch until the install is fixed and the service restarts.
+**Conventions established:** Startup cleanup of Claude tmux sockets runs exactly once globally before per-binding reconcile; probe checks use `claude --version` only and never launch a live Claude session.
+**Notes for next iteration:** #045 is frontend-only and should keep Playwright manual for UI flows unless explicitly requested.
