@@ -24,3 +24,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept routing out of scope; the adapter requires a pre-resolved Claude model and fails before tmux launch if `issue.resolved_model` is empty.
 **Conventions established:** Claude adapter stdout is authoritative result-file content; pane capture is ANSI-stripped stderr diagnostics only. Tests should drive tmux behavior through fake `run_func`/clock/sleep/tempdir seams.
 **Notes for next iteration:** #043 can wire `RoutingAgentAdapter` to choose `ClaudeAgentAdapter` for resolved Claude issues and keep `reasoning_effort` suffixes out of Claude model argv.
+
+## #043 Wire claude dispatch end-to-end — 2026-06-13
+
+**What changed:** Wired `ClaudeAgentAdapter` into runtime construction and `RoutingAgentAdapter`, allowed Claude through the dispatch gate, stored Claude Run rows with empty provider and bare model id, isolated Claude verdict/summary/gate parsing to stdout, and kept context compaction on the Pi adapter.
+**Files:** agent_runner.py, main.py, scheduler.py, tests/test_agent_runner.py, tests/test_dispatch_compaction.py, tests/test_dispatch_gate.py, tests/test_trading_podium_dispatch.py, .kanban/issues/043-wire-claude-dispatch.md
+**Decisions:** Claude post-run parsing treats pane stderr as diagnostics only because it can echo prompt vocabulary; Pi continues scanning stdout+stderr. Context compaction remains engine housekeeping through Pi defaults even for Claude issues.
+**Conventions established:** Non-Pi Run rows keep resolved provider/model verbatim; Claude resolved models never receive reasoning-effort suffixes.
+**Notes for next iteration:** #044 can add Claude startup probe and orphan socket reaping now that real Claude dispatch routing exists.

@@ -1,7 +1,7 @@
 ---
 id: 043
 title: Wire claude dispatch end-to-end through gate, routing, and verdict parsing
-status: review
+status: done
 blocked_by: [041, 042]
 parent: null
 priority: 1
@@ -25,17 +25,26 @@ Changes:
 
 ## Acceptance criteria
 
-- [ ] Scheduler-level test: candidate with `agent:claude` label + claude model dispatches through a fake claude adapter (no "engine is not wired" block) and records a Run row with `agent="claude"`, `provider=""`, `model="claude-opus-4-8"`.
-- [ ] Pi dispatch regression: existing pi gate/dispatch tests pass without modification of their expected argv/fields (`:high` suffix and provider intact).
-- [ ] `RoutingAgentAdapter` test: same binding, one issue labeled `agent:claude` and one `agent:pi`, routed to the respective fake adapters.
-- [ ] Claude run whose stderr (pane) contains "approval required" and a bogus `SYMPHONY_SUMMARY:` line, but whose stdout (result file) is clean, does NOT trip the approval gate and takes its summary from stdout. Equivalent pi-shaped run still trips the gate (stderr still scanned for pi).
-- [ ] Claude run with non-empty markerless stdout lands the default `review` verdict (parity with pi).
-- [ ] Compaction test: a claude-labeled candidate over the compaction threshold compacts via the pi adapter with the pi default model (assert the fake pi adapter received the call and the fake claude adapter did not), and the subsequent dispatch still routes to the claude adapter.
-- [ ] `uv run pytest` green.
+- [x] Scheduler-level test: candidate with `agent:claude` label + claude model dispatches through a fake claude adapter (no "engine is not wired" block) and records a Run row with `agent="claude"`, `provider=""`, `model="claude-opus-4-8"`.
+- [x] Pi dispatch regression: existing pi gate/dispatch tests pass without modification of their expected argv/fields (`:high` suffix and provider intact).
+- [x] `RoutingAgentAdapter` test: same binding, one issue labeled `agent:claude` and one `agent:pi`, routed to the respective fake adapters.
+- [x] Claude run whose stderr (pane) contains "approval required" and a bogus `SYMPHONY_SUMMARY:` line, but whose stdout (result file) is clean, does NOT trip the approval gate and takes its summary from stdout. Equivalent pi-shaped run still trips the gate (stderr still scanned for pi).
+- [x] Claude run with non-empty markerless stdout lands the default `review` verdict (parity with pi).
+- [x] Compaction test: a claude-labeled candidate over the compaction threshold compacts via the pi adapter with the pi default model (assert the fake pi adapter received the call and the fake claude adapter did not), and the subsequent dispatch still routes to the claude adapter.
+- [x] `uv run pytest` green.
 
 ## Verification
 
 `uv run pytest`
+
+## Implementation Notes
+
+- Removed the non-pi dispatch gate block while keeping agent/model mismatch validation.
+- Added Claude routing to `RoutingAgentAdapter` and runtime construction.
+- Stored Claude run provider/model fields verbatim (`provider=""`, bare model id).
+- Restricted Claude post-run verdict, summary, permission, and approval parsing to stdout only; Pi keeps stdout+stderr parsing.
+- Kept context compaction on the Pi adapter with the Pi catalog default before subsequent Claude dispatch.
+- Verification passed: `uv run pytest` (681 passed, 1 skipped). Fresh Ralph review passed.
 
 ## Blocked by
 
