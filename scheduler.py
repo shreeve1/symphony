@@ -398,17 +398,20 @@ def _format_previous_comment_body(body: str) -> str:
     )
 
 
-def _extract_summary(result: AgentResult, secrets: Sequence[str]) -> str | None:
-    """Pull SYMPHONY_SUMMARY from the raw streams and apply secret redaction.
+def _extract_summary(
+    result: AgentResult, secrets: Sequence[str], *, include_stderr: bool = True
+) -> str | None:
+    """Pull SYMPHONY_SUMMARY from raw streams and apply secret redaction.
 
     Summary extraction runs against the *unsanitized* stdout/stderr because
     `_sanitize_report` keeps only the last 2 KB of stderr (for failure-comment
     bounding); a summary line earlier in the stream would otherwise be lost.
-    The captured line is still passed through ANSI stripping, whitespace
-    collapse, and SUMMARY_MAX_CHARS truncation inside `_parse_summary_marker`.
+    Claude pane stderr echoes the prompt, so callers can restrict parsing to
+    stdout only for Claude runs.
     """
 
-    summary = _parse_summary_marker(result.stdout, result.stderr)
+    streams = (result.stdout, result.stderr) if include_stderr else (result.stdout,)
+    summary = _parse_summary_marker(*streams)
     if summary is None:
         return None
     for secret in secrets:
@@ -505,10 +508,24 @@ async def _maybe_compact_context(
             )
         )
     compaction = import_module("context_compaction")
+    context = str(getattr(candidate, "context_md", "") or "")
+    if vars(compaction)["estimate_tokens"](context) <= int(settings["threshold_tokens"]):
+        return candidate
+    try:
+        pi_entry = resolve_model(None, load_models(), agent="pi")
+    except Exception as exc:
+        raise SchedulerContextCompactionError(
+            f"context compaction model resolution failed: {exc}"
+        ) from exc
+    compaction_candidate = replace(
+        candidate,
+        resolved_provider=str(pi_entry["provider"]),
+        resolved_model=f"{pi_entry['id']}:high",
+    )
     try:
         compacted = await asyncio.to_thread(
             vars(compaction)["maybe_compact"],
-            candidate,
+            compaction_candidate,
             resolved_binding,
             agent_runner,
             threshold_tokens=int(settings["threshold_tokens"]),
@@ -539,11 +556,6 @@ def _apply_dispatch_gate(
     defaults silently.
     """
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
-    if agent != "pi":
-        return candidate, (
-            f"Dispatch blocked: agent `{agent}` engine is not wired (pi only). "
-            "Clear preferred_agent or set it to `pi`."
-        )
     try:
         entry = resolve_model(
             getattr(candidate, "preferred_model", None), load_models(), agent=agent
@@ -569,12 +581,21 @@ def _apply_dispatch_gate(
                 f"Dispatch blocked: skill source for `{skill}` is missing "
                 f"on disk: {skill_source}"
             )
-    effort = getattr(candidate, "reasoning_effort", "") or "high"
+    if agent == "pi":
+        effort = getattr(candidate, "reasoning_effort", "") or "high"
+        return (
+            replace(
+                candidate,
+                resolved_provider=str(entry["provider"]),
+                resolved_model=f"{entry['id']}:{effort}",
+            ),
+            None,
+        )
     return (
         replace(
             candidate,
-            resolved_provider=str(entry["provider"]),
-            resolved_model=f"{entry['id']}:{effort}",
+            resolved_provider="",
+            resolved_model=str(entry["id"]),
         ),
         None,
     )
@@ -600,13 +621,18 @@ async def _start_run_record(
         else "pi"
     )
     base_branch = getattr(candidate, "base_branch", "") or config.base_branch
+    resolved_provider = getattr(candidate, "resolved_provider", "")
+    resolved_model = getattr(candidate, "resolved_model", "")
+    if agent == "pi":
+        resolved_provider = resolved_provider or config.pi_provider
+        resolved_model = resolved_model or config.pi_model
     run_payload = {
         "issue_id": candidate.id,
         "agent": agent,
-        # Resolved by the dispatch gate from models.yml; config values are the
-        # legacy Plane-path fallback only.
-        "provider": getattr(candidate, "resolved_provider", "") or config.pi_provider,
-        "model": getattr(candidate, "resolved_model", "") or config.pi_model,
+        # Resolved by the dispatch gate from models.yml; legacy config fallback
+        # applies only to pi. Non-pi agents store resolved fields verbatim.
+        "provider": resolved_provider,
+        "model": resolved_model,
         "state": "queued",
         "base_branch": base_branch,
         "skill_invoked": getattr(candidate, "preferred_skill", None),
@@ -843,6 +869,7 @@ async def run_tick(
     *,
     agent_runner: Callable[..., AgentResult],
     render_prompt: Callable[[CandidateIssue], str],
+    compaction_agent_runner: Callable[..., AgentResult] | None = None,
     lock_path: Path | None = None,
     poller: Callable[[TrackerAdapter], Any] | None = None,
     repo_dirty: Callable[[Path], bool] | None = None,
@@ -1103,7 +1130,7 @@ async def run_tick(
                 config,
                 adapter,
                 candidate,
-                agent_runner,
+                compaction_agent_runner or agent_runner,
                 now=now,
                 binding=tick_binding,
             )
@@ -1161,6 +1188,12 @@ async def run_tick(
             )
 
             secrets = _collect_secrets(config)
+            dispatch_agent = (
+                tick_binding.resolve_agent(candidate.labels)
+                if tick_binding is not None
+                else "pi"
+            )
+            parse_stderr = dispatch_agent != "claude"
 
             try:
                 result = await asyncio.to_thread(agent_runner, candidate, prompt)
@@ -1201,7 +1234,7 @@ async def run_tick(
             if result.timed_out:
                 msg = f"Agent timed out after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
-                summary = _extract_summary(result, secrets)
+                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
@@ -1237,7 +1270,7 @@ async def run_tick(
             if result.exit_code != 0:
                 msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)
-                summary = _extract_summary(result, secrets)
+                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 msg += "\n\n" + _format_timeline(
@@ -1273,6 +1306,7 @@ async def run_tick(
                 return TickResult(True, "nonzero", candidate.id, mode=mode)
 
             stdout, stderr = _format_report(result, secrets)
+            gate_stderr = stderr if parse_stderr else ""
 
             if not is_coding:
                 scheduled_after_agent = await _detect_agent_schedule(
@@ -1289,11 +1323,11 @@ async def run_tick(
                         True, scheduled_after_agent, candidate.id, mode=mode
                     )
 
-            if _hit_permission_gate(stdout, stderr):
+            if _hit_permission_gate(stdout, gate_stderr):
                 msg = (
                     "Agent could not complete because required tool access was denied."
                 )
-                summary = _extract_summary(result, secrets)
+                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _finish_run_record(
@@ -1321,9 +1355,9 @@ async def run_tick(
                 )
                 return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
-            if _hit_approval_gate(stdout, stderr):
+            if _hit_approval_gate(stdout, gate_stderr):
                 msg = "Agent could not complete because operator approval is required."
-                summary = _extract_summary(result, secrets)
+                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
                 if stderr:
                     msg += f"\n\n{_format_stderr_summary(stderr)}"
                 await _finish_run_record(
@@ -1352,7 +1386,7 @@ async def run_tick(
                 return TickResult(True, "approval-gate", candidate.id, mode=mode)
 
             verdict = _parse_result_marker(stdout)
-            summary = _extract_summary(result, secrets)
+            summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
 
             def _completion_body(verdict_label: str) -> str:
                 if summary:
@@ -1513,6 +1547,7 @@ async def _dispatch_one(
     run_blocked_reconciler: bool,
     dispatch_state: _DispatchState | None = None,
     binding: ProjectBinding | None = None,
+    compaction_agent_runner: AgentAdapter | None = None,
 ) -> TickResult:
     """Dispatch a single Run to the semaphore-bounded slot.
 
@@ -1528,6 +1563,7 @@ async def _dispatch_one(
                 adapter,
                 agent_runner=agent_runner,
                 render_prompt=render_prompt,
+                compaction_agent_runner=compaction_agent_runner,
                 notifier=notifier,
                 run_blocked_reconciler=run_blocked_reconciler,
                 dispatch_state=state,
@@ -1796,6 +1832,7 @@ async def run_loop(
     render_prompt: Callable[[CandidateIssue], str],
     notifier: TelegramNotifier | None = None,
     binding: ProjectBinding | None = None,
+    compaction_agent_runner: AgentAdapter | None = None,
 ) -> None:
     """Run the concurrent dispatcher forever, sleeping between dispatches.
 
@@ -1859,7 +1896,11 @@ async def run_loop(
         # Runs are active.
         slots_available = config.run_cap - len(active_tasks)
         if slots_available > 0 and cooldown_remaining <= 0:
-            dispatch_kwargs = {"binding": binding} if binding is not None else {}
+            dispatch_kwargs: dict[str, Any] = {}
+            if binding is not None:
+                dispatch_kwargs["binding"] = binding
+            if compaction_agent_runner is not None:
+                dispatch_kwargs["compaction_agent_runner"] = compaction_agent_runner
             task = asyncio.create_task(
                 _dispatch_one(
                     config,

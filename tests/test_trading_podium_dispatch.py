@@ -11,7 +11,7 @@ import pytest
 
 import main
 import scheduler
-from agent_runner import AgentResult
+from agent_runner import AgentResult, RoutingAgentAdapter
 from config import SymphonyConfig
 from tracker_podium import PodiumTrackerAdapter
 from web.api.schema import SCHEMA_SQL
@@ -59,7 +59,7 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
+def _seed_db(path: Path, *, worktree_active: bool = False, preferred_agent: str = "pi") -> int:
     skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
     skill_file.parent.mkdir(parents=True, exist_ok=True)
     skill_file.write_text("---\nname: dev-build\n---\nbuild it\n", encoding="utf-8")
@@ -77,9 +77,9 @@ def _seed_db(path: Path, *, worktree_active: bool = False) -> int:
               binding_name, title, description, state, preferred_agent,
               preferred_skill, worktree_active, base_branch, comments_md,
               context_md, created_at, updated_at
-            ) VALUES ('trading', 'Smoke cutover', 'Exercise trading dispatch', 'todo', 'pi', '/dev-build', ?, 'main', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            ) VALUES ('trading', 'Smoke cutover', 'Exercise trading dispatch', 'todo', ?, '/dev-build', ?, 'main', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
             """,
-            (worktree_active,),
+            (preferred_agent, worktree_active),
         )
         connection.commit()
         assert cursor.lastrowid is not None
@@ -165,6 +165,77 @@ async def test_trading_podium_dispatch_records_run_log_and_context(
     log = Path(run["log_path"]).read_text(encoding="utf-8")
     assert "stdout body" in log
     assert "stderr body" in log
+
+
+@pytest.mark.asyncio
+async def test_claude_podium_dispatch_records_bare_model_and_stdout_only_parsing(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, preferred_agent="claude")
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    calls: list[str] = []
+
+    def pi_adapter(issue, rendered_prompt: str) -> AgentResult:
+        calls.append("pi")
+        return AgentResult(0, 10, False, stdout="pi should not run")
+
+    def claude_adapter(issue, rendered_prompt: str) -> AgentResult:
+        calls.append("claude")
+        assert issue.resolved_provider == ""
+        assert issue.resolved_model == "claude-opus-4-8"
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="clean markerless stdout",
+            stderr=(
+                "approval required\n"
+                "SYMPHONY_SUMMARY: bogus pane summary from echoed prompt"
+            ),
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=RoutingAgentAdapter(
+            binding,
+            pi_adapter=pi_adapter,
+            claude_adapter=claude_adapter,
+        ),
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+    issue = await adapter.get_issue(str(issue_id))
+    run = await adapter.get_run(str(issue["latest_run_id"]))
+
+    assert calls == ["claude"]
+    assert result.reason == "agent-clean-review"
+    assert issue["state"] == "in_review"
+    assert run is not None
+    assert run["agent"] == "claude"
+    assert run["provider"] == ""
+    assert run["model"] == "claude-opus-4-8"
+    assert run["verdict"] == "review"
+    assert run["summary"] is None
+    assert "bogus pane summary" not in issue["comments_md"]
 
 
 @pytest.mark.asyncio

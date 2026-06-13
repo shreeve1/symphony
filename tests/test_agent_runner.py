@@ -191,11 +191,15 @@ def test_pi_agent_adapter_delegates_to_pi_runner(monkeypatch, tmp_path: Path) ->
 
 
 
-def test_routing_agent_adapter_routes_to_pi(tmp_path: Path) -> None:
+def test_routing_agent_adapter_routes_by_resolved_agent(tmp_path: Path) -> None:
     seen: list[str] = []
 
     def pi_adapter_fn(issue, prompt):
         seen.append("pi")
+        return AgentResult(0, 1, False)
+
+    def claude_adapter_fn(issue, prompt):
+        seen.append("claude")
         return AgentResult(0, 1, False)
 
     binding = ProjectBinding(
@@ -205,11 +209,26 @@ def test_routing_agent_adapter_routes_to_pi(tmp_path: Path) -> None:
         base_branch="main",
         tracker_contract=_config(tmp_path).bindings[0].tracker_contract,
     )
-    router = RoutingAgentAdapter(binding, pi_adapter=pi_adapter_fn)
+    router = RoutingAgentAdapter(
+        binding,
+        pi_adapter=pi_adapter_fn,
+        claude_adapter=claude_adapter_fn,
+    )
 
     router(_issue(), "prompt")
+    router(
+        CandidateIssue(
+            id="issue-456",
+            identifier="HOM-456",
+            name="Claude issue",
+            description="Test description",
+            labels=("agent:claude",),
+            created_at="2026-05-04T00:00:00+00:00",
+        ),
+        "prompt",
+    )
 
-    assert seen == ["pi"]
+    assert seen == ["pi", "claude"]
 
 
 def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> None:

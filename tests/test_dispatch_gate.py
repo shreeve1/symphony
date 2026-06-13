@@ -58,11 +58,13 @@ def _candidate(**overrides) -> CandidateIssue:
     return CandidateIssue(**fields)
 
 
-def test_claude_agent_blocks_loudly(catalog: Path) -> None:
-    _, error = _apply_dispatch_gate(
+def test_claude_agent_and_model_pass_gate(catalog: Path) -> None:
+    candidate, error = _apply_dispatch_gate(
         _candidate(labels=("agent:claude",)), _binding()
     )
-    assert error is not None and "not wired" in error
+    assert error is None
+    assert candidate.resolved_provider == ""
+    assert candidate.resolved_model == "claude-fable-5"
 
 
 def test_unknown_model_blocks_loudly(catalog: Path) -> None:

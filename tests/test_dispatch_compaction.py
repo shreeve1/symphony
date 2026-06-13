@@ -44,7 +44,7 @@ def _config(tmp_path: Path) -> SymphonyConfig:
     return config.for_binding(binding)
 
 
-def _seed_db(path: Path) -> int:
+def _seed_db(path: Path, *, preferred_agent: str = "pi") -> int:
     # The dispatch gate verifies the skill source exists on disk, so the
     # seeded row must point at a real SKILL.md.
     skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
@@ -72,9 +72,9 @@ def _seed_db(path: Path) -> int:
               binding_name, title, description, state, preferred_agent,
               preferred_skill, worktree_active, base_branch, comments_md,
               context_md, created_at, updated_at
-            ) VALUES ('trading', 'Compact me', 'Exercise compaction', 'todo', 'pi', '/dev-build', 0, 'main', '', ?, '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            ) VALUES ('trading', 'Compact me', 'Exercise compaction', 'todo', ?, '/dev-build', 0, 'main', '', ?, '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
             """,
-            ("old run log\n" * 20,),
+            (preferred_agent, "old run log\n" * 20),
         )
         connection.commit()
         assert cursor.lastrowid is not None
@@ -148,6 +148,75 @@ async def test_dispatch_compacts_context_before_operator_run_without_run_row(
     assert run_count == 1
     assert len(prompts) == 2
     assert runs
+
+
+@pytest.mark.asyncio
+async def test_claude_dispatch_compacts_with_pi_adapter_then_dispatches_claude(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, preferred_agent="claude")
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    pi_calls: list[tuple[str, str]] = []
+    claude_calls: list[tuple[str, str]] = []
+
+    def pi_compactor(issue, rendered_prompt: str) -> AgentResult:
+        pi_calls.append((issue.resolved_provider, issue.resolved_model))
+        assert COMPACTED_CONTEXT_MARKER in rendered_prompt
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout=f"{COMPACTED_CONTEXT_MARKER}\ncompacted dispatch context",
+            stderr="",
+        )
+
+    def claude_runner(issue, rendered_prompt: str) -> AgentResult:
+        claude_calls.append((issue.resolved_provider, issue.resolved_model))
+        assert "compacted dispatch context" in rendered_prompt
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: claude dispatch ok",
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=claude_runner,
+        compaction_agent_runner=pi_compactor,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+    issue = await adapter.get_issue(str(issue_id))
+    run = await adapter.get_run(str(issue["latest_run_id"]))
+
+    assert result.reason == "agent-marker-review"
+    assert pi_calls == [("openai-codex", "gpt-5.5:high")]
+    assert claude_calls == [("", "claude-opus-4-8")]
+    assert run is not None
+    assert run["agent"] == "claude"
+    assert run["provider"] == ""
+    assert run["model"] == "claude-opus-4-8"
 
 
 @pytest.mark.asyncio

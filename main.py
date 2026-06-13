@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from agent_runner import (
     AgentAdapter,
@@ -15,6 +15,7 @@ from agent_runner import (
     RoutingAgentAdapter,
     verify_pi_support,
 )
+from claude_runner import ClaudeAgentAdapter
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
@@ -36,6 +37,7 @@ class BindingRuntime:
     transport: ClosablePlaneTransport | None
     adapter: TrackerAdapter
     agent_adapter: AgentAdapter
+    pi_adapter: AgentAdapter | None = None
     binding: ProjectBinding | None = None
 
 
@@ -108,6 +110,7 @@ def _build_binding_runtime(
             binding_config.plane_api_url, binding_config.plane_api_key
         )
         adapter = build_adapter(transport, contract=binding.tracker_contract)
+    pi_adapter = PiAgentAdapter(binding_config)
     return BindingRuntime(
         name=binding.name,
         config=binding_config,
@@ -115,8 +118,10 @@ def _build_binding_runtime(
         adapter=adapter,
         agent_adapter=RoutingAgentAdapter(
             binding=binding,
-            pi_adapter=PiAgentAdapter(binding_config),
+            pi_adapter=pi_adapter,
+            claude_adapter=ClaudeAgentAdapter(binding_config),
         ),
+        pi_adapter=pi_adapter,
         binding=binding,
     )
 
@@ -157,12 +162,11 @@ async def run_bindings_loop(
                     cleaned,
                 )
         # Each binding runs its own concurrent dispatcher loop.
-        tasks = [
-            run_loop(
-                runtime.config,
-                runtime.adapter,
-                agent_runner=runtime.agent_adapter,
-                render_prompt=(
+        tasks = []
+        for runtime in runtimes:
+            loop_kwargs: dict[str, Any] = {
+                "agent_runner": runtime.agent_adapter,
+                "render_prompt": (
                     lambda issue, contract=runtime.adapter.contract, repo_path=runtime.config.homelab_repo_path, binding=runtime.binding: (
                         _render_candidate_prompt(
                             issue,
@@ -173,11 +177,18 @@ async def run_bindings_loop(
                         )
                     )
                 ),
-                notifier=notifier,
-                binding=runtime.binding,
+                "notifier": notifier,
+                "binding": runtime.binding,
+            }
+            if runtime.pi_adapter is not None:
+                loop_kwargs["compaction_agent_runner"] = runtime.pi_adapter
+            tasks.append(
+                run_loop(
+                    runtime.config,
+                    runtime.adapter,
+                    **loop_kwargs,
+                )
             )
-            for runtime in runtimes
-        ]
         await asyncio.gather(*tasks)
     finally:
         for runtime in runtimes:

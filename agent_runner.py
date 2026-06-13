@@ -325,13 +325,19 @@ class PiAgentAdapter:
 
 @dataclass(frozen=True)
 class RoutingAgentAdapter:
-    """Route to pi agent (claude paused for v2)."""
+    """Route each issue to the agent resolved by its binding labels."""
 
     binding: ProjectBinding
     pi_adapter: AgentAdapter
+    claude_adapter: AgentAdapter
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
-        return self.pi_adapter(issue, rendered_prompt)
+        agent = self.binding.resolve_agent(issue.labels)
+        if agent == "pi":
+            return self.pi_adapter(issue, rendered_prompt)
+        if agent == "claude":
+            return self.claude_adapter(issue, rendered_prompt)
+        raise AgentRunnerError(f"No agent adapter configured for `{agent}`")
 
 
 def _strip_ansi(text: str) -> str:

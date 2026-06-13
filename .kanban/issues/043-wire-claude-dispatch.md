@@ -1,11 +1,13 @@
 ---
 id: 043
 title: Wire claude dispatch end-to-end through gate, routing, and verdict parsing
-status: pending
+status: in-progress
 blocked_by: [041, 042]
 parent: null
 priority: 1
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
