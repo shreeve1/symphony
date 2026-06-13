@@ -1,7 +1,7 @@
 ---
 id: 053
 title: Live Session Tail — stream the running agent's session file to the flyout
-status: in-progress
+status: review
 blocked_by: [050, 051]
 parent: null
 priority: 0
