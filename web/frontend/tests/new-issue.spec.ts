@@ -75,7 +75,9 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 	await page.getByTestId("new-issue-agent").fill("claude");
 	await page.getByTestId("new-issue-model").click();
 	await expect(
-		page.getByTestId("new-issue-model-option").filter({ hasText: "claude-fable-5" }),
+		page
+			.getByTestId("new-issue-model-option")
+			.filter({ hasText: "claude-fable-5" }),
 	).toBeVisible();
 	await expect(
 		page
@@ -90,7 +92,9 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 			.filter({ hasText: "gpt-5.3-codex-spark" }),
 	).toBeVisible();
 	await expect(
-		page.getByTestId("new-issue-model-option").filter({ hasText: "claude-fable-5" }),
+		page
+			.getByTestId("new-issue-model-option")
+			.filter({ hasText: "claude-fable-5" }),
 	).toHaveCount(0);
 
 	await page.getByTestId("new-issue-agent").fill("custom-agent");
@@ -107,8 +111,12 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 		.filter({ hasText: title });
 	await expect(todoCard).toBeVisible();
 	await todoCard.click();
-	await expect(page.getByTestId("edit-preferred_agent")).toHaveValue("custom-agent");
-	await expect(page.getByTestId("edit-preferred_model")).toHaveValue("custom-model");
+	await expect(page.getByTestId("edit-preferred_agent")).toHaveValue(
+		"custom-agent",
+	);
+	await expect(page.getByTestId("edit-preferred_model")).toHaveValue(
+		"custom-model",
+	);
 
 	expectCleanConsole(problems);
 });
@@ -162,9 +170,9 @@ test("agent-aware model preselect switches default with agent", async ({
 
 	// Agent field starts empty → no default preselected.
 	await page.getByTestId("new-issue-model").click();
-	await expect(
-		page.getByTestId("new-issue-model-option").first(),
-	).toHaveText(/^—/);
+	await expect(page.getByTestId("new-issue-model-option").first()).toHaveText(
+		/^—/,
+	);
 	await page.getByTestId("new-issue-model").blur();
 
 	// Select pi → model preselects pi default (gpt-5.5).

@@ -231,7 +231,9 @@ function NewIssueModal({
 	});
 	const skillNames = (skills.data ?? []).map((s) => s.name);
 	const skillOptions = skillNames.map((name) => ({ value: name }));
-	const agentOptions = (options.data?.agents ?? []).map((name) => ({ value: name }));
+	const agentOptions = (options.data?.agents ?? []).map((name) => ({
+		value: name,
+	}));
 	const modelOptions = (options.data?.models ?? [])
 		.filter((option: ModelOption) => !agent || option.agent === agent)
 		.map((option: ModelOption) => ({
