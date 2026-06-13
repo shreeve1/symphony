@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #050 pi RPC dispatch + resume wiring
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #050 implementation; commits `831e9f3`, `09f904f`, `9177bf1`; `.kanban/issues/050-pi-resume-end-to-end.md`; `.kanban/progress.md`; `agent_runner.py`; `scheduler.py`; `config.py`; `main.py`; `plane_adapter.py`; `tracker_podium.py`; `prompt_renderer.py`; `tests/test_agent_runner.py`; `tests/test_dispatch_compaction.py`; existing ADR-0009/ADR-0010 Session Resume wiki pages.
+- Outputs: updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/analyses/adr-0009-session-resume-continuity.md`; updated `wiki/analyses/adr-0010-pi-rpc-dispatch-for-live-steering.md`; updated `wiki/CLAIMS.md` (C-0181..C-0183 added; C-0175/C-0178 notes updated); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured `PiRpcAgentAdapter`, per-binding `pi_mode: rpc` opt-in, scheduler resume eligibility/rendering/fallback/run-row wiring, and context-compaction skip on resume. Verification passed: issue command `uv run pytest tests/test_dispatch_compaction.py tests/test_scheduler*.py tests/test_session_continuity.py tests/test_agent_runner*.py -q` (166 passed), full `uv run pytest -q` passed on retry after one transient SQLite busy-test failure was green in isolation, touched-file LSP diagnostics clean, `git diff --check`, secret-pattern diff scan, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-13] session-update | #049 delta-only resume prompt rendering
 
 - Actor: agent (Pi, Ralph + wiki update)

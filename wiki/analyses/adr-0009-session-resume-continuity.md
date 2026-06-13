@@ -8,6 +8,9 @@ sources:
   - wiki/raw/adr-0009-session-resume-continuity.md
   - docs/adr/0009-session-resume-continuity.md
   - wiki/raw/sessions/2026-06-13-session-resume-continuity-design.md
+  - .kanban/issues/050-pi-resume-end-to-end.md
+  - scheduler.py
+  - agent_runner.py
 confidence: high
 tags: [adr, session-resume, continuity, re-feed, decision, design-stage, partially-implemented]
 ---
@@ -40,8 +43,8 @@ Continuity now depends on hidden filesystem state (`~/.claude/projects`, `~/.pi/
 
 ## Scope note
 
-`accepted` and **partially implemented** as of 2026-06-13. Live behavior is still pure re-feed because adapters are not wired yet. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), and #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`). Remaining backlog `.kanban/issues/050`–`055` covers pi/Claude end-to-end resume, Question Park, Session Tail, fast re-dispatch, and checkpointed exploration; #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
+`accepted` and **partially implemented** as of 2026-06-13. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`), and #050 pi RPC dispatch/resume wiring. Pi RPC bindings can now take the Session Resume path when eligibility passes; non-RPC, ineligible, runtime-failed, and Claude paths still fall back to re-feed. Remaining backlog `.kanban/issues/051`–`055` covers Claude resume, Question Park, Session Tail, fast re-dispatch, and checkpointed exploration; #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
 
 ## Claims
 
-C-0175, C-0177, and C-0180 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0177, C-0180, C-0181, C-0182, and C-0183 in [CLAIMS.md](../CLAIMS.md).
