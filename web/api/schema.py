@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0006_drop_max_duration_seconds"
+INITIAL_REVISION = "0007_add_run_session_tracking_columns"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS run(
   log_path TEXT,
   skill_invoked TEXT,
   started_at TIMESTAMP,
-  ended_at TIMESTAMP
+  ended_at TIMESTAMP,
+  agent_session_sha TEXT,
+  resumed BOOLEAN DEFAULT FALSE
 );
 """

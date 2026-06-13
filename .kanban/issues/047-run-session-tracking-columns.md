@@ -1,7 +1,7 @@
 ---
 id: 047
 title: Run-row session-tracking columns
-status: pending
+status: in-progress
 blocked_by: []
 parent: null
 priority: 0
