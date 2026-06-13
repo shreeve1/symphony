@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -38,6 +39,42 @@ def test_reply_on_in_review_returns_todo(client: TestClient, issue_id: int) -> N
     assert payload["state"] == "todo"
     assert "### Operator Reply (" in payload["comments_md"]
     assert "please retry the migration" in payload["comments_md"]
+
+
+# [5.2b]
+def test_reply_writes_wake_sentinel(
+    client: TestClient,
+    issue_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = tmp_path / "reply-wake"
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(sentinel))
+    _set_state(client, issue_id, "in_review")
+
+    response = client.post(f"/api/issues/{issue_id}/reply", json={"body": "go"})
+
+    assert response.status_code == 200
+    assert sentinel.is_file()
+
+
+# [5.2c]
+def test_failed_reply_does_not_write_wake_sentinel(
+    client: TestClient,
+    issue_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = tmp_path / "reply-wake"
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(sentinel))
+    with main.connect() as connection:
+        connection.execute("UPDATE issue SET state = 'todo' WHERE id = ?", (issue_id,))
+        connection.commit()
+
+    response = client.post(f"/api/issues/{issue_id}/reply", json={"body": "nope"})
+
+    assert response.status_code == 409
+    assert not sentinel.exists()
 
 
 # [5.3]

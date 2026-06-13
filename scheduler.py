@@ -50,6 +50,9 @@ from schedule import (
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from web.api.db import resolve_run_log_root
 
+_wake_signal = import_module("web.api.wake_signal")
+consume_wake_sentinel = _wake_signal.consume_wake_sentinel
+
 
 LOGGER = logging.getLogger(__name__)
 # Global semaphore capping live Runs. Retained for backward compat with
@@ -80,6 +83,7 @@ RATE_LIMIT_BASE_COOLDOWN_S = 30.0
 RATE_LIMIT_MAX_COOLDOWN_S = 300.0
 RATE_LIMIT_JITTER_FRACTION = 0.2
 LOG_RETENTION_INTERVAL = timedelta(hours=24)
+WAKE_SENTINEL_CHECK_INTERVAL_S = 1.0
 
 SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
 SCHEDULED_LABEL_WINDOW_START_HOUR = 0
@@ -2283,6 +2287,54 @@ def _fallback_dispatch_state(config: SymphonyConfig) -> _DispatchState:
     )
 
 
+async def _sleep_or_wake(
+    timeout: float,
+    *,
+    sleep: Callable[[float], Any] | None = None,
+    consume_wake: Callable[[], bool] | None = None,
+    check_interval: float = WAKE_SENTINEL_CHECK_INTERVAL_S,
+) -> bool:
+    """Sleep up to ``timeout`` seconds, returning early when a wake is consumed."""
+
+    sleep_fn = sleep or asyncio.sleep
+    consume_fn = consume_wake or consume_wake_sentinel
+    if consume_fn():
+        return True
+    remaining = max(0.0, timeout)
+    while remaining > 0:
+        delay = min(remaining, check_interval)
+        await sleep_fn(delay)
+        if consume_fn():
+            return True
+        remaining -= delay
+    return False
+
+
+async def _wait_for_tasks_or_wake(
+    tasks: set[asyncio.Task[TickResult]],
+    timeout: float,
+) -> tuple[set[asyncio.Task[TickResult]], set[asyncio.Task[TickResult]], bool]:
+    """Wait for a task completion or a wake sentinel, without busy-looping."""
+
+    pending = set(tasks)
+    remaining = max(0.0, timeout)
+    if consume_wake_sentinel():
+        return set(), pending, True
+    while remaining > 0:
+        delay = min(remaining, WAKE_SENTINEL_CHECK_INTERVAL_S)
+        done, pending = await asyncio.wait(
+            pending,
+            timeout=delay,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if done:
+            return set(done), set(pending), False
+        if consume_wake_sentinel():
+            return set(), set(pending), True
+        remaining -= delay
+    return set(), set(pending), False
+
+
 async def run_loop(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -2379,11 +2431,12 @@ async def run_loop(
             wait_timeout = min(wait_timeout, cooldown_remaining)
 
         if active_tasks:
-            done_wait, pending = await asyncio.wait(
+            done_wait, pending, woke = await _wait_for_tasks_or_wake(
                 active_tasks,
-                timeout=wait_timeout,
-                return_when=asyncio.FIRST_COMPLETED,
+                wait_timeout,
             )
+            if woke:
+                LOGGER.info("wake_sentinel_consumed")
             all_idle = bool(done_wait)
             for task in done_wait:
                 try:
@@ -2399,10 +2452,13 @@ async def run_loop(
                     result.issue_id or "",
                 )
             active_tasks = set(pending)
-            if not active_tasks and all_idle:
-                await asyncio.sleep(wait_timeout)
+            if woke:
+                continue
+            if not active_tasks and all_idle and await _sleep_or_wake(wait_timeout):
+                LOGGER.info("wake_sentinel_consumed")
         else:
-            await asyncio.sleep(wait_timeout)
+            if await _sleep_or_wake(wait_timeout):
+                LOGGER.info("wake_sentinel_consumed")
 
 
 def _in_flight_lock() -> asyncio.Lock:

@@ -1,8 +1,9 @@
 ---
 id: 054
 title: Fast re-dispatch on operator reply
-status: pending
+status: in-progress
 blocked_by: [047]
+updated: 2026-06-13
 parent: null
 priority: 0
 created: 2026-06-13

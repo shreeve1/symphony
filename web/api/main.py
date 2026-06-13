@@ -35,11 +35,13 @@ if __package__:
     _db = import_module(f"{__package__}.db")
     _schema = import_module(f"{__package__}.schema")
     _seed = import_module(f"{__package__}.seed")
+    _wake_signal = import_module(f"{__package__}.wake_signal")
 else:  # pragma: no cover - supports uvicorn main:app from web/api
     _auth = import_module("auth")
     _db = import_module("db")
     _schema = import_module("schema")
     _seed = import_module("seed")
+    _wake_signal = import_module("wake_signal")
 
 COOKIE_NAME = _auth.COOKIE_NAME
 SESSION_MAX_AGE_SECONDS = _auth.SESSION_MAX_AGE_SECONDS
@@ -59,6 +61,7 @@ BINDINGS_PATH = _seed.BINDINGS_PATH
 MODELS_PATH = BINDINGS_PATH.parent / "models.yml"
 _load_bindings = _seed._load_bindings
 seed_if_empty = _seed.seed_if_empty
+touch_wake_sentinel = _wake_signal.touch_wake_sentinel
 
 try:
     _model_catalog = import_module("model_catalog")
@@ -990,6 +993,8 @@ async def patch_issue(
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )
+    if changed.get("state") == "todo":
+        touch_wake_sentinel()
 
     # Worktree merge-on-done: when state transitions to "done" and
     # worktree is active, attempt FF-merge + cleanup.
@@ -1132,6 +1137,7 @@ async def reply_to_issue(
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )
+    touch_wake_sentinel()
     return result
 
 

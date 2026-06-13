@@ -3656,6 +3656,7 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
     async def fake_sleep(seconds):
         raise StopLoop
 
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
     monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
     monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
 
@@ -3668,6 +3669,99 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
         )
 
     assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_sleep_or_wake_preserves_poll_cadence_without_sentinel() -> None:
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    woke = await scheduler._sleep_or_wake(
+        2.5,
+        sleep=fake_sleep,
+        consume_wake=lambda: False,
+        check_interval=1.0,
+    )
+
+    assert woke is False
+    assert slept == [1.0, 1.0, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_sleep_or_wake_consumes_stale_sentinel_without_sleeping() -> None:
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    woke = await scheduler._sleep_or_wake(
+        30.0,
+        sleep=fake_sleep,
+        consume_wake=lambda: True,
+        check_interval=1.0,
+    )
+
+    assert woke is True
+    assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_run_loop_wake_sentinel_triggers_scan_before_full_interval(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class StopLoop(Exception):
+        pass
+
+    calls = 0
+    wake_pending = False
+    sleeps: list[float] = []
+
+    async def fake_dispatch_one(
+        config,
+        adapter,
+        agent_runner,
+        render_prompt,
+        notifier,
+        run_blocked_reconciler,
+        dispatch_state=None,
+    ):
+        nonlocal calls
+        calls += 1
+        return scheduler.TickResult(False, "no-candidates")
+
+    async def fake_sleep(seconds: float) -> None:
+        nonlocal wake_pending
+        sleeps.append(seconds)
+        if calls == 1:
+            wake_pending = True
+            return
+        raise StopLoop
+
+    def fake_consume_wake() -> bool:
+        nonlocal wake_pending
+        if not wake_pending:
+            return False
+        wake_pending = False
+        return True
+
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(scheduler, "consume_wake_sentinel", fake_consume_wake)
+
+    with pytest.raises(StopLoop):
+        await scheduler.run_loop(
+            _config(tmp_path, run_cap=1, poll_interval_ms=30_000),
+            _adapter(FakeTransport()),
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+        )
+
+    assert calls == 2
+    assert sleeps[0] == scheduler.WAKE_SENTINEL_CHECK_INTERVAL_S
+    assert sleeps[0] < 30.0
 
 
 @pytest.mark.asyncio
@@ -3697,6 +3791,7 @@ async def test_run_loop_logs_dispatch_exceptions_without_exiting(
     async def fake_sleep(seconds):
         raise StopLoop
 
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
     monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
     monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
 
