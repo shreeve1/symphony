@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #051 Claude resume end-to-end
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #051 implementation; commits `ca23cc3`, `2afed5a`, `6aa223b`; `.kanban/issues/051-claude-resume-end-to-end.md`; `.kanban/progress.md`; `claude_runner.py`; `scheduler.py`; `tests/test_claude_runner.py`; `tests/test_dispatch_compaction.py`; existing ADR-0009 Session Resume wiki pages.
+- Outputs: updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/analyses/adr-0009-session-resume-continuity.md`; updated `wiki/CLAIMS.md` (C-0184 added; C-0175/C-0176/C-0177/C-0180/C-0183 notes updated); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured Claude tmux `--session-id`/`--resume` launch branching, `--continue`/`-c` ban, scheduler resume eligibility extended to Claude, delta-only resume prompts, compaction skip, run-row `agent_session_sha`/`resumed`, and in-tick fresh re-feed fallback on resume failure. Verification passed: issue command `uv run pytest tests/test_claude_runner.py tests/test_session_continuity.py -q`, broader dispatch tests, full `uv run pytest -q` (740 passed, 1 skipped), touched-file LSP diagnostics clean, `git diff --check`, secret-pattern diff scan, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-13] session-update | #050 pi RPC dispatch + resume wiring
 
 - Actor: agent (Pi, Ralph + wiki update)
