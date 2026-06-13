@@ -9,7 +9,7 @@ sources:
   - docs/adr/0009-session-resume-continuity.md
   - wiki/raw/sessions/2026-06-13-session-resume-continuity-design.md
 confidence: high
-tags: [adr, session-resume, continuity, re-feed, decision, design-stage]
+tags: [adr, session-resume, continuity, re-feed, decision, design-stage, partially-implemented]
 ---
 
 # ADR-0009 — Session-resume continuity
@@ -40,8 +40,8 @@ Continuity now depends on hidden filesystem state (`~/.claude/projects`, `~/.pi/
 
 ## Scope note
 
-`accepted` but **unimplemented** as of 2026-06-13. Live behavior is still pure re-feed. Implementation is backlogged as `.kanban/issues/047`–`055` (Session Resume core + Question Park + Session Tail + fast re-dispatch + checkpointed exploration). See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
+`accepted` and **partially implemented** as of 2026-06-13. Live behavior is still pure re-feed because dispatch rendering/adapters are not wired yet. Implemented slices: #047 run columns and #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`). Remaining backlog `.kanban/issues/049`–`055` covers delta prompt rendering, pi/Claude end-to-end resume, Question Park, Session Tail, fast re-dispatch, and checkpointed exploration. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
 
 ## Claims
 
-C-0175 in [CLAIMS.md](../CLAIMS.md).
+C-0175 and C-0177 in [CLAIMS.md](../CLAIMS.md).

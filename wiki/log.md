@@ -477,3 +477,10 @@ Append entries with this format:
 - Inputs: operator asked to fix the stale records flagged in C-0176 (CONTEXT.md "Agent" term contradicting live Claude).
 - Outputs: CONTEXT.md — **Agent** term rewritten (pi + claude both live, per-issue routing, claude via tmux; was "pi only / claude removed"); **Project Binding** `default_agent` now `pi`/`claude` and coding bindings = `trading` + `symphony` (was pi-only / trading-only); **Tracker Adapter** lists `homelab`/`trading`/`symphony` on Podium (was "both homelab and trading"). C-0176 note updated to record the fix.
 - Notes: Aligns the glossary with C-0153 (RoutingAgentAdapter), C-0170 (symphony binding live), C-0174 (live Claude). Analyses pages referencing the pi-only era are accurate history and were left intact (mark-superseded-not-delete). Working tree uncommitted (live-infra repo — operator to review/commit). No secrets read.
+
+## [2026-06-13] session-update | Ralph #048 Session Resume decision core
+
+- Actor: Ralph (Pi)
+- Inputs: `.kanban/issues/048-continuity-decision-core.md` from ADR-0009 backlog; implementation base `838ff66e46562cbf38ac28b0cf91fa2f8c9e9147`.
+- Outputs: Added `session_continuity.py` and `tests/test_session_continuity.py`; marked #048 done; updated `.kanban/progress.md`; promoted wiki status from design-stage/unimplemented to partially implemented for Session Resume; added claim C-0177 and updated C-0176 status note.
+- Notes: Live dispatch still uses re-feed until #049–#051 wire delta prompt rendering and pi/Claude adapters. Verification: `uv run pytest tests/test_session_continuity.py -q` (11 passed), full `uv run pytest -q` (727 passed, 1 skipped), critical LSP diagnostics clean for touched Python files. No secrets read; no service restart or external notification fired.
