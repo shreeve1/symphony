@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #049 delta-only resume prompt rendering
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #049 implementation; commits `ce6e7c5`, `915525e`, `3a523c7`; `.kanban/issues/049-delta-only-resume-prompt.md`; `.kanban/progress.md`; `prompt_renderer.py`; `tests/test_prompt_renderer_podium.py`; existing ADR-0009/session-resume wiki pages.
+- Outputs: updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/analyses/adr-0009-session-resume-continuity.md`; updated `wiki/CLAIMS.md` (C-0180 added; C-0175..C-0177 notes updated); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured `render_prompt(..., resume=True)` emitting `OUTPUT_CONTRACT` plus only the newest `### Operator Reply`, omitting WORKFLOW.md/issue/full comments/context, preserving Podium `preferred_skill` directive, and leaving live dispatch on re-feed until #050/#051 adapter wiring. Verification passed: `uv run pytest tests/test_prompt_renderer.py tests/test_prompt_renderer_podium.py -q`, full `uv run pytest -q` (733 passed, 1 skipped), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents.
+
+---
+
 ## [2026-06-13] session-update | Claude dispatch path — first live #046 E2E + three tmux fixes (C-0154 closed)
 
 - Actor: agent (Claude Code)

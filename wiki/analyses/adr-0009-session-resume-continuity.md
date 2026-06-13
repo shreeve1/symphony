@@ -40,8 +40,8 @@ Continuity now depends on hidden filesystem state (`~/.claude/projects`, `~/.pi/
 
 ## Scope note
 
-`accepted` and **partially implemented** as of 2026-06-13. Live behavior is still pure re-feed because dispatch rendering/adapters are not wired yet. Implemented slices: #047 run columns and #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`). Remaining backlog `.kanban/issues/049`–`055` covers delta prompt rendering, pi/Claude end-to-end resume, Question Park, Session Tail, fast re-dispatch, and checkpointed exploration. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
+`accepted` and **partially implemented** as of 2026-06-13. Live behavior is still pure re-feed because adapters are not wired yet. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), and #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`). Remaining backlog `.kanban/issues/050`–`055` covers pi/Claude end-to-end resume, Question Park, Session Tail, fast re-dispatch, and checkpointed exploration; #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
 
 ## Claims
 
-C-0175 and C-0177 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0177, and C-0180 in [CLAIMS.md](../CLAIMS.md).
