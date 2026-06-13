@@ -327,7 +327,6 @@ Append entries with this format:
 - Outputs: `wiki/raw/sessions/2026-06-12-issue-archive-state-design.md`; `wiki/analyses/podium-issue-archive-design.md` (auto-promoted after lint); `wiki/CLAIMS.md` C-0123..C-0125; `wiki/index.md`; `wiki/ROUTING.md`; `wiki/log.md`.
 - Notes: Design accepted, not implemented — sixth `archived` state (no new column), engine-terminal contract (no verdict transition post-run, deferred worktree teardown via `remove_worktree`), mid-run archive allowed, per-column board minimize with localStorage persistence, Archive button in flyout, 14-day opportunistic purge on `updated_at` with FK-safe delete order. Hazards recorded: `transition_state` resurrection bug, worktree-vs-issue "archive" terminology collision. C-0021/C-0064 (five states) left active — supersession deferred to the implementation pass. ADR offered, declined. No secrets, no env contents, no transcript.
 
-<<<<<<< Updated upstream
 ## [2026-06-12] session-update | #034 archived issue state core
 
 - Actor: agent (Pi, Ralph + wiki update)
@@ -355,14 +354,12 @@ Append entries with this format:
 - Inputs: James report of phantom dropdown entries; `podium.db` skill rows; `web/frontend/tests/skill-catalog.spec.ts`; `web/frontend/tests/fixtures.ts`; git history (`6d9f1c6`).
 - Outputs: deleted `catalog-alpha`/`catalog-bravo` rows from live `podium.db` (48 rows remain, zero manual rows); updated `wiki/analyses/podium-skills-catalog-refresh.md` resulting-state section; updated C-0136 note in `wiki/CLAIMS.md`.
 - Notes: Rows were leaked Playwright e2e fixtures — an older `seedSkills` wrote `source=''` into the live DB, which refresh's manual-row protection then preserved. Current `fixtures.ts` isolates via `PODIUM_DB_PATH` → `web/test-results/podium-e2e.db` and tags `source='e2e'` (self-healing: refresh deletes leaked `'e2e'` rows). No FK or code references existed at deletion. No secrets, no env contents.
-=======
 ## [2026-06-12] session-update | Pi personal harness hardening pass
 
 - Actor: agent (Pi follow-up)
 - Inputs: `.pi/extensions/personal-harness.ts`; `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; `wiki/raw/sessions/2026-06-12-personal-harness-pi.md`; post-generation setup review findings.
 - Outputs: tracked `wiki/raw/personal-harness-pi-profile.md`; updated `.pi/extensions/personal-harness.ts`; updated `.rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md`; updated `wiki/analyses/personal-harness-pi-profile.md`; updated `wiki/CLAIMS.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
 - Notes: Hardened bash secret-read blocking for `/home/james/symphony-host.env` and `.env`-like files, switched runtime roots to `PROFILE.targetRepo`, moved the durable profile reference into tracked wiki raw storage, changed automatic pytest beforeGit into a manual `uv run pytest -q` reminder, and replaced source-only dry checks with mocked-event verification coverage. No secrets or `.env` contents captured.
->>>>>>> Stashed changes
 
 ## [2026-06-12] session-update | #039 dashboard attention list removal
 
@@ -391,3 +388,10 @@ Append entries with this format:
 - Inputs: James request (archive claude-adapter ticket, unit cleanup, CLI ensure_schema parity); unit + override.conf edits with `*.bak.2026-06-12` backups; restart verification markers.
 - Outputs: `.kanban/issues/040` → `.kanban/archive/2026-06-12c/` (status blocked, deferral note; Ralph attempt had blocked on missing verification command); symphony-host unit cleaned of `OPENCODE_*` and `SYMPHONY_PI_*` env (drop-in keeps `PI_BIN`); `web/cli/podium_skills.py` `ensure_schema` now fresh-only (never touches existing DBs); CLAUDE.md env/dead-config sections rewritten; `wiki/sources/symphony-host-service-unit.md` note updated.
 - Notes: Post-cleanup restart clean on code_sha=81bfd8d — startup pi probe passed using the models.yml default (gpt-5.5/openai-codex), proving env removal safe. No secrets.
+
+## [2026-06-13] lint | Resolve committed git stash-pop conflict markers in wiki
+
+- Actor: agent (Claude Code)
+- Inputs: `wiki/index.md`, `wiki/ROUTING.md`, `wiki/log.md` each carrying committed `<<<<<<< Updated upstream` / `=======` / `>>>>>>> Stashed changes` markers from a prior `git stash pop` (stashes `ralph-preserve-unrelated-*` still present).
+- Outputs: `wiki/index.md` (superset of 4 analysis rows — kept stashed's fuller `personal-harness-pi-profile` sources incl. `wiki/raw/personal-harness-pi-profile.md`, kept upstream's "#034/#035/#036 implemented" `podium-issue-archive-design` row over the stale "not yet implemented" side); `wiki/ROUTING.md` (Skills & Tooling union — upstream page set + `tracked harness profile`/`targetRepo root resolution`/`secret-env-bash-read` keywords merged in); `wiki/log.md` (kept both append-only entry sets — #034/#036/skills-catalog/fixture-leak from upstream and the Pi-harness-hardening entry from stashed).
+- Notes: All referenced pages verified on disk (no dangling links). No content lost — markers were a merge artifact, both sides were legitimate. Leftover stashes `stash@{0}`/`stash@{1}` not dropped. Unrelated working-tree WIP (output-contract refactor across claude_runner/prompt_renderer/scheduler/tracker_podium) left untouched and excluded from this commit.
