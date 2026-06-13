@@ -1,11 +1,13 @@
 ---
 id: 044
 title: Claude startup probe + orphan tmux socket reaper
-status: pending
+status: in-progress
 blocked_by: [042, 043]
 parent: null
 priority: 2
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build

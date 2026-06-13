@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
+from claude_runner import claude_probe_failure_reason
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
@@ -509,7 +510,9 @@ async def _maybe_compact_context(
         )
     compaction = import_module("context_compaction")
     context = str(getattr(candidate, "context_md", "") or "")
-    if vars(compaction)["estimate_tokens"](context) <= int(settings["threshold_tokens"]):
+    if vars(compaction)["estimate_tokens"](context) <= int(
+        settings["threshold_tokens"]
+    ):
         return candidate
     try:
         pi_entry = resolve_model(None, load_models(), agent="pi")
@@ -567,6 +570,11 @@ def _apply_dispatch_gate(
             f"Dispatch blocked: model `{entry['id']}` requires agent "
             f"`{entry['agent']}` but the issue resolves to agent `{agent}`; "
             "pick a matching model or change preferred_agent."
+        )
+    if agent == "claude" and (probe_failure := claude_probe_failure_reason()):
+        return candidate, (
+            "Dispatch blocked: claude engine probe failed at startup: "
+            f"{probe_failure}. Fix the install and restart."
         )
     skill = getattr(candidate, "preferred_skill", None)
     if skill:
@@ -1494,9 +1502,7 @@ async def run_tick(
             if await _handle_archived_terminal(
                 adapter, config, candidate, run_id, binding=tick_binding
             ):
-                return TickResult(
-                    True, "archived-terminal", candidate.id, mode=mode
-                )
+                return TickResult(True, "archived-terminal", candidate.id, mode=mode)
             try:
                 await adapter.transition_state(
                     candidate.id, TrackerRole.STATE_IN_REVIEW

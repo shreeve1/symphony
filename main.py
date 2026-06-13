@@ -15,7 +15,11 @@ from agent_runner import (
     RoutingAgentAdapter,
     verify_pi_support,
 )
-from claude_runner import ClaudeAgentAdapter
+from claude_runner import (
+    ClaudeAgentAdapter,
+    reap_orphan_claude_sockets,
+    verify_claude_support,
+)
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
@@ -135,6 +139,8 @@ async def run_bindings_loop(
     (semaphore, in-flight set, poll interval). Startup reconcile runs for all
     bindings before the dispatcher loop starts.
     """
+    reap_orphan_claude_sockets()
+    verify_claude_support()
     runtimes = [_build_binding_runtime(config, binding) for binding in config.bindings]
     try:
         for runtime in runtimes:

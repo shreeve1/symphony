@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +21,106 @@ from plane_poller import CandidateIssue
 
 LOGGER = logging.getLogger(__name__)
 READY_TIMEOUT_SECONDS = 30.0
+CLAUDE_PROBE_TIMEOUT_SECONDS = 30.0
 READY_PATTERN = "bypass permissions on|shift+tab to cycle"
+_CLAUDE_PROBE_FAILURE_REASON: str | None = None
+
+
+def claude_probe_failure_reason() -> str | None:
+    """Return startup probe failure reason, if Claude dispatch is disabled."""
+
+    return _CLAUDE_PROBE_FAILURE_REASON
+
+
+def set_claude_probe_failure_reason(reason: str | None) -> None:
+    """Set Claude probe state for startup wiring and tests."""
+
+    global _CLAUDE_PROBE_FAILURE_REASON
+    _CLAUDE_PROBE_FAILURE_REASON = reason
+
+
+def verify_claude_support(
+    *,
+    run_func: Callable[..., CompletedLike] = subprocess.run,
+    which_func: Callable[..., str | None] = shutil.which,
+    environ: Mapping[str, str] | None = None,
+    timeout: float = CLAUDE_PROBE_TIMEOUT_SECONDS,
+) -> None:
+    """Probe Claude CLI support without failing scheduler boot."""
+
+    env = os.environ if environ is None else environ
+    path = env.get("PATH")
+    for binary in ("tmux", "claude"):
+        if which_func(binary, path=path) is None:
+            _record_claude_probe_failure(f"{binary} binary not found on PATH")
+            return
+    try:
+        result = run_func(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            env=dict(env),
+        )
+    except subprocess.TimeoutExpired:
+        _record_claude_probe_failure(f"claude --version timed out after {timeout:g}s")
+        return
+    except OSError as exc:
+        _record_claude_probe_failure(f"claude --version could not run: {exc}")
+        return
+    if int(result.returncode) != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        detail = f": {stderr}" if stderr else ""
+        _record_claude_probe_failure(
+            f"claude --version failed with exit code {result.returncode}{detail}"
+        )
+        return
+    set_claude_probe_failure_reason(None)
+    LOGGER.info("claude_probe_ok")
+
+
+def _record_claude_probe_failure(reason: str) -> None:
+    set_claude_probe_failure_reason(reason)
+    LOGGER.warning("claude_probe_failed reason=%s", reason)
+
+
+def reap_orphan_claude_sockets(
+    *,
+    glob_func: Callable[[str], Iterable[str | Path]] | None = None,
+    run_func: Callable[..., CompletedLike] = subprocess.run,
+    unlink_func: Callable[[Path], object] | None = None,
+) -> int:
+    """Kill orphan Claude tmux servers left behind by prior scheduler runs."""
+
+    if glob_func is None:
+        glob_func = _default_claude_socket_glob
+    if unlink_func is None:
+        unlink_func = _default_unlink
+    count = 0
+    for raw_path in glob_func("/tmp/symphony-claude-*.sock"):
+        socket_path = Path(raw_path)
+        with suppress(OSError):
+            run_func(
+                ["tmux", "-S", str(socket_path), "kill-server"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        with suppress(OSError, FileNotFoundError):
+            unlink_func(socket_path)
+        LOGGER.info("claude_socket_reaped path=%s", socket_path)
+        count += 1
+    LOGGER.info("claude_socket_reap_done count=%d", count)
+    return count
+
+
+def _default_claude_socket_glob(pattern: str) -> Iterable[Path]:
+    return Path("/tmp").glob(Path(pattern).name)
+
+
+def _default_unlink(path: Path) -> None:
+    path.unlink(missing_ok=True)
 
 
 @dataclass
@@ -41,7 +140,14 @@ class ClaudeRunCleanup:
         self.cleaned = True
         with suppress(OSError):
             self.run_func(
-                ["tmux", "-S", str(self.socket_path), "kill-session", "-t", self.session_name],
+                [
+                    "tmux",
+                    "-S",
+                    str(self.socket_path),
+                    "kill-session",
+                    "-t",
+                    self.session_name,
+                ],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -92,7 +198,9 @@ def run_claude_agent(
     prompt_file = temp_dir / "prompt.txt"
     result_file = temp_dir / "result.txt"
     done_file = temp_dir / "done"
-    cleanup = ClaudeRunCleanup(socket_path, session_name, temp_dir, run_func, remove_tree)
+    cleanup = ClaudeRunCleanup(
+        socket_path, session_name, temp_dir, run_func, remove_tree
+    )
 
     try:
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -157,17 +265,26 @@ def run_claude_agent(
         deadline = started + (config.run_timeout_ms / 1000)
         while clock() <= deadline:
             if done_file.exists():
-                if not result_file.exists() or not result_file.read_text(encoding="utf-8").strip():
+                if (
+                    not result_file.exists()
+                    or not result_file.read_text(encoding="utf-8").strip()
+                ):
                     duration_ms = int((clock() - started) * 1000)
-                    stderr = "claude done file exists but result file is missing or empty"
+                    stderr = (
+                        "claude done file exists but result file is missing or empty"
+                    )
                     return _logged_result(issue, 137, duration_ms, False, "", stderr)
                 stdout = result_file.read_text(encoding="utf-8")
-                stderr = _capture_pane_full(socket_path, session_name, run_func=run_func)
+                stderr = _capture_pane_full(
+                    socket_path, session_name, run_func=run_func
+                )
                 duration_ms = int((clock() - started) * 1000)
                 return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
             if not _session_alive(socket_path, session_name, run_func=run_func):
                 duration_ms = int((clock() - started) * 1000)
-                stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
+                stderr = _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func
+                )
                 return _logged_result(issue, 1, duration_ms, False, "", stderr)
             sleep(1.0)
 
@@ -195,7 +312,9 @@ def _resolve_cwd(
             config.bindings[0].name if config.bindings else ""
         )
         base_branch = getattr(issue, "base_branch", "") or config.base_branch or "main"
-        return create_worktree_func(config.homelab_repo_path, binding_name, issue.id, base_branch)
+        return create_worktree_func(
+            config.homelab_repo_path, binding_name, issue.id, base_branch
+        )
     return config.homelab_repo_path
 
 
@@ -213,7 +332,9 @@ def _wrap_prompt(
     issue: CandidateIssue,
 ) -> str:
     skill = getattr(issue, "preferred_skill", None)
-    skill_directive = f"\nInvoke the `{skill}` skill by name before doing the work." if skill else ""
+    skill_directive = (
+        f"\nInvoke the `{skill}` skill by name before doing the work." if skill else ""
+    )
     return f"""You are running unattended for Symphony. Nobody can respond to questions.
 Never ask questions. Never end your turn awaiting operator input. If genuinely blocked, write `SYMPHONY_RESULT: blocked` and still touch the done file.{skill_directive}
 
@@ -251,7 +372,9 @@ def _ready_pattern_seen(text: str) -> bool:
     return "bypass permissions on" in lowered or "shift+tab to cycle" in lowered
 
 
-def _tmux(run_func: Callable[..., CompletedLike], socket_path: Path, *args: str) -> CompletedLike:
+def _tmux(
+    run_func: Callable[..., CompletedLike], socket_path: Path, *args: str
+) -> CompletedLike:
     return run_func(
         ["tmux", "-S", str(socket_path), *args],
         capture_output=True,
@@ -280,7 +403,9 @@ def _capture_pane_tail(
     run_func: Callable[..., CompletedLike],
 ) -> str:
     try:
-        result = _tmux(run_func, socket_path, "capture-pane", "-pt", session_name, "-S", "-200")
+        result = _tmux(
+            run_func, socket_path, "capture-pane", "-pt", session_name, "-S", "-200"
+        )
     except OSError:
         return ""
     return _strip_ansi(result.stdout or result.stderr or "")

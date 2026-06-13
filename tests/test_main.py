@@ -139,6 +139,60 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
 
 
 @pytest.mark.asyncio
+async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeConfig:
+        bindings = ("one", "two")
+
+    class FakeRuntimeConfig:
+        homelab_repo_path = Path("/tmp/repo")
+
+        @property
+        def bindings(self):
+            return (type("Binding", (), {"binding_type": "infra"})(),)
+
+    class FakeAdapter:
+        contract = None
+
+    def fake_build_runtime(config, binding):
+        return main.BindingRuntime(
+            name=binding,
+            config=cast(Any, FakeRuntimeConfig()),
+            transport=None,
+            adapter=cast(Any, FakeAdapter()),
+            agent_adapter=cast(Any, f"agent-{binding}"),
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
+        calls.append(("reconcile-startup", binding))
+        return 0
+
+    async def fake_run_loop(
+        config, adapter, *, agent_runner, render_prompt, notifier=None, binding=None
+    ):
+        calls.append(("run-loop", binding))
+        raise StopLoop
+
+    monkeypatch.setattr(
+        main, "reap_orphan_claude_sockets", lambda: calls.append("reap")
+    )
+    monkeypatch.setattr(main, "verify_claude_support", lambda: calls.append("probe"))
+    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    with pytest.raises(StopLoop):
+        await main.run_bindings_loop(cast(Any, FakeConfig()))
+
+    assert calls.count("reap") == 1
+    assert calls.count("probe") == 1
+    assert calls[:2] == ["reap", "probe"]
+
+
+@pytest.mark.asyncio
 async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
     calls = []
     closed = []
@@ -258,7 +312,9 @@ def test_homelab_podium_binding_builds_without_plane_transport(monkeypatch):
     class ExplodingTransport:
         def __init__(self, *args):
             calls["transport"] = args
-            raise AssertionError("homelab Podium binding must not create Plane transport")
+            raise AssertionError(
+                "homelab Podium binding must not create Plane transport"
+            )
 
     monkeypatch.setattr(main, "HttpxPlaneTransport", ExplodingTransport)
     monkeypatch.setattr(

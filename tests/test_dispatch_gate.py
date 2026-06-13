@@ -6,10 +6,18 @@ from pathlib import Path
 
 import pytest
 
+from claude_runner import set_claude_probe_failure_reason
 from config import ProjectBinding
 from plane_adapter import CandidateIssue
 from scheduler import _apply_dispatch_gate
 from tracker_contract import DEFAULT_CONTRACT
+
+
+@pytest.fixture(autouse=True)
+def reset_claude_probe_state():
+    set_claude_probe_failure_reason(None)
+    yield
+    set_claude_probe_failure_reason(None)
 
 
 @pytest.fixture()
@@ -67,10 +75,22 @@ def test_claude_agent_and_model_pass_gate(catalog: Path) -> None:
     assert candidate.resolved_model == "claude-fable-5"
 
 
-def test_unknown_model_blocks_loudly(catalog: Path) -> None:
-    _, error = _apply_dispatch_gate(
-        _candidate(preferred_model="gpt-9000"), _binding()
+def test_claude_probe_failure_blocks_claude_but_not_pi(catalog: Path) -> None:
+    set_claude_probe_failure_reason("claude --version failed")
+
+    _, error = _apply_dispatch_gate(_candidate(labels=("agent:claude",)), _binding())
+    assert error == (
+        "Dispatch blocked: claude engine probe failed at startup: "
+        "claude --version failed. Fix the install and restart."
     )
+
+    candidate, pi_error = _apply_dispatch_gate(_candidate(), _binding())
+    assert pi_error is None
+    assert candidate.resolved_model == "gpt-5.5:high"
+
+
+def test_unknown_model_blocks_loudly(catalog: Path) -> None:
+    _, error = _apply_dispatch_gate(_candidate(preferred_model="gpt-9000"), _binding())
     assert error is not None and "gpt-9000" in error
 
 
