@@ -1,7 +1,7 @@
 ---
 id: 044
 title: Claude startup probe + orphan tmux socket reaper
-status: in-progress
+status: review
 blocked_by: [042, 043]
 parent: null
 priority: 2
