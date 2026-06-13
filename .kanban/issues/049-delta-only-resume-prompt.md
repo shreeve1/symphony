@@ -1,7 +1,7 @@
 ---
 id: 049
 title: Delta-only resume prompt rendering
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
