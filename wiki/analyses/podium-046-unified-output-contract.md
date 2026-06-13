@@ -16,6 +16,7 @@ sources:
   - tests/test_engine_against_podium.py
   - wiki/raw/sessions/2026-06-13-unified-output-contract.md
   - wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md
+  - .kanban/issues/052-question-park.md
 confidence: high
 tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflow]
 ---
@@ -26,11 +27,15 @@ Issue #046 collapses the agent end-of-run contract into one engine-owned source 
 
 ## One output contract
 
-`prompt_renderer.OUTPUT_CONTRACT` is a module constant appended to every rendered prompt after the issue block, so the pi and claude runners receive identical instructions from one place [source: prompt_renderer.py]. The contract tells the agent to emit exactly one `SYMPHONY_RESULT: done|review|blocked` verdict line plus a `SYMPHONY_SUMMARY_BEGIN` / `SYMPHONY_SUMMARY_END` block holding its natural end-of-turn message, written for a human reader, posted verbatim, bounded to ~4000 characters [source: prompt_renderer.py]. `claude_runner._wrap_prompt` now references the contract instead of carrying its own copy [source: claude_runner.py].
+`prompt_renderer.OUTPUT_CONTRACT` is a module constant appended to every rendered prompt after the issue block, so the pi and claude runners receive identical instructions from one place [source: prompt_renderer.py]. The contract tells the agent to emit exactly one terminal outcome: `SYMPHONY_RESULT: done|review` plus a `SYMPHONY_SUMMARY_BEGIN` / `SYMPHONY_SUMMARY_END` block, `SYMPHONY_RESULT: blocked` plus a summary block, or the #052 Question Park block `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` when operator clarification is needed [source: prompt_renderer.py; source: .kanban/issues/052-question-park.md]. Result summaries hold the natural end-of-turn message, written for a human reader, posted verbatim, bounded to ~4000 characters; question blocks are bounded by the same path [source: prompt_renderer.py; source: scheduler.py]. `claude_runner._wrap_prompt` now references the shared contract and permits Question Park instead of forbidding questions [source: claude_runner.py].
 
 ## Multi-line summary block
 
 `scheduler._parse_summary_block(*streams)` returns the last `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block across streams, preserving markdown and newlines [source: scheduler.py]. It strips ANSI, removes machine marker lines (`SYMPHONY_(RESULT|SUMMARY|COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):` via `_MARKER_LINE_RE`), and bounds the result with `_bound_summary_block` — pass-through under 4000 chars, otherwise head 2500 + a truncation notice + tail 1200 — so a runaway agent cannot smuggle its whole transcript into a comment that is later re-injected as untrusted prompt context [source: scheduler.py]. `_extract_summary` prefers the block, then falls back to the legacy single-line `_parse_summary_marker` [source: scheduler.py]. This is a companion to the verdict marker contract (see C-0006): the verdict line still declares done/review/blocked; the block now carries the prose.
+
+## Question Park block (#052)
+
+`scheduler._parse_question_block(*streams)` returns the last `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` block, strips ANSI/marker lines, and `_extract_question` redacts secrets before bounding with the same summary bound [source: scheduler.py]. In `run_tick`, a question block after a clean agent exit records the Run as `succeeded` with verdict `question`, posts `**Symphony question:**` with the extracted text, transitions the Issue to `in_review`, and notifies review; `SYMPHONY_RESULT: blocked` still takes the unchanged blocked path before question handling [source: scheduler.py; source: tests/test_scheduler.py; source: .kanban/issues/052-question-park.md]. This makes Question Park a third terminal outcome of the shared output contract, not a new issue state or separate state machine.
 
 ## Verbatim posting, no header wrapper
 

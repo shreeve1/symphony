@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #052 Question Park
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #052 implementation; commits `a796e5a`, `ecb2c62`, `595fd34`; `.kanban/issues/052-question-park.md`; `.kanban/progress.md`; `prompt_renderer.py`; `scheduler.py`; `claude_runner.py`; `tests/test_scheduler.py`; `tests/test_prompt_renderer.py`; `tests/test_prompt_renderer_podium.py`; `tests/test_claude_runner.py`; existing ADR-0009 Session Resume and #046 output-contract wiki pages.
+- Outputs: updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/analyses/adr-0009-session-resume-continuity.md`; updated `wiki/analyses/podium-046-unified-output-contract.md`; updated `wiki/CLAIMS.md` (C-0185 added; C-0176 note updated); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` as a third terminal output outcome, scheduler verdict `question`, `**Symphony question:**` comment posting, `in_review` parking for the existing operator-reply redispatch/resume path, Claude wrapper permission for Question Park, and unchanged blocked-on-error mapping. Verification passed: issue command `uv run pytest tests/test_scheduler*.py tests/test_prompt_renderer*.py web/api/tests/test_reply.py -q`, full `uv run pytest -q` (741 passed, 1 skipped), touched-file LSP diagnostics clean, `git diff --check`, secret-pattern diff scan, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-13] session-update | #051 Claude resume end-to-end
 
 - Actor: agent (Pi, Ralph + wiki update)
