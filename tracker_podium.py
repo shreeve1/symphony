@@ -601,6 +601,25 @@ class PodiumTrackerAdapter:
             connection.commit()
         return await self.get_issue(issue_id)
 
+    async def consume_preferred_skill(
+        self, issue_id: str, expected: str
+    ) -> dict[str, Any]:
+        """Compare-and-clear ``preferred_skill``.
+
+        Nulls ``preferred_skill`` only when it still equals ``expected`` (the
+        skill the scheduler consumed for this dispatch). If an operator changed
+        the skill mid-window, the ``AND preferred_skill = ?`` guard no-ops so
+        their newer pick survives to drive the next run.
+        """
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE issue SET preferred_skill = NULL, updated_at = ? "
+                "WHERE id = ? AND preferred_skill = ?",
+                (_now(), issue_id, expected),
+            )
+            connection.commit()
+        return await self.get_issue(issue_id)
+
     async def _append_issue_field(
         self, issue_id: str, field_name: str, block: str
     ) -> dict[str, Any]:

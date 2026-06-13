@@ -1220,6 +1220,18 @@ async def run_tick(
             run_id, run_log_path = await _start_run_record(
                 adapter, config, candidate, binding=tick_binding
             )
+            # preferred_skill is consume-on-dispatch (ADR-0008): captured into
+            # run.skill_invoked above, cleared once the Run row is recorded.
+            # Compare-and-clear so a concurrent operator re-pick survives; only
+            # runs for stores_context adapters (run_id is not None — Plane
+            # returns None and is untouched). Mirrors the guarded-getattr at
+            # the worktree-column clear above. Does not touch preferred_model
+            # or reasoning_effort (those stay standing config).
+            consumed_skill = getattr(candidate, "preferred_skill", None)
+            if run_id is not None and consumed_skill:
+                consume = getattr(adapter, "consume_preferred_skill", None)
+                if callable(consume):
+                    await _maybe_await(consume(candidate.id, consumed_skill))
             await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
             claim_time = now().isoformat()
             await _mark_run_record_running(

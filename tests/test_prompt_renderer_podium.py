@@ -15,7 +15,9 @@ def test_skill_to_mode_projection_table() -> None:
     assert mode_for_skill(None) == "execute"
 
 
-def test_podium_render_prompt_reads_comments_and_context_without_truncation(tmp_path: Path) -> None:
+def test_podium_render_prompt_reads_comments_and_context_without_truncation(
+    tmp_path: Path,
+) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
     long_comments = "old" + ("x" * 12050) + "new"
@@ -41,7 +43,9 @@ def test_podium_render_prompt_reads_comments_and_context_without_truncation(tmp_
     assert "Do podium work" in prompt
 
 
-def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(tmp_path: Path) -> None:
+def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(
+    tmp_path: Path,
+) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text("mode={{issue.mode}}\n", encoding="utf-8")
 
@@ -58,9 +62,13 @@ def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(tmp_p
 
     assert "mode=execute" in unknown
     assert "mode=execute" in missing
+    # [2.4]/[T.2.2] skill-less render emits no skill-invoke directive.
+    assert "First, invoke" not in missing
 
 
-_OPERATOR_REPLY_DIRECTIVE = "Blocks headed `### Operator Reply` are the operator's directives"
+_OPERATOR_REPLY_DIRECTIVE = (
+    "Blocks headed `### Operator Reply` are the operator's directives"
+)
 
 
 def test_operator_reply_directive_present_only_when_flagged() -> None:
@@ -97,7 +105,9 @@ def test_render_prompt_operator_reply_directive_podium_only(tmp_path: Path) -> N
     assert _OPERATOR_REPLY_DIRECTIVE not in plane
 
 
-def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(tmp_path: Path) -> None:
+def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
+    tmp_path: Path,
+) -> None:
     workflow = tmp_path / "WORKFLOW.md"
     workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
     long_comments = "start" + ("x" * 12050) + "tail"
