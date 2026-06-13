@@ -13,6 +13,7 @@ import main
 import scheduler
 from agent_runner import AgentResult
 from config import SymphonyConfig
+from session_continuity import derive_session_id
 from tracker_podium import PodiumTrackerAdapter
 from web.api.schema import SCHEMA_SQL
 
@@ -261,3 +262,99 @@ async def test_dispatch_compaction_failure_blocks_without_corrupting_context(
     assert issue["state"] == "blocked"
     assert issue["context_md"] == original_context
     assert run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pi_rpc_resume_uses_delta_prompt_skips_compaction_and_records_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    comments = """
+### Older note
+old context should not be re-fed
+
+### Operator Reply (2026-06-13T00:00:00+00:00)
+Please continue from the parked question.
+""".strip()
+    session_id = derive_session_id(str(issue_id))
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    (session_dir / f"2026-06-13_{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(session_dir))
+    with sqlite3.connect(db_path) as connection:
+        previous = connection.execute(
+            """
+            INSERT INTO run(
+              issue_id, agent, provider, model, state, verdict,
+              started_at, ended_at, agent_session_sha, resumed
+            ) VALUES (?, 'pi', 'openai-codex', 'gpt-5.5:high', 'succeeded',
+                      'review', '2026-06-13T00:00:00+00:00',
+                      '2026-06-13T00:01:00+00:00', 'unknown', 0)
+            """,
+            (issue_id,),
+        ).lastrowid
+        connection.execute(
+            """
+            UPDATE issue
+            SET comments_md = ?, latest_run_id = ?, context_md = ?
+            WHERE id = ?
+            """,
+            (comments, previous, "old run log\n" * 20, issue_id),
+        )
+        connection.commit()
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy should be omitted on resume.", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    rpc_binding = replace(config.bindings[0], pi_mode="rpc")
+    config = config.for_binding(rpc_binding)
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=rpc_binding.tracker_contract,
+    )
+    prompts: list[str] = []
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        prompts.append(rendered_prompt)
+        assert issue.resumed is True
+        assert issue.agent_session_sha == "unknown"
+        assert "Please continue from the parked question." in rendered_prompt
+        assert "old context should not be re-fed" not in rendered_prompt
+        assert "old run log" not in rendered_prompt
+        assert "Repo policy should be omitted" not in rendered_prompt
+        assert COMPACTED_CONTEXT_MARKER not in rendered_prompt
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: resumed ok",
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue, *, resume=False: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+            resume=resume,
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 13, tzinfo=UTC),
+        binding=rpc_binding,
+    )
+    with sqlite3.connect(db_path) as connection:
+        run = connection.execute(
+            "SELECT resumed, agent_session_sha FROM run ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    assert result.reason == "agent-marker-review"
+    assert len(prompts) == 1
+    assert run == (1, "unknown")

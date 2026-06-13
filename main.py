@@ -12,6 +12,7 @@ from typing import Any, Literal
 from agent_runner import (
     AgentAdapter,
     PiAgentAdapter,
+    PiRpcAgentAdapter,
     RoutingAgentAdapter,
     verify_pi_support,
 )
@@ -52,6 +53,7 @@ def _render_candidate_prompt(
     repo_path: Path | None = None,
     binding_type: str = "infra",
     tracker_kind: Literal["plane", "podium"] = "plane",
+    resume: bool = False,
 ) -> str:
     workflow_path = (repo_path or Path.cwd()) / "WORKFLOW.md"
     issue_data = IssueData(
@@ -78,6 +80,7 @@ def _render_candidate_prompt(
             path=workflow_path,
             binding_type=binding_type,
             tracker_kind="podium",
+            resume=resume,
         )
     return render_prompt(issue_data, path=workflow_path, binding_type=binding_type)
 
@@ -115,6 +118,11 @@ def _build_binding_runtime(
         )
         adapter = build_adapter(transport, contract=binding.tracker_contract)
     pi_adapter = PiAgentAdapter(binding_config)
+    pi_dispatch_adapter: AgentAdapter = (
+        PiRpcAgentAdapter(binding_config)
+        if binding.pi_mode == "rpc"
+        else pi_adapter
+    )
     return BindingRuntime(
         name=binding.name,
         config=binding_config,
@@ -122,7 +130,7 @@ def _build_binding_runtime(
         adapter=adapter,
         agent_adapter=RoutingAgentAdapter(
             binding=binding,
-            pi_adapter=pi_adapter,
+            pi_adapter=pi_dispatch_adapter,
             claude_adapter=ClaudeAgentAdapter(binding_config),
         ),
         pi_adapter=pi_adapter,
@@ -180,6 +188,7 @@ async def run_bindings_loop(
                             repo_path=repo_path,
                             binding_type=getattr(binding, "binding_type", "infra"),
                             tracker_kind=getattr(binding, "tracker", "plane"),
+                            resume=getattr(issue, "resumed", False),
                         )
                     )
                 ),

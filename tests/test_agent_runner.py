@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 import signal
 import subprocess
 from pathlib import Path
@@ -7,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import agent_runner as agent_runner_module
-from agent_runner import AgentResult, AgentRunnerError, PiAgentAdapter, RoutingAgentAdapter, run_agent, verify_pi_support
+from agent_runner import AgentResult, AgentRunnerError, PiAgentAdapter, RoutingAgentAdapter, run_agent, run_pi_rpc_agent, verify_pi_support
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
 
@@ -17,6 +19,30 @@ class Completed:
         self.stdout = stdout
         self.stderr = stderr
         self.returncode = returncode
+
+
+
+
+class FakeRpcProcess:
+    def __init__(self, lines: list[str], returncode: int = 0):
+        self.pid = 4343
+        self.returncode = returncode
+        self.stdin = io.StringIO()
+        self.stdout = io.StringIO("".join(lines))
+        self.stderr = io.StringIO("")
+        self.wait_calls: list[float | None] = []
+
+    def poll(self) -> int | None:
+        if self.stdout.tell() == len(self.stdout.getvalue()):
+            return self.returncode
+        return None
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls.append(timeout)
+        return self.returncode
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        return self.stdout.read(), self.stderr.read()
 
 
 class FakeProcess:
@@ -451,3 +477,84 @@ def test_run_agent_timeout_terminates_then_kills_process_group(tmp_path: Path) -
     assert signals == [signal.SIGTERM, signal.SIGKILL]
     assert process.communicate_calls == [1.0, 5, None]
     assert not temp_dir.exists()
+
+
+
+def test_run_pi_rpc_agent_sends_prompt_and_returns_final_text(tmp_path: Path) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "message_update", "delta": "SYMPHONY_RESULT: done\n"}) + "\n",
+            json.dumps({"type": "message_update", "delta": "SYMPHONY_SUMMARY: ok"}) + "\n",
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return process
+
+    issue = _issue()
+    result = run_pi_rpc_agent(
+        _config_with_model(tmp_path),
+        issue,
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        mkdtemp=lambda **k: str(temp_dir),
+        clock=iter([10.0, 10.1, 10.2, 10.3, 10.4]).__next__,
+        environ={"PATH": "/usr/bin"},
+    )
+
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert result.stdout == "SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: ok"
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[:7] == [
+        "/usr/local/bin/pi",
+        "--mode",
+        "rpc",
+        "--provider",
+        "test-provider",
+        "--model",
+        "test-model:high",
+    ]
+    assert "--session-id" in command
+    assert "--no-session" not in command
+    assert "--continue" not in command
+    assert "-c" not in command
+    assert captured["stdin"] is subprocess.PIPE
+    assert captured["cwd"] == str(tmp_path)
+    sent = json.loads(process.stdin.getvalue().strip())
+    assert sent == {"type": "prompt", "message": "rendered prompt"}
+
+
+def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess([])
+    signals: list[int] = []
+
+    result = run_pi_rpc_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(temp_dir),
+        kill_process_group=lambda pid, sig: signals.append(sig),
+        clock=iter([0.0, 2.0, 2.1]).__next__,
+        environ={"PATH": "/usr/bin"},
+    )
+
+    assert result.timed_out is True
+    assert result.exit_code == -1
+    commands = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
+    assert commands[-1] == {"type": "abort"}
+    assert signals == [signal.SIGTERM]

@@ -69,6 +69,7 @@ class ProjectBinding:
     default_agent: str = "pi"
     binding_type: str = "infra"
     tracker: Literal["plane", "podium"] = "plane"
+    pi_mode: Literal["one-shot", "rpc"] = "one-shot"
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
 
@@ -367,6 +368,10 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
     if tracker_raw not in {"plane", "podium"}:
         raise ConfigError(f"{prefix}.tracker: must be 'plane' or 'podium', got '{tracker_raw}'")
     tracker: Literal["plane", "podium"] = "podium" if tracker_raw == "podium" else "plane"
+    pi_mode_raw = str(raw.get("pi_mode", "one-shot") or "one-shot")
+    if pi_mode_raw not in {"one-shot", "rpc"}:
+        raise ConfigError(f"{prefix}.pi_mode: must be 'one-shot' or 'rpc', got '{pi_mode_raw}'")
+    pi_mode: Literal["one-shot", "rpc"] = "rpc" if pi_mode_raw == "rpc" else "one-shot"
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),
         plane_project_id=plane_project_id,
@@ -375,6 +380,7 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
         default_agent=default_agent,
         binding_type=binding_type,
         tracker=tracker,
+        pi_mode=pi_mode,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),

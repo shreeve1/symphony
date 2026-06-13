@@ -105,7 +105,7 @@ def _escape_untrusted_block(text: str) -> str:
 
 _OPERATOR_REPLY_RE = re.compile(
     r"### Operator Reply\s*\([^)]*\)\s*\n"
-    r"(?:.*?\n)*?"
+    r".*?"
     r"(?=\n###|\Z)",
     re.DOTALL,
 )

@@ -66,6 +66,9 @@ class CandidateIssue:
     # agent runner passes these to the pi CLI verbatim.
     resolved_provider: str = ""
     resolved_model: str = ""
+    agent_session_id: str = ""
+    agent_session_sha: str = ""
+    resumed: bool = False
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -405,8 +408,8 @@ class PodiumTrackerAdapter:
                   issue_id, agent, provider, model, state, verdict, summary,
                   exit_code, cost_usd, input_tokens, output_tokens, worktree_path,
                   branch_name, base_branch, log_path, skill_invoked, started_at,
-                  ended_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ended_at, agent_session_sha, resumed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -682,6 +685,8 @@ _RUN_INSERT_COLUMNS = (
     "skill_invoked",
     "started_at",
     "ended_at",
+    "agent_session_sha",
+    "resumed",
 )
 _RUN_UPDATE_COLUMNS = tuple(key for key in _RUN_INSERT_COLUMNS if key != "issue_id")
 

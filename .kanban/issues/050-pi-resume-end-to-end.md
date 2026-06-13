@@ -1,12 +1,13 @@
 ---
 id: 050
 title: Pi RPC dispatch + resume end-to-end (Slice A)
-status: pending
+status: in-progress
 blocked_by: [047, 048, 049]
 parent: null
 priority: 0
 created: 2026-06-13
 updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build

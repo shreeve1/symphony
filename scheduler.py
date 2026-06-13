@@ -16,6 +16,7 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
+from code_version import resolve_code_sha
 from blocked_reconciler import reconcile_blocked
 from claude_runner import claude_probe_failure_reason
 from config import ProjectBinding, SymphonyConfig
@@ -33,6 +34,13 @@ from plane_adapter import (
     TrackerAdapter,
 )
 from prompt_renderer import render_previous_comments_block
+from session_continuity import (
+    ACTION_RESUME,
+    REASON_SESSION_ABSENT,
+    ResumeDecision,
+    derive_session_id,
+    evaluate_resume_eligibility,
+)
 from schedule import (
     CandidateComment,
     ScheduleEvent,
@@ -520,6 +528,140 @@ def _worktree_run_fields(
     }
 
 
+
+def _render_candidate_prompt(
+    render_prompt: Callable[..., str],
+    candidate: CandidateIssue,
+    *,
+    resume: bool = False,
+) -> str:
+    """Call the configured prompt renderer, passing resume when supported."""
+
+    try:
+        signature = inspect.signature(render_prompt)
+    except (TypeError, ValueError):
+        return render_prompt(candidate)
+    if "resume" in signature.parameters:
+        return render_prompt(candidate, resume=resume)
+    return render_prompt(candidate)
+
+
+def _dispatch_cwd(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None = None,
+) -> Path:
+    base_branch = getattr(candidate, "base_branch", "") or config.base_branch
+    worktree_fields = _worktree_run_fields(
+        config,
+        candidate,
+        base_branch,
+        binding=binding,
+    )
+    if worktree_fields.get("worktree_path"):
+        return Path(worktree_fields["worktree_path"])
+    return config.homelab_repo_path
+
+
+async def _prepare_resume_candidate(
+    adapter: TrackerAdapter,
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    fresh_issue: dict[str, Any],
+    *,
+    binding: ProjectBinding | None = None,
+) -> tuple[CandidateIssue, ResumeDecision | None]:
+    """Annotate a candidate with Session Resume fields for pi RPC dispatch."""
+
+    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    session_id = derive_session_id(candidate.id)
+    current_cwd = _dispatch_cwd(config, candidate, binding=binding)
+    current_sha = resolve_code_sha(current_cwd)
+    base_candidate = replace(
+        candidate,
+        agent_session_id=session_id,
+        agent_session_sha=current_sha,
+        resumed=False,
+    )
+    if (
+        agent != "pi"
+        or binding is None
+        or getattr(binding, "pi_mode", "one-shot") != "rpc"
+        or not getattr(adapter, "stores_context", False)
+    ):
+        return base_candidate, None
+
+    latest_run_id = str(fresh_issue.get("latest_run_id") or "")
+    get_run = getattr(adapter, "get_run", None)
+    previous_run = None
+    if latest_run_id and callable(get_run):
+        previous_run = await _maybe_await(get_run(latest_run_id))
+    if not previous_run:
+        decision = ResumeDecision(
+            action="refeed",
+            reason=REASON_SESSION_ABSENT,
+            session_id=session_id,
+            session_file=Path(""),
+        )
+    else:
+        previous_cwd = previous_run.get("worktree_path") or current_cwd
+        decision = evaluate_resume_eligibility(
+            previous_agent_kind=str(previous_run.get("agent") or ""),
+            current_agent_kind=agent,
+            previous_cwd=previous_cwd,
+            current_cwd=current_cwd,
+            session_id=session_id,
+            agent_session_sha=previous_run.get("agent_session_sha"),
+            current_git_sha=current_sha,
+        )
+    if decision.action == ACTION_RESUME:
+        LOGGER.info(
+            "resume_selected issue_id=%s session_id=%s session_file=%s",
+            candidate.id,
+            decision.session_id,
+            decision.session_file,
+        )
+        return replace(base_candidate, resumed=True), decision
+    LOGGER.info(
+        "resume_skipped issue_id=%s reason=%s session_id=%s fell_back=true",
+        candidate.id,
+        decision.reason,
+        decision.session_id,
+    )
+    return base_candidate, decision
+
+
+async def _render_for_dispatch(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    render_prompt: Callable[..., str],
+    agent_runner: Callable[..., AgentResult],
+    *,
+    now: Callable[[], datetime],
+    binding: ProjectBinding | None = None,
+    comments_text: str = "",
+) -> tuple[CandidateIssue, str]:
+    if not getattr(candidate, "resumed", False):
+        candidate = await _maybe_compact_context(
+            config,
+            adapter,
+            candidate,
+            agent_runner,
+            now=now,
+            binding=binding,
+        )
+    prompt = _render_candidate_prompt(
+        render_prompt,
+        candidate,
+        resume=getattr(candidate, "resumed", False),
+    )
+    if comments_text and not getattr(candidate, "resumed", False):
+        prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
+    return candidate, prompt
+
+
 async def _maybe_compact_context(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -697,6 +839,8 @@ async def _start_run_record(
         "state": "queued",
         "base_branch": base_branch,
         "skill_invoked": getattr(candidate, "preferred_skill", None),
+        "agent_session_sha": getattr(candidate, "agent_session_sha", "") or None,
+        "resumed": bool(getattr(candidate, "resumed", False)),
         **_worktree_run_fields(
             config, candidate, base_branch, binding=resolved_binding
         ),
@@ -1187,17 +1331,23 @@ async def run_tick(
 
         try:
             comments_text = await _fetch_issue_comments(adapter, candidate.id)
-            candidate = await _maybe_compact_context(
+            candidate, _resume_decision = await _prepare_resume_candidate(
+                adapter,
+                config,
+                candidate,
+                fresh,
+                binding=tick_binding,
+            )
+            candidate, prompt = await _render_for_dispatch(
                 config,
                 adapter,
                 candidate,
+                render_prompt,
                 compaction_agent_runner or agent_runner,
                 now=now,
                 binding=tick_binding,
+                comments_text=comments_text,
             )
-            prompt = render_prompt(candidate)
-            if comments_text:
-                prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
         except SchedulerContextCompactionError as exc:
             _iu, _du = _build_urls(config, candidate.id)
             await _block_issue(
@@ -1266,34 +1416,90 @@ async def run_tick(
             )
             parse_stderr = dispatch_agent != "claude"
 
+            result: AgentResult | None = None
             try:
                 result = await asyncio.to_thread(agent_runner, candidate, prompt)
             except Exception as exc:
-                result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    stdout="",
-                    stderr=str(exc),
-                    state="failed",
-                    verdict="blocked",
-                    summary=f"Agent crashed: {exc}",
-                    ended_at=now().isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    f"Agent crashed: {exc}",
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "agent-crashed", candidate.id, mode=mode)
+                if getattr(candidate, "resumed", False):
+                    resume_summary = f"resume_failed: {exc}; fell_back=true"
+                    await _finish_run_record(
+                        adapter,
+                        run_id,
+                        run_log_path,
+                        result=AgentResult(1, 0, False, stdout="", stderr=str(exc)),
+                        stdout="",
+                        stderr=str(exc),
+                        state="failed",
+                        verdict="blocked",
+                        summary=resume_summary,
+                        ended_at=now().isoformat(),
+                    )
+                    LOGGER.warning(
+                        "resume_failed issue_id=%s error=%s fell_back=true",
+                        candidate.id,
+                        exc,
+                    )
+                    candidate = replace(
+                        candidate,
+                        resumed=False,
+                        agent_session_sha=resolve_code_sha(
+                            _dispatch_cwd(config, candidate, binding=tick_binding)
+                        ),
+                    )
+                    try:
+                        candidate, prompt = await _render_for_dispatch(
+                            config,
+                            adapter,
+                            candidate,
+                            render_prompt,
+                            compaction_agent_runner or agent_runner,
+                            now=now,
+                            binding=tick_binding,
+                            comments_text=comments_text,
+                        )
+                        run_id, run_log_path = await _start_run_record(
+                            adapter, config, candidate, binding=tick_binding
+                        )
+                        claim_time = now().isoformat()
+                        await _mark_run_record_running(
+                            adapter,
+                            run_id,
+                            run_log_path,
+                            started_at=claim_time,
+                        )
+                        claim_dt = datetime.fromisoformat(claim_time)
+                        result = await asyncio.to_thread(agent_runner, candidate, prompt)
+                    except Exception as fallback_exc:
+                        exc = fallback_exc
+                    else:
+                        exc = None
+                if exc is not None:
+                    result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
+                    await _finish_run_record(
+                        adapter,
+                        run_id,
+                        run_log_path,
+                        result=result,
+                        stdout="",
+                        stderr=str(exc),
+                        state="failed",
+                        verdict="blocked",
+                        summary=f"Agent crashed: {exc}",
+                        ended_at=now().isoformat(),
+                    )
+                    _iu, _du = _build_urls(config, candidate.id)
+                    await _block_issue(
+                        adapter,
+                        candidate.id,
+                        f"Agent crashed: {exc}",
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
+                    )
+                    return TickResult(True, "agent-crashed", candidate.id, mode=mode)
+            assert result is not None
 
             LOGGER.info(
                 "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=%s",
@@ -1302,6 +1508,81 @@ async def run_tick(
                 result.duration_ms,
                 str(result.timed_out).lower(),
             )
+            if getattr(candidate, "resumed", False) and result.exit_code != 0 and not result.timed_out:
+                resume_summary = f"resume_failed: exit code {result.exit_code}; fell_back=true"
+                await _finish_run_record(
+                    adapter,
+                    run_id,
+                    run_log_path,
+                    result=result,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    state="failed",
+                    verdict="blocked",
+                    summary=resume_summary,
+                    ended_at=now().isoformat(),
+                )
+                LOGGER.warning(
+                    "resume_failed issue_id=%s exit_code=%s fell_back=true",
+                    candidate.id,
+                    result.exit_code,
+                )
+                candidate = replace(
+                    candidate,
+                    resumed=False,
+                    agent_session_sha=resolve_code_sha(
+                        _dispatch_cwd(config, candidate, binding=tick_binding)
+                    ),
+                )
+                try:
+                    candidate, prompt = await _render_for_dispatch(
+                        config,
+                        adapter,
+                        candidate,
+                        render_prompt,
+                        compaction_agent_runner or agent_runner,
+                        now=now,
+                        binding=tick_binding,
+                        comments_text=comments_text,
+                    )
+                    run_id, run_log_path = await _start_run_record(
+                        adapter, config, candidate, binding=tick_binding
+                    )
+                    claim_time = now().isoformat()
+                    await _mark_run_record_running(
+                        adapter,
+                        run_id,
+                        run_log_path,
+                        started_at=claim_time,
+                    )
+                    claim_dt = datetime.fromisoformat(claim_time)
+                    result = await asyncio.to_thread(agent_runner, candidate, prompt)
+                except Exception as exc:
+                    result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
+                    await _finish_run_record(
+                        adapter,
+                        run_id,
+                        run_log_path,
+                        result=result,
+                        stdout="",
+                        stderr=str(exc),
+                        state="failed",
+                        verdict="blocked",
+                        summary=f"Agent crashed: {exc}",
+                        ended_at=now().isoformat(),
+                    )
+                    _iu, _du = _build_urls(config, candidate.id)
+                    await _block_issue(
+                        adapter,
+                        candidate.id,
+                        f"Agent crashed: {exc}",
+                        issue_name=candidate.name,
+                        issue_identifier=candidate.identifier,
+                        notifier=notifier,
+                        issue_url=_iu,
+                        dashboard_url=_du,
+                    )
+                    return TickResult(True, "agent-crashed", candidate.id, mode=mode)
             if result.timed_out:
                 msg = f"Agent timed out after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)

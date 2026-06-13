@@ -74,6 +74,9 @@ class CandidateIssue:
     skill_source: str = ""
     resolved_provider: str = ""
     resolved_model: str = ""
+    agent_session_id: str = ""
+    agent_session_sha: str = ""
+    resumed: bool = False
 
 
 def stable_external_id(runbook: str, external_key: str) -> str:

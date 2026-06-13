@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import selectors
 import shutil
 import signal
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from io import TextIOBase
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
+from session_continuity import derive_session_id
 
 
 LOGGER = logging.getLogger(__name__)
@@ -49,6 +53,21 @@ class ProcessLike(Protocol):
     def returncode(self) -> int | None: ...
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]: ...
+
+
+class RpcProcessLike(ProcessLike, Protocol):
+    @property
+    def stdin(self) -> TextIOBase: ...
+
+    @property
+    def stdout(self) -> TextIOBase: ...
+
+    @property
+    def stderr(self) -> TextIOBase: ...
+
+    def poll(self) -> int | None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
 
 
 @dataclass(frozen=True)
@@ -139,6 +158,53 @@ def verify_pi_support(
         )
 
 
+
+def _agent_env(
+    config: SymphonyConfig,
+    issue: CandidateIssue,
+    temp_dir: str,
+    source_env: Mapping[str, str],
+) -> dict[str, str]:
+    # TERM is deliberately NOT inherited. We override with TERM=dumb and
+    # NO_COLOR=1 below so the pi CLI (and any tool it spawns) cannot emit
+    # ANSI escapes or progress trace into our captured stderr. Plane
+    # renders fenced blocks as plain text; ANSI is pure noise there.
+    allowed_keys = {
+        "PATH",
+        "HOME",
+        "USER",
+        "LANG",
+        "XDG_RUNTIME_DIR",
+        "PYTHONUNBUFFERED",
+        "TMPDIR",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "TELEGRAM_HOME_CHANNEL",
+        "ZAI_API_KEY",
+        "PI_OFFLINE",
+        "PI_CODING_AGENT_DIR",
+        "PI_CODING_AGENT_SESSION_DIR",
+    }
+    env = {k: v for k, v in source_env.items() if k in allowed_keys}
+    env.update(
+        {
+            "PATH": f"{temp_dir}{os.pathsep}{source_env.get('PATH', '')}",
+            "HOME": source_env.get("HOME", f"/home/{os.getenv('USER', 'james')}"),
+            "TERM": "dumb",
+            "NO_COLOR": "1",
+            "SYMPHONY_ISSUE_ID": issue.id,
+            "SYMPHONY_PLANE_API_URL": config.plane_api_url,
+            "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
+            "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
+            "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
+            "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
+            "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
+            "PYTHONPATH": str(Path(__file__).parent),
+        }
+    )
+    return env
+
+
 def run_agent(
     config: SymphonyConfig,
     issue: CandidateIssue,
@@ -203,43 +269,7 @@ def run_agent(
         helper_target.chmod(0o700)
 
         source_env = os.environ if environ is None else environ
-        # TERM is deliberately NOT inherited. We override with TERM=dumb and
-        # NO_COLOR=1 below so the pi CLI (and any tool it spawns) cannot emit
-        # ANSI escapes or progress trace into our captured stderr. Plane
-        # renders fenced blocks as plain text; ANSI is pure noise there.
-        allowed_keys = {
-            "PATH",
-            "HOME",
-            "USER",
-            "LANG",
-            "XDG_RUNTIME_DIR",
-            "PYTHONUNBUFFERED",
-            "TMPDIR",
-            "TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_CHAT_ID",
-            "TELEGRAM_HOME_CHANNEL",
-            "ZAI_API_KEY",
-            "PI_OFFLINE",
-            "PI_CODING_AGENT_DIR",
-            "PI_CODING_AGENT_SESSION_DIR",
-        }
-        env = {k: v for k, v in source_env.items() if k in allowed_keys}
-        env.update(
-            {
-                "PATH": f"{temp_dir}{os.pathsep}{source_env.get('PATH', '')}",
-                "HOME": source_env.get("HOME", f"/home/{os.getenv('USER', 'james')}"),
-                "TERM": "dumb",
-                "NO_COLOR": "1",
-                "SYMPHONY_ISSUE_ID": issue.id,
-                "SYMPHONY_PLANE_API_URL": config.plane_api_url,
-                "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
-                "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
-                "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
-                "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
-                "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
-                "PYTHONPATH": str(Path(__file__).parent),
-            }
-        )
+        env = _agent_env(config, issue, temp_dir, source_env)
 
         # Provider/model are resolved per-issue from models.yml by the
         # scheduler's dispatch gate; the config values are the legacy
@@ -313,6 +343,176 @@ def run_agent(
         remove_tree(temp_dir)
 
 
+
+def run_pi_rpc_agent(
+    config: SymphonyConfig,
+    issue: CandidateIssue,
+    rendered_prompt: str,
+    *,
+    plane_cli_source: Path | None = None,
+    popen_factory: Callable[..., RpcProcessLike] | None = None,
+    mkdtemp: Callable[..., str] = tempfile.mkdtemp,
+    copy_file: Callable[[Path, Path], object] = shutil.copy2,
+    remove_tree: Callable[[str], object] = shutil.rmtree,
+    kill_process_group: Callable[[int, int], object] = os.killpg,
+    clock: Callable[[], float] = time.monotonic,
+    environ: dict[str, str] | None = None,
+) -> AgentResult:
+    """Run pi in RPC mode and return the final assistant text as stdout."""
+
+    helper_source = plane_cli_source or Path(__file__).with_name("plane_cli.py")
+    if popen_factory is None:
+        popen_factory = cast(Callable[..., RpcProcessLike], subprocess.Popen)
+    temp_dir = mkdtemp(prefix="symphony-plane-cli-")
+    started = clock()
+    process: RpcProcessLike | None = None
+
+    try:
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
+        helper_target = Path(temp_dir) / "plane"
+        copy_file(helper_source, helper_target)
+        helper_target.chmod(0o700)
+
+        source_env = os.environ if environ is None else environ
+        env = _agent_env(config, issue, temp_dir, source_env)
+        provider = getattr(issue, "resolved_provider", "") or config.pi_provider
+        model = getattr(issue, "resolved_model", "") or config.pi_model
+        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
+        command = [
+            config.pi_bin,
+            "--mode",
+            "rpc",
+            "--provider",
+            provider,
+            "--model",
+            model,
+            "--session-id",
+            session_id,
+        ]
+        skill_source = getattr(issue, "skill_source", "")
+        if skill_source:
+            command += ["--skill", str(Path(skill_source).parent)]
+        cwd = str(config.homelab_repo_path)
+        LOGGER.info(
+            "pi_rpc_dispatch issue_id=%s provider=%s model=%s session_id=%s cwd=%s",
+            issue.id,
+            provider,
+            model,
+            session_id,
+            cwd,
+        )
+        process = popen_factory(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=cwd,
+            start_new_session=True,
+        )
+        process.stdin.write(json.dumps({"type": "prompt", "message": rendered_prompt}) + "\n")
+        process.stdin.flush()
+
+        assistant_parts: list[str] = []
+        stderr_parts: list[str] = []
+        error_seen = False
+        event_exit_code: int | None = None
+        deadline = started + (config.run_timeout_ms / 1000)
+
+        while True:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                _send_rpc_abort(process)
+                stdout, stderr = _terminate_process_group(
+                    process,
+                    kill_process_group=kill_process_group,
+                )
+                if stdout:
+                    assistant_parts.append(_rpc_text_from_raw(stdout))
+                if stderr:
+                    stderr_parts.append(stderr)
+                duration_ms = int((clock() - started) * 1000)
+                return AgentResult(
+                    -1,
+                    duration_ms,
+                    True,
+                    "".join(assistant_parts),
+                    "".join(stderr_parts),
+                )
+
+            line = _read_rpc_line(process, timeout=remaining)
+            if line == "":
+                if process.poll() is not None:
+                    event_exit_code = process.returncode
+                    break
+                continue
+
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                stderr_parts.append(line)
+                continue
+
+            event_type = str(event.get("type") or "")
+            text = _event_text(event)
+            if text:
+                assistant_parts.append(text)
+            if event_type == "error":
+                error_seen = True
+                message = event.get("message") or event.get("error") or text
+                if message:
+                    stderr_parts.append(str(message))
+            if event_type == "agent_end":
+                if "exit_code" in event:
+                    try:
+                        event_exit_code = int(event["exit_code"])
+                    except (TypeError, ValueError):
+                        event_exit_code = 0
+                else:
+                    event_exit_code = 0
+                break
+
+        try:
+            process.wait(timeout=TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = _terminate_process_group(
+                process,
+                kill_process_group=kill_process_group,
+            )
+            if stdout:
+                assistant_parts.append(_rpc_text_from_raw(stdout))
+            if stderr:
+                stderr_parts.append(stderr)
+        else:
+            leftover_stderr = _read_remaining(process.stderr)
+            if leftover_stderr:
+                stderr_parts.append(leftover_stderr)
+        duration_ms = int((clock() - started) * 1000)
+        exit_code = int(event_exit_code if event_exit_code is not None else (process.returncode or 0))
+        if error_seen and exit_code == 0:
+            exit_code = 1
+        return AgentResult(
+            exit_code,
+            duration_ms,
+            False,
+            "".join(assistant_parts),
+            "".join(stderr_parts),
+        )
+    finally:
+        remove_tree(temp_dir)
+
+
+@dataclass(frozen=True)
+class PiRpcAgentAdapter:
+    """Pi RPC subprocess adapter."""
+
+    config: SymphonyConfig
+
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
+        return run_pi_rpc_agent(self.config, issue, rendered_prompt)
+
+
 @dataclass(frozen=True)
 class PiAgentAdapter:
     """Pi one-shot subprocess adapter."""
@@ -338,6 +538,74 @@ class RoutingAgentAdapter:
         if agent == "claude":
             return self.claude_adapter(issue, rendered_prompt)
         raise AgentRunnerError(f"No agent adapter configured for `{agent}`")
+
+
+
+def _send_rpc_abort(process: RpcProcessLike) -> None:
+    try:
+        process.stdin.write(json.dumps({"type": "abort"}) + "\n")
+        process.stdin.flush()
+    except Exception:
+        return
+
+
+def _read_rpc_line(process: RpcProcessLike, *, timeout: float) -> str:
+    stdout = process.stdout
+    try:
+        fd = stdout.fileno()
+    except (AttributeError, OSError):
+        return stdout.readline()
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(fd, selectors.EVENT_READ)
+        events = selector.select(timeout=max(0.0, timeout))
+        if not events:
+            return ""
+        return stdout.readline()
+    finally:
+        selector.close()
+
+
+def _event_text(event: dict[str, object]) -> str:
+    for key in ("delta", "text", "content", "message", "result", "stdout"):
+        value = event.get(key)
+        text = _stringify_event_text(value)
+        if text:
+            return text
+    return ""
+
+
+def _stringify_event_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("delta", "text", "content", "message"):
+            text = _stringify_event_text(value.get(key))
+            if text:
+                return text
+    if isinstance(value, list):
+        return "".join(_stringify_event_text(item) for item in value)
+    return ""
+
+
+def _rpc_text_from_raw(raw: str) -> str:
+    parts: list[str] = []
+    for line in raw.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        text = _event_text(event)
+        if text:
+            parts.append(text)
+    return "".join(parts)
+
+
+def _read_remaining(stream: TextIOBase) -> str:
+    try:
+        return stream.read()
+    except Exception:
+        return ""
 
 
 def _strip_ansi(text: str) -> str:
