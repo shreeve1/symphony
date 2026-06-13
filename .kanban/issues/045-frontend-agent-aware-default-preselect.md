@@ -1,7 +1,9 @@
 ---
 id: 045
 title: Agent-aware default model preselect in NewIssueModal
-status: pending
+status: in-progress
+updated: 2026-06-13
+actor: ralph
 blocked_by: [041]
 parent: null
 priority: 2

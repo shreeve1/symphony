@@ -246,14 +246,16 @@ function NewIssueModal({
 
 	useEffect(() => titleRef.current?.focus(), []);
 
-	// Preselect the catalog's default: true model so the form shows what the
-	// scheduler will actually dispatch when the operator changes nothing.
-	const defaultModel = (options.data?.models ?? []).find(
-		(option: ModelOption) => option.default,
-	)?.id;
+	// Agent-aware default preselect (#045): when agent changes or options
+	// load, preselect the default:true model whose agent matches the selected
+	// agent. If the selected agent has no default, clear the model field so
+	// the operator never silently submits a cross-agent mismatch.
 	useEffect(() => {
-		if (defaultModel) setModel((current) => current || defaultModel);
-	}, [defaultModel]);
+		const match = (options.data?.models ?? []).find(
+			(option: ModelOption) => option.default && option.agent === agent,
+		)?.id;
+		setModel(match ?? "");
+	}, [options.data?.models, agent]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();

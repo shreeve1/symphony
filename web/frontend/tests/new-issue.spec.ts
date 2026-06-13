@@ -151,3 +151,75 @@ test("create failure rolls back the card and keeps the modal open", async ({
 
 	expectCleanConsole(problems, { ignore: [/422/] });
 });
+
+test("agent-aware model preselect switches default with agent", async ({
+	page,
+	problems,
+}) => {
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+
+	// Agent field starts empty → no default preselected.
+	await page.getByTestId("new-issue-model").click();
+	await expect(
+		page.getByTestId("new-issue-model-option").first(),
+	).toHaveText(/^—/);
+	await page.getByTestId("new-issue-model").blur();
+
+	// Select pi → model preselects pi default (gpt-5.5).
+	await page.getByTestId("new-issue-agent").fill("pi");
+	await page.getByTestId("new-issue-title").click();
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+
+	// Switch to claude → model preselects claude default (Opus 4.8).
+	await page.getByTestId("new-issue-agent").fill("claude");
+	await page.getByTestId("new-issue-title").click();
+	await expect(page.getByTestId("new-issue-model")).toHaveValue(
+		"Opus 4.8 (claude-opus-4-8)",
+	);
+
+	// Switch back to pi → model restores pi default.
+	await page.getByTestId("new-issue-agent").fill("pi");
+	await page.getByTestId("new-issue-title").click();
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+
+	expectCleanConsole(problems);
+});
+
+test("model preselect clears when agent has no default", async ({
+	page,
+	problems,
+}) => {
+	await page.goto("/homelab");
+
+	// Intercept options to strip the claude default.
+	await page.route("**/api/bindings/homelab/options", async (route) => {
+		const response = await route.fetch();
+		const body = await response.json();
+		body.models = body.models.map((m: Record<string, unknown>) =>
+			m.agent === "claude" ? { ...m, default: false } : m,
+		);
+		await route.fulfill({ response, json: body });
+	});
+
+	await page.getByTestId("new-issue-button").click();
+	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+
+	// pi has a default → preselects gpt-5.5.
+	await page.getByTestId("new-issue-agent").fill("pi");
+	await page.getByTestId("new-issue-title").click();
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+
+	// claude has no default → model clears to placeholder.
+	await page.getByTestId("new-issue-agent").fill("claude");
+	await page.getByTestId("new-issue-title").click();
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("");
+
+	// Switch back to pi → pi default restores.
+	await page.getByTestId("new-issue-agent").fill("pi");
+	await page.getByTestId("new-issue-title").click();
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+
+	expectCleanConsole(problems);
+});
