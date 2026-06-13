@@ -132,7 +132,7 @@ export function Sidebar() {
 	return (
 		<aside
 			data-testid="sidebar"
-			className="flex h-full w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground"
+			className="relative z-50 flex h-full w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground"
 		>
 			<Link
 				href="/"
