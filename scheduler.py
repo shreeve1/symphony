@@ -19,6 +19,7 @@ from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
+from model_catalog import load_models, resolve_model
 from notifier import (
     TelegramNotifier,
     format_blocked_message,
@@ -31,6 +32,7 @@ from plane_adapter import (
     PlaneRateLimitError,
     TrackerAdapter,
 )
+from prompt_renderer import render_previous_comments_block
 from schedule import (
     CandidateComment,
     ScheduleEvent,
@@ -38,8 +40,6 @@ from schedule import (
     ScheduleParseError,
     latest_event,
 )
-from model_catalog import load_models, resolve_model
-from prompt_renderer import render_previous_comments_block
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from web.api.db import resolve_run_log_root
 
@@ -546,14 +546,15 @@ def _apply_dispatch_gate(
         )
     try:
         entry = resolve_model(
-            getattr(candidate, "preferred_model", None), load_models()
+            getattr(candidate, "preferred_model", None), load_models(), agent=agent
         )
     except Exception as exc:
         return candidate, f"Dispatch blocked: model resolution failed: {exc}"
-    if entry["agent"] != "pi":
+    if entry["agent"] != agent:
         return candidate, (
             f"Dispatch blocked: model `{entry['id']}` requires agent "
-            f"`{entry['agent']}`, which is not wired."
+            f"`{entry['agent']}` but the issue resolves to agent `{agent}`; "
+            "pick a matching model or change preferred_agent."
         )
     skill = getattr(candidate, "preferred_skill", None)
     if skill:

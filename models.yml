@@ -2,6 +2,7 @@ models:
   - id: claude-opus-4-8
     agent: claude
     label: Opus 4.8
+    default: true
   - id: claude-fable-5
     agent: claude
   - id: claude-sonnet-4-6

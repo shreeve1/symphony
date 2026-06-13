@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from config import ProjectBinding
+from plane_adapter import CandidateIssue
 from scheduler import _apply_dispatch_gate
 from tracker_contract import DEFAULT_CONTRACT
-from tracker_podium import CandidateIssue
 
 
 @pytest.fixture()
@@ -19,6 +19,7 @@ def catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "models:\n"
         "  - id: claude-fable-5\n"
         "    agent: claude\n"
+        "    default: true\n"
         "  - id: gpt-5.5\n"
         "    agent: pi\n"
         "    provider: openai-codex\n"
@@ -75,7 +76,9 @@ def test_claude_model_on_pi_agent_blocks(catalog: Path) -> None:
     _, error = _apply_dispatch_gate(
         _candidate(preferred_model="claude-fable-5"), _binding()
     )
-    assert error is not None and "claude-fable-5" in error
+    assert error is not None
+    assert "claude-fable-5" in error
+    assert "requires agent `claude` but the issue resolves to agent `pi`" in error
 
 
 def test_missing_skill_row_blocks(catalog: Path) -> None:

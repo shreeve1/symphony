@@ -69,6 +69,11 @@ class CandidateIssue:
     worktree_active: bool = False
     base_branch: str = ""
     binding_name: str = ""
+    preferred_model: str | None = None
+    reasoning_effort: str = "high"
+    skill_source: str = ""
+    resolved_provider: str = ""
+    resolved_model: str = ""
 
 
 def stable_external_id(runbook: str, external_key: str) -> str:

@@ -24,9 +24,9 @@ from plane_adapter import (
     TrackerAdapter,
     build_adapter,
 )
+from prompt_renderer import IssueData, render_prompt
 from scheduler import _resolve_mode, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
-from prompt_renderer import IssueData, render_prompt
 
 
 @dataclass
@@ -88,7 +88,7 @@ def _build_binding_runtime(
             # startup probe must exercise the catalog default, not legacy env.
             from model_catalog import load_models, resolve_model
 
-            entry = resolve_model(None, load_models())
+            entry = resolve_model(None, load_models(), agent="pi")
             probe_provider = str(entry["provider"])
             probe_model = str(entry["id"])
         verify_pi_support(

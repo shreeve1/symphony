@@ -3,9 +3,9 @@
 The catalog is the single source of truth for which models can be dispatched.
 `/api/bindings/{name}/options` feeds the new-issue Model dropdown from it, and
 the scheduler resolves `issue.preferred_model` against it at dispatch time.
-Exactly one entry carries `default: true`; that entry is used when an issue
-has no `preferred_model`. Unknown models fail dispatch loudly rather than
-falling back silently.
+Each agent may carry at most one `default: true`; that per-agent entry is used
+when an issue has no `preferred_model`. Unknown models fail dispatch loudly
+rather than falling back silently.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
         raise ValueError("models must be a list")
 
     seen: set[str] = set()
-    defaults: list[str] = []
+    defaults_by_agent: dict[str, str] = {}
     result: list[dict[str, Any]] = []
     for index, item in enumerate(models):
         if not isinstance(item, dict):
@@ -62,13 +62,15 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
                 raise ValueError(f"models[{index}].default must be a boolean")
             if default:
                 entry["default"] = True
-                defaults.append(model_id)
+                previous_default = defaults_by_agent.get(str(agent))
+                if previous_default is not None:
+                    raise ValueError(
+                        f"multiple default: true entries for agent `{agent}`: "
+                        f"`{previous_default}` and `{model_id}`"
+                    )
+                defaults_by_agent[str(agent)] = model_id
         result.append(entry)
         seen.add(model_id)
-    if len(defaults) != 1:
-        raise ValueError(
-            f"exactly one model must set default: true (found {len(defaults)})"
-        )
     return result
 
 
@@ -79,7 +81,7 @@ def load_models(path: Path | None = None) -> list[dict[str, Any]]:
 
 
 def resolve_model(
-    preferred_model: str | None, models: list[dict[str, Any]]
+    preferred_model: str | None, models: list[dict[str, Any]], *, agent: str
 ) -> dict[str, Any]:
     """Resolve an issue's preferred model (or the catalog default) to an entry.
 
@@ -95,6 +97,8 @@ def resolve_model(
             "add it to the catalog or clear preferred_model"
         )
     for entry in models:
-        if entry.get("default"):
+        if entry.get("default") and entry["agent"] == agent:
             return entry
-    raise ModelResolutionError("models.yml has no default: true entry")
+    raise ModelResolutionError(
+        f"models.yml has no default: true entry for agent `{agent}`"
+    )

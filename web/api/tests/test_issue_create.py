@@ -223,9 +223,14 @@ def test_models_validator_rejects_invalid_catalogs() -> None:
         {"models": [{"id": "claude-fable-5", "agent": "claude", "default": True}]}
     ) == [{"id": "claude-fable-5", "agent": "claude", "default": True}]
 
-    with pytest.raises(ValueError, match="exactly one model"):
+    with pytest.raises(ValueError, match="multiple default: true entries for agent `claude`"):
         main._validate_models(
-            {"models": [{"id": "claude-fable-5", "agent": "claude"}]}
+            {
+                "models": [
+                    {"id": "claude-fable-5", "agent": "claude", "default": True},
+                    {"id": "claude-opus-4-8", "agent": "claude", "default": True},
+                ]
+            }
         )
     with pytest.raises(ValueError, match="provider is required for pi models"):
         main._validate_models(

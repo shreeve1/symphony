@@ -1,11 +1,13 @@
 ---
 id: 041
 title: Agent-aware model catalog with per-agent defaults
-status: pending
+status: in-progress
 blocked_by: []
 parent: null
 priority: 1
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
