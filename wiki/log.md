@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #042 Claude tmux adapter component
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #042 implementation; commits `e45759d`, `b17f405`, `bdde507`; `.kanban/issues/042-claude-tmux-adapter.md`; `.kanban/progress.md`; `claude_runner.py`; `tests/test_claude_runner.py`; `docs/adr/0001-claude-via-tmux-send-keys.md`.
+- Outputs: new `wiki/analyses/podium-042-claude-tmux-adapter.md`; updated `wiki/CLAIMS.md` (C-0148..C-0151); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured Python-native `ClaudeAgentAdapter` component, `symphony-claude-<issue>-<nonce>` artifact namespace, allowlisted env, ready poll, file result/done gate, lifecycle mappings, cleanup, and #043 routing handoff. Verification passed: `uv run pytest -q` (679 passed, 1 skipped), `uv run ruff check claude_runner.py tests/test_claude_runner.py`, `git diff --check`, touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-12] session-update | #038 Podium Inbox dismissal and resurface
 
 - Actor: agent (Pi, Ralph + wiki update)

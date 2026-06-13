@@ -49,8 +49,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Executor / Agent
 
-- Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/symphony-plan-history.md`, `analyses/brainstorm-pi-swap.md`, `concepts/symphony-engine.md`, `concepts/agent-runner-and-worktree.md`, `concepts/thin-engine-v2.md`, `analyses/thin-engine-e2e-test.md`
-- Keywords: pi, pi-coding-agent, --print, --no-session, --provider, --model, glm-5.1, zai, openai-codex, gpt-5.5, claude, tmux, send-keys, Done Marker, SYMPHONY_RESULT, SYMPHONY_SUMMARY, verify_pi_support, silent-failure guardrail, PiAgentAdapter, RoutingAgentAdapter, ZAI_API_KEY, thin-engine, coding-binding, no-worktree
+- Pages: `analyses/adr-0001-claude-tmux.md`, `analyses/podium-042-claude-tmux-adapter.md`, `analyses/symphony-plan-history.md`, `analyses/brainstorm-pi-swap.md`, `concepts/symphony-engine.md`, `concepts/agent-runner-and-worktree.md`, `concepts/thin-engine-v2.md`, `analyses/thin-engine-e2e-test.md`
+- Keywords: pi, pi-coding-agent, --print, --no-session, --provider, --model, glm-5.1, zai, openai-codex, gpt-5.5, claude, tmux, send-keys, Done Marker, SYMPHONY_RESULT, SYMPHONY_SUMMARY, verify_pi_support, silent-failure guardrail, PiAgentAdapter, ClaudeAgentAdapter, run_claude_agent, claude_runner, symphony-claude, claude_ready_timeout, bypassPermissions, load-buffer, paste-buffer, result file, done file, allowlisted env, RoutingAgentAdapter, ZAI_API_KEY, thin-engine, coding-binding, no-worktree
 
 ## Thin Engine
 
@@ -94,5 +94,5 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Dispatch contract (models, effort, skills, claude gate)
 
-- Pages: `analyses/podium-issue-dispatch-contract.md`
-- Keywords: dispatch gate, _apply_dispatch_gate, model catalog, models.yml default true, gpt-5.5 default, preferred_model blocks, reasoning_effort suffix, --skill loading, skill directive, claude not wired, kanban 040, run row provider model, 60min timeout, max_duration_seconds dropped, migration 0006, alembic stamp drift, inbox_dismissed_at missing, pragma diff parity, ensure_schema never re-stamp, schema drift check at boot, missing column raises
+- Pages: `analyses/podium-issue-dispatch-contract.md`, `analyses/podium-042-claude-tmux-adapter.md`
+- Keywords: dispatch gate, _apply_dispatch_gate, model catalog, models.yml default true, gpt-5.5 default, preferred_model blocks, reasoning_effort suffix, --skill loading, skill directive, claude not wired, kanban 040, run row provider model, 60min timeout, max_duration_seconds dropped, migration 0006, alembic stamp drift, inbox_dismissed_at missing, pragma diff parity, ensure_schema never re-stamp, schema drift check at boot, missing column raises, ClaudeAgentAdapter, run_claude_agent, issue.resolved_model, no config.pi_model fallback, markerless default, file completion gate, #043 routing

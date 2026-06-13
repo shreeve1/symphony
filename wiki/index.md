@@ -76,6 +76,7 @@
 >>>>>>> Stashed changes
 
 | [analyses/podium-issue-dispatch-contract.md](analyses/podium-issue-dispatch-contract.md) | Issue-field dispatch contract — fail-loud gate (agent/model/skill), models.yml `default: true` (gpt-5.5), `:effort` suffix, `--skill` loading + prompt directive, 60min timeout, max_duration dropped, alembic stamp-vs-run drift root cause | `model_catalog.py`, `scheduler.py`, `agent_runner.py`, `wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md` | 2026-06-12 |
+| [analyses/podium-042-claude-tmux-adapter.md](analyses/podium-042-claude-tmux-adapter.md) | #042 Claude tmux adapter component — Python-native `ClaudeAgentAdapter`, `symphony-claude-<issue>-<nonce>` artifacts, allowlisted env, ready poll, file completion gate, lifecycle mappings, cleanup; routing remains #043 | `.kanban/issues/042-claude-tmux-adapter.md`, `claude_runner.py`, `tests/test_claude_runner.py`, `docs/adr/0001-claude-via-tmux-send-keys.md` | 2026-06-13 |
 
 ## Candidate Review Queue
 
