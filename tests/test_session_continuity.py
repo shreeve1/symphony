@@ -56,8 +56,12 @@ def test_pi_session_file_path_uses_default_cwd_slug(
 
     path = continuity.session_file_path("pi", cwd, session_id)
 
-    safe_path = f"--{str(cwd.resolve()).lstrip('/').replace('/', '-').replace(':', '-')}--"
-    assert path == home / ".pi" / "agent" / "sessions" / safe_path / f"{session_id}.jsonl"
+    safe_path = (
+        f"--{str(cwd.resolve()).lstrip('/').replace('/', '-').replace(':', '-')}--"
+    )
+    assert (
+        path == home / ".pi" / "agent" / "sessions" / safe_path / f"{session_id}.jsonl"
+    )
 
 
 def test_pi_session_file_path_honors_session_dir_override(
@@ -69,7 +73,10 @@ def test_pi_session_file_path_honors_session_dir_override(
     monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(session_dir))
     session_id = continuity.derive_session_id("048")
 
-    assert continuity.session_file_path("pi", cwd, session_id) == session_dir / f"{session_id}.jsonl"
+    assert (
+        continuity.session_file_path("pi", cwd, session_id)
+        == session_dir / f"{session_id}.jsonl"
+    )
 
 
 def test_pi_session_file_path_finds_existing_timestamped_session(
@@ -134,7 +141,9 @@ def test_evaluate_resume_eligibility_rejects_agent_mismatch(tmp_path: Path) -> N
     assert decision.reason == continuity.REASON_AGENT_MISMATCH
 
 
-def test_evaluate_resume_eligibility_rejects_missing_or_changed_cwd(tmp_path: Path) -> None:
+def test_evaluate_resume_eligibility_rejects_missing_or_changed_cwd(
+    tmp_path: Path,
+) -> None:
     previous_cwd = tmp_path / "old"
     current_cwd = tmp_path / "new"
     current_cwd.mkdir()
@@ -208,4 +217,6 @@ def test_session_continuity_module_stays_pure() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_roots.add(node.module.split(".")[0])
 
-    assert not ({"subprocess", "scheduler", "agent_runner", "socket", "httpx"} & imported_roots)
+    assert not (
+        {"subprocess", "scheduler", "agent_runner", "socket", "httpx"} & imported_roots
+    )

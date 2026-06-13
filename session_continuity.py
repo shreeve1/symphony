@@ -44,7 +44,9 @@ def session_file_path(agent_kind: str, cwd: Path | str, session_id: str) -> Path
     resolved_cwd = _resolve_cwd(cwd)
     if normalized_agent == "claude":
         encoded_cwd = re.sub(r"[^A-Za-z0-9]", "-", str(resolved_cwd))
-        return Path.home() / ".claude" / "projects" / encoded_cwd / f"{session_id}.jsonl"
+        return (
+            Path.home() / ".claude" / "projects" / encoded_cwd / f"{session_id}.jsonl"
+        )
     if normalized_agent == "pi":
         session_dir = _pi_session_dir(resolved_cwd)
         existing = sorted(session_dir.glob(f"*_{session_id}.jsonl"))
