@@ -31,3 +31,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Resume prompts intentionally omit WORKFLOW.md, issue description, full comments, and issue context; the Podium `preferred_skill` directive still prepends resume prompts when set.
 **Conventions established:** Fresh prompt rendering remains the default (`resume=False`); downstream #050/#051 should opt into `resume=True` only after resume eligibility succeeds.
 **Notes for next iteration:** #050/#051 must pass the resume flag from scheduler/adapter wiring and still handle `--skill` loading outside prompt rendering.
+
+## #050 Pi RPC dispatch + resume end-to-end — 2026-06-13
+
+**What changed:** Added `PiRpcAgentAdapter` with `pi --mode rpc` dispatch, derived session ids, JSONL event pumping, timeout aborts, and scheduler Session Resume wiring.
+**Files:** `agent_runner.py`, `scheduler.py`, `config.py`, `main.py`, `plane_adapter.py`, `tracker_podium.py`, `prompt_renderer.py`, `tests/test_agent_runner.py`, `tests/test_dispatch_compaction.py`, `.kanban/issues/050-pi-resume-end-to-end.md`.
+**Decisions:** Kept one-shot `PiAgentAdapter` as the default rollback path; bindings opt into RPC with `pi_mode: rpc`. Resume runs skip Podium context compaction and render only the newest operator reply; predicate/runtime failures fall back to fresh full re-feed in the same tick.
+**Conventions established:** Pi RPC run rows record `agent_session_sha` and `resumed`; the final assistant text still flows through `AgentResult.stdout` so result/summary parsing remains adapter-neutral.
+**Notes for next iteration:** #051 can mirror the resume/fallback flow for Claude; #056/#058 should build steering/lifecycle on the RPC event pump without changing the one-shot rollback path.

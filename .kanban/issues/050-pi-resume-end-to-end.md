@@ -1,7 +1,7 @@
 ---
 id: 050
 title: Pi RPC dispatch + resume end-to-end (Slice A)
-status: review
+status: done
 blocked_by: [047, 048, 049]
 parent: null
 priority: 0
@@ -30,13 +30,13 @@ Parity verified 2026-06-13 (ADR-0010 spike): `pi --mode rpc` honors `--skill`, C
 
 ## Acceptance criteria
 
-- [ ] `PiRpcAgentAdapter` dispatches `pi --mode rpc` with `--session-id <derived>`, never `--no-session`/`--continue`, and returns an `AgentResult` whose `stdout` is the final assistant text.
-- [ ] Run-to-completion parity: a normal run completes on `agent_end` exit 0; verdict/summary/metrics parse identically to the one-shot path; timeout sends `abort` and returns `timed_out=True`.
-- [ ] Resume run renders the delta-only prompt (#049); fallback renders full re-feed; `resumed`/`agent_session_sha` recorded for both paths.
-- [ ] Predicate failure and a simulated resume/runtime error fall back to fresh+re-feed in the same tick with the documented markers.
-- [ ] `_maybe_compact_context` is NOT invoked on resume runs and IS on fresh/fallback runs.
-- [ ] One-shot `PiAgentAdapter` remains intact and selectable (rollback path); a per-binding flag selects RPC vs one-shot.
-- [ ] Tests fake the RPC subprocess stdio with scripted JSONL events (existing injected-fake style).
+- [x] `PiRpcAgentAdapter` dispatches `pi --mode rpc` with `--session-id <derived>`, never `--no-session`/`--continue`, and returns an `AgentResult` whose `stdout` is the final assistant text.
+- [x] Run-to-completion parity: a normal run completes on `agent_end` exit 0; verdict/summary/metrics parse identically to the one-shot path; timeout sends `abort` and returns `timed_out=True`.
+- [x] Resume run renders the delta-only prompt (#049); fallback renders full re-feed; `resumed`/`agent_session_sha` recorded for both paths.
+- [x] Predicate failure and a simulated resume/runtime error fall back to fresh+re-feed in the same tick with the documented markers.
+- [x] `_maybe_compact_context` is NOT invoked on resume runs and IS on fresh/fallback runs.
+- [x] One-shot `PiAgentAdapter` remains intact and selectable (rollback path); a per-binding flag selects RPC vs one-shot.
+- [x] Tests fake the RPC subprocess stdio with scripted JSONL events (existing injected-fake style).
 
 ## Verification
 
@@ -45,3 +45,7 @@ Parity verified 2026-06-13 (ADR-0010 spike): `pi --mode rpc` honors `--skill`, C
 ## Blocked by
 
 - Blocked by #047, #048, #049
+
+## Implementation Notes
+
+Implemented `PiRpcAgentAdapter` and `run_pi_rpc_agent` for `pi --mode rpc` dispatch with derived session ids, JSONL event pumping, abort-on-timeout, and final assistant text mapped into `AgentResult.stdout`. Added per-binding `pi_mode: rpc` routing while preserving the one-shot `PiAgentAdapter` rollback path. Wired scheduler resume eligibility, delta-only prompt rendering, resume/fallback run-row fields, runtime fallback, and compaction skipping on resume. Added regression coverage for RPC stdio, timeout abort, and resume prompt/run-row behavior.
