@@ -1,11 +1,13 @@
 ---
 id: 047
 title: Run-row session-tracking columns
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
@@ -21,11 +23,11 @@ No adapter, scheduler, or prompt changes here — this is the schema foundation 
 
 ## Acceptance criteria
 
-- [ ] `run` table has `agent_session_sha` (nullable TEXT) and `resumed` (default false) in both `web/api/schema.py` `SCHEMA_SQL` and a new Alembic migration revision.
-- [ ] Alembic head and runtime `SCHEMA_SQL` produce identical `run` table PRAGMA (parity test passes).
-- [ ] `ensure_schema(...)` updates `alembic_version` to the new revision for schema-created DBs.
-- [ ] Existing rows/migrations upgrade cleanly (nullable + default, no backfill required).
-- [ ] A test asserts both columns are present and default correctly on a fresh DB.
+- [x] `run` table has `agent_session_sha` (nullable TEXT) and `resumed` (default false) in both `web/api/schema.py` `SCHEMA_SQL` and a new Alembic migration revision.
+- [x] Alembic head and runtime `SCHEMA_SQL` produce identical `run` table PRAGMA (parity test passes).
+- [x] `ensure_schema(...)` updates `alembic_version` to the new revision for schema-created DBs.
+- [x] Existing rows/migrations upgrade cleanly (nullable + default, no backfill required).
+- [x] A test asserts both columns are present and default correctly on a fresh DB.
 
 ## Verification
 
@@ -34,3 +36,7 @@ No adapter, scheduler, or prompt changes here — this is the schema foundation 
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Added `agent_session_sha TEXT` and `resumed BOOLEAN DEFAULT FALSE` to the runtime `run` table schema and Alembic revision `0007_add_run_session_tracking_columns`. Bumped `INITIAL_REVISION` so fresh runtime-created databases stamp the new head. Verified migration/runtime PRAGMA parity and run reconciliation tests.
