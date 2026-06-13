@@ -1,7 +1,7 @@
 ---
 id: 041
 title: Agent-aware model catalog with per-agent defaults
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 1
@@ -25,17 +25,25 @@ Changes:
 
 ## Acceptance criteria
 
-- [ ] `validate_models` accepts one pi default + one claude default simultaneously; rejects two pi defaults or two claude defaults with an error naming the agent.
-- [ ] `resolve_model(None, models, agent="claude")` returns `claude-opus-4-8`; `resolve_model(None, models, agent="pi")` returns `gpt-5.5`; missing per-agent default raises `ModelResolutionError` naming the agent.
-- [ ] Explicit `preferred_model` resolution is unchanged (match or loud `ModelResolutionError`), regardless of agent.
-- [ ] `models.yml` carries `default: true` on `claude-opus-4-8` and still loads via `load_models()`.
-- [ ] `_apply_dispatch_gate` blocks an agent/model mismatch (pi agent + claude model) with the new message; pi agent + pi model still dispatches; claude agent still blocks with "engine is not wired".
-- [ ] Startup pi probe path works (the `main.py` call site passes `agent="pi"` and existing startup tests stay green).
-- [ ] `uv run pytest` green.
+- [x] `validate_models` accepts one pi default + one claude default simultaneously; rejects two pi defaults or two claude defaults with an error naming the agent.
+- [x] `resolve_model(None, models, agent="claude")` returns `claude-opus-4-8`; `resolve_model(None, models, agent="pi")` returns `gpt-5.5`; missing per-agent default raises `ModelResolutionError` naming the agent.
+- [x] Explicit `preferred_model` resolution is unchanged (match or loud `ModelResolutionError`), regardless of agent.
+- [x] `models.yml` carries `default: true` on `claude-opus-4-8` and still loads via `load_models()`.
+- [x] `_apply_dispatch_gate` blocks an agent/model mismatch (pi agent + claude model) with the new message; pi agent + pi model still dispatches; claude agent still blocks with "engine is not wired".
+- [x] Startup pi probe path works (the `main.py` call site passes `agent="pi"` and existing startup tests stay green).
+- [x] `uv run pytest` green.
 
 ## Verification
 
 `uv run pytest`
+
+## Implementation Notes
+
+- Updated the model catalog validator and resolver for per-agent defaults.
+- Added a Claude default to `models.yml` while preserving the Pi default.
+- Passed the resolved agent through startup and dispatch-gate model resolution.
+- Added model-catalog and dispatch-gate regression tests; `uv run pytest` passed with 665 passed, 1 skipped.
+- Fresh Ralph review passed.
 
 ## Blocked by
 
