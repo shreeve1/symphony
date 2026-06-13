@@ -1,7 +1,7 @@
 ---
 id: 043
 title: Wire claude dispatch end-to-end through gate, routing, and verdict parsing
-status: in-progress
+status: review
 blocked_by: [041, 042]
 parent: null
 priority: 1
