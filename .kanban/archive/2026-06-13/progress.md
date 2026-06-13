@@ -4,32 +4,56 @@ This file tracks implementation notes across Ralph iterations.
 
 # Conventions & Decisions
 
-- Inbox is the canonical sidebar membership list for operator-response issues; membership is a projection and does not move issues between board columns.
-- Inbox membership uses `in_review` and `blocked` issues across non-archived bindings, ordered by `COALESCE(last_event_at, updated_at) DESC, id DESC`.
-- Inbox dismissal is represented by nullable `issue.inbox_dismissed_at`; read-path filtering excludes rows dismissed at or after latest activity and allows newer activity to resurface cards.
+- `models.yml` allows at most one `default: true` entry per agent. Missing per-agent defaults are valid at catalog load time but block dispatch when an issue for that agent lacks `preferred_model`.
+- Claude dispatch is wired. A startup Claude probe failure blocks only Claude issues at the dispatch gate; Pi dispatch remains unaffected.
+- Claude startup runs one global orphan tmux socket reaper for `/tmp/symphony-claude-*.sock` before per-binding reconcile.
 
 # Iteration Log
 
-## #037 Podium Inbox read path — 2026-06-12
+## #041 Agent-aware model catalog with per-agent defaults — 2026-06-13
 
-**What changed:** Added `inbox_dismissed_at` migration/schema parity, authenticated `GET /api/inbox`, backend tests, Sidebar Inbox query/cards, live invalidation, fixtures, and Playwright inbox tests.
-**Files:** `web/api/main.py`, `web/api/schema.py`, `web/api/migrations/versions/0005_inbox_dismissed_at.py`, `web/api/tests/test_inbox.py`, `web/frontend/lib/api.ts`, `web/frontend/components/Sidebar.tsx`, `web/frontend/components/QueryProvider.tsx`, `web/frontend/tests/fixtures.ts`, `web/frontend/tests/inbox.spec.ts`.
-**Decisions:** Used TanStack Query invalidation for `issue.created` / `issue.updated` events instead of direct cache surgery; kept 10s polling fallback.
-**Conventions established:** Inbox sections hide completely when empty; cards deep-link with `/{binding_name}?issue={id}`.
-**Notes for next iteration:** #038 owns writing `inbox_dismissed_at`, dismiss button UX, and explicit resurface clearing on transitions into `in_review` or `blocked`.
+**What changed:** Added per-agent model defaults, made `resolve_model` require an agent, set `claude-opus-4-8` as the Claude default, and updated dispatch/startup call sites.
+**Files:** model_catalog.py, models.yml, main.py, scheduler.py, plane_adapter.py, tests/test_model_catalog.py, tests/test_dispatch_gate.py, web/api/tests/test_issue_create.py, .claude/skills/symphony-models/SKILL.md, .kanban/issues/041-agent-aware-model-catalog.md
+**Decisions:** Zero defaults for an agent remain valid at load time; dispatch blocks only when that agent needs an implicit default.
+**Conventions established:** Explicit preferred models remain agent-agnostic in `resolve_model`; scheduler mismatch gate owns agent/model compatibility errors.
+**Notes for next iteration:** #043 can remove the non-`pi` engine block and rely on the mismatch gate and per-agent catalog defaults.
 
-## #038 Podium Inbox dismiss + resurface — 2026-06-12
+## #042 ClaudeAgentAdapter tmux send-keys engine — 2026-06-13
 
-**What changed:** Added `POST /api/issues/{id}/dismiss`, optimistic Sidebar dismiss controls, API/backend resurface coverage, tracker transition dismissal clearing, and Playwright coverage for hover-dismiss without navigation.
-**Files:** `web/api/main.py`, `tracker_podium.py`, `web/api/tests/test_inbox.py`, `tests/test_tracker_podium.py`, `web/frontend/lib/api.ts`, `web/frontend/components/Sidebar.tsx`, `web/frontend/tests/inbox.spec.ts`, `web/frontend/tests/fixtures.ts`, `web/frontend/tests/live-sync.spec.ts`, `web/frontend/tests/new-issue.spec.ts`.
-**Decisions:** Dismissal is state-preserving; transitions into `in_review`/`blocked` clear `inbox_dismissed_at`; newer `last_event_at` remains a secondary resurface path.
-**Conventions established:** Inbox dismiss buttons use optimistic removal with rollback and do not navigate the card.
-**Notes for next iteration:** #039 can remove the dashboard attention list now that Inbox read + dismiss flows are in place.
+**What changed:** Added `claude_runner.py` with a Python-native tmux send-keys Claude adapter, file-based result/done completion, ready-pattern polling, allowlisted environment, worktree-aware cwd selection, and idempotent cleanup.
+**Files:** claude_runner.py, tests/test_claude_runner.py, .kanban/issues/042-claude-tmux-adapter.md
+**Decisions:** Kept routing out of scope; the adapter requires a pre-resolved Claude model and fails before tmux launch if `issue.resolved_model` is empty.
+**Conventions established:** Claude adapter stdout is authoritative result-file content; pane capture is ANSI-stripped stderr diagnostics only. Tests should drive tmux behavior through fake `run_func`/clock/sleep/tempdir seams.
+**Notes for next iteration:** #043 can wire `RoutingAgentAdapter` to choose `ClaudeAgentAdapter` for resolved Claude issues and keep `reasoning_effort` suffixes out of Claude model argv.
 
-## #039 Podium remove dashboard attention list — 2026-06-12
+## #043 Wire claude dispatch end-to-end — 2026-06-13
 
-**What changed:** Removed the Dashboard Needs attention section, deleted its attention computation and row component, and updated the dashboard Playwright spec to assert the legacy attention testids are absent.
-**Files:** `web/frontend/app/page.tsx`, `web/frontend/tests/dashboard.spec.ts`.
-**Decisions:** Sidebar Inbox is now the only operator-response surface; dashboard remains focused on global roll-up and per-binding cards.
-**Conventions established:** Dashboard specs should not depend on `dashboard-attention` or `attention-row`.
-**Notes for next iteration:** None.
+**What changed:** Wired `ClaudeAgentAdapter` into runtime construction and `RoutingAgentAdapter`, allowed Claude through the dispatch gate, stored Claude Run rows with empty provider and bare model id, isolated Claude verdict/summary/gate parsing to stdout, and kept context compaction on the Pi adapter.
+**Files:** agent_runner.py, main.py, scheduler.py, tests/test_agent_runner.py, tests/test_dispatch_compaction.py, tests/test_dispatch_gate.py, tests/test_trading_podium_dispatch.py, .kanban/issues/043-wire-claude-dispatch.md
+**Decisions:** Claude post-run parsing treats pane stderr as diagnostics only because it can echo prompt vocabulary; Pi continues scanning stdout+stderr. Context compaction remains engine housekeeping through Pi defaults even for Claude issues.
+**Conventions established:** Non-Pi Run rows keep resolved provider/model verbatim; Claude resolved models never receive reasoning-effort suffixes.
+**Notes for next iteration:** #044 can add Claude startup probe and orphan socket reaping now that real Claude dispatch routing exists.
+
+## #044 Claude startup probe + orphan socket reaper — 2026-06-13
+
+**What changed:** Added fail-soft Claude startup probing, module-level probe failure state, Claude-only dispatch blocking on probe failure, and a startup orphan tmux socket reaper.
+**Files:** claude_runner.py, scheduler.py, main.py, tests/conftest.py, tests/test_claude_runner.py, tests/test_dispatch_gate.py, tests/test_main.py, .kanban/issues/044-claude-startup-probe-and-socket-reaper.md
+**Decisions:** Missing or broken Claude support no longer fails Symphony boot; it blocks only Claude dispatch until the install is fixed and the service restarts.
+**Conventions established:** Startup cleanup of Claude tmux sockets runs exactly once globally before per-binding reconcile; probe checks use `claude --version` only and never launch a live Claude session.
+**Notes for next iteration:** #045 is frontend-only and should keep Playwright manual for UI flows unless explicitly requested.
+
+## #045 Agent-aware default model preselect in NewIssueModal — 2026-06-13
+
+**What changed:** Made new-issue model default preselection follow the selected agent, clear when that agent has no default, and avoid silent cross-agent default mismatches.
+**Files:** web/frontend/components/NewIssueModal.tsx, web/frontend/tests/new-issue.spec.ts, .kanban/issues/045-frontend-agent-aware-default-preselect.md
+**Decisions:** Agent changes intentionally replace stale model selections with the new agent default or empty state; this matches dispatch-gate compatibility over preserving a cross-agent stale value.
+**Conventions established:** Frontend default-model flows must filter `default: true` by selected agent before preselecting.
+**Notes for next iteration:** No follow-up issue is unblocked by #045 in the current board.
+
+## #046 Unify Symphony agent output contract — 2026-06-13
+
+**What changed:** Centralized the agent output contract in one `OUTPUT_CONTRACT` block appended to every prompt (pi + claude from one source), introduced the multi-line `SYMPHONY_SUMMARY_BEGIN`/`SYMPHONY_SUMMARY_END` block (single-line marker kept as fallback), posted summaries verbatim, and removed the machine `Timeline` footer and the `Symphony claimed at` claim comment.
+**Files:** prompt_renderer.py, scheduler.py, tracker_podium.py, claude_runner.py, tests/test_scheduler.py, tests/test_prompt_renderer.py, tests/test_tracker_podium.py, tests/test_engine_against_podium.py, .kanban/issues/046-unified-output-contract.md; plus homelab/WORKFLOW.md and crypto-trading-agents/WORKFLOW.md in their own repos.
+**Decisions:** Claim time now reads from the Run record `started_at` (`_run_started_at`) with Plane comment-parse fallback; the summary block is bounded (4000 chars, head 2500 / tail 1200) so the re-injected comment stream cannot absorb a runaway transcript. Blocked-path stderr summary appends only when no summary block is present.
+**Conventions established:** Agents emit one verdict line plus a verbatim multi-line summary block; comments carry no Timeline/claim machine noise.
+**Notes for next iteration:** Binding WORKFLOW.md files now defer the output contract to the engine; future binding edits should not re-add `SYMPHONY_*` boilerplate.

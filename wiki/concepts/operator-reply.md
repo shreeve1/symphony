@@ -61,6 +61,8 @@ A reply on a `done` issue silently reopens it (→ `todo`). No new worktree code
 
 pi is invoked one-shot (`--no-session`), so there is no session to resume. Continuity comes from re-feeding `comments_md` (operator-curated thread) + `context_md` (agent-owned cumulative log), both injected into every Podium prompt. A fresh run that re-reads both is the architecture-aligned way to "continue the conversation" [source: prompt_renderer.py] [source: agent_runner.py].
 
+> **Design-stage update (2026-06-13):** ADR-0009 proposes layering best-effort native **Session Resume** on top of this re-feed for the in_review/blocked reply loop — but re-feed stays the guaranteed floor, so this section remains accurate for current behavior and for every fallback. See [Session Resume continuity](session-resume-continuity.md). Not yet implemented; do not treat this section as superseded until it ships.
+
 ## Prompt-renderer directive
 
 `render_previous_comments_block` gained `flag_operator_replies` (Podium path only); when set it appends a directive elevating the most-recent `### Operator Reply` block to "the operator's current request" while keeping other comment text untrusted. See [Prompt renderer](prompt-renderer.md#escaping-and-context-blocks).
