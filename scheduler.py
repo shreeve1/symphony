@@ -16,9 +16,9 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
-from code_version import resolve_code_sha
 from blocked_reconciler import reconcile_blocked
 from claude_runner import claude_probe_failure_reason
+from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
 from notifier import (
@@ -572,7 +572,7 @@ async def _prepare_resume_candidate(
     *,
     binding: ProjectBinding | None = None,
 ) -> tuple[CandidateIssue, ResumeDecision | None]:
-    """Annotate a candidate with Session Resume fields for pi RPC dispatch."""
+    """Annotate a candidate with Session Resume fields for resumable dispatch."""
 
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
     session_id = derive_session_id(candidate.id)
@@ -584,10 +584,12 @@ async def _prepare_resume_candidate(
         agent_session_sha=current_sha,
         resumed=False,
     )
+    supports_resume = agent == "claude" or (
+        agent == "pi" and getattr(binding, "pi_mode", "one-shot") == "rpc"
+    )
     if (
-        agent != "pi"
-        or binding is None
-        or getattr(binding, "pi_mode", "one-shot") != "rpc"
+        binding is None
+        or not supports_resume
         or not getattr(adapter, "stores_context", False)
     ):
         return base_candidate, None

@@ -13,7 +13,7 @@ import main
 import scheduler
 from agent_runner import AgentResult
 from config import SymphonyConfig
-from session_continuity import derive_session_id
+from session_continuity import derive_session_id, session_file_path
 from tracker_podium import PodiumTrackerAdapter
 from web.api.schema import SCHEMA_SQL
 
@@ -358,3 +358,211 @@ Please continue from the parked question.
     assert result.reason == "agent-marker-review"
     assert len(prompts) == 1
     assert run == (1, "unknown")
+
+
+@pytest.mark.asyncio
+async def test_claude_resume_uses_delta_prompt_skips_compaction_and_records_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, preferred_agent="claude")
+    comments = """
+### Older note
+old context should not be re-fed
+
+### Operator Reply (2026-06-13T00:00:00+00:00)
+Please continue Claude from the parked question.
+""".strip()
+    session_id = derive_session_id(str(issue_id))
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session_file = session_file_path("claude", tmp_path, session_id)
+    session_file.parent.mkdir(parents=True)
+    session_file.write_text("{}\n", encoding="utf-8")
+    with sqlite3.connect(db_path) as connection:
+        previous = connection.execute(
+            """
+            INSERT INTO run(
+              issue_id, agent, provider, model, state, verdict,
+              started_at, ended_at, agent_session_sha, resumed
+            ) VALUES (?, 'claude', '', 'claude-opus-4-8', 'succeeded',
+                      'review', '2026-06-13T00:00:00+00:00',
+                      '2026-06-13T00:01:00+00:00', 'unknown', 0)
+            """,
+            (issue_id,),
+        ).lastrowid
+        connection.execute(
+            """
+            UPDATE issue
+            SET comments_md = ?, latest_run_id = ?, context_md = ?
+            WHERE id = ?
+            """,
+            (comments, previous, "old run log\n" * 20, issue_id),
+        )
+        connection.commit()
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy should be omitted on Claude resume.", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    prompts: list[str] = []
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        prompts.append(rendered_prompt)
+        assert issue.resumed is True
+        assert issue.agent_session_sha == "unknown"
+        assert "Please continue Claude from the parked question." in rendered_prompt
+        assert "old context should not be re-fed" not in rendered_prompt
+        assert "old run log" not in rendered_prompt
+        assert "Repo policy should be omitted" not in rendered_prompt
+        assert COMPACTED_CONTEXT_MARKER not in rendered_prompt
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: claude resumed ok",
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        compaction_agent_runner=lambda issue, prompt: AgentResult(
+            1, 1, False, stderr="compaction should not run"
+        ),
+        render_prompt=lambda issue, *, resume=False: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+            resume=resume,
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 13, tzinfo=UTC),
+        binding=binding,
+    )
+    with sqlite3.connect(db_path) as connection:
+        run = connection.execute(
+            "SELECT resumed, agent_session_sha FROM run ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    assert result.reason == "agent-marker-review"
+    assert len(prompts) == 1
+    assert run == (1, "unknown")
+
+
+@pytest.mark.asyncio
+async def test_claude_resume_failure_falls_back_to_fresh_full_refeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, preferred_agent="claude")
+    comments = """
+### Older note
+old context should be re-fed on fallback
+
+### Operator Reply (2026-06-13T00:00:00+00:00)
+Please continue Claude from the parked question.
+""".strip()
+    session_id = derive_session_id(str(issue_id))
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    session_file = session_file_path("claude", tmp_path, session_id)
+    session_file.parent.mkdir(parents=True)
+    session_file.write_text("{}\n", encoding="utf-8")
+    with sqlite3.connect(db_path) as connection:
+        previous = connection.execute(
+            """
+            INSERT INTO run(
+              issue_id, agent, provider, model, state, verdict,
+              started_at, ended_at, agent_session_sha, resumed
+            ) VALUES (?, 'claude', '', 'claude-opus-4-8', 'succeeded',
+                      'review', '2026-06-13T00:00:00+00:00',
+                      '2026-06-13T00:01:00+00:00', 'unknown', 0)
+            """,
+            (issue_id,),
+        ).lastrowid
+        connection.execute(
+            """
+            UPDATE issue
+            SET comments_md = ?, latest_run_id = ?, context_md = ?
+            WHERE id = ?
+            """,
+            (comments, previous, "short context", issue_id),
+        )
+        connection.execute(
+            """
+            UPDATE binding_settings
+            SET context_compact_threshold_tokens = 1000
+            WHERE binding_name = 'trading'
+            """
+        )
+        connection.commit()
+    (tmp_path / "WORKFLOW.md").write_text(
+        "Repo policy should be present on fallback.", encoding="utf-8"
+    )
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    prompts: list[str] = []
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        prompts.append(rendered_prompt)
+        if len(prompts) == 1:
+            assert issue.resumed is True
+            assert "old context should be re-fed" not in rendered_prompt
+            raise RuntimeError("corrupt Claude session")
+        assert issue.resumed is False
+        assert "old context should be re-fed on fallback" in rendered_prompt
+        assert "short context" in rendered_prompt
+        assert "Repo policy should be present" in rendered_prompt
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: claude fallback ok",
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue, *, resume=False: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+            resume=resume,
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 13, tzinfo=UTC),
+        binding=binding,
+    )
+    with sqlite3.connect(db_path) as connection:
+        runs = connection.execute(
+            "SELECT state, summary, resumed FROM run ORDER BY id DESC LIMIT 2"
+        ).fetchall()
+
+    assert result.reason == "agent-marker-review"
+    assert len(prompts) == 2
+    assert runs[0] == ("succeeded", "claude fallback ok", 0)
+    assert runs[1] == (
+        "failed",
+        "resume_failed: corrupt Claude session; fell_back=true",
+        1,
+    )

@@ -17,6 +17,7 @@ from pathlib import Path
 from agent_runner import AgentResult, AgentRunnerError, CompletedLike, _strip_ansi
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
+from session_continuity import derive_session_id
 
 
 LOGGER = logging.getLogger(__name__)
@@ -220,11 +221,16 @@ def run_claude_agent(
         cwd = _resolve_cwd(config, issue, create_worktree_func=create_worktree_func)
         source_env = dict(os.environ) if environ is None else environ
         env = _claude_env(issue, source_env)
+        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
+        resume_requested = bool(getattr(issue, "resumed", False))
+        session_arg = "--resume" if resume_requested else "--session-id"
         LOGGER.info(
-            "claude_dispatch issue_id=%s model=%s cwd=%s",
+            "claude_dispatch issue_id=%s model=%s cwd=%s session_id=%s resumed=%s",
             issue.id,
             model,
             cwd,
+            session_id,
+            str(resume_requested).lower(),
         )
         launch = run_func(
             [
@@ -240,6 +246,8 @@ def run_claude_agent(
                 "bypassPermissions",
                 "--model",
                 model,
+                session_arg,
+                session_id,
             ],
             capture_output=True,
             text=True,

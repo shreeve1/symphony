@@ -1,11 +1,13 @@
 ---
 id: 051
 title: Claude resume end-to-end
-status: pending
+status: in-progress
 blocked_by: [047, 048, 049, 050]
 parent: null
 priority: 0
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build

@@ -561,14 +561,18 @@ def test_claude_env_allowlist_and_launch_argv_cwd(tmp_path: Path) -> None:
 
     launch_call = next(call for call in fake.calls if "new-session" in call[0])
     command, kwargs = launch_call
-    assert command[-5:] == [
+    assert command[-7:] == [
         "claude",
         "--permission-mode",
         "bypassPermissions",
         "--model",
         "claude-opus-4-8",
+        "--session-id",
+        issue_session_id("42"),
     ]
     assert "-p" not in command
+    assert "--continue" not in command
+    assert "-c" not in command
     assert kwargs["cwd"] == str(tmp_path)
     env = kwargs["env"]
     assert sorted(env) == [
@@ -661,6 +665,62 @@ def test_claude_empty_resolved_model_fails_before_tmux(tmp_path: Path) -> None:
         )
 
     assert calls == []
+
+
+def issue_session_id(issue_id: str) -> str:
+    return claude_runner.derive_session_id(issue_id)
+
+
+def test_claude_resume_launch_uses_resume_when_issue_is_resumed(tmp_path: Path) -> None:
+    fake = TmuxFake(result_text="SYMPHONY_RESULT: done")
+    session_id = issue_session_id("42")
+
+    run_claude_agent(
+        _config(tmp_path),
+        _issue(agent_session_id=session_id, resumed=True),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    launch_call = next(call for call in fake.calls if "new-session" in call[0])
+    command = launch_call[0]
+    assert "--resume" in command
+    assert command[command.index("--resume") + 1] == session_id
+    assert "--session-id" not in command
+    assert "--continue" not in command
+    assert "-c" not in command
+
+
+def test_claude_fresh_launch_uses_session_id_when_issue_is_not_resumed(
+    tmp_path: Path,
+) -> None:
+    fake = TmuxFake(result_text="SYMPHONY_RESULT: done")
+    session_id = issue_session_id("42")
+
+    run_claude_agent(
+        _config(tmp_path),
+        _issue(agent_session_id=session_id, resumed=False),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    launch_call = next(call for call in fake.calls if "new-session" in call[0])
+    command = launch_call[0]
+    assert "--session-id" in command
+    assert command[command.index("--session-id") + 1] == session_id
+    assert "--resume" not in command
+    assert "--continue" not in command
+    assert "-c" not in command
 
 
 def test_claude_runner_does_not_invoke_engine_sh_or_print_mode() -> None:
