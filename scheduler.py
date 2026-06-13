@@ -200,8 +200,11 @@ SUMMARY_MAX_CHARS = 500
 # terminal-state comment. Bounded so a runaway agent cannot dump its whole
 # transcript into the comment stream (comments are re-injected into the next
 # prompt as untrusted context).
+# Markers must sit at the start of a line (no leading whitespace). This keeps
+# the indented example inside OUTPUT_CONTRACT from matching even when an agent
+# echoes the prompt into its output stream — the echo stays indented.
 _SUMMARY_BLOCK_RE = re.compile(
-    r"^[ \t]*SYMPHONY_SUMMARY_BEGIN[ \t]*\n(.*?)\n?[ \t]*SYMPHONY_SUMMARY_END[ \t]*$",
+    r"^SYMPHONY_SUMMARY_BEGIN[ \t]*\n(.*?)\nSYMPHONY_SUMMARY_END[ \t]*$",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 # Machine marker lines stripped from a summary block before display so they
@@ -213,6 +216,9 @@ _MARKER_LINE_RE = re.compile(
 SUMMARY_BLOCK_MAX_CHARS = 4000
 SUMMARY_BLOCK_HEAD_CHARS = 2500
 SUMMARY_BLOCK_TAIL_CHARS = 1200
+# Cap the blocked-reason text sent to the Telegram notifier, leaving headroom
+# under Telegram's 4096-char limit for the name/identifier/URL wrapping.
+NOTIFY_REASON_MAX_CHARS = 2000
 _PERMISSION_GATE_RE = re.compile(
     r"permission requested:|auto-rejecting|user rejected permission",
     re.IGNORECASE,
@@ -300,7 +306,10 @@ def _parse_summary_block(*streams: str) -> str | None:
     cleaned = cleaned.strip("\n").strip()
     if not cleaned:
         return None
-    return _bound_summary_block(cleaned)
+    # Return unbounded: bounding happens in _extract_summary *after* secret
+    # redaction so a secret straddling the truncation boundary cannot leak a
+    # surviving fragment.
+    return cleaned
 
 
 def _parse_run_metrics(stdout: str) -> dict[str, Any]:
@@ -439,6 +448,7 @@ def _extract_summary(
 
     streams = (result.stdout, result.stderr) if include_stderr else (result.stdout,)
     summary = _parse_summary_block(*streams)
+    is_block = summary is not None
     if summary is None:
         summary = _parse_summary_marker(*streams)
     if summary is None:
@@ -446,6 +456,10 @@ def _extract_summary(
     for secret in secrets:
         if secret:
             summary = summary.replace(secret, _REDACTED)
+    # Bound the (already-redacted) multi-line block. The single-line marker is
+    # already capped at SUMMARY_MAX_CHARS, so it is left as-is.
+    if is_block:
+        summary = _bound_summary_block(summary)
     return summary
 
 
@@ -1412,7 +1426,9 @@ async def run_tick(
 
             def _completion_body() -> str:
                 if summary:
-                    return f"**Symphony completed:** {summary}"
+                    # Block on its own line so a leading markdown heading in the
+                    # agent's summary renders correctly.
+                    return f"**Symphony completed:**\n\n{summary}"
                 return "**Symphony completed:** Agent finished without a summary."
 
             if verdict == "blocked":
@@ -2342,6 +2358,11 @@ async def _run_started_at(adapter: TrackerAdapter, issue_id: str) -> datetime | 
     adapters without a Run store (e.g. Plane) so callers fall back to comments.
     """
 
+    # Run records only exist on context-storing adapters (Podium). Gate on that
+    # capability so Plane short-circuits here instead of paying a get_issue API
+    # call on every reconcile tick (PlaneAdapter.get_run exists but returns None).
+    if not getattr(adapter, "stores_context", False):
+        return None
     get_run = getattr(adapter, "get_run", None)
     if not callable(get_run):
         return None
@@ -2425,11 +2446,17 @@ async def _block_issue(
     LOGGER.info("state_transitioned issue_id=%s state=blocked", issue_id)
     if notifier:
         try:
+            # The comment body can now be the agent's full ~4000-char summary;
+            # bound it for the notifier so the Telegram message stays well under
+            # the 4096-char limit (name/URL wrapping is added on top).
+            notify_reason = message
+            if len(notify_reason) > NOTIFY_REASON_MAX_CHARS:
+                notify_reason = notify_reason[:NOTIFY_REASON_MAX_CHARS].rstrip() + "…"
             await notifier.send(
                 format_blocked_message(
                     issue_name,
                     issue_identifier,
-                    message,
+                    notify_reason,
                     issue_url=issue_url,
                     dashboard_url=dashboard_url,
                 )

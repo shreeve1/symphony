@@ -32,7 +32,7 @@ End every run by emitting these markers on their own lines in your output:
 - A summary block carrying your natural end-of-turn message — what you did, what
   you found, and any questions or decisions for the operator. Symphony posts this
   block verbatim as the issue comment, so write it for a human reader (markdown
-  is fine):
+  is fine). Emit the two marker lines at the START of a line (no indentation):
 
   SYMPHONY_SUMMARY_BEGIN
   <your summary here>
@@ -181,7 +181,9 @@ def _render_schedule_context(issue: IssueData) -> str:
         f"- not_before: {_escape_untrusted_block(issue.schedule_not_before)}",
     ]
     if issue.schedule_not_after:
-        lines.append(f"- advisory_not_after: {_escape_untrusted_block(issue.schedule_not_after)}")
+        lines.append(
+            f"- advisory_not_after: {_escape_untrusted_block(issue.schedule_not_after)}"
+        )
     if issue.schedule_reason:
         lines.append(f"- reason: {_escape_untrusted_block(issue.schedule_reason)}")
     if issue.schedule_source:
