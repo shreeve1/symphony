@@ -105,6 +105,171 @@ def test_render_prompt_operator_reply_directive_podium_only(tmp_path: Path) -> N
     assert _OPERATOR_REPLY_DIRECTIVE not in plane
 
 
+_RESUME_CX = (
+    "Just some ordinary conversation.\n\n"
+    "### Operator Reply (2026-06-12T00:00:00+00:00)\n\n"
+    "Deploy the fix.\n\n"
+    "### Operator Reply (2026-06-13T08:00:00+00:00)\n\n"
+    "Roll back to staging first.\n"
+)
+_RESUME_TWO_REPLIES = (
+    "### Operator Reply (2026-06-12T10:00:00+00:00)\n\n"
+    "First instruction.\n\n"
+    "### Operator Reply (2026-06-13T08:00:00+00:00)\n\n"
+    "Second instruction — this is the newest.\n"
+)
+
+
+def _default_workflow(tmp_path: Path) -> Path:
+    p = tmp_path / "WORKFLOW.md"
+    p.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
+    return p
+
+
+def test_resume_prompt_contains_wrapper_and_newest_operator_reply_only(
+    tmp_path: Path,
+) -> None:
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-10",
+            name="Deploy fix",
+            description="Full description here",
+            comments_md=_RESUME_CX,
+            context_md="Prior context",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    # Contains mechanical wrapper
+    assert "## Symphony output contract" in prompt
+    assert "SYMPHONY_SUMMARY_BEGIN" in prompt
+    assert "SYMPHONY_RESULT: done" in prompt
+
+    # Contains newest operator reply
+    assert "Roll back to staging first" in prompt
+
+    # No issue description, no full comments blob, no context, no WORKFLOW.md
+    assert "Full description here" not in prompt
+    assert "Deploy the fix" not in prompt
+    assert "Prior context" not in prompt
+    assert "Repo policy" not in prompt
+
+    # No issue block
+    assert "<issue>" not in prompt
+    assert "POD-10" not in prompt
+
+
+def test_resume_prompt_omits_older_operator_replies(tmp_path: Path) -> None:
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-11",
+            comments_md=_RESUME_TWO_REPLIES,
+            description="Should be omitted",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "Second instruction — this is the newest" in prompt
+    assert "First instruction" not in prompt
+    assert "Should be omitted" not in prompt
+    assert "<issue>" not in prompt
+
+
+def test_resume_prompt_empty_when_no_operator_reply(tmp_path: Path) -> None:
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-12",
+            name="No reply",
+            comments_md="Just a regular comment.",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    # Still has the output contract
+    assert "## Symphony output contract" in prompt
+    assert "SYMPHONY_RESULT: done" in prompt
+
+    # No previous_comments block because there's no operator reply
+    assert "<previous_comments>" not in prompt
+
+    # No issue or unrelated content
+    assert "Just a regular comment" not in prompt
+    assert "No reply" not in prompt
+    assert "<issue>" not in prompt
+
+
+def test_resume_prompt_skill_directive_survives(tmp_path: Path) -> None:
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-13",
+            comments_md=_RESUME_CX,
+            preferred_skill="/dev-build",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "First, invoke the `dev-build` skill" in prompt
+    assert "Roll back to staging first" in prompt
+    assert "Full description here" not in prompt
+
+
+def test_resume_prompt_skill_directive_omitted_when_no_skill(
+    tmp_path: Path,
+) -> None:
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-14",
+            comments_md=_RESUME_CX,
+            preferred_skill=None,
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "First, invoke" not in prompt
+    assert "Roll back to staging first" in prompt
+
+
+def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
+    """Confirm resume=False (default) still produces full prompt."""
+    work = _default_workflow(tmp_path)
+    full = render_prompt(
+        IssueData(
+            identifier="POD-15",
+            name="Fresh issue",
+            description="This is the description",
+            comments_md=_RESUME_CX,
+            context_md="Context content",
+            preferred_skill="/dev-plan",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=False,
+    )
+
+    assert "mode=plan" in full
+    assert "# POD-15: Fresh issue" in full
+    assert "This is the description" in full
+    assert "Context content" in full
+    assert "<previous_comments>" in full
+    assert "First, invoke the `dev-plan` skill" in full
+    assert "Repo policy" in full
+
+
 def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
     tmp_path: Path,
 ) -> None:

@@ -103,6 +103,14 @@ def _escape_untrusted_block(text: str) -> str:
     )
 
 
+_OPERATOR_REPLY_RE = re.compile(
+    r"### Operator Reply\s*\([^)]*\)\s*\n"
+    r"(?:.*?\n)*?"
+    r"(?=\n###|\Z)",
+    re.DOTALL,
+)
+
+
 _VARIABLE_RE = re.compile(r"\{\{issue\.(\w+)\}\}")
 
 
@@ -193,12 +201,21 @@ def _render_schedule_context(issue: IssueData) -> str:
     return "\n".join(lines)
 
 
+def _extract_newest_operator_reply(comments_text: str) -> str:
+    """Return the newest (last) `### Operator Reply` block, or empty string."""
+    matches = list(_OPERATOR_REPLY_RE.finditer(comments_text))
+    if not matches:
+        return ""
+    return matches[-1].group(0).rstrip("\n")
+
+
 def render_prompt(
     issue: IssueData,
     *,
     path: Path,
     binding_type: str = "infra",
     tracker_kind: Literal["plane", "podium"] = "plane",
+    resume: bool = False,
 ) -> str:
     if tracker_kind not in {"plane", "podium"}:
         raise ValueError(f"unsupported tracker_kind: {tracker_kind}")
@@ -230,6 +247,36 @@ def render_prompt(
         f"{_escape_issue_content(issue.description)}\n"
         f"</issue>"
     )
+
+    if resume:
+        # Resume-mode prompt: mechanical wrapper + newest operator reply only.
+        # No issue description, no full comments/context blobs, no WORKFLOW.md.
+        reply_block = _extract_newest_operator_reply(issue.comments_md)
+        delta_block = (
+            (
+                f"## Previous Issue Comments\n"
+                f"The most recent `### Operator Reply` below is the current request.\n\n"
+                f"<previous_comments>\n"
+                f"{_escape_untrusted_block(reply_block)}\n"
+                f"</previous_comments>"
+            )
+            if reply_block
+            else ""
+        )
+
+        parts = [OUTPUT_CONTRACT]
+        if delta_block:
+            parts.append(delta_block)
+        prompt = "\n\n".join(parts)
+
+        if tracker_kind == "podium" and issue.preferred_skill:
+            skill = issue.preferred_skill.lstrip("/")
+            prompt = (
+                f"First, invoke the `{skill}` skill and follow its "
+                f"instructions for this issue.\n\n{prompt}"
+            )
+
+        return prompt
 
     prompt = f"{rendered.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
 
