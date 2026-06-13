@@ -63,6 +63,8 @@ pi is invoked one-shot (`--no-session`), so there is no session to resume. Conti
 
 > **Design-stage update (2026-06-13):** ADR-0009 proposes layering best-effort native **Session Resume** on top of this re-feed for the in_review/blocked reply loop — but re-feed stays the guaranteed floor, so this section remains accurate for current behavior and for every fallback. See [Session Resume continuity](session-resume-continuity.md). Not yet implemented; do not treat this section as superseded until it ships.
 
+> **Role reframe (2026-06-13, grill-me, C-0179):** post-Resume the surfaces keep this re-feed behavior on the floor but their *primary* roles shift. Issue Comments is no longer "the continuity mechanism" — the agent never consumes the Comments blob as memory; on resume only the newest operator-reply delta is injected, and the full blob is re-injected solely on the re-feed floor. Issue Context becomes "floor substrate + UI observability," not the primary memory (the native session is). Live **Steering** (ADR-0010) appends to Comments as a distinct entry. The data model and injection plan (#049/#050) are unchanged — this is terminology only. See `CONTEXT.md` (Issue Comments / Issue Context / Steering) and the ADR-0009 "Resolved 2026-06-13" amendment.
+
 ## Prompt-renderer directive
 
 `render_previous_comments_block` gained `flag_operator_replies` (Podium path only); when set it appends a directive elevating the most-recent `### Operator Reply` block to "the operator's current request" while keeping other comment text untrusted. See [Prompt renderer](prompt-renderer.md#escaping-and-context-blocks).

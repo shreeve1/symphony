@@ -14,7 +14,7 @@ updated: 2026-06-13
 The operator-facing surface for live Steering: extend the #053 tail flyout with a steer input so the operator can watch a running pi Run and redirect it mid-task. Frontend + thin wiring only; the channel and tail are #056/#053.
 
 - A steer input box in the issue flyout, enabled only when the open issue has a live RPC pi run (disabled/hidden otherwise, including for Claude runs — show "park-and-reply only" affordance there).
-- Submitting posts to the #056 steer endpoint; show the in-flight steer in the tail stream (queued → delivered) using the RPC `queue_update`/tail signal so the operator sees it land.
+- Submitting posts to the #056 steer endpoint; show the in-flight steer in the tail stream (queued → delivered) using the RPC `queue_update`/tail signal so the operator sees it land. The steer is also written to `comments_md` by #056 as an `### Operator Steer` entry — the durable record — so it shows in the comments thread (the tail view is transient); no extra write here, just ensure the comments tab reflects it.
 - An abort/stop control wired to the #056 abort path.
 - Reuse the #053 tail panel for the live view; rebind on issue switch; degrade gracefully when no run is active.
 
