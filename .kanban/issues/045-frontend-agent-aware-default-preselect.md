@@ -1,7 +1,7 @@
 ---
 id: 045
 title: Agent-aware default model preselect in NewIssueModal
-status: in-progress
+status: review
 updated: 2026-06-13
 actor: ralph
 blocked_by: [041]
