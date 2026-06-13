@@ -1,7 +1,7 @@
 ---
 id: 051
 title: Claude resume end-to-end
-status: review
+status: done
 blocked_by: [047, 048, 049, 050]
 parent: null
 priority: 0
@@ -24,12 +24,12 @@ Same eligibility predicate, same `resumed`/`agent_session_sha` recording, same c
 
 ## Acceptance criteria
 
-- [ ] When the derived session file is absent, the launch uses `--session-id <derived>`; when present, it uses `--resume <derived>`.
-- [ ] `--continue` / `-c` is never used on either path.
-- [ ] Resume run renders the delta-only prompt; fallback renders full re-feed.
-- [ ] A simulated `--resume` failure (nonexistent/corrupt session) falls back to a fresh session + full re-feed in the same tick and logs `resume_failed ... fell_back=true`.
-- [ ] `resumed` and `agent_session_sha` are recorded for resume and fallback runs.
-- [ ] Existing Claude dispatch tests (probe, reaper, completion gate, paste/submit) still pass.
+- [x] When the derived session file is absent, the launch uses `--session-id <derived>`; when present, it uses `--resume <derived>`.
+- [x] `--continue` / `-c` is never used on either path.
+- [x] Resume run renders the delta-only prompt; fallback renders full re-feed.
+- [x] A simulated `--resume` failure (nonexistent/corrupt session) falls back to a fresh session + full re-feed in the same tick and logs `resume_failed ... fell_back=true`.
+- [x] `resumed` and `agent_session_sha` are recorded for resume and fallback runs.
+- [x] Existing Claude dispatch tests (probe, reaper, completion gate, paste/submit) still pass.
 
 ## Verification
 
@@ -38,3 +38,7 @@ Same eligibility predicate, same `resumed`/`agent_session_sha` recording, same c
 ## Blocked by
 
 - Blocked by #047, #048, #049, #050
+
+## Implementation Notes
+
+Extended Claude tmux dispatch to use the derived Session Resume id: fresh Claude runs launch with `--session-id`, resumed runs launch with `--resume`, and neither path uses `--continue` / `-c`. Reused scheduler resume eligibility for Claude so resume runs get the delta-only prompt, skip context compaction, record `resumed`/`agent_session_sha`, and fall back to fresh full re-feed on resume failure.
