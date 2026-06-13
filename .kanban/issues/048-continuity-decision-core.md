@@ -1,11 +1,13 @@
 ---
 id: 048
 title: Continuity decision core (derive session id + resume eligibility)
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-13
+updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
@@ -20,11 +22,11 @@ This module never decides to use `--continue` — only explicit derived ids exis
 
 ## Acceptance criteria
 
-- [ ] `derive_session_id` is deterministic and returns a valid UUID string; identical for repeated calls on the same issue id, distinct across issue ids.
-- [ ] `session_file_path` produces the documented Claude `<encoded-cwd>` encoding and the Pi path (with env override honored).
-- [ ] `evaluate_resume_eligibility` returns `resume` only when all four conditions hold; each single-condition failure returns `refeed` with a distinct reason (agent-mismatch, cwd-missing, session-absent, sha-drift).
-- [ ] No subprocess, no network, no scheduler imports in the module (pure + filesystem probe only).
-- [ ] Reasons are stable string constants suitable for log markers.
+- [x] `derive_session_id` is deterministic and returns a valid UUID string; identical for repeated calls on the same issue id, distinct across issue ids.
+- [x] `session_file_path` produces the documented Claude `<encoded-cwd>` encoding and the Pi path (with env override honored).
+- [x] `evaluate_resume_eligibility` returns `resume` only when all four conditions hold; each single-condition failure returns `refeed` with a distinct reason (agent-mismatch, cwd-missing, session-absent, sha-drift).
+- [x] No subprocess, no network, no scheduler imports in the module (pure + filesystem probe only).
+- [x] Reasons are stable string constants suitable for log markers.
 
 ## Verification
 
@@ -33,3 +35,7 @@ This module never decides to use `--continue` — only explicit derived ids exis
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Added `session_continuity.py` with deterministic UUIDv5 session ids, Claude and Pi session-file path resolution, and pure resume eligibility decisions with stable `resume`/`refeed` actions plus machine-readable reasons. Added `tests/test_session_continuity.py` covering id derivation, path resolution, env override behavior, timestamped Pi session discovery, all eligibility branches, and the no-subprocess/no-network/no-scheduler purity guard.
