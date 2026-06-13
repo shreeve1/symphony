@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #044 Claude startup probe and orphan socket reaper
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #044 implementation; commits `2e5439a`, `e61ace5`, `ea7aa82`; `.kanban/issues/044-claude-startup-probe-and-socket-reaper.md`; `.kanban/progress.md`; `claude_runner.py`; `scheduler.py`; `main.py`; `tests/test_claude_runner.py`; `tests/test_dispatch_gate.py`; `tests/test_main.py`; `tests/conftest.py`; existing #042/#043 wiki pages.
+- Outputs: new `wiki/analyses/podium-044-claude-startup-probe-reaper.md`; updated `wiki/CLAIMS.md` (C-0156..C-0158 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured fail-soft Claude startup probing, Claude-only dispatch blocking on probe failure, Pi unaffected behavior, and one-time global reaping of `/tmp/symphony-claude-*.sock` tmux servers before per-binding reconcile. Verification passed: `git diff --check`, secret-pattern diff scan, `uv run pytest` and `uv run pytest -q` (690 passed, 1 skipped), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-13] session-update | #043 Claude dispatch routing
 
 - Actor: agent (Pi, Ralph + wiki update)
