@@ -1,7 +1,7 @@
 ---
 id: 052
 title: Question Park — agent may park to ask the operator
-status: review
+status: done
 blocked_by: [050, 051]
 parent: null
 priority: 0
@@ -25,11 +25,11 @@ This is the turn-taking backbone; it is only useful because resume preserves the
 
 ## Acceptance criteria
 
-- [ ] Output-contract parser recognizes three outcomes: completed, question-park (`SYMPHONY_QUESTION`), blocked-on-error — with the question text extracted from the marker.
-- [ ] A question-park outcome transitions the issue to `in_review` and records the question as the run's posted summary/comment.
-- [ ] The prompt wrappers no longer forbid questions; they describe the Question Park protocol for both Pi and Claude.
-- [ ] An operator reply to a question-parked issue re-dispatches and resumes the session (predicate-pass path), delivering the answer via the delta-only prompt.
-- [ ] A blocked-on-error outcome still maps to `blocked` (unchanged), distinct from question-park.
+- [x] Output-contract parser recognizes three outcomes: completed, question-park (`SYMPHONY_QUESTION`), blocked-on-error — with the question text extracted from the marker.
+- [x] A question-park outcome transitions the issue to `in_review` and records the question as the run's posted summary/comment.
+- [x] The prompt wrappers no longer forbid questions; they describe the Question Park protocol for both Pi and Claude.
+- [x] An operator reply to a question-parked issue re-dispatches and resumes the session (predicate-pass path), delivering the answer via the delta-only prompt.
+- [x] A blocked-on-error outcome still maps to `blocked` (unchanged), distinct from question-park.
 
 ## Verification
 
@@ -38,3 +38,7 @@ This is the turn-taking backbone; it is only useful because resume preserves the
 ## Blocked by
 
 - Blocked by #050, #051
+
+## Implementation Notes
+
+Added `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` to the shared output contract and scheduler parsing. Question-park Runs now finish successfully with verdict `question`, post `**Symphony question:**` as the issue comment, and transition the issue to `in_review` so the existing operator-reply redispatch/resume path can carry the answer back into the preserved session. Claude's tmux wrapper now permits the question-park protocol instead of forbidding questions; Pi receives the same protocol through the shared rendered prompt. The blocked-result path remains unchanged.

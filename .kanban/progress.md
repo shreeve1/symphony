@@ -47,3 +47,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept the existing scheduler fallback path shared across agents: a Claude resume exception or non-zero result records a failed resumed Run, logs `resume_failed ... fell_back=true`, then starts a fresh full re-feed Run in the same tick.
 **Conventions established:** Claude resume uses the same `derive_session_id`, `evaluate_resume_eligibility`, delta-only prompt rendering, compaction-skip, and run-row `agent_session_sha`/`resumed` fields as Pi RPC.
 **Notes for next iteration:** #052 can rely on both Pi RPC and Claude preserving parked question context through operator reply resume; #053 can resolve Claude session files with the existing #048 path helper.
+
+## #052 Question Park — 2026-06-13
+
+**What changed:** Added a `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` output outcome that parks an agent question to `in_review`, records the question as a comment, and leaves blocked-on-error behavior unchanged.
+**Files:** `prompt_renderer.py`, `scheduler.py`, `claude_runner.py`, `tests/test_prompt_renderer.py`, `tests/test_prompt_renderer_podium.py`, `tests/test_scheduler.py`, `tests/test_claude_runner.py`, `.kanban/issues/052-question-park.md`.
+**Decisions:** Implemented Question Park as a scheduler verdict/comment/state mapping, not a new state machine; operator replies continue to use the existing `in_review` redispatch and #050/#051 resume path.
+**Conventions established:** Agents must use `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` instead of interactive questions when they need operator clarification.
+**Notes for next iteration:** #055 can build checkpointed exploration on this park-and-reply behavior; #056 remains separate live steering for Pi RPC.
