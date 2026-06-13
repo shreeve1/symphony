@@ -8,6 +8,7 @@ const E2E_WEB_PORT = 18091;
 const E2E_API_ORIGIN = `http://127.0.0.1:${E2E_API_PORT}`;
 const E2E_WEB_ORIGIN = `http://127.0.0.1:${E2E_WEB_PORT}`;
 const E2E_DB_PATH = path.resolve(__dirname, "test-results/podium-e2e.db");
+const E2E_PI_SESSION_DIR = path.resolve(__dirname, "test-results/pi-sessions");
 const E2E_PASSWORD_HASH =
 	"$2b$12$ZjUmIMBDipXIftuigS2s0O3SSJzKwkSHWsrHmauOcytbDU.K3e1k2";
 const E2E_SESSION_SECRET = "e2e-session-secret";
@@ -26,8 +27,9 @@ export default defineConfig({
 	webServer: [
 		{
 			command:
-				`mkdir -p test-results && rm -f ${E2E_DB_PATH} && ` +
+				`mkdir -p test-results && rm -f ${E2E_DB_PATH} && rm -rf ${E2E_PI_SESSION_DIR} && ` +
 				`PODIUM_DB_PATH=${E2E_DB_PATH} ` +
+				`PI_CODING_AGENT_SESSION_DIR=${E2E_PI_SESSION_DIR} ` +
 				`PODIUM_PASSWORD_HASH='${E2E_PASSWORD_HASH}' ` +
 				`PODIUM_SESSION_SECRET=${E2E_SESSION_SECRET} ` +
 				`uv run uvicorn main:app --host 127.0.0.1 --port ${E2E_API_PORT} --app-dir ../api`,

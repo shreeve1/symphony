@@ -73,11 +73,16 @@ export const test = base.extend<{
 export { expect };
 
 const E2E_DB_PATH = path.resolve(__dirname, "../test-results/podium-e2e.db");
+const E2E_PI_SESSION_DIR = path.resolve(__dirname, "../test-results/pi-sessions");
 
 function runDbScript<T>(script: string): T {
 	const stdout = execFileSync("uv", ["run", "python", "-c", script], {
 		cwd: path.resolve(__dirname, "../../.."),
-		env: { ...process.env, PODIUM_DB_PATH: E2E_DB_PATH },
+		env: {
+			...process.env,
+			PODIUM_DB_PATH: E2E_DB_PATH,
+			PI_CODING_AGENT_SESSION_DIR: E2E_PI_SESSION_DIR,
+		},
 		stdio: "pipe",
 	});
 	return JSON.parse(stdout.toString() || "null") as T;
@@ -198,6 +203,43 @@ with connect() as connection:
 	return runDbScript<{ issueId: number; runId: number; logPath: string }>(
 		script,
 	);
+}
+
+export function appendSessionTail(issueId: number, line: unknown) {
+	const script = `
+import json
+import yaml
+from pathlib import Path
+from session_continuity import derive_session_id, session_file_path
+from web.api.db import connect
+issue_id = ${issueId}
+line = ${JSON.stringify(line)}
+with connect() as connection:
+    row = connection.execute(
+        """
+        SELECT i.binding_name, r.agent
+        FROM issue i
+        INNER JOIN run r ON r.id = i.latest_run_id
+        WHERE i.id = ?
+        """,
+        (issue_id,),
+    ).fetchone()
+    binding = row["binding_name"]
+    agent = row["agent"]
+raw_bindings = yaml.safe_load(Path("bindings.yml").read_text())
+repo_path = next(
+    item["repo_path"]
+    for item in raw_bindings["bindings"]
+    if item["name"] == binding
+)
+session_id = derive_session_id(issue_id)
+path = session_file_path(agent, repo_path, session_id)
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(line) + "\\n")
+print(json.dumps({"path": str(path)}))
+`;
+	return runDbScript<{ path: string }>(script);
 }
 
 export function finishRun(runId: number, logText: string) {

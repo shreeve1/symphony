@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
 import { RunHistoryList } from "@/components/RunHistoryList";
+import { SessionTailPanel } from "@/components/SessionTailPanel";
 
 // Width persistence — the operator's chosen flyout width survives reopen and
 // reload. The #012c spec's "~480px" is only the default; validated by the
@@ -537,7 +538,7 @@ function CommentsThread({ source }: { source: string }) {
 	);
 }
 
-const TABS = ["comments", "context"] as const;
+const TABS = ["comments", "context", "session"] as const;
 type Tab = (typeof TABS)[number];
 
 export function IssueFlyout({
@@ -697,6 +698,8 @@ export function IssueFlyout({
 											<ReplyComposer issue={issue} />
 											<CommentsThread source={issue.comments_md} />
 										</div>
+									) : tab === "session" ? (
+										<SessionTailPanel issueId={issue.id} />
 									) : (
 										// key resets the draft when switching issues, so an
 										// uncommitted context draft can't bleed across issues.

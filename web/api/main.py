@@ -18,6 +18,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
+try:
+    from session_continuity import derive_session_id, session_file_path
+except ModuleNotFoundError:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from session_continuity import derive_session_id, session_file_path  # type: ignore[no-redef]
+
 logger = logging.getLogger(__name__)
 
 PURGE_AFTER_DAYS = 14
@@ -119,6 +127,132 @@ class WebSocketHub:
             logger.info("websocket_disconnected")
 
 
+class _SessionTailer:
+    """Tails session files of running issues and emits run.tail WS events."""
+
+    _POLL_INTERVAL_S = 2.0
+
+    def __init__(self) -> None:
+        # issue_id -> {path, cursor, inode}
+        self._state: dict[int, dict[str, Any]] = {}
+        self._stop: asyncio.Event = asyncio.Event()
+
+    async def run_loop(self) -> None:
+        """Poll loop that runs until stop is set."""
+        while not self._stop.is_set():
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=self._POLL_INTERVAL_S)
+            try:
+                await self._poll_running()
+            except Exception:
+                logger.exception("session_tail_poll_error")
+
+    def shutdown(self) -> None:
+        self._stop.set()
+
+    async def _poll_running(self) -> None:
+        """Query DB for running issues, tail their session files, emit events."""
+        try:
+            connection = connect()
+        except Exception:
+            return
+        try:
+            rows = connection.execute(
+                """
+                SELECT i.id, i.binding_name, r.agent
+                FROM issue i
+                INNER JOIN run r ON r.id = i.latest_run_id
+                WHERE i.latest_run_state = 'running'
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+
+        current_ids: set[int] = set()
+        for row in rows:
+            issue_id = int(row["id"])
+            binding_name = str(row["binding_name"] or "")
+            agent = str(row["agent"] or "").strip().lower()
+            if not agent or agent not in ("pi", "claude"):
+                continue
+            current_ids.add(issue_id)
+
+            repo_path = _repo_path_for_binding(binding_name)
+            if not repo_path:
+                continue
+
+            session_id = derive_session_id(issue_id)
+            try:
+                s_path = session_file_path(agent, repo_path, session_id)
+            except (ValueError, OSError):
+                continue
+
+            lines = self._read_new_lines(issue_id, s_path)
+            if lines:
+                await websocket_hub.publish(
+                    {
+                        "type": "run.tail",
+                        "issue_id": issue_id,
+                        "lines": lines,
+                    }
+                )
+
+        # Cleanup stale tracked issues no longer running
+        for issue_id in list(self._state):
+            if issue_id not in current_ids:
+                del self._state[issue_id]
+
+    def _read_new_lines(self, issue_id: int, path: Path) -> list[str]:
+        """Read new JSONL lines appended since last poll. On first encounter,
+        reads the entire existing content so the operator catches up."""
+        try:
+            stat_result = path.stat()
+        except OSError:
+            # File does not exist yet — first poll, fine
+            self._state.setdefault(issue_id, {"path": path, "cursor": 0, "inode": 0})
+            return []
+
+        current_inode = stat_result.st_ino
+        current_size = stat_result.st_size
+        tracked = self._state.get(issue_id)
+
+        if tracked is None or tracked["inode"] != current_inode:
+            # First detection or file rotated: read all existing content
+            self._state[issue_id] = {
+                "path": path,
+                "cursor": current_size,
+                "inode": current_inode,
+            }
+            # On first detection, emit existing content so the operator sees
+            # the full session so far
+            if current_size == 0:
+                return []
+            try:
+                return _read_jsonl_lines(path, 0, current_size)
+            except OSError:
+                return []
+
+        if current_size <= tracked["cursor"]:
+            return []
+
+        try:
+            lines = _read_jsonl_lines(path, tracked["cursor"], current_size)
+        except OSError:
+            return []
+
+        tracked["cursor"] = current_size
+        return lines
+
+
+def _read_jsonl_lines(path: Path, start: int, end: int) -> list[str]:
+    """Read and split the byte range [start, end) into non-empty lines."""
+    with path.open("rb") as f:
+        f.seek(start)
+        raw = f.read(end - start)
+    return [line for line in raw.decode("utf-8", errors="replace").split("\n") if line]
+
+
+_session_tailer = _SessionTailer()
 websocket_hub = WebSocketHub()
 _auth_config: Any | None = None
 
@@ -139,7 +273,14 @@ async def lifespan(_app: FastAPI):
         await websocket_hub.publish(
             {"type": "run.updated", "id": row["id"], "row": row}
         )
-    yield
+    tail_task = asyncio.create_task(_session_tailer.run_loop())
+    try:
+        yield
+    finally:
+        _session_tailer.shutdown()
+        tail_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tail_task
 
 
 app = FastAPI(title="Podium API", lifespan=lifespan)

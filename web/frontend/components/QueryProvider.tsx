@@ -21,11 +21,25 @@ type ConnectionState = "connected" | "disconnected";
 
 const ConnectionContext = createContext<ConnectionState>("disconnected");
 
+// Tail events carry appended JSONL lines from a running issue's session file.
+export interface TailEvent {
+	issue_id: number;
+	lines: string[];
+}
+
+const TailContext = createContext<TailEvent[]>([]);
+
+export function useTailEvents(): TailEvent[] {
+	return useContext(TailContext);
+}
+
 interface LiveMessage {
-	type: "issue.created" | "issue.updated" | "run.updated";
+	type: "issue.created" | "issue.updated" | "run.updated" | "run.tail";
 	id?: number;
 	binding_name?: string;
 	row: IssueDetail | Run;
+	issue_id?: number;
+	lines?: string[];
 }
 
 function websocketUrl() {
@@ -68,8 +82,10 @@ function updateRun(old: Run[] | undefined, row: Run) {
 
 function LiveUpdates({
 	onState,
+	onTail,
 }: {
 	onState: (state: ConnectionState) => void;
+	onTail: (event: TailEvent) => void;
 }) {
 	const queryClient = useQueryClient();
 
@@ -120,6 +136,12 @@ function LiveUpdates({
 					queryClient.setQueriesData<Run[]>({ queryKey: ["runs"] }, (old) =>
 						updateRun(old, row),
 					);
+				}
+				if (message.type === "run.tail") {
+					onTail({
+						issue_id: message.issue_id!,
+						lines: message.lines ?? [],
+					});
 				}
 			};
 			socket.onclose = () => {
@@ -172,8 +194,11 @@ export function ConnectionPill() {
 	);
 }
 
+const TAIL_BUFFER_PER_ISSUE = 1000;
+
 export function QueryProvider({ children }: { children: ReactNode }) {
 	const [connection, setConnection] = useState<ConnectionState>("disconnected");
+	const [tailEvents, setTailEvents] = useState<TailEvent[]>([]);
 	// One client per browser session. 5s staleTime per #012b: fetches are shared
 	// and considered fresh for 5s so navigating between bindings does not refetch.
 	const [client] = useState(
@@ -188,11 +213,18 @@ export function QueryProvider({ children }: { children: ReactNode }) {
 			}),
 	);
 
+	// Append incoming tail events, capped per issue to avoid unbounded growth.
+	const handleTail = (event: TailEvent) => {
+		setTailEvents((prev) => [...prev, event].slice(-TAIL_BUFFER_PER_ISSUE * 2)); // loose global cap
+	};
+
 	return (
 		<QueryClientProvider client={client}>
 			<ConnectionContext.Provider value={connection}>
-				<LiveUpdates onState={setConnection} />
-				{children}
+				<TailContext.Provider value={tailEvents}>
+					<LiveUpdates onState={setConnection} onTail={handleTail} />
+					{children}
+				</TailContext.Provider>
 			</ConnectionContext.Provider>
 		</QueryClientProvider>
 	);

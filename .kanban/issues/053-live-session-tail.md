@@ -1,12 +1,13 @@
 ---
 id: 053
 title: Live Session Tail — stream the running agent's session file to the flyout
-status: pending
+status: in-progress
 blocked_by: [050, 051]
 parent: null
 priority: 0
 created: 2026-06-13
 updated: 2026-06-13
+actor: ralph
 ---
 
 ## What to build
