@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-13] session-update | #043 Claude dispatch routing
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #043 implementation; commits `56fd314`, `2dc4be4`, `235fda7`; `.kanban/issues/043-wire-claude-dispatch.md`; `.kanban/progress.md`; `agent_runner.py`; `main.py`; `scheduler.py`; `tests/test_agent_runner.py`; `tests/test_dispatch_compaction.py`; `tests/test_dispatch_gate.py`; `tests/test_trading_podium_dispatch.py`; existing #042 and dispatch-contract wiki pages.
+- Outputs: new `wiki/analyses/podium-043-claude-dispatch-routing.md`; updated `wiki/analyses/podium-issue-dispatch-contract.md`; updated `wiki/analyses/podium-026-context-compaction.md`; updated `wiki/analyses/podium-042-claude-tmux-adapter.md`; updated `wiki/CLAIMS.md` (C-0146 superseded, C-0148 note, C-0152..C-0155 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured #043 opening the Claude dispatch gate, `RoutingAgentAdapter` Pi/Claude branching, honest Claude Run rows (`provider=""`, bare model id), stdout-only Claude post-run parsing, and Pi-only context compaction. Verification passed: `git diff --check`, `uv run pytest -q` (681 passed, 1 skipped), touched-file LSP diagnostics clean, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
 ## [2026-06-13] session-update | #042 Claude tmux adapter component
 
 - Actor: agent (Pi, Ralph + wiki update)

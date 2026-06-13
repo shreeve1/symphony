@@ -15,7 +15,7 @@ tags: [podium, dispatch, claude, tmux, adapter, ralph]
 
 # #042 Claude tmux adapter component
 
-Issue #042 added the Python-native Claude adapter component, but did not wire dispatch routing; #043 remains responsible for selecting it from the scheduler path [source: .kanban/issues/042-claude-tmux-adapter.md]. The existing dispatch gate can still block Claude Issues until routing changes land [source: wiki/analyses/podium-issue-dispatch-contract.md].
+Issue #042 added the Python-native Claude adapter component, but did not wire dispatch routing; #043 later made `RoutingAgentAdapter` select it from the scheduler path [source: .kanban/issues/042-claude-tmux-adapter.md] [source: wiki/analyses/podium-043-claude-dispatch-routing.md]. Before #043, the dispatch gate still blocked Claude Issues [source: wiki/analyses/podium-issue-dispatch-contract.md].
 
 ## Adapter contract
 

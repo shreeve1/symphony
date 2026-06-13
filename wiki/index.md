@@ -76,7 +76,8 @@
 >>>>>>> Stashed changes
 
 | [analyses/podium-issue-dispatch-contract.md](analyses/podium-issue-dispatch-contract.md) | Issue-field dispatch contract — fail-loud gate (agent/model/skill), models.yml `default: true` (gpt-5.5), `:effort` suffix, `--skill` loading + prompt directive, 60min timeout, max_duration dropped, alembic stamp-vs-run drift root cause | `model_catalog.py`, `scheduler.py`, `agent_runner.py`, `wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md` | 2026-06-12 |
-| [analyses/podium-042-claude-tmux-adapter.md](analyses/podium-042-claude-tmux-adapter.md) | #042 Claude tmux adapter component — Python-native `ClaudeAgentAdapter`, `symphony-claude-<issue>-<nonce>` artifacts, allowlisted env, ready poll, file completion gate, lifecycle mappings, cleanup; routing remains #043 | `.kanban/issues/042-claude-tmux-adapter.md`, `claude_runner.py`, `tests/test_claude_runner.py`, `docs/adr/0001-claude-via-tmux-send-keys.md` | 2026-06-13 |
+| [analyses/podium-042-claude-tmux-adapter.md](analyses/podium-042-claude-tmux-adapter.md) | #042 Claude tmux adapter component — Python-native `ClaudeAgentAdapter`, `symphony-claude-<issue>-<nonce>` artifacts, allowlisted env, ready poll, file completion gate, lifecycle mappings, cleanup; routed by #043 | `.kanban/issues/042-claude-tmux-adapter.md`, `claude_runner.py`, `tests/test_claude_runner.py`, `docs/adr/0001-claude-via-tmux-send-keys.md` | 2026-06-13 |
+| [analyses/podium-043-claude-dispatch-routing.md](analyses/podium-043-claude-dispatch-routing.md) | #043 Claude dispatch routing — dispatch gate accepts matching Claude models, `RoutingAgentAdapter` selects Claude adapter, Claude Run rows store empty provider + bare model id, stderr parsing is diagnostics-only, compaction stays Pi-only | `.kanban/issues/043-wire-claude-dispatch.md`, `agent_runner.py`, `main.py`, `scheduler.py`, `tests/test_*` | 2026-06-13 |
 
 ## Candidate Review Queue
 

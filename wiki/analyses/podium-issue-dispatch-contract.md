@@ -24,16 +24,15 @@ Every operator-settable Issue field now has a real dispatch effect, enforced by 
 
 `scheduler._apply_dispatch_gate` runs after a candidate is reserved and before any state transition or context-compaction spend [source: scheduler.py]. It blocks the Issue (state `blocked` + comment) when:
 
-- the resolved agent is not `pi` ("claude engine is not wired") — real adapter tracked in kanban `#040`;
 - `preferred_model` is absent from `models.yml`, or the catalog itself fails validation;
 - the resolved model entry belongs to a different agent (e.g. a claude model on a pi dispatch);
 - `preferred_skill` has no skill-table row, or the row's `source` SKILL.md no longer exists on disk.
 
-On success it annotates the candidate with `resolved_provider` and `resolved_model = "{id}:{reasoning_effort}"`; `_start_run_record` and the pi argv use these, so Run rows record what actually ran [source: scheduler.py; agent_runner.py]. Seven gate cases are covered in `tests/test_dispatch_gate.py`.
+As of #043, Claude is wired: a matching Claude entry annotates the candidate with `resolved_provider=""` and a bare `resolved_model`, while Pi keeps `resolved_provider=str(entry["provider"])` and `resolved_model = "{id}:{reasoning_effort}"` [source: scheduler.py; source: wiki/analyses/podium-043-claude-dispatch-routing.md]. `_start_run_record` and the agent adapters use these, so Run rows record what actually ran [source: scheduler.py; agent_runner.py]. Gate cases are covered in `tests/test_dispatch_gate.py`.
 
 ## Model catalog is the contract
 
-`model_catalog.py` (shared by `web.api.main` `/options` and the scheduler) requires: unique ids, `agent` in `pi|claude`, `provider` on every pi entry, and exactly one `default: true` entry catalog-wide (currently `gpt-5.5`/`openai-codex`) [source: model_catalog.py; models.yml]. The default dispatches when `preferred_model` is unset; the new-issue modal preselects it [source: web/frontend/components/NewIssueModal.tsx]. `SYMPHONY_PI_MODEL`/`SYMPHONY_PI_PROVIDER` are a legacy Plane-path fallback only; the podium startup pi probe exercises the catalog default [source: main.py].
+`model_catalog.py` (shared by `web.api.main` `/options` and the scheduler) requires: unique ids, `agent` in `pi|claude`, `provider` on every pi entry, and at most one `default: true` entry per agent [source: model_catalog.py; models.yml]. The per-agent default dispatches when `preferred_model` is unset; the new-issue modal preselects by selected agent [source: web/frontend/components/NewIssueModal.tsx]. `SYMPHONY_PI_MODEL`/`SYMPHONY_PI_PROVIDER` are a legacy Plane-path fallback only; the podium startup pi probe exercises the Pi catalog default [source: main.py].
 
 ## Skill application
 

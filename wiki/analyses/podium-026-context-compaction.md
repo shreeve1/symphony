@@ -32,7 +32,7 @@ tags: [podium, context-compaction, scheduler, issue-context, alembic]
 
 ## Dispatch integration
 
-`scheduler.run_tick(...)` calls `_maybe_compact_context(...)` before prompt rendering and before `_start_run_record(...)`, so compaction does not create a `run` row or `skill_invoked` value. It uses the same configured agent runner supplied to the binding runtime instead of hardcoding an agent. On safe compaction errors, the Issue moves to Blocked with a `Context compaction failed: ...` comment and no Run row is created. [source: scheduler.py] [source: tests/test_dispatch_compaction.py]
+`scheduler.run_tick(...)` calls `_maybe_compact_context(...)` before prompt rendering and before `_start_run_record(...)`, so compaction does not create a `run` row or `skill_invoked` value. Since #043, compaction uses a separate `compaction_agent_runner` and resolves the Pi catalog default, so engine housekeeping stays Pi-only even when the operator dispatch routes to Claude. On safe compaction errors, the Issue moves to Blocked with a `Context compaction failed: ...` comment and no Run row is created. [source: scheduler.py] [source: tests/test_dispatch_compaction.py] [source: wiki/analyses/podium-043-claude-dispatch-routing.md]
 
 The dispatch regression test configures a tiny threshold, verifies the first agent call is the compaction prompt, verifies the second call is the operator prompt containing compacted context, and asserts `SELECT COUNT(*) FROM run` equals 1 after the operator Run. A failure-path test asserts failed compaction blocks the Issue, leaves original `context_md` unchanged, and creates zero Run rows. [source: tests/test_dispatch_compaction.py]
 
