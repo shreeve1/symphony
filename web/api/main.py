@@ -329,7 +329,9 @@ class IssuePatch(BaseModel):
     preferred_agent: str | None = None
     preferred_model: str | None = None
     preferred_skill: str | None = None
-    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
     worktree_active: bool | None = None
     approval_required: bool | None = None
     approved: bool | None = None
@@ -354,7 +356,9 @@ class IssueCreate(BaseModel):
     preferred_skill: str | None = None
     preferred_agent: str | None = None
     preferred_model: str | None = None
-    reasoning_effort: Literal["minimal", "low", "medium", "high"] = "high"
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = (
+        "high"
+    )
     worktree_active: bool = False
     approval_required: bool = False
     approved: bool = False
@@ -824,9 +828,10 @@ async def patch_issue(
     # No-op guard: an empty body or a patch echoing stored values must not bump
     # updated_at — the board orders by it, so a blind bump reorders cards.
     changed = {name: value for name, value in fields.items() if current[name] != value}
-    if fields.get("state") in ("in_review", "blocked") and current.get(
-        "inbox_dismissed_at"
-    ) is not None:
+    if (
+        fields.get("state") in ("in_review", "blocked")
+        and current.get("inbox_dismissed_at") is not None
+    ):
         changed["inbox_dismissed_at"] = None
     if not changed:
         return current

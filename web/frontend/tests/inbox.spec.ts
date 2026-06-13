@@ -81,6 +81,36 @@ test.describe
 			expectCleanConsole(problems);
 		});
 
+		test("clicking another same-binding inbox card switches the flyout", async ({
+			page,
+			problems,
+		}) => {
+			const titleA = `e2e inbox switch A ${Date.now()}`;
+			const titleB = `e2e inbox switch B ${Date.now()}`;
+			const { issueId: idA } = seedIssue("homelab", titleA, "in_review");
+			const { issueId: idB } = seedIssue("homelab", titleB, "in_review");
+
+			await openPage(page);
+
+			const cardA = page.getByTestId("inbox-card").filter({ hasText: titleA });
+			const cardB = page.getByTestId("inbox-card").filter({ hasText: titleB });
+			await expect(cardA).toBeVisible({ timeout: 15_000 });
+			await expect(cardB).toBeVisible({ timeout: 15_000 });
+
+			// Open the first issue.
+			await cardA.click();
+			await expect(page).toHaveURL(`/homelab?issue=${idA}`);
+			await expect(page.getByTestId("flyout-title")).toHaveText(titleA);
+
+			// Clicking the second same-binding card must switch the flyout, not
+			// leave it pinned to the first issue (no remount on same-binding nav).
+			await cardB.click();
+			await expect(page).toHaveURL(`/homelab?issue=${idB}`);
+			await expect(page.getByTestId("flyout-title")).toHaveText(titleB);
+
+			expectCleanConsole(problems);
+		});
+
 		test("dismiss button removes card without navigating", async ({
 			page,
 			problems,

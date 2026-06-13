@@ -31,6 +31,7 @@ def catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "  - id: gpt-5.5\n"
         "    agent: pi\n"
         "    provider: openai-codex\n"
+        "    efforts: [none, low, medium, high, xhigh]\n"
         "    default: true\n"
         "  - id: deepseek-v4-pro\n"
         "    agent: pi\n"
@@ -126,6 +127,36 @@ def test_default_model_and_effort_suffix(catalog: Path) -> None:
     assert error is None
     assert candidate.resolved_provider == "openai-codex"
     assert candidate.resolved_model == "gpt-5.5:high"
+
+
+def test_unsupported_effort_blocks_loudly(catalog: Path) -> None:
+    candidate, error = _apply_dispatch_gate(
+        _candidate(reasoning_effort="minimal"), _binding()
+    )
+    assert error is not None
+    assert "minimal" in error
+    assert "gpt-5.5" in error
+    # Failed loudly before forming the dispatch suffix.
+    assert candidate.resolved_model != "gpt-5.5:minimal"
+
+
+def test_supported_effort_resolves(catalog: Path) -> None:
+    candidate, error = _apply_dispatch_gate(
+        _candidate(reasoning_effort="xhigh"), _binding()
+    )
+    assert error is None
+    assert candidate.resolved_model == "gpt-5.5:xhigh"
+
+
+def test_model_without_efforts_skips_validation(catalog: Path) -> None:
+    # deepseek-v4-pro declares no `efforts`, so any effort passes through
+    # (back-compat: validation only applies to models that declare a set).
+    candidate, error = _apply_dispatch_gate(
+        _candidate(preferred_model="deepseek-v4-pro", reasoning_effort="minimal"),
+        _binding(),
+    )
+    assert error is None
+    assert candidate.resolved_model == "deepseek-v4-pro:minimal"
 
 
 def test_preferred_model_and_effort_resolve(catalog: Path, tmp_path: Path) -> None:

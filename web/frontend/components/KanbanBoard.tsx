@@ -25,6 +25,15 @@ export function KanbanBoard({
 		initialIssueId ?? null,
 	);
 
+	// Sync the open flyout when the ?issue= deep link changes without a remount
+	// (e.g. clicking another inbox item within the same binding). The useState
+	// initializer only runs on mount, so same-binding navigations are missed.
+	useEffect(() => {
+		if (initialIssueId != null) {
+			setSelected(initialIssueId);
+		}
+	}, [initialIssueId]);
+
 	// Per-binding collapse state persisted in localStorage.
 	const storageKey = `podium.collapsed.${binding ?? ""}`;
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());

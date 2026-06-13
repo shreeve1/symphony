@@ -9,29 +9,72 @@ Create a new Symphony binding for the Podium era.
 
 ## Prerequisites
 
-- Symphony repo at `/home/james/symphony`.
-- Writable Podium DB path from `PODIUM_DB_PATH` or `web.api.db.resolve_db_path()`.
-- Target repository exists locally and has a `WORKFLOW.md` ready to author or replace.
+- Symphony repo at `/home/james/symphony`. Run everything from this directory (`skill_migration` is a repo-root module).
+- Writable Podium DB path. With no `PODIUM_DB_PATH` set and `/var/lib/symphony` absent, `web.api.db.resolve_db_path()` resolves to the live `/home/james/symphony/podium.db`.
+- Target repository exists locally. `WORKFLOW.md` is not required here — `symphony-workflow-author` authors it as a separate step.
 
 ## Workflow
 
-1. Resolve target binding name, repo path, base branch, default agent, and binding type.
-2. Run `scaffold_podium_binding(...)` from `skill_migration.py`.
-3. Verify the Podium `binding` row exists in SQLite.
-4. Verify `bindings.yml` contains the same binding with `tracker: podium`.
-5. Do not create any tracker-side project. Podium treats the binding itself as the project.
+1. Resolve binding inputs:
+   - `name` — non-empty, no whitespace.
+   - `repo_path` — absolute path to the target repo.
+   - `base_branch` — e.g. `main`.
+   - `default_agent` — must be `pi` or `claude` (default `pi`).
+   - `binding_type` — must be `infra` or `coding` (default `coding`).
+   - `display_name` — optional; defaults to `name`.
+2. Run `scaffold_podium_binding(...)`. It takes a `PodiumBindingScaffoldRequest` plus required keyword-only `db_path` and `bindings_path`:
+
+   ```bash
+   cd /home/james/symphony && uv run python - <<'PY'
+   from pathlib import Path
+   from web.api.db import resolve_db_path
+   from skill_migration import PodiumBindingScaffoldRequest, scaffold_podium_binding
+
+   result = scaffold_podium_binding(
+       PodiumBindingScaffoldRequest(
+           name="NAME",
+           repo_path=Path("/absolute/repo/path"),
+           base_branch="main",
+           default_agent="pi",      # 'pi' | 'claude'
+           binding_type="coding",   # 'infra' | 'coding'
+       ),
+       db_path=resolve_db_path(),
+       bindings_path=Path("/home/james/symphony/bindings.yml"),
+   )
+   print(result)
+   PY
+   ```
+
+   The call is dupe-guarded: it raises if `name` already exists in the DB or in `bindings.yml`, and schema creation is idempotent (`CREATE TABLE IF NOT EXISTS`).
+3. Do not create any tracker-side project. Podium treats the binding itself as the project.
+4. The written `bindings.yml` entry includes `plane_project_id: <name>`. This is transitional `ProjectBinding`/`config.py` compatibility only — it is not a Plane call and not a real Plane project.
+5. New binding is not live until `symphony-host.service` reloads `bindings.yml`. Restart via the `symphony-restart` skill (ask James) when ready, or let `symphony-onboard-project` chain it.
 
 ## Safety rules
 
 - No Plane API calls.
 - No `plane_adapter` imports.
 - Do not read or print `/home/james/symphony-host.env`.
-- Show the `bindings.yml` diff before committing.
+- Show the `bindings.yml` diff before committing (the `plane_project_id` field will appear — see step 4).
 - If `bindings.yml` or the DB already contains the binding name, stop instead of merging entries.
 
 ## Verification
 
-Run:
+Confirm your new binding actually landed (replace `NAME`):
+
+```bash
+cd /home/james/symphony
+uv run python - <<'PY'
+import sqlite3
+from web.api.db import resolve_db_path
+con = sqlite3.connect(resolve_db_path())
+print(con.execute("SELECT name, display_name, archived FROM binding WHERE name = 'NAME'").fetchone())
+print(con.execute("SELECT binding_name FROM binding_settings WHERE binding_name = 'NAME'").fetchone())
+PY
+grep -nA10 "name: NAME" bindings.yml
+```
+
+Regression test for the helper itself (uses tmp fixtures, not the live DB):
 
 ```bash
 cd /home/james/symphony && uv run pytest tests/skills/test_binding_scaffold.py

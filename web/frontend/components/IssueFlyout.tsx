@@ -233,7 +233,10 @@ function ChipToggle({
 	);
 }
 
-const EFFORTS = ["minimal", "low", "medium", "high"] as const;
+// Union of effort tokens across models; the model chip here is free-text (no
+// per-model catalog lookup), so the dispatch gate is the enforcement point for
+// an effort a given model doesn't support.
+const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 const STATE_KEYS = STATES.map((s) => s.key);
 
 function MetadataChips({

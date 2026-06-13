@@ -66,6 +66,8 @@ _Avoid_: "template" (the template is the static shape the scaffold applies; the 
 
 **Skill**:
 A named, reusable agent procedure the operator can direct an issue toward (e.g. `dev-plan`, `diagnose`, `code-review`). [[Podium]] tracks Skills in three forms: an operator-curated **catalog** of known Skills (populates the UI dropdown), an Issue-level **preferred Skill** the operator names to direct the next dispatch, and a Run-level **invoked Skill** captured from the agent's output as a record of what actually ran. The catalog is non-live — refreshed by an operator command, not auto-discovered each session — and `run.skill_invoked` is advisory free-text, not foreign-keyed to the catalog (an agent may run ad-hoc Skills the catalog has not indexed).
+
+The **preferred Skill is consume-on-dispatch**, not standing config: it is invoked exactly once. The scheduler captures it into the Run's invoked Skill, then clears the Issue's preferred Skill in the same dispatch (only once the Run row is recorded — a blocked or deferred dispatch leaves it intact). A skill-less dispatch is valid and runs as a plain agent continuation (no skill-invoke directive injected). This mirrors a CLI `/skill` invocation: the operator names a Skill once, the next Run uses it, and re-dispatches (e.g. an Operator Reply) run skill-less unless the operator names a Skill again. This is deliberately asymmetric with the other Issue-level dispatch properties (**preferred model**, **reasoning effort**), which are *standing* — they persist across every Run like a CLI session's model choice and are not consumed.
 _Avoid_: "command" (a Skill is the named procedure, not its invocation syntax), "tool" (a tool is what a Skill internally calls; the two are not interchangeable)
 
 **Playbook**:

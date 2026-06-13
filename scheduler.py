@@ -633,6 +633,17 @@ def _apply_dispatch_gate(
             )
     if agent == "pi":
         effort = getattr(candidate, "reasoning_effort", "") or "high"
+        # Reasoning-effort vocabulary is model-specific (e.g. gpt-5.5 dropped
+        # 'minimal' for 'none' and added 'xhigh'). Reject an unsupported effort
+        # here so dispatch fails loudly instead of the provider failing the run
+        # ~8s in. Entries without `efforts` are not validated (back-compat).
+        supported = entry.get("efforts")
+        if supported and effort not in supported:
+            return candidate, (
+                f"Dispatch blocked: reasoning_effort `{effort}` is not supported "
+                f"by model `{entry['id']}`; supported: {', '.join(supported)}. "
+                "Pick a supported effort or clear reasoning_effort."
+            )
         return (
             replace(
                 candidate,

@@ -117,9 +117,10 @@ If James approves reading the local DB path and it is readable:
 
 ```bash
 DB=<resolved-path>
-sqlite3 "$DB" "select name, repo_path, default_agent from binding order by name;"
+# binding rows carry display metadata only; repo_path/default_agent live in bindings.yml (above).
+sqlite3 "$DB" "select name, display_name, archived from binding order by name;"
 sqlite3 "$DB" "select id, binding_name, title, state, latest_run_state, latest_verdict, updated_at from issue order by updated_at desc limit 20;"
-sqlite3 "$DB" "select id, issue_id, state, verdict, summary, updated_at from run order by updated_at desc limit 20;"
+sqlite3 "$DB" "select id, issue_id, state, verdict, summary, started_at, ended_at from run order by id desc limit 20;"
 ```
 
 ### Recent error slice

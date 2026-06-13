@@ -12,7 +12,10 @@ import {
 	type ModelOption,
 } from "@/lib/api";
 
-const EFFORTS = ["minimal", "low", "medium", "high"] as const;
+// Fallback effort list for models that don't declare an `efforts` set in the
+// catalog. Models that do (e.g. gpt-5.5) drive the dropdown from their own set
+// so the operator can't pick an effort the model will reject at dispatch.
+const DEFAULT_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
 // Optimistic create (#014): prepend a temp card to the board cache on submit,
 // swap it for the canonical server row on success, roll back on error, and
@@ -243,7 +246,11 @@ function NewIssueModal({
 	const branchOptions = (options.data?.branches ?? []).map((name) => ({
 		value: name,
 	}));
-	const effortOptions = EFFORTS.map((name) => ({ value: name }));
+	const selectedModelEfforts = (options.data?.models ?? []).find(
+		(option: ModelOption) => option.id === model,
+	)?.efforts;
+	const effortChoices = selectedModelEfforts ?? DEFAULT_EFFORTS;
+	const effortOptions = effortChoices.map((name) => ({ value: name }));
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
 	useEffect(() => titleRef.current?.focus(), []);
@@ -258,6 +265,12 @@ function NewIssueModal({
 		)?.id;
 		setModel(match ?? "");
 	}, [options.data?.models, agent]);
+
+	// Clear a set effort the newly selected model doesn't support, so the form
+	// never submits an effort the dispatch gate would reject.
+	useEffect(() => {
+		if (effort && !effortChoices.includes(effort)) setEffort("");
+	}, [effort, effortChoices]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();

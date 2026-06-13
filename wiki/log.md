@@ -11,7 +11,21 @@ Append entries with this format:
 
 ---
 
-## [2026-06-13] session-update | #044 Claude startup probe and orphan socket reaper
+## [2026-06-13] session-update | Per-model reasoning-effort validation (fix for C-0167)
+
+- Actor: agent (Claude Code)
+- Inputs: troubleshooting the #046 live-smoke failure (Issue 2: `reasoning_effort=minimal` rejected by default `gpt-5.5`); James approved fix approach "per-model efforts + gate validate" and "edit now, you merge" alongside his concurrent consume-on-dispatch WIP.
+- Outputs: code — `model_catalog.validate_models` parses optional `efforts:`; `models.yml` gpt-5.5 `efforts: [none, low, medium, high, xhigh]`; `scheduler._apply_dispatch_gate` pi-branch effort validation (fail-loud); `web/api/main.py` `reasoning_effort` Literal widened to `none|minimal|low|medium|high|xhigh`; `web/frontend/lib/api.ts` `ModelOption.efforts`; `NewIssueModal` per-model effort dropdown + clear-on-invalid; `IssueFlyout` union list; tests in `tests/test_dispatch_gate.py`, `tests/test_model_catalog.py`, `web/api/tests/test_issue_create.py`. Wiki — C-0169 added, C-0167 note updated (follow-up resolved), section added to `wiki/analyses/podium-issue-dispatch-contract.md`, ROUTING dispatch route extended, this log entry.
+- Notes: `uv run pytest` 713 passed, 1 skipped; ruff + frontend tsc clean. Made live 2026-06-13 ~05:48 UTC at James's request: restarted `podium-api` + `symphony-host` (working tree, uncommitted) and ran the frontend `deploy.sh` atomic swap. Verified end-to-end — `minimal` smoke (issue 4) blocked at the gate with no run row + loud comment; `xhigh` smoke (issue 5) dispatched `gpt-5.5:xhigh` → `done`/exit 0. Still uncommitted — James to merge. consume-on-dispatch is now committed (`06cff0f`). No secrets read.
+
+---
+
+## [2026-06-13] session-update | #046 unified output contract — live end-to-end smoke verification
+
+- Actor: agent (Claude Code)
+- Inputs: James-approved low-risk homelab smoke Issue against the running `symphony-host.service` (commit `5be9755`, restarted 2026-06-13 04:48 UTC); live `podium.db` inspection of `issue.comments_md` / `run.summary`; journalctl dispatch markers. Issue id 2 (`reasoning_effort=minimal`) → Run id 1 `failed`/`blocked`; Issue id 3 (`low`) → Run id 2 `succeeded`/`done`.
+- Outputs: new raw capture `wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md`; `wiki/analyses/podium-046-unified-output-contract.md` updated (live-status paragraph corrected to pushed+live, new "Live verification (2026-06-13)" section, source added); `wiki/CLAIMS.md` C-0166 + C-0167 added, C-0163 and C-0165 "not yet live" notes corrected to live-confirmed; `wiki/index.md` #046 row updated; `wiki/ROUTING.md` Output-contract + Dispatch-contract routes extended; this log entry.
+- Notes: #046 output contract confirmed in production exactly as documented (verbatim multi-line summary, no `### Symphony AI Summary` header, no Timeline footer, no `Symphony claimed at` comment) — C-0166. Surfaced one durable gotcha: `reasoning_effort=minimal` is valid in `IssueCreate` but rejected by the default `gpt-5.5` model → fast `blocked` failure (C-0167); open follow-up to gate/translate effort per model. Claude dispatch path (C-0154) still unverified live. Smoke Issues left in Podium as audit evidence. No secrets read, no `.env` contents, no transcript. Smoke Issues filed by direct INSERT into live `podium.db` (HTTP API needs a session password not recoverable from env).
 
 - Actor: agent (Pi, Ralph + wiki update)
 - Inputs: issue #044 implementation; commits `2e5439a`, `e61ace5`, `ea7aa82`; `.kanban/issues/044-claude-startup-probe-and-socket-reaper.md`; `.kanban/progress.md`; `claude_runner.py`; `scheduler.py`; `main.py`; `tests/test_claude_runner.py`; `tests/test_dispatch_gate.py`; `tests/test_main.py`; `tests/conftest.py`; existing #042/#043 wiki pages.
@@ -416,3 +430,10 @@ Append entries with this format:
 - Inputs: independent Opus review (dev-review-claude) of the committed #046 change (`82f81fd`); applied five fixes in the working tree — secret redaction before bounding (W2), column-0 `_SUMMARY_BLOCK_RE` + unindented OUTPUT_CONTRACT (W3), `_run_started_at` gated on `stores_context` (W1), completion summary on its own line (N3), `NOTIFY_REASON_MAX_CHARS=2000` notifier cap (N4); added two regression tests (straddle redaction, indented-block non-match); `uv run pytest` 696 passed, 1 skipped; ruff clean.
 - Outputs: review-hardening section added to `wiki/analyses/podium-046-unified-output-contract.md`; claim C-0165 added (refines C-0160, C-0162); this log entry. Code changes in `scheduler.py`, `prompt_renderer.py`, `tests/test_scheduler.py`.
 - Notes: Durable refinement of the #046 output contract (security: secret-straddle redaction; correctness: contract self-match guard). Separate symphony commit on top of `82f81fd`; NOT pushed and NOT live — `symphony-host.service` runs prior code until a James-approved restart. No secrets read. Working tree also contains an unrelated archive-button-removal stream (frontend + its wiki) left uncommitted.
+
+## [2026-06-13] session-update | symphony-* skills audit + troubleshooter SQL fix
+
+- Actor: agent (Claude Code)
+- Inputs: full review of all 11 repo-local `symphony-*` skills against current source after #042–#046/Podium churn; verified referenced functions, API endpoints (loopback 8090), test files, and SQLite column names.
+- Outputs: fixed two stale SQLite fallback queries in `.claude/skills/symphony-troubleshooter/SKILL.md` (binding `repo_path`/`default_agent` → `name, display_name, archived`; run `updated_at` → `started_at`/`ended_at`, order by `id desc`); raw capture `wiki/raw/sessions/2026-06-13-symphony-skills-audit.md`; claim C-0168 (refines C-0129); maintenance edit + date bump on `wiki/analyses/symphony-skills-index.md`; this log entry.
+- Notes: Doc-only fix; no code or service change. Other 10 skills verified clean. James approved the edit. No secrets read; review read-only except the single skill-doc edit. Follow-up: when ADR-0008 `preferred_skill` consume-on-dispatch is committed, decide whether any operator skill should mention it.

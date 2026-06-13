@@ -56,6 +56,18 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
                 entry[key] = value
         if agent == "pi" and not entry.get("provider"):
             raise ValueError(f"models[{index}].provider is required for pi models")
+        efforts = item.get("efforts")
+        if efforts is not None:
+            if not isinstance(efforts, list) or not efforts:
+                raise ValueError(f"models[{index}].efforts must be a non-empty list")
+            cleaned_efforts: list[str] = []
+            for effort in efforts:
+                if not isinstance(effort, str) or not effort.strip():
+                    raise ValueError(
+                        f"models[{index}].efforts entries must be non-empty strings"
+                    )
+                cleaned_efforts.append(effort)
+            entry["efforts"] = cleaned_efforts
         default = item.get("default")
         if default is not None:
             if not isinstance(default, bool):

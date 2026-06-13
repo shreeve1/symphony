@@ -85,6 +85,20 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
     assert body["base_branch"] == "develop"
 
 
+@pytest.mark.parametrize(
+    "effort", ["none", "minimal", "low", "medium", "high", "xhigh"]
+)
+def test_create_accepts_model_specific_efforts(client: TestClient, effort: str) -> None:
+    # The API accepts the full effort vocabulary across models (gpt-5.5 added
+    # `none`/`xhigh`); per-model validity is enforced at the dispatch gate.
+    response = client.post(
+        "/api/bindings/homelab/issues",
+        json={"title": f"effort {effort}", "reasoning_effort": effort},
+    )
+    assert response.status_code == 201
+    assert response.json()["reasoning_effort"] == effort
+
+
 def test_created_issue_appears_in_binding_list(client: TestClient) -> None:
     created = client.post(
         "/api/bindings/trading/issues", json={"title": "listed"}
@@ -223,7 +237,9 @@ def test_models_validator_rejects_invalid_catalogs() -> None:
         {"models": [{"id": "claude-fable-5", "agent": "claude", "default": True}]}
     ) == [{"id": "claude-fable-5", "agent": "claude", "default": True}]
 
-    with pytest.raises(ValueError, match="multiple default: true entries for agent `claude`"):
+    with pytest.raises(
+        ValueError, match="multiple default: true entries for agent `claude`"
+    ):
         main._validate_models(
             {
                 "models": [
@@ -251,7 +267,9 @@ def test_models_validator_rejects_invalid_catalogs() -> None:
         )
 
 
-@pytest.mark.parametrize("content", [None, ": not [ yaml", "models:\n  - id: x\n    agent: bad\n"])
+@pytest.mark.parametrize(
+    "content", [None, ": not [ yaml", "models:\n  - id: x\n    agent: bad\n"]
+)
 def test_options_models_degrade_to_empty_on_bad_catalog(
     client: TestClient, monkeypatch, tmp_path, content: str | None
 ) -> None:

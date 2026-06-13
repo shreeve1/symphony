@@ -150,6 +150,9 @@ export interface ModelOption {
 	label?: string;
 	provider?: string;
 	default?: boolean;
+	// Reasoning efforts this model accepts (model-specific vocabulary). Absent
+	// when the catalog entry declares none — the form then offers the full set.
+	efforts?: string[];
 }
 
 export interface IssueOptions {

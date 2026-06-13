@@ -15,6 +15,7 @@ sources:
   - tests/test_tracker_podium.py
   - tests/test_engine_against_podium.py
   - wiki/raw/sessions/2026-06-13-unified-output-contract.md
+  - wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md
 confidence: high
 tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflow]
 ---
@@ -57,4 +58,10 @@ Accepted without change: `_MARKER_LINE_RE` could in principle strip a human line
 
 ## Verification and live status
 
-`uv run pytest` is green (696 passed, 1 skipped — base 694 plus two review-hardening tests: secret-straddle redaction and indented-block non-match). The base change is committed across three repos (`82f81fd` symphony, `f1b7e57` homelab, `9a29dfb` trading); the review-hardening follow-up is a separate symphony commit. None pushed and not yet live — `symphony-host.service` runs the previous code until a James-approved restart, so the new comment format only takes effect after restart [source: wiki/raw/sessions/2026-06-13-unified-output-contract.md].
+`uv run pytest` is green (696 passed, 1 skipped — base 694 plus two review-hardening tests: secret-straddle redaction and indented-block non-match). The base change is committed across three repos (`82f81fd` symphony, `f1b7e57` homelab, `9a29dfb` trading); the review-hardening follow-up is a separate symphony commit (`5be9755`). Both are now pushed to `origin/main` and live — `symphony-host.service` was restarted on `5be9755` at 2026-06-13 04:48 UTC [source: wiki/raw/sessions/2026-06-13-unified-output-contract.md].
+
+## Live verification (2026-06-13)
+
+The contract was verified end-to-end on the running service via a low-risk homelab smoke Issue (James-approved). A successful Pi/codex Run (`provider=openai-codex model=gpt-5.5:low`, verdict `done`, exit 0, ~37s) produced `comments_md` equal to `**Symphony completed:**\n\n{summary}`, where `{summary}` was the agent's multi-line `SYMPHONY_SUMMARY_BEGIN`/`END` block posted **verbatim** (three markdown bullets, newlines preserved). The comment carried no `### Symphony AI Summary` header, no `**Timeline** —` footer, and the Issue's comment stream held no `Symphony claimed at` comment — confirming the C-0160 / C-0161 / C-0162 behavior in production (C-0166). `run.summary` stored the block verbatim; `comments_md` was that block plus the prefix. The Claude dispatch path (C-0154) was not exercised [source: wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md].
+
+A first attempt failed for an unrelated reason: `reasoning_effort=minimal` (valid in Symphony's `IssueCreate`) is rejected by the default `gpt-5.5` model, which supports only `none`/`low`/`medium`/`high`/`xhigh`. The agent exited non-zero in ~8s and the Issue went `blocked`/`failed`; the blocked comment still showed the #046-clean format (no Timeline, no claim comment) and posted the stderr summary because no summary block was emitted. Re-filing with `reasoning_effort=low` succeeded. This effort/model incompatibility is captured as C-0167 [source: wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md].

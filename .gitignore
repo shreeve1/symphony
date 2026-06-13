@@ -5,6 +5,7 @@ __pycache__/
 podium.db
 podium.db-shm
 podium.db-wal
+podium.db.predelete-bak-*
 runs/
 *.env
 plans/

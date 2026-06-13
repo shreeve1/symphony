@@ -27,4 +27,9 @@ models:
   - id: gpt-5.5
     agent: pi
     provider: openai-codex
+    # gpt-5.5 dropped 'minimal' (use 'none') and added 'xhigh'. The dispatch
+    # gate rejects an unsupported reasoning_effort before dispatch instead of
+    # letting the provider fail the run. Models without an `efforts:` list are
+    # not effort-validated (back-compat).
+    efforts: [none, low, medium, high, xhigh]
     default: true
