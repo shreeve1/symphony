@@ -6,11 +6,14 @@ blocked_by: [050, 051]
 parent: null
 priority: 0
 created: 2026-06-13
+updated: 2026-06-13
 ---
 
 ## What to build
 
 Give the operator an in-flight, read-only view of a running Run by tailing the agent's session `.jsonl` (which the agent appends live during the run) and streaming it to the Podium issue flyout. This recovers in-flight visibility WITHOUT changing the separate-process scheduler architecture (ADR-0006): the per-Run disk log is only written once at process exit, but the session file is a live stream.
+
+> **ADR-0010 note:** this approach is transport-agnostic and **stands as designed** — pi RPC (#050) persists the session `.jsonl` via `--session-id` (not `--no-session`), so the jsonl-tail source exists for both agents. No RPC-event plumbing required for tail. (An optional richer/lower-latency tail off the RPC event stream itself is possible later but is out of scope here.)
 
 - Backend: for a running issue, resolve the derived session file path (#048 `session_file_path`), tail newly appended JSONL events, and fan them out over the existing WebSocket hub (#017) as a new event type (e.g. `run.tail`). Read-only; same-host file read of `~/.claude/projects/...` and `~/.pi/agent/sessions/...`.
 - Frontend: a flyout panel that subscribes to the tail events for the open issue and renders the streamed tool-calls/reasoning/edits as they arrive; clears/rebinds when switching issues; degrades gracefully when no run is active or the session file is absent.

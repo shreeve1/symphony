@@ -43,7 +43,8 @@ A session persists the **conversation, not the filesystem** — resume restores 
 - **Session Tail** — tail the live-appended session `.jsonl` and stream over the WS hub (#017) for in-flight visibility, without changing the separate-process scheduler model (ADR-0006). [source: CONTEXT.md]
 - **Fast re-dispatch** — reply writes a wake sentinel the scheduler watches; round-trip minutes → seconds.
 - **Checkpointed exploration** — WORKFLOW/Skill policy: bounded step then park, leaning on resume + Question Park.
-- Deferred (no issues): live tmux send-keys mid-run steering (Claude-only); `--fork` A/B exploration.
+- **Steering** (pi-only, live mid-run) — operator input injected into a *running* pi Run via the RPC `steer` command, distinct from the between-Run Question Park reply loop. Decided by **ADR-0010** (dispatch pi via `pi --mode rpc`); in-scope as #056/#057/#058. [source: CONTEXT.md] [source: docs/adr/0010-pi-rpc-dispatch-for-live-steering.md]
+- Deferred (no issues): `--fork` A/B exploration. (Live mid-run steering is no longer deferred — un-deferred for pi via RPC by ADR-0010, C-0178; it was never viable for Claude, which has no headless protocol for this account and keeps park-and-reply.)
 
 ## Backlog
 
@@ -55,4 +56,4 @@ This conditionally reverses the "transcript re-feed, not session resume" stance 
 
 ## Claims
 
-C-0175, C-0176, C-0177 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0176, C-0177, C-0178 in [CLAIMS.md](../CLAIMS.md).
