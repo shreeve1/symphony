@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0007_add_run_session_tracking_columns"
+INITIAL_REVISION = "0008_fix_issue_archived_check"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
