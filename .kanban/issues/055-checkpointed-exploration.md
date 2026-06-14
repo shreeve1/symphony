@@ -1,11 +1,13 @@
 ---
 id: 055
 title: Checkpointed exploration mode
-status: pending
+status: in-progress
 blocked_by: [050, 051, 052]
 parent: null
 priority: 0
 created: 2026-06-13
+updated: 2026-06-14
+actor: ralph
 ---
 
 ## What to build

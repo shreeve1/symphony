@@ -17,9 +17,10 @@ This skill is tracker-agnostic. It does not write Podium or Plane. It edits repo
 2. Confirm the repo has a binding in `bindings.yml` or in Podium's binding table.
 3. Read repo orientation files and the prompt renderer contract.
 4. Interview or use supplied operator policy for sandbox boundaries, forbidden paths, mode behaviour, tests, identity, and timeouts.
-5. Write `WORKFLOW.md`.
-6. Render-test with representative Issue fields.
-7. Commit only the target repo Workflow change when running as a live authoring session.
+5. When a binding may need incremental investigation, document that operators can select the `checkpointed-exploration` Skill to force one bounded exploration step per Run followed by Question Park review.
+6. Write `WORKFLOW.md`.
+7. Render-test with representative Issue fields.
+8. Commit only the target repo Workflow change when running as a live authoring session.
 
 ## Safety rules
 

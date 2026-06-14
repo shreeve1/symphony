@@ -13,3 +13,5 @@ def test_workflow_author_documents_tracker_agnostic_behavior() -> None:
     assert "It does not write Podium or Plane" in text
     assert "Never write a Workflow for an unbound repo" in text
     assert "Never restart Symphony or file smoke Issues" in text
+    assert "checkpointed-exploration" in text
+    assert "one bounded exploration step per Run" in text

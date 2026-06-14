@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from prompt_renderer import IssueData, render_prompt, render_previous_comments_block
+from prompt_renderer import (
+    CHECKPOINTED_EXPLORATION_DIRECTIVE,
+    IssueData,
+    render_prompt,
+    render_previous_comments_block,
+)
 from skill_mode_map import SKILL_TO_MODE, mode_for_skill
 
 
@@ -244,6 +249,58 @@ def test_resume_prompt_skill_directive_omitted_when_no_skill(
 
     assert "First, invoke" not in prompt
     assert "Roll back to staging first" in prompt
+
+
+def test_checkpointed_exploration_directive_emits_only_for_selected_skill(
+    tmp_path: Path,
+) -> None:
+    work = _default_workflow(tmp_path)
+
+    selected = render_prompt(
+        IssueData(
+            identifier="POD-16",
+            comments_md=_RESUME_CX,
+            preferred_skill="checkpointed-exploration",
+        ),
+        path=work,
+        tracker_kind="podium",
+    )
+    other = render_prompt(
+        IssueData(
+            identifier="POD-17",
+            comments_md=_RESUME_CX,
+            preferred_skill="dev-build",
+        ),
+        path=work,
+        tracker_kind="podium",
+    )
+
+    assert CHECKPOINTED_EXPLORATION_DIRECTIVE in selected
+    assert "Do exactly one bounded" in selected
+    assert "SYMPHONY_QUESTION_BEGIN" in selected
+    assert "operator\nexplicitly says exploration is complete" in selected
+    assert CHECKPOINTED_EXPLORATION_DIRECTIVE not in other
+
+
+def test_checkpointed_exploration_directive_survives_resume(
+    tmp_path: Path,
+) -> None:
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-18",
+            comments_md=_RESUME_CX,
+            preferred_skill="/checkpointed-exploration",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert CHECKPOINTED_EXPLORATION_DIRECTIVE in prompt
+    assert "First, invoke the `checkpointed-exploration` skill" in prompt
+    assert "Roll back to staging first" in prompt
+    assert "Repo policy" not in prompt
 
 
 def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:

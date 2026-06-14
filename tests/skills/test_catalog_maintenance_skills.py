@@ -8,10 +8,14 @@ import pytest
 import yaml
 
 main = cast(Any, import_module("web.api.main"))
+_skills = cast(Any, import_module("web.cli.podium_skills"))
 
 SKILLS_PATH = Path(".claude/skills/symphony-skills/SKILL.md")
 MODELS_SKILL_PATH = Path(".claude/skills/symphony-models/SKILL.md")
 MODELS_PATH = Path("models.yml")
+CHECKPOINTED_EXPLORATION_SKILL_PATH = Path(
+    ".claude/skills/checkpointed-exploration/SKILL.md"
+)
 
 
 def test_symphony_skills_documents_dry_run_then_live_refresh() -> None:
@@ -25,6 +29,19 @@ def test_symphony_skills_documents_dry_run_then_live_refresh() -> None:
     assert "symphony-host.env" in text
     assert "PLANE_API_URL" not in text
     assert "api/v1/workspaces" not in text
+
+
+def test_checkpointed_exploration_skill_is_catalog_scannable() -> None:
+    records = _skills.scan_skills(Path(".claude/skills"))
+    record_by_name = {record.name: record for record in records}
+    text = CHECKPOINTED_EXPLORATION_SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "checkpointed-exploration" in record_by_name
+    assert "bounded reviewable checkpoints" in record_by_name[
+        "checkpointed-exploration"
+    ].description
+    assert "SYMPHONY_QUESTION_BEGIN" in text
+    assert "Do not emit `SYMPHONY_RESULT: done`" in text
 
 
 def test_symphony_models_documents_list_add_remove_and_shared_validator() -> None:

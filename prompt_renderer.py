@@ -48,6 +48,17 @@ this block verbatim as the issue comment, so write it for a human reader
 
 Keep summaries and questions focused; they are bounded to ~4000 characters when posted."""
 
+CHECKPOINTED_EXPLORATION_SKILL = "checkpointed-exploration"
+
+CHECKPOINTED_EXPLORATION_DIRECTIVE = """\
+## Checkpointed exploration directive
+
+This issue selected the `checkpointed-exploration` skill. Do exactly one bounded
+exploration step in this run, summarize the evidence and the next recommended
+step, then park for operator review with `SYMPHONY_QUESTION_BEGIN` /
+`SYMPHONY_QUESTION_END`. Do not emit `SYMPHONY_RESULT: done` unless the operator
+explicitly says exploration is complete."""
+
 
 @dataclass
 class IssueData:
@@ -217,6 +228,22 @@ def _extract_newest_operator_reply(comments_text: str) -> str:
     return matches[-1].group(0).rstrip("\n")
 
 
+def _normalized_skill(preferred_skill: str | None) -> str | None:
+    if preferred_skill is None:
+        return None
+    return preferred_skill.lstrip("/")
+
+
+def _skill_directive(preferred_skill: str | None) -> str:
+    skill = _normalized_skill(preferred_skill)
+    if not skill:
+        return ""
+    lines = [f"First, invoke the `{skill}` skill and follow its instructions for this issue."]
+    if skill == CHECKPOINTED_EXPLORATION_SKILL:
+        lines.append(CHECKPOINTED_EXPLORATION_DIRECTIVE)
+    return "\n\n".join(lines)
+
+
 def render_prompt(
     issue: IssueData,
     *,
@@ -277,12 +304,10 @@ def render_prompt(
             parts.append(delta_block)
         prompt = "\n\n".join(parts)
 
-        if tracker_kind == "podium" and issue.preferred_skill:
-            skill = issue.preferred_skill.lstrip("/")
-            prompt = (
-                f"First, invoke the `{skill}` skill and follow its "
-                f"instructions for this issue.\n\n{prompt}"
-            )
+        if tracker_kind == "podium":
+            directive = _skill_directive(issue.preferred_skill)
+            if directive:
+                prompt = f"{directive}\n\n{prompt}"
 
         return prompt
 
@@ -291,11 +316,9 @@ def render_prompt(
     # The operator's skill choice is a directive, not metadata: the scheduler
     # loads the skill into pi via --skill, and this line makes the agent
     # actually invoke it. Prepended so it is the first instruction read.
-    if tracker_kind == "podium" and issue.preferred_skill:
-        skill = issue.preferred_skill.lstrip("/")
-        prompt = (
-            f"First, invoke the `{skill}` skill and follow its "
-            f"instructions for this issue.\n\n{prompt}"
-        )
+    if tracker_kind == "podium":
+        directive = _skill_directive(issue.preferred_skill)
+        if directive:
+            prompt = f"{directive}\n\n{prompt}"
 
     return prompt
