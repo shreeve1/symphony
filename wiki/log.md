@@ -639,3 +639,13 @@ Append entries with this format:
 - Wiki updates: new raw capture + `analyses/pre-git-pytest-gate-agent-oom.md`, claims **C-0197/C-0198/C-0199**, pre-git bullet in `analyses/claude-code-harness-profile.md` updated (cited), `index.md`, `ROUTING.md`.
 - Unresolved: #1 archive CHECK drift (rebuild `issue` per 0004 DDL) not applied; #2 issue #15's completed frontend edits sit uncommitted in the live tree; detection gap in C-0147 (CHECK drift); residual RAM risk from two concurrent Python commits (worktree/MemoryMax descoped).
 - No secrets / `.env` read.
+
+## 2026-06-14 — session-update: real root cause of Claude agent socket deaths (corrects OOM) + fixes landed
+- Source: this session (a third failure, #17 "Archive", triggered re-investigation → root cause → fixes → wiki). Raw capture `wiki/raw/sessions/2026-06-14-claude-agent-socket-reap-root-cause.md`.
+- Inputs: operator reported #17 also failed with `error connecting to ...sock`. Single agent, no concurrency, ~20 GiB free.
+- Findings: OOM hypothesis (C-0198) DISPROVEN. Real cause (C-0200): `main.run_bindings_loop`→`run_dispatcher` calls the real `reap_orphan_claude_sockets()`/`reap_orphan_rpc_processes()`; three `tests/test_main.py` tests drive `run_bindings_loop` without stubbing them, so any `uv run pytest -q` reaps live `/tmp/symphony-claude-*.sock` → kills the running Claude agent's own socket. Proven via a sentinel tmux socket killed by the full suite (777 passed) and bisected to those tests; pi (#16, RPC) and subset runs unaffected. Also: #17's agent had authored the correct archive fix (migration 0008) before dying.
+- Change: (1) `tests/conftest.py` autouse `_no_real_orphan_reap` fixture neutralising both reapers — commit `f096476`, sentinel survives full suite after fix; (2) committed #17's archive fix (migration `0008_fix_issue_archived_check` + `INITIAL_REVISION`→0008 + `test_upgrade_repairs_stale_archived_check`) — commit `b26f31f`. Pre-git hook change (`c2c6187`) kept as hygiene only.
+- Verification: `uv run pytest -q` 777 passed / 2 skipped twice (pre/post fix); targeted `tests/test_alembic_baseline.py` 3 passed; sentinel-socket experiment before/after.
+- Wiki updates: new raw capture; analysis `pre-git-pytest-gate-agent-oom.md` corrected (OOM marked disproven, real cause appended); claim **C-0200** added, **C-0198** corrected, **C-0199** marked fix-landed; `index.md`, `ROUTING.md`.
+- Unresolved: apply migration 0008 to live `podium.db` (`alembic upgrade head`, back up + quiesce `podium-api`) — operator step pending; C-0147 CHECK-drift detection gap; defence-in-depth: scope `reap_orphan_claude_sockets` to the current run/PID or a service-only guard.
+- No secrets / `.env` read.
