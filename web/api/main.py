@@ -1202,7 +1202,11 @@ async def steer_issue(
         message = "Abort requested."
 
     run_id = str(current.get("latest_run_id") or "")
-    if current.get("state") != "running" or current.get("latest_run_state") != "running" or not run_id:
+    if (
+        current.get("state") != "running"
+        or current.get("latest_run_state") != "running"
+        or not run_id
+    ):
         raise HTTPException(
             status_code=409,
             detail="steer requires an active running pi RPC run",
@@ -1220,7 +1224,10 @@ async def steer_issue(
             status_code=409,
             detail="Claude runs do not support live steering; use park-and-reply only",
         )
-    if agent != "pi" or _binding_pi_mode_for(str(current.get("binding_name") or "")) != "rpc":
+    if (
+        agent != "pi"
+        or _binding_pi_mode_for(str(current.get("binding_name") or "")) != "rpc"
+    ):
         raise HTTPException(
             status_code=409,
             detail="steer requires an active running pi RPC run",

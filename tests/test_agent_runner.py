@@ -581,9 +581,7 @@ def test_run_pi_rpc_agent_forwards_queued_steer(tmp_path: Path) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"
     helper.write_text("print('helper')\n")
-    process = FakeRpcProcess(
-        [json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"]
-    )
+    process = FakeRpcProcess([json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"])
     environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
     steer_queue.write_steer_record(
         "77",
@@ -624,9 +622,7 @@ def test_run_pi_rpc_agent_forwards_queued_abort(tmp_path: Path) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"
     helper.write_text("print('helper')\n")
-    process = FakeRpcProcess(
-        [json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"]
-    )
+    process = FakeRpcProcess([json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"])
     environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
     steer_queue.write_steer_record("78", _issue().id, kind="abort", environ=environ)
     issue = CandidateIssue(

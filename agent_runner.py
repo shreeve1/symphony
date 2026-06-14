@@ -451,9 +451,7 @@ def run_pi_rpc_agent(
         run_id = str(getattr(issue, "active_run_id", "") or "")
         steer_offset = 0
         read_queued_steers = (
-            import_module("web.api.steer_queue").read_steer_records
-            if run_id
-            else None
+            import_module("web.api.steer_queue").read_steer_records if run_id else None
         )
 
         # pi RPC is a persistent session server: it streams its event burst then
@@ -489,9 +487,7 @@ def run_pi_rpc_agent(
                     )
                     _forward_steer_records(process, steer_records)
 
-                line, eof = read_line(
-                    min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS)
-                )
+                line, eof = read_line(min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS))
                 if eof:
                     # stdout closed: process exited on its own (crash / fake).
                     if process.poll() is not None:
