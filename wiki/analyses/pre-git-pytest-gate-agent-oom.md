@@ -107,8 +107,11 @@ run after the fix [source: tests/conftest.py].
 **Why the pre-git hook change isn't the fix:** issue #17's agent ran the suite *voluntarily* (not via commit), so the
 hook scoping never engaged. The hook change (C-0198) is retained as hygiene only.
 
-**Archive fix landed:** issue #17's agent authored the correct repair before dying — migration
-`0008_fix_issue_archived_check` (commit `b26f31f`, idempotent). Live `podium.db` apply is a pending operator step.
+**Archive fix landed and applied:** issue #17's agent authored the correct repair before dying — migration
+`0008_fix_issue_archived_check` (commit `b26f31f`, idempotent). Applied to the live `podium.db` 2026-06-14
+(podium-api stopped, DB backed up, `alembic upgrade head`, restarted clean): live `alembic_version=0008`, the
+`issue.state` CHECK now lists `'archived'`, and a BEGIN/ROLLBACK `state='archived'` UPDATE was accepted. The
+original "archive does nothing" report is resolved.
 
 ## Related claims
 
