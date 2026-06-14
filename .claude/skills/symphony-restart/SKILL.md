@@ -107,8 +107,10 @@ Wait for the first dispatch/reconcile cycle:
 ```bash
 sleep 35
 journalctl -u symphony-host.service --since="1 minute ago" --no-pager -n 250 \
-  | grep -E 'symphony_started|reconcile_startup_(begin|done|failed)|run_reconcile_(begin|done|failed)|dispatch_completed|ERROR|Traceback'
+  | grep -E 'symphony_started|reconcile_startup_(begin|done|failed)|run_reconcile_(begin|done|failed)|dispatch_completed|rpc_orphan_reap_done|pi_rpc_probe_(ok|failed)|ERROR|Traceback'
 ```
+
+Note: the reconcile/dispatch lines can lag `symphony_started` by up to ~90s (a startup probe runs first); the service shows `active/running` throughout. If the first grep shows only `symphony_started` + probe lines, wait and re-run before calling it stalled.
 
 Expected evidence:
 
@@ -116,6 +118,8 @@ Expected evidence:
 - one `reconcile_startup_begin` and matching `reconcile_startup_done` per binding.
 - `run_reconcile_begin` / `run_reconcile_done` for Podium bindings when run reconciliation is enabled.
 - at least one `dispatch_completed` line showing the scheduler loop is alive.
+- **`rpc_orphan_reap_done count=<N>`** — the boot orphan sweep ran (`count=0` is the healthy steady state).
+- **`pi_rpc_probe_ok`** when any binding sets `pi_mode: rpc`. A `pi_rpc_probe_failed reason=...` means the RPC binary/protocol is broken and RPC dispatch will fail — investigate before relying on RPC.
 - zero `ERROR` / `Traceback` / `reconcile_startup_failed` lines since restart.
 
 ### 6. Verdict

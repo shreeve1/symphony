@@ -21,6 +21,7 @@ Create a new Symphony binding for the Podium era.
    - `base_branch` — e.g. `main`.
    - `default_agent` — must be `pi` or `claude` (default `pi`).
    - `binding_type` — must be `infra` or `coding` (default `coding`).
+   - `pi_mode` — `rpc` or `one-shot` (default `rpc`, the accepted ADR-0010 standard). Written only for `pi` bindings; `one-shot` selects the legacy `pi --print` rollback path. Ignored for `claude` bindings.
    - `display_name` — optional; defaults to `name`.
 2. Run `scaffold_podium_binding(...)`. It takes a `PodiumBindingScaffoldRequest` plus required keyword-only `db_path` and `bindings_path`:
 
@@ -37,6 +38,7 @@ Create a new Symphony binding for the Podium era.
            base_branch="main",
            default_agent="pi",      # 'pi' | 'claude'
            binding_type="coding",   # 'infra' | 'coding'
+           pi_mode="rpc",           # 'rpc' (default) | 'one-shot'; pi bindings only
        ),
        db_path=resolve_db_path(),
        bindings_path=Path("/home/james/symphony/bindings.yml"),
@@ -47,7 +49,7 @@ Create a new Symphony binding for the Podium era.
 
    The call is dupe-guarded: it raises if `name` already exists in the DB or in `bindings.yml`, and schema creation is idempotent (`CREATE TABLE IF NOT EXISTS`).
 3. Do not create any tracker-side project. Podium treats the binding itself as the project.
-4. The written `bindings.yml` entry includes `plane_project_id: <name>`. This is transitional `ProjectBinding`/`config.py` compatibility only — it is not a Plane call and not a real Plane project.
+4. The written `bindings.yml` entry includes `plane_project_id: <name>` (transitional `ProjectBinding`/`config.py` compatibility only — not a Plane call and not a real Plane project) and, for `pi` bindings, `pi_mode: rpc` (ADR-0010 accepted; the `pi --mode rpc` dispatch path the live bindings use).
 5. New binding is not live until `symphony-host.service` reloads `bindings.yml`. Restart via the `symphony-restart` skill (ask James) when ready, or let `symphony-onboard-project` chain it.
 
 ## Safety rules

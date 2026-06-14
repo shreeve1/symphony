@@ -37,6 +37,10 @@ class PodiumBindingScaffoldRequest:
     sort_order: int | None = None
     default_agent: str = "pi"
     binding_type: str = "coding"
+    # pi dispatch transport (ADR-0010). Defaults to "rpc" — the accepted
+    # standard for all live bindings — and is written only for pi bindings.
+    # "one-shot" remains selectable as the legacy `pi --print` rollback path.
+    pi_mode: str = "rpc"
     landing_mode: str = "local"
     approval_enabled: bool = False
     context_compact_threshold_tokens: int = 16_000
@@ -68,6 +72,8 @@ def scaffold_podium_binding(
         raise ValueError("default_agent must be 'pi' or 'claude'")
     if request.binding_type not in {"infra", "coding"}:
         raise ValueError("binding_type must be 'infra' or 'coding'")
+    if request.pi_mode not in {"one-shot", "rpc"}:
+        raise ValueError("pi_mode must be 'one-shot' or 'rpc'")
 
     with connect(db_path) as connection:
         _ensure_schema(connection)
@@ -85,6 +91,9 @@ def scaffold_podium_binding(
         "approval": {"enabled": request.approval_enabled},
         "landing": {"mode": request.landing_mode},
     }
+    # pi_mode only governs pi dispatch; omit it for claude bindings.
+    if request.default_agent == "pi":
+        binding["pi_mode"] = request.pi_mode
     _append_binding(bindings_path, binding)
     return PodiumBindingScaffoldResult(
         binding_name=request.name,
@@ -181,7 +190,12 @@ def _insert_binding_row(
         INSERT INTO binding(name, display_name, color, sort_order, archived)
         VALUES (?, ?, ?, ?, FALSE)
         """,
-        (request.name, request.display_name or request.name, request.color, request.sort_order),
+        (
+            request.name,
+            request.display_name or request.name,
+            request.color,
+            request.sort_order,
+        ),
     )
     connection.execute(
         """
@@ -209,7 +223,9 @@ def _append_binding(path: Path, binding: dict[str, Any]) -> None:
         raise ValueError(f"{path}: expected mapping with bindings list")
     for existing in raw["bindings"]:
         if isinstance(existing, dict) and existing.get("name") == binding["name"]:
-            raise ValueError(f"binding already exists in bindings.yml: {binding['name']}")
+            raise ValueError(
+                f"binding already exists in bindings.yml: {binding['name']}"
+            )
     raw["bindings"].append(binding)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")

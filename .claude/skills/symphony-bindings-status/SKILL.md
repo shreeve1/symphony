@@ -18,7 +18,8 @@ Report current Symphony bindings without mutating tracker state.
 2. For each binding, fetch `GET /api/bindings/{name}/issues`.
 3. Count non-`done` Issues as open.
 4. Render the same table shape as the previous status skill: binding, project/display name, repo hint if known, last reconcile, last dispatch, open Issue count.
-5. If journal access is available, add the latest `reconcile_startup_*` and `dispatch_completed` evidence.
+5. Add a **dispatch** column from `bindings.yml` (`/api/bindings` does not carry it): `default_agent` plus, for pi bindings, `pi_mode` (`rpc` or `one-shot`). `rpc` means pi dispatches via `pi --mode rpc` (ADR-0010, the live standard); a stray `one-shot` on an otherwise-rpc fleet is worth flagging.
+6. If journal access is available, add the latest `reconcile_startup_*` and `dispatch_completed` evidence.
 
 ## Safety rules
 

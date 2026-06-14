@@ -15,7 +15,9 @@ scaffold_podium_binding = skill_migration.scaffold_podium_binding
 SKILL_PATH = Path(".claude/skills/symphony-binding-scaffold/SKILL.md")
 
 
-def test_binding_scaffold_creates_podium_db_row_and_bindings_entry(tmp_path: Path) -> None:
+def test_binding_scaffold_creates_podium_db_row_and_bindings_entry(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "podium.db"
     bindings_path = tmp_path / "bindings.yml"
 
@@ -47,7 +49,43 @@ def test_binding_scaffold_creates_podium_db_row_and_bindings_entry(tmp_path: Pat
     assert binding["tracker"] == "podium"
     assert binding["repo_path"] == str(tmp_path / "repo")
     assert binding["base_branch"] == "main"
-    assert binding["plane_project_id"] == "demo"  # transitional config compatibility only
+    assert (
+        binding["plane_project_id"] == "demo"
+    )  # transitional config compatibility only
+    assert (
+        binding["pi_mode"] == "rpc"
+    )  # RPC is the default for new pi bindings (ADR-0010)
+
+
+def test_binding_scaffold_pi_mode_one_shot_and_claude_omits_it(tmp_path: Path) -> None:
+    db_path = tmp_path / "podium.db"
+    bindings_path = tmp_path / "bindings.yml"
+
+    scaffold_podium_binding(
+        PodiumBindingScaffoldRequest(
+            name="legacy",
+            repo_path=tmp_path / "repo-a",
+            base_branch="main",
+            pi_mode="one-shot",
+        ),
+        db_path=db_path,
+        bindings_path=bindings_path,
+    )
+    scaffold_podium_binding(
+        PodiumBindingScaffoldRequest(
+            name="cl",
+            repo_path=tmp_path / "repo-b",
+            base_branch="main",
+            default_agent="claude",
+        ),
+        db_path=db_path,
+        bindings_path=bindings_path,
+    )
+
+    raw = yaml.safe_load(bindings_path.read_text(encoding="utf-8"))
+    by_name = {b["name"]: b for b in raw["bindings"]}
+    assert by_name["legacy"]["pi_mode"] == "one-shot"  # rollback path selectable
+    assert "pi_mode" not in by_name["cl"]  # claude bindings carry no pi_mode
 
 
 def test_binding_scaffold_skill_is_not_plane_coupled() -> None:

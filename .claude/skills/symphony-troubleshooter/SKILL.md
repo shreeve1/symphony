@@ -83,7 +83,7 @@ path = "/home/james/symphony/bindings.yml"
 data = yaml.safe_load(open(path, encoding="utf-8"))
 bindings = data.get("bindings", data) if isinstance(data, dict) else data
 for b in bindings:
-    print(f"{b['name']}\ttracker={b.get('tracker','plane')}\trepo={b.get('repo_path','?')}\tagent={b.get('default_agent','pi')}\tbase={b.get('base_branch','?')}")
+    print(f"{b['name']}\ttracker={b.get('tracker','plane')}\trepo={b.get('repo_path','?')}\tagent={b.get('default_agent','pi')}\tpi_mode={b.get('pi_mode','one-shot')}\tbase={b.get('base_branch','?')}")
 PY
 ```
 
@@ -127,7 +127,7 @@ sqlite3 "$DB" "select id, issue_id, state, verdict, summary, started_at, ended_a
 
 ```bash
 journalctl -u symphony-host.service --since=30m --no-pager \
-  | grep -E 'ERROR|Traceback|ConfigError|reconcile_startup_failed|run_reconcile_failed|dispatch_failed|workflow-missing|permission-gate|approval-gate|pi_silent_exit|agent-crashed|timeout|nonzero|archived_terminal' \
+  | grep -E 'ERROR|Traceback|ConfigError|reconcile_startup_failed|run_reconcile_failed|dispatch_failed|workflow-missing|permission-gate|approval-gate|pi_silent_exit|agent-crashed|timeout|nonzero|archived_terminal|pi_rpc_probe_failed|resume_failed' \
   || echo "no recent matched scheduler errors"
 ```
 
@@ -135,9 +135,22 @@ journalctl -u symphony-host.service --since=30m --no-pager \
 
 ```bash
 journalctl -u symphony-host.service --since=30m --no-pager \
-  | grep -E 'symphony_started|reconcile_startup_(begin|done|failed)|run_reconcile_(begin|done|failed)|dispatch_completed|issue_claimed|agent_exited|state_transitioned|run_record_(started|finished)|archived_terminal|log_retention_(begin|done|failed)' \
+  | grep -E 'symphony_started|reconcile_startup_(begin|done|failed)|run_reconcile_(begin|done|failed)|dispatch_completed|issue_claimed|agent_exited|state_transitioned|run_record_(started|finished)|archived_terminal|log_retention_(begin|done|failed)|pi_rpc_dispatch|rpc_orphan_reaped|rpc_orphan_reap_done|pi_rpc_probe_(ok|failed)|resume_(skipped|failed)' \
   | tail -160
 ```
+
+### pi RPC dispatch markers (ADR-0010, `pi_mode: rpc` bindings)
+
+```bash
+journalctl -u symphony-host.service --since=2h --no-pager \
+  | grep -E 'pi_rpc_dispatch|pi_rpc_probe_(ok|failed)|rpc_orphan_reaped|rpc_orphan_reap_done|resume_(skipped|failed)' \
+  | tail -80
+```
+
+- `pi_rpc_dispatch issue_id=... session_id=... cwd=...` — an RPC run started; absence on a `pi_mode: rpc` binding that *did* dispatch means it fell back to one-shot.
+- `pi_rpc_probe_failed reason=...` at boot — the RPC binary/protocol is broken; RPC dispatch will not work until fixed.
+- `rpc_orphan_reaped pid=...` / `rpc_orphan_reap_done count=N` — boot orphan sweep; a non-zero count means a prior scheduler crashed mid-RPC-run.
+- `resume_skipped`/`resume_failed ... fell_back=true` — Session Resume degraded to full re-feed (expected on cwd/SHA/agent change; loud by design).
 
 ### Per-target slices
 
