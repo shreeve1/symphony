@@ -12,7 +12,8 @@ import signal
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from io import TextIOBase
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,20 @@ LOGGER = logging.getLogger(__name__)
 TERMINATE_GRACE_SECONDS = 5
 PI_HELP_TIMEOUT_SECONDS = 30
 PI_PROBE_TIMEOUT_SECONDS = 30
+PI_RPC_PROBE_TIMEOUT_SECONDS = 20
+# Pidfile registry for live `pi --mode rpc` processes. Each dispatch writes
+# <runtime_dir>/rpc/<pid>.pid on launch and removes it on exit; a boot sweep
+# (reap_orphan_rpc_processes) kills any that a crashed scheduler left behind,
+# the RPC analogue of reap_orphan_claude_sockets (#058 orphan reaping).
+RPC_RUNTIME_DIR_ENV = "SYMPHONY_RUNTIME_DIR"
+_DEFAULT_RUNTIME_DIR = Path("/tmp/symphony")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _rpc_pidfile_dir(environ: Mapping[str, str] | None = None) -> Path:
+    source = os.environ if environ is None else environ
+    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(_DEFAULT_RUNTIME_DIR)))
+    return runtime_dir / "rpc"
 
 
 class AgentRunnerError(RuntimeError):
@@ -364,6 +378,7 @@ def run_pi_rpc_agent(
     temp_dir = mkdtemp(prefix="symphony-plane-cli-")
     started = clock()
     process: RpcProcessLike | None = None
+    pidfile: Path | None = None
 
     try:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -411,6 +426,16 @@ def run_pi_rpc_agent(
             cwd=cwd,
             start_new_session=True,
         )
+        # Register the live process so a boot sweep can reap it if this scheduler
+        # dies mid-run (the pi RPC child is its own session/group and would
+        # otherwise linger). Best-effort: never let pidfile IO break dispatch.
+        with suppress(OSError):
+            pid_dir = _rpc_pidfile_dir(source_env)
+            pid_dir.mkdir(parents=True, exist_ok=True)
+            pidfile = pid_dir / f"{process.pid}.pid"
+            # Record the process start-time so the boot reaper can tell our
+            # orphan from a later process that reused the pid.
+            pidfile.write_text(_pid_start_time(process.pid), encoding="utf-8")
         process.stdin.write(
             json.dumps({"type": "prompt", "message": rendered_prompt}) + "\n"
         )
@@ -530,6 +555,9 @@ def run_pi_rpc_agent(
             "".join(stderr_parts),
         )
     finally:
+        if pidfile is not None:
+            with suppress(OSError):
+                pidfile.unlink(missing_ok=True)
         remove_tree(temp_dir)
 
 
@@ -541,6 +569,185 @@ class PiRpcAgentAdapter:
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
         return run_pi_rpc_agent(self.config, issue, rendered_prompt)
+
+
+def reap_orphan_rpc_processes(
+    *,
+    pidfile_dir: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    is_alive: Callable[[int], bool] | None = None,
+    read_start_time: Callable[[int], str] | None = None,
+    kill_group: Callable[[int, int], object] = os.killpg,
+    glob_func: Callable[[Path], Iterable[Path]] | None = None,
+    unlink_func: Callable[[Path], object] | None = None,
+) -> int:
+    """Kill orphan `pi --mode rpc` processes left behind by a prior scheduler.
+
+    Boot-time sweep (#058 orphan reaping, the RPC analogue of
+    ``reap_orphan_claude_sockets``). Every pidfile under ``<runtime>/rpc`` is
+    from a previous instance — the current scheduler has not launched any RPC
+    run yet. A pid is killed only when it is still alive AND its
+    ``/proc/<pid>/stat`` start-time still matches the value recorded in the
+    pidfile at launch; that start-time guard survives pid reuse and pi masking
+    its own argv (its cmdline shows just ``pi``), which a cmdline check cannot.
+    The pidfile is removed either way. The run reconciler independently fails
+    the stale Run rows, so this only cleans up leaked OS processes.
+    """
+    if is_alive is None:
+        is_alive = _pid_alive
+    if read_start_time is None:
+        read_start_time = _pid_start_time
+    if unlink_func is None:
+        unlink_func = _unlink_missing_ok
+    if glob_func is None:
+        glob_func = _default_pid_glob
+    if pidfile_dir is None:
+        pidfile_dir = _rpc_pidfile_dir(environ)
+
+    count = 0
+    if not pidfile_dir.exists():
+        LOGGER.info("rpc_orphan_reap_done count=0")
+        return 0
+    for raw in glob_func(pidfile_dir):
+        pidfile = Path(raw)
+        try:
+            pid = int(pidfile.stem)
+        except ValueError:
+            with suppress(OSError):
+                unlink_func(pidfile)
+            continue
+        try:
+            recorded = pidfile.read_text(encoding="utf-8").strip()
+        except OSError:
+            recorded = ""
+        if recorded and is_alive(pid) and read_start_time(pid) == recorded:
+            # SIGKILL, not SIGTERM: `pi --mode rpc` traps/ignores SIGTERM (it
+            # reserves it for graceful RPC abort via stdin), so a leaderless
+            # orphan never dies on TERM. The run reconciler has already failed
+            # the Run row, so a hard kill of the leftover process is correct.
+            with suppress(OSError, ProcessLookupError):
+                kill_group(pid, signal.SIGKILL)
+            LOGGER.info("rpc_orphan_reaped pid=%d", pid)
+            count += 1
+        with suppress(OSError, FileNotFoundError):
+            unlink_func(pidfile)
+    LOGGER.info("rpc_orphan_reap_done count=%d", count)
+    return count
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _pid_start_time(pid: int) -> str:
+    """Return the process start-time (jiffies since boot) from /proc/<pid>/stat,
+    or "" if unavailable. Used as a pid-reuse guard. Parses after the last ')'
+    because the comm field can contain spaces and parens."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read().decode("utf-8", "replace")
+        fields = data[data.rindex(")") + 2 :].split()
+        return fields[19]  # starttime: field 22 overall, index 19 after comm
+    except (OSError, ValueError, IndexError):
+        return ""
+
+
+def _unlink_missing_ok(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
+def _default_pid_glob(directory: Path) -> Iterable[Path]:
+    return sorted(directory.glob("*.pid"))
+
+
+def verify_pi_rpc_support(
+    pi_bin: str,
+    cwd: Path | str,
+    *,
+    popen_factory: Callable[..., RpcProcessLike] | None = None,
+    environ: Mapping[str, str] | None = None,
+    timeout: float = PI_RPC_PROBE_TIMEOUT_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    kill_process_group: Callable[[int, int], object] = os.killpg,
+) -> bool:
+    """Confirm `pi --mode rpc` speaks the JSONL protocol, without an LLM call.
+
+    Spawns the RPC process, sends ``get_state``, and waits for the matching
+    ``response``. Non-fatal (#058 startup probe, analogue of
+    ``verify_pi_support``): logs ``pi_rpc_probe_ok`` / ``pi_rpc_probe_failed``
+    and returns a bool so a broken RPC binary surfaces at boot rather than on
+    the first dispatch.
+    """
+    if popen_factory is None:
+        popen_factory = cast(Callable[..., RpcProcessLike], subprocess.Popen)
+    source_env = os.environ if environ is None else environ
+    started = clock()
+    process: RpcProcessLike | None = None
+    try:
+        process = popen_factory(
+            [pi_bin, "--mode", "rpc", "--no-session"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=dict(source_env),
+            cwd=str(cwd),
+            start_new_session=True,
+        )
+        process.stdin.write(json.dumps({"type": "get_state"}) + "\n")
+        process.stdin.flush()
+        read_line, close_reader = _rpc_line_reader(process)
+        deadline = started + timeout
+        try:
+            while True:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    LOGGER.warning(
+                        "pi_rpc_probe_failed reason=timeout after %gs", timeout
+                    )
+                    return False
+                line, eof = read_line(remaining)
+                if eof:
+                    LOGGER.warning(
+                        "pi_rpc_probe_failed reason=stream-closed-before-response"
+                    )
+                    return False
+                if line is None:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    event.get("type") == "response"
+                    and event.get("command") == "get_state"
+                ):
+                    if event.get("success"):
+                        LOGGER.info("pi_rpc_probe_ok")
+                        return True
+                    LOGGER.warning(
+                        "pi_rpc_probe_failed reason=%s",
+                        event.get("error") or "get_state-unsuccessful",
+                    )
+                    return False
+        finally:
+            close_reader()
+    except OSError as exc:
+        LOGGER.warning("pi_rpc_probe_failed reason=%s", exc)
+        return False
+    finally:
+        if process is not None:
+            _send_rpc_abort(process)
+            with suppress(Exception):
+                _terminate_process_group(process, kill_process_group=kill_process_group)
 
 
 @dataclass(frozen=True)

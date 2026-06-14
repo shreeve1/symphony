@@ -14,6 +14,8 @@ from agent_runner import (
     PiAgentAdapter,
     PiRpcAgentAdapter,
     RoutingAgentAdapter,
+    reap_orphan_rpc_processes,
+    verify_pi_rpc_support,
     verify_pi_support,
 )
 from claude_runner import (
@@ -119,9 +121,7 @@ def _build_binding_runtime(
         adapter = build_adapter(transport, contract=binding.tracker_contract)
     pi_adapter = PiAgentAdapter(binding_config)
     pi_dispatch_adapter: AgentAdapter = (
-        PiRpcAgentAdapter(binding_config)
-        if binding.pi_mode == "rpc"
-        else pi_adapter
+        PiRpcAgentAdapter(binding_config) if binding.pi_mode == "rpc" else pi_adapter
     )
     return BindingRuntime(
         name=binding.name,
@@ -149,6 +149,13 @@ async def run_bindings_loop(
     """
     reap_orphan_claude_sockets()
     verify_claude_support()
+    reap_orphan_rpc_processes()
+    rpc_binding = next(
+        (b for b in config.bindings if getattr(b, "pi_mode", "one-shot") == "rpc"),
+        None,
+    )
+    if rpc_binding is not None:
+        verify_pi_rpc_support(config.pi_bin, rpc_binding.repo_path)
     runtimes = [_build_binding_runtime(config, binding) for binding in config.bindings]
     try:
         for runtime in runtimes:

@@ -15,8 +15,10 @@ from agent_runner import (
     AgentRunnerError,
     PiAgentAdapter,
     RoutingAgentAdapter,
+    reap_orphan_rpc_processes,
     run_agent,
     run_pi_rpc_agent,
+    verify_pi_rpc_support,
     verify_pi_support,
 )
 from config import ProjectBinding, SymphonyConfig
@@ -667,6 +669,159 @@ def test_run_pi_rpc_agent_extracts_only_assistant_text_deltas(tmp_path: Path) ->
     assert result.timed_out is False
     # only the two text_deltas — no banner, no thinking, no prompt echo
     assert result.stdout == "SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: ok"
+
+
+def test_run_pi_rpc_agent_cleans_up_pidfile(tmp_path: Path) -> None:
+    """A completed RPC run registers a pidfile under <runtime>/rpc and removes
+    it on exit (so only a crash leaves an orphan for the boot sweep to reap)."""
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess([json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"])
+
+    run_pi_rpc_agent(
+        _config(tmp_path),
+        _issue(),
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(tmp_path / "helper"),
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ={"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)},
+    )
+
+    rpc_dir = tmp_path / "rpc"
+    assert rpc_dir.exists()  # the registry dir was created during launch
+    assert list(rpc_dir.glob("*.pid")) == []  # pidfile removed on clean exit
+
+
+def test_reap_orphan_rpc_processes_kills_alive_matching(tmp_path: Path) -> None:
+    rpc_dir = tmp_path / "rpc"
+    rpc_dir.mkdir()
+    (rpc_dir / "111.pid").write_text("9999")  # recorded start-time
+    (rpc_dir / "222.pid").write_text("8888")
+    killed: list[tuple[int, int]] = []
+
+    count = reap_orphan_rpc_processes(
+        pidfile_dir=rpc_dir,
+        is_alive=lambda pid: pid == 111,  # 222 already dead
+        read_start_time=lambda pid: "9999" if pid == 111 else "0",
+        kill_group=lambda pid, sig: killed.append((pid, sig)),
+    )
+
+    assert count == 1
+    assert killed == [(111, signal.SIGKILL)]  # pi ignores SIGTERM
+    assert list(rpc_dir.glob("*.pid")) == []  # both pidfiles cleaned up
+
+
+def test_reap_orphan_rpc_processes_skips_pid_reuse(tmp_path: Path) -> None:
+    """An alive pid whose /proc start-time no longer matches the recorded value
+    (pid reuse) must not be killed — only the stale pidfile is removed."""
+    rpc_dir = tmp_path / "rpc"
+    rpc_dir.mkdir()
+    (rpc_dir / "333.pid").write_text("5555")  # recorded at launch
+    killed: list[int] = []
+
+    count = reap_orphan_rpc_processes(
+        pidfile_dir=rpc_dir,
+        is_alive=lambda pid: True,
+        read_start_time=lambda pid: "7777",  # different process now holds the pid
+        kill_group=lambda pid, sig: killed.append(pid),
+    )
+
+    assert count == 0
+    assert killed == []
+    assert list(rpc_dir.glob("*.pid")) == []
+
+
+def test_reap_orphan_rpc_processes_skips_unverifiable(tmp_path: Path) -> None:
+    """A pidfile with no recorded start-time can't be verified, so its process
+    is not killed (only the file is cleaned up)."""
+    rpc_dir = tmp_path / "rpc"
+    rpc_dir.mkdir()
+    (rpc_dir / "444.pid").write_text("")
+    killed: list[int] = []
+
+    count = reap_orphan_rpc_processes(
+        pidfile_dir=rpc_dir,
+        is_alive=lambda pid: True,
+        read_start_time=lambda pid: "1234",
+        kill_group=lambda pid, sig: killed.append(pid),
+    )
+
+    assert count == 0
+    assert killed == []
+    assert list(rpc_dir.glob("*.pid")) == []
+
+
+def test_reap_orphan_rpc_processes_missing_dir(tmp_path: Path) -> None:
+    assert reap_orphan_rpc_processes(pidfile_dir=tmp_path / "absent") == 0
+
+
+def test_verify_pi_rpc_support_ok(tmp_path: Path) -> None:
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "agent_start"}) + "\n",
+            json.dumps(
+                {
+                    "type": "response",
+                    "command": "get_state",
+                    "success": True,
+                    "data": {},
+                }
+            )
+            + "\n",
+        ]
+    )
+    ok = verify_pi_rpc_support(
+        "pi",
+        tmp_path,
+        popen_factory=lambda *a, **k: process,
+        environ={"PATH": "/usr/bin"},
+        clock=lambda: 0.0,
+        kill_process_group=lambda pid, sig: None,
+    )
+    assert ok is True
+    sent = json.loads(process.stdin.getvalue().splitlines()[0])
+    assert sent == {"type": "get_state"}
+
+
+def test_verify_pi_rpc_support_reports_failure(tmp_path: Path) -> None:
+    process = FakeRpcProcess(
+        [
+            json.dumps(
+                {
+                    "type": "response",
+                    "command": "get_state",
+                    "success": False,
+                    "error": "boom",
+                }
+            )
+            + "\n",
+        ]
+    )
+    ok = verify_pi_rpc_support(
+        "pi",
+        tmp_path,
+        popen_factory=lambda *a, **k: process,
+        environ={"PATH": "/usr/bin"},
+        clock=lambda: 0.0,
+        kill_process_group=lambda pid, sig: None,
+    )
+    assert ok is False
+
+
+def test_verify_pi_rpc_support_stream_closed(tmp_path: Path) -> None:
+    process = FakeRpcProcess([])  # no response before EOF
+    ok = verify_pi_rpc_support(
+        "pi",
+        tmp_path,
+        popen_factory=lambda *a, **k: process,
+        environ={"PATH": "/usr/bin"},
+        clock=lambda: 0.0,
+        kill_process_group=lambda pid, sig: None,
+    )
+    assert ok is False
 
 
 @pytest.mark.skipif(
