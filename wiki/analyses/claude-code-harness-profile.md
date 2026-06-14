@@ -3,7 +3,7 @@ title: Claude Code hook harness profile
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-14
 sources:
   - wiki/raw/sessions/2026-06-12-claude-code-harness.md
   - .claude/settings.json
@@ -38,6 +38,12 @@ runtimes. Hooks fire only inside Claude Code sessions, never in `symphony-host.s
   blocking. Runs `ruff format --check` + `ruff check` on **staged `*.py` only**, then
   `uv run pytest -q` over the full suite; each check time-boxed at 180s
   [source: .claude/hooks/pre-git-checks.sh].
+  **Updated 2026-06-14 (C-0198):** the pytest gate now fires **only when Python actually
+  changed** — `changed_py` = staged `*.py` (commit) ∪ `*.py` in `@{u}..HEAD` (push) —
+  and the hook prepends `~/.local/bin` to PATH so `uv` resolves under the dispatch env's
+  systemd-default PATH. This fixed a fleet-OOM hazard where agents committing
+  frontend-only changes hand-rolled their own unbounded suite run around a broken `uv`
+  PATH [source: wiki/analyses/pre-git-pytest-gate-agent-oom.md].
 - **`reinject-rules.sh`** — `SessionStart` `compact`, advisory. Re-injects the
   live-infra invariants after a context compaction
   [source: .claude/hooks/reinject-rules.sh].

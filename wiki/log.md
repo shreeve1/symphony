@@ -629,3 +629,13 @@ Append entries with this format:
 - Wiki updates: new `analyses/podium-run-log-cap-and-flyout-dedup.md`, claims **C-0195** + **C-0196**, `CONTEXT.md` Issue Context glossary amended, `index.md`, `ROUTING.md`.
 - Unresolved: frontend uncommitted (needs `next build` + restart / hot-reload); `npm run test:e2e` not yet run; ADR-0007 has no promoted wiki analysis page (candidate opportunity).
 - No secrets / `.env` read.
+
+## 2026-06-14 — session-update: pre-git pytest gate OOM-killed concurrent live agents (#14/#15) + harden hook
+- Source: this session (review two failed `symphony`-binding issues → diagnose → fix hazard #3 → wiki). Raw capture `wiki/raw/sessions/2026-06-14-pre-git-pytest-gate-agent-oom.md`.
+- Inputs: operator report that two `symphony`-binding issues failed (#14 "Column changing", #15 "Inbox"); both Runs recorded `error connecting to /tmp/symphony-claude-*.sock`.
+- Findings: that socket string is a `capture-pane`-after-death artifact (C-0197), not the cause. Both claude/opus agents (cwd = live repo) were SIGKILL'd (exit 137) within 1s at 14:09:08 UTC, `timed_out=false`, mid-work — no restart (`NRestarts=0`), no reap. Trigger: issue #15's agent committed a frontend-only change; the pre-git hook ran full `uv run pytest` but `uv` was off the dispatch PATH, so the agent hand-rolled an unbounded suite run in its live tmux session → resource exhaustion killed both agents (C-0198). Separately found issue #14's real bug: live `podium.db` `issue.state` CHECK omits `'archived'` despite `alembic_version=0007` — a new stamp-vs-run drift extending C-0145, undetected because C-0147's guard only checks missing columns not CHECK diffs (C-0199, unfixed).
+- Change: hook-only fix to `.claude/hooks/pre-git-checks.sh` (James chose surgical over worktree/MemoryMax) — (1) prepend `~/.local/bin` to PATH so `uv` resolves in-hook; (2) gate pytest on `changed_py` = staged `*.py` (commit) ∪ `*.py` in `@{u}..HEAD` (push). Live immediately (PreToolUse re-reads script); no service/DB change.
+- Verification: `bash -n` clean; gate decision verified across frontend-only commit (skip), Python staged (run), Python in unpushed commits (run), non-Python push (skip); `uv` resolves under simulated systemd default PATH.
+- Wiki updates: new raw capture + `analyses/pre-git-pytest-gate-agent-oom.md`, claims **C-0197/C-0198/C-0199**, pre-git bullet in `analyses/claude-code-harness-profile.md` updated (cited), `index.md`, `ROUTING.md`.
+- Unresolved: #1 archive CHECK drift (rebuild `issue` per 0004 DDL) not applied; #2 issue #15's completed frontend edits sit uncommitted in the live tree; detection gap in C-0147 (CHECK drift); residual RAM risk from two concurrent Python commits (worktree/MemoryMax descoped).
+- No secrets / `.env` read.
