@@ -1,7 +1,7 @@
 ---
 id: 058
 title: pi RPC lifecycle & ops (orphan reaping, timeout, concurrency) — Slice E
-status: in-progress
+status: review
 blocked_by: [050]
 parent: null
 priority: 0
