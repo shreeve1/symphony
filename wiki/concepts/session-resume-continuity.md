@@ -15,6 +15,8 @@ sources:
   - .kanban/issues/053-live-session-tail.md
   - .kanban/issues/054-fast-redispatch-on-reply.md
   - .kanban/issues/055-checkpointed-exploration.md
+  - .kanban/issues/056-live-steer-channel.md
+  - .kanban/issues/057-steer-ui-flyout.md
   - .claude/skills/checkpointed-exploration/SKILL.md
   - .claude/skills/symphony-workflow-author/SKILL.md
   - agent_runner.py
@@ -27,11 +29,15 @@ sources:
   - tests/test_prompt_renderer.py
   - web/api/main.py
   - web/api/wake_signal.py
+  - web/api/steer_queue.py
   - web/api/tests/test_session_tail.py
   - web/api/tests/test_reply.py
+  - web/api/tests/test_steer.py
+  - web/frontend/components/IssueFlyout.tsx
   - web/frontend/components/SessionTailPanel.tsx
   - web/frontend/components/QueryProvider.tsx
   - web/frontend/tests/session-tail.spec.ts
+  - web/frontend/tests/steer-flyout.spec.ts
   - tests/test_scheduler.py
 confidence: high
 tags: [session-resume, continuity, re-feed, question-park, session-tail, checkpointed-exploration, implemented, podium]
@@ -39,7 +45,7 @@ tags: [session-resume, continuity, re-feed, question-park, session-tail, checkpo
 
 # Session Resume continuity
 
-> **Implemented through the between-Run continuity backlog as of 2026-06-14.** Schema columns (#047), the pure decision core (#048), delta-only prompt rendering (#049), **pi RPC resume wiring (#050)**, **Claude resume wiring (#051)**, **Question Park (#052)**, **Live Session Tail (#053)**, **Fast re-dispatch (#054)**, and **Checkpointed exploration (#055)** have landed. Live mid-run Steering remains a separate ADR-0010 follow-up (#056/#057/#058).
+> **Implemented through the between-Run continuity backlog as of 2026-06-14.** Schema columns (#047), the pure decision core (#048), delta-only prompt rendering (#049), **pi RPC resume wiring (#050)**, **Claude resume wiring (#051)**, **Question Park (#052)**, **Live Session Tail (#053)**, **Fast re-dispatch (#054)**, and **Checkpointed exploration (#055)** have landed. Live mid-run Steering is ADR-0010 work: **#056 live steer channel** and **#057 flyout UI** have landed; #058 remains for lifecycle/ops hardening.
 
 ## The two continuity modes
 
@@ -70,12 +76,12 @@ A session persists the **conversation, not the filesystem** — resume restores 
 - **Session Tail (#053)** — the web/API process tails live-appended pi/Claude session `.jsonl` files for running issues and publishes appended lines as `run.tail` events over the existing in-process WS hub (#017), without changing the separate-process scheduler model (ADR-0006). `_SessionTailer` resolves the derived session path, reads byte ranges in `rb` mode only, tracks cursor/inode per issue, emits existing content on first detection, and treats missing/empty/locked files as no event. The flyout's Session tab renders lines from the shared `QueryProvider` WebSocket stream and filters by issue id. [source: web/api/main.py] [source: web/api/tests/test_session_tail.py] [source: web/frontend/components/SessionTailPanel.tsx] [source: web/frontend/components/QueryProvider.tsx] [source: web/frontend/tests/session-tail.spec.ts]
 - **Fast re-dispatch (#054)** — successful operator replies and API PATCH transitions to `todo` touch a filesystem wake sentinel. The scheduler consumes the sentinel during its poll sleep at a one-second cadence, clears it with `unlink`, and immediately starts another candidate scan; absent sentinel preserves normal poll cadence, and a stale sentinel is consumed without sleeping so restart cannot wedge the loop. Config knobs: `SYMPHONY_WAKE_SENTINEL_PATH`, else `SYMPHONY_RUNTIME_DIR/reply-wake`, else `/tmp/symphony/reply-wake`. [source: web/api/wake_signal.py] [source: web/api/main.py] [source: scheduler.py] [source: web/api/tests/test_reply.py] [source: tests/test_scheduler.py]
 - **Checkpointed exploration (#055)** — a repo-local `checkpointed-exploration` Skill plus prompt-renderer directive tells agents to do exactly one bounded exploration step, summarize evidence, then park with `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` until the operator replies; it emits only when that Skill is selected and is documented in `symphony-workflow-author` guidance. [source: .claude/skills/checkpointed-exploration/SKILL.md] [source: prompt_renderer.py] [source: tests/test_prompt_renderer_podium.py] [source: .kanban/issues/055-checkpointed-exploration.md]
-- **Steering** (pi-only, live mid-run) — operator input injected into a *running* pi Run via the RPC `steer` command, distinct from the between-Run Question Park reply loop. Decided by **ADR-0010** (dispatch pi via `pi --mode rpc`); in-scope as #056/#057/#058. [source: CONTEXT.md] [source: docs/adr/0010-pi-rpc-dispatch-for-live-steering.md]
+- **Steering** (pi-only, live mid-run) — operator input injected into a *running* pi Run via the RPC `steer` command, distinct from the between-Run Question Park reply loop. Decided by **ADR-0010** and implemented through #056/#057: the API writes transient steer/abort queue records plus durable `Operator Steer` / `Operator Abort` comment blocks, the pi RPC adapter forwards queue records to stdin, and the flyout Session tab exposes steer/abort controls only for active pi RPC runs. [source: CONTEXT.md] [source: docs/adr/0010-pi-rpc-dispatch-for-live-steering.md] [source: web/api/main.py] [source: web/api/steer_queue.py] [source: web/frontend/components/IssueFlyout.tsx] [source: web/frontend/tests/steer-flyout.spec.ts]
 - Deferred (no issues): `--fork` A/B exploration. (Live mid-run steering is no longer deferred — un-deferred for pi via RPC by ADR-0010, C-0178; it was never viable for Claude, which has no headless protocol for this account and keeps park-and-reply.)
 
 ## Backlog
 
-`.kanban/issues/047`–`055` plus ADR-0010 steering/RPC follow-ups. Status: 047 (run columns), 048 (decision core), 049 (delta renderer), **050 (pi RPC dispatch + resume wiring)**, **051 (Claude resume wiring)**, **052 (Question Park)**, **053 (Live Session Tail)**, **054 (Fast re-dispatch)**, and **055 (Checkpointed exploration)** are done. #056/#057/#058 cover pi RPC steering. [source: .kanban/issues/047-run-session-tracking-columns.md] [source: .kanban/issues/048-continuity-decision-core.md] [source: .kanban/issues/049-delta-only-resume-prompt.md] [source: .kanban/issues/050-pi-resume-end-to-end.md] [source: .kanban/issues/051-claude-resume-end-to-end.md] [source: .kanban/issues/052-question-park.md] [source: .kanban/issues/053-live-session-tail.md] [source: .kanban/issues/054-fast-redispatch-on-reply.md] [source: .kanban/issues/055-checkpointed-exploration.md]
+`.kanban/issues/047`–`055` plus ADR-0010 steering/RPC follow-ups. Status: 047 (run columns), 048 (decision core), 049 (delta renderer), **050 (pi RPC dispatch + resume wiring)**, **051 (Claude resume wiring)**, **052 (Question Park)**, **053 (Live Session Tail)**, **054 (Fast re-dispatch)**, **055 (Checkpointed exploration)**, **056 (Live Steering channel)**, and **057 (flyout Steering UI)** are done. #058 remains for pi RPC lifecycle/ops hardening. [source: .kanban/issues/047-run-session-tracking-columns.md] [source: .kanban/issues/048-continuity-decision-core.md] [source: .kanban/issues/049-delta-only-resume-prompt.md] [source: .kanban/issues/050-pi-resume-end-to-end.md] [source: .kanban/issues/051-claude-resume-end-to-end.md] [source: .kanban/issues/052-question-park.md] [source: .kanban/issues/053-live-session-tail.md] [source: .kanban/issues/054-fast-redispatch-on-reply.md] [source: .kanban/issues/055-checkpointed-exploration.md] [source: .kanban/issues/056-live-steer-channel.md] [source: .kanban/issues/057-steer-ui-flyout.md]
 
 ## Relation to existing knowledge
 
@@ -83,4 +89,4 @@ This conditionally reverses the "transcript re-feed, not session resume" stance 
 
 ## Claims
 
-C-0175, C-0176, C-0177, C-0178, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, C-0186, C-0187, and C-0192 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0176, C-0177, C-0178, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, C-0186, C-0187, C-0192, and C-0193 in [CLAIMS.md](../CLAIMS.md).

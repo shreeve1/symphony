@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-14] session-update | #057 Podium flyout Steering UI
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #057 implementation; commits `b536de5`, `92a6de7`, `0d65d6d`; `.kanban/issues/057-steer-ui-flyout.md`; `.kanban/progress.md`; `web/api/main.py`; `web/api/tests/test_endpoints.py`; `web/frontend/components/IssueFlyout.tsx`; `web/frontend/components/QueryProvider.tsx`; `web/frontend/components/SessionTailPanel.tsx`; `web/frontend/lib/api.ts`; `web/frontend/tests/fixtures.ts`; `web/frontend/tests/steer-flyout.spec.ts`; existing ADR-0010 and Session Resume wiki pages.
+- Outputs: updated `wiki/analyses/adr-0010-pi-rpc-dispatch-for-live-steering.md`; updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/CLAIMS.md` (C-0193 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured the live steer flyout UI, typed frontend steer/abort clients, `/api/bindings` `pi_mode` exposure, local queued/delivered tail echoes, disabled Claude/idle/non-RPC affordances, and e2e coverage for live tail + steer + durable comments + abort. Verification passed: `uv run pytest web/api/tests/ -q`, full `uv run pytest -q` (772 passed, 2 skipped), `cd web/frontend && pnpm exec tsc --noEmit`, `cd web/frontend && npm run test:e2e -- steer-flyout.spec.ts` (3 passed), touched-file LSP diagnostics clean, `git diff --check`, secret-pattern diff scan, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-13] session-update | #053 Live Session Tail
 
 - Actor: agent (Pi, Ralph + wiki update)
