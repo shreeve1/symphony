@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS run(
   skill_invoked TEXT,
   started_at TIMESTAMP,
   ended_at TIMESTAMP,
+  -- Binding-repo git short-sha at dispatch (NOT the agent session id);
+  -- resume eligibility re-feeds on sha drift. See session_continuity.evaluate_resume_eligibility.
   agent_session_sha TEXT,
   resumed BOOLEAN DEFAULT FALSE
 );

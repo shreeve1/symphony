@@ -75,6 +75,7 @@ class CandidateIssue:
     resolved_provider: str = ""
     resolved_model: str = ""
     agent_session_id: str = ""
+    # Binding-repo git short-sha at dispatch, not a session id; guards resume against code drift.
     agent_session_sha: str = ""
     resumed: bool = False
     active_run_id: str = ""
