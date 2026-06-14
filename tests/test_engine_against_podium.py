@@ -115,7 +115,9 @@ async def test_engine_dispatch_cycle_against_podium(tmp_path: Path) -> None:
     assert "Symphony claimed at" not in issue["comments_md"]
     assert "podium dispatch ok" in issue["comments_md"]
     assert "full output" in issue["context_md"]
-    assert "mode=build" in prompts[0]
+    # ADR-0011: coding bindings ignore WORKFLOW.md; the issue is the prompt.
+    assert "Repo policy" not in prompts[0]
+    assert "Dispatch me" in prompts[0]
 
     # [2.1]/[T.1.1] preferred_skill consumed on dispatch (ADR-0008).
     assert issue["preferred_skill"] is None

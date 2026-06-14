@@ -280,7 +280,9 @@ Please continue from the parked question.
     session_id = derive_session_id(str(issue_id))
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    (session_dir / f"2026-06-13_{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+    (session_dir / f"2026-06-13_{session_id}.jsonl").write_text(
+        "{}\n", encoding="utf-8"
+    )
     monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(session_dir))
     with sqlite3.connect(db_path) as connection:
         previous = connection.execute(
@@ -527,7 +529,9 @@ Please continue Claude from the parked question.
         assert issue.resumed is False
         assert "old context should be re-fed on fallback" in rendered_prompt
         assert "short context" in rendered_prompt
-        assert "Repo policy should be present" in rendered_prompt
+        # ADR-0011: coding bindings ignore WORKFLOW.md even on the fresh/
+        # fallback refeed path; only comments+context are re-fed.
+        assert "Repo policy should be present" not in rendered_prompt
         return AgentResult(
             0,
             10,

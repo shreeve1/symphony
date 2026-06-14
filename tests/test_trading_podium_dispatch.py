@@ -59,7 +59,9 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _seed_db(path: Path, *, worktree_active: bool = False, preferred_agent: str = "pi") -> int:
+def _seed_db(
+    path: Path, *, worktree_active: bool = False, preferred_agent: str = "pi"
+) -> int:
     skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
     skill_file.parent.mkdir(parents=True, exist_ok=True)
     skill_file.write_text("---\nname: dev-build\n---\nbuild it\n", encoding="utf-8")
@@ -107,7 +109,10 @@ async def test_trading_podium_dispatch_records_run_log_and_context(
 
     def agent_runner(issue, rendered_prompt: str) -> AgentResult:
         assert issue.id == str(issue_id)
-        assert "mode=build" in rendered_prompt
+        # Coding bindings ignore WORKFLOW.md (ADR-0011): the body is not
+        # rendered; the issue itself is the prompt.
+        assert "Repo policy" not in rendered_prompt
+        assert "Exercise trading dispatch" in rendered_prompt
         return AgentResult(
             0,
             10,

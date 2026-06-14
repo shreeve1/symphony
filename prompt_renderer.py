@@ -238,7 +238,9 @@ def _skill_directive(preferred_skill: str | None) -> str:
     skill = _normalized_skill(preferred_skill)
     if not skill:
         return ""
-    lines = [f"First, invoke the `{skill}` skill and follow its instructions for this issue."]
+    lines = [
+        f"First, invoke the `{skill}` skill and follow its instructions for this issue."
+    ]
     if skill == CHECKPOINTED_EXPLORATION_SKILL:
         lines.append(CHECKPOINTED_EXPLORATION_DIRECTIVE)
     return "\n\n".join(lines)
@@ -258,7 +260,14 @@ def render_prompt(
     if tracker_kind == "podium":
         issue = replace(issue, mode=mode_for_skill(issue.preferred_skill))
 
-    _cfg, body = load_workflow(path)
+    # Coding bindings are "issue is the prompt": Symphony does not read
+    # WORKFLOW.md for them (ADR-0011). WORKFLOW.md is autonomy policy for
+    # Symphony-orchestrated infra bindings only; repo conventions and safety
+    # rules for a coding binding live in the repo's native agent config.
+    if binding_type == "coding":
+        body = ""
+    else:
+        _cfg, body = load_workflow(path)
     rendered = _substitute(body, issue)
 
     if binding_type != "coding":
@@ -311,7 +320,11 @@ def render_prompt(
 
         return prompt
 
-    prompt = f"{rendered.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
+    prompt_head = rendered.strip()
+    if prompt_head:
+        prompt = f"{prompt_head}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
+    else:
+        prompt = f"{issue_block}\n\n{OUTPUT_CONTRACT}"
 
     # The operator's skill choice is a directive, not metadata: the scheduler
     # loads the skill into pi via --skill, and this line makes the agent

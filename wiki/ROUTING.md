@@ -19,8 +19,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Bindings & Repos
 
-- Pages: `entities/binding-homelab.md`, `entities/binding-trading.md`, `entities/binding-symphony.md`, `entities/workflow-homelab.md`, `entities/workflow-trading.md`, `concepts/tracker-contract.md`, `analyses/adr-0004-tracker-contract.md`, `analyses/podium-023d-trading-plane-archive.md`, `analyses/analysis-session-symphony-self-binding-scaffold.md`
-- Keywords: bindings.yml, homelab, trading, crypto-trading-agents, symphony binding, self-binding, scaffold_podium_binding, PodiumBindingScaffoldRequest, symphony-binding-scaffold, bindings.yml comment stripping, yaml safe_dump, _append_binding, is_coding per-binding, WORKFLOW.md, smoke ticket, project scaffold, Role, TrackerRole, RoleBinding, PlaneUserMapping, default_agent, base_branch, approval.enabled, landing.mode, project_id, project_slug, workspace_slug, plane_uuid, medium-risk autonomy, Trading Safety Boundary, excluded services, tracker_contract removed, DEFAULT_CONTRACT fallback, trading archived
+- Pages: `entities/binding-homelab.md`, `entities/binding-trading.md`, `entities/binding-symphony.md`, `entities/workflow-homelab.md`, `entities/workflow-trading.md`, `concepts/tracker-contract.md`, `analyses/adr-0004-tracker-contract.md`, `analyses/adr-0011-workflow-md-infra-only.md`, `analyses/podium-023d-trading-plane-archive.md`, `analyses/analysis-session-symphony-self-binding-scaffold.md`
+- Keywords: bindings.yml, homelab, trading, crypto-trading-agents, symphony binding, self-binding, scaffold_podium_binding, PodiumBindingScaffoldRequest, symphony-binding-scaffold, bindings.yml comment stripping, yaml safe_dump, _append_binding, is_coding per-binding, WORKFLOW.md, WORKFLOW.md infra-only, coding binding ignores WORKFLOW.md, binding_type coding infra, cli vs infra, cli-first issue tracker, issue is the prompt, autonomy policy not safety, safety is repo responsibility, native agent config CLAUDE.md AGENTS.md, render_prompt skip load_workflow, ADR-0011, workflow-missing block, bind-time safety flag, smoke ticket, project scaffold, Role, TrackerRole, RoleBinding, PlaneUserMapping, default_agent, base_branch, approval.enabled, landing.mode, project_id, project_slug, workspace_slug, plane_uuid, medium-risk autonomy, Trading Safety Boundary, excluded services, tracker_contract removed, DEFAULT_CONTRACT fallback, trading archived
 
 ## Plane Integration
 
@@ -34,8 +34,8 @@ Use this file after reading `index.md` when narrowing a wiki-backed question to 
 
 ## Plan / Build / Approve
 
-- Pages: `analyses/symphony-plan-history.md`, `concepts/symphony-engine.md`, `concepts/prompt-renderer.md`, `entities/workflow-homelab.md`, `entities/workflow-trading.md`, `analyses/trading-smoke-rate-limit-debugging.md`, `analyses/adr-0003-worktree-per-run.md`
-- Keywords: mode:plan, mode:build, execute, approval-required, approved, plan handoff, git-ref handoff, _PLAN_HANDOFF_MARKER, plans/<slug>.md, Plans/<identifier>.md, dirty-worktree, plan_path_from_comments, Plan-Path trailer, Symphony completed plan., conversation mode, unlabeled ticket, file edits forbidden
+- Pages: `analyses/symphony-plan-history.md`, `concepts/symphony-engine.md`, `concepts/prompt-renderer.md`, `entities/workflow-homelab.md`, `entities/workflow-trading.md`, `analyses/adr-0011-workflow-md-infra-only.md`, `analyses/trading-smoke-rate-limit-debugging.md`, `analyses/adr-0003-worktree-per-run.md`
+- Keywords: mode:plan, mode:build, execute, approval-required, approved, plan handoff, git-ref handoff, _PLAN_HANDOFF_MARKER, plans/<slug>.md, Plans/<identifier>.md, dirty-worktree, plan_path_from_comments, Plan-Path trailer, Symphony completed plan., conversation mode, unlabeled ticket, file edits forbidden, WORKFLOW.md autonomy policy, infra autonomy instructions, coding skips WORKFLOW.md
 
 ## Blocked Reconciler
 

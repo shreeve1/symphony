@@ -13,7 +13,9 @@ tags: [workflow, homelab, prompt-policy, plan-mode, build-mode, execute-mode, sa
 
 # homelab WORKFLOW.md
 
-The live per-repo prompt policy for the `homelab` Binding. Lives at `/home/james/homelab/WORKFLOW.md`. CONTEXT.md says `WORKFLOW.md` is mandatory for every Binding [source: wiki/raw/symphony-context.md#24] — this is one of two in active use.
+The live per-repo prompt policy for the `homelab` Binding. Lives at `/home/james/homelab/WORKFLOW.md`.
+
+> **Update 2026-06-14 (ADR-0011, [analysis](../analyses/adr-0011-workflow-md-infra-only.md)).** `WORKFLOW.md` is now **infra-only autonomy policy** — mandatory for `infra` bindings, *ignored* for `coding` bindings (the trading sibling page is superseded; its file was deleted). `homelab` is an `infra` binding, so this Workflow remains active and required. It is **autonomy** policy, not safety: safety rules belong in the repo's native `CLAUDE.md`/`AGENTS.md`. The old "mandatory for **every** Binding" framing (claim C-0005) is superseded by C-0203.
 
 ## Front-matter (engine-visible config)
 

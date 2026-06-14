@@ -48,6 +48,50 @@ def test_podium_render_prompt_reads_comments_and_context_without_truncation(
     assert "Do podium work" in prompt
 
 
+def test_coding_binding_ignores_workflow_md(tmp_path: Path) -> None:
+    """ADR-0011: coding bindings never read WORKFLOW.md, even if one exists.
+
+    The issue is the prompt; repo policy/safety live in the repo's native
+    agent config, not in a Symphony-rendered WORKFLOW.md body.
+    """
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
+
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-9",
+            name="Coding issue",
+            description="Do the coding work",
+            preferred_skill="/dev-build",
+        ),
+        path=workflow,
+        binding_type="coding",
+        tracker_kind="podium",
+    )
+
+    # WORKFLOW.md body absent...
+    assert "Repo policy" not in prompt
+    assert "mode=" not in prompt
+    # ...but the issue and the output contract still render.
+    assert "Do the coding work" in prompt
+    assert "SYMPHONY_RESULT" in prompt
+    # No leading blank lines from the dropped body.
+    assert not prompt.startswith("\n")
+
+
+def test_coding_binding_renders_without_workflow_file(tmp_path: Path) -> None:
+    """A coding binding dispatches even when WORKFLOW.md is absent (ADR-0011)."""
+    prompt = render_prompt(
+        IssueData(identifier="POD-10", name="No workflow", description="Body here"),
+        path=tmp_path / "WORKFLOW.md",  # does not exist
+        binding_type="coding",
+        tracker_kind="podium",
+    )
+
+    assert "Body here" in prompt
+    assert "SYMPHONY_RESULT" in prompt
+
+
 def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(
     tmp_path: Path,
 ) -> None:

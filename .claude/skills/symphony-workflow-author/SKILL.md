@@ -1,11 +1,20 @@
 ---
 name: symphony-workflow-author
-description: "Author WORKFLOW.md for a Symphony binding. Tracker-agnostic: works for both Podium and dormant Plane bindings because it edits repository policy on disk."
+description: "Author WORKFLOW.md autonomy policy for an INFRA Symphony binding. Infra-only (ADR-0011): coding bindings ignore WORKFLOW.md, so refuse them. Tracker-agnostic across Podium and dormant Plane because it edits repository policy on disk."
 ---
 
 # Symphony Workflow Author
 
-Author or replace a bound repository `WORKFLOW.md`.
+Author or replace a bound repository `WORKFLOW.md` — the per-repo **autonomy policy** for an infra binding.
+
+## Binding-type gate (ADR-0011)
+
+`WORKFLOW.md` is **infra-only**. Symphony does not read it for `coding` bindings — they treat the issue as the prompt and take repo conventions/safety from the repo's native agent config (`CLAUDE.md`/`AGENTS.md`), not from a Symphony-rendered file. Before authoring, resolve the binding's `type`:
+
+- `infra` → proceed.
+- `coding` → **refuse**. Do not write `WORKFLOW.md`; it would be ignored at dispatch. Tell the operator that coding-binding policy/safety belongs in the repo's `CLAUDE.md`/`AGENTS.md`.
+
+`WORKFLOW.md` carries **autonomy** instruction (how to operate under Symphony's orchestration), not safety enforcement; safety remains the bound repo's responsibility.
 
 ## Tracker posture
 

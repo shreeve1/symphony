@@ -13,6 +13,8 @@ tags: [workflow, trading, prompt-policy, safety, exchange, secrets, mcp, tempora
 
 # trading WORKFLOW.md
 
+> **SUPERSEDED 2026-06-14 (ADR-0011, [analysis](../analyses/adr-0011-workflow-md-infra-only.md)).** `trading` is a `coding` binding, and coding bindings no longer read `WORKFLOW.md` — Symphony ignores it entirely. **The file has been deleted from `~/trading/crypto-trading-agents`.** Everything below is a historical snapshot of the pre-deletion policy. Safety for a coding binding is now the repo's responsibility via native `CLAUDE.md`/`AGENTS.md`, not a Symphony-rendered Workflow. See claims C-0203/C-0204; the trading-specific claims C-0029/C-0030 are now `superseded`.
+
 Live prompt policy for the `trading` Binding, against `~/trading/crypto-trading-agents` — a Temporal + MCP crypto trading stack. 4.2 KB, much leaner than homelab's WORKFLOW.
 
 ## Front-matter
