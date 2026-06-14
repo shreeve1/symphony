@@ -619,3 +619,13 @@ Append entries with this format:
 - Verification: issue command `uv run pytest tests/test_prompt_renderer*.py tests/skills/ -q` passed; full `uv run pytest -q` passed (762 passed, 2 skipped); `uv run ruff check` passed on touched Python files; touched-file LSP diagnostics clean; fresh review returned `RALPH_REVIEW: PASS`.
 - Wiki updates: `concepts/session-resume-continuity.md`, `analyses/adr-0009-session-resume-continuity.md`, `index.md`, `ROUTING.md`, and claim **C-0192** updated.
 - No secrets / `.env` read.
+
+## 2026-06-14 — session-update: run-log size decouple + fly-out comments/context/run-summary dedup
+- Source: this session (grill → implement → restart → wiki). Raw capture `wiki/raw/sessions/2026-06-14-flyout-dedup-and-run-log-cap.md`; scheduler commit `e0c02b4` (live `code_sha=e0c02b4`); frontend changes uncommitted at capture.
+- Inputs: operator report that the issue fly-out comments tab ≈ context tab and the run-detail summary row is a third copy, plus the run-log pane showing only `## stdout … [output truncated]`.
+- Findings: for `pi_mode: rpc` bindings the agent's stdout is assistant `text_delta` prose only (`_assistant_delta`, `agent_runner.py:888`) = the `SYMPHONY_SUMMARY` block, fanned into `comments_md`/`context_md`/`run.summary`; the run log shared the 2 KB `_sanitize_report` bound with `context_md`, so it only kept a 2 KB tail (write-time truncation).
+- Change: (1) frontend display-only — `IssueFlyout.tsx` dropped the context tab + orphaned `MarkdownEditor`, `RunDetailPanel.tsx` dropped the run-summary row; (2) `scheduler.py` decoupled the run-log cap — `LOG_MAX_BYTES=1_048_576`, `_sanitize_report(..., max_bytes=…)`, `_finish_run_record` takes `secrets` and logs raw `result` streams; comment/context stay at 2 KB. `context_md` store untouched (re-feed floor + compaction).
+- Verification: `uv run pytest` 776 passed / 2 skipped; restart verified `reconcile_startup_*` ×3, `dispatch_completed`, `rpc_orphan_reap_done count=0`, `pi_rpc_probe_ok`, zero errors.
+- Wiki updates: new `analyses/podium-run-log-cap-and-flyout-dedup.md`, claims **C-0195** + **C-0196**, `CONTEXT.md` Issue Context glossary amended, `index.md`, `ROUTING.md`.
+- Unresolved: frontend uncommitted (needs `next build` + restart / hot-reload); `npm run test:e2e` not yet run; ADR-0007 has no promoted wiki analysis page (candidate opportunity).
+- No secrets / `.env` read.
