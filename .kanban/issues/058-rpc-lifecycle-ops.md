@@ -6,8 +6,17 @@ blocked_by: [050]
 parent: null
 priority: 0
 created: 2026-06-13
-updated: 2026-06-13
+updated: 2026-06-14
 ---
+
+## PARTIAL 2026-06-14 — orphan-reaper + startup probe landed (commit 44e72c9)
+
+Done as the gate for enabling `pi_mode: rpc` on real bindings (all three flipped 2026-06-14, C-0191):
+- **Orphan reaping** — `reap_orphan_rpc_processes()` (boot sweep wired into `run_bindings_loop` beside `reap_orphan_claude_sockets`) SIGKILLs leftover `pi --mode rpc` processes; `run_pi_rpc_agent` writes/removes `<runtime>/rpc/<pid>.pid`, guarded on `/proc/<pid>/stat` start-time (pi masks argv; pid-reuse safe). Uses SIGKILL because pi `--mode rpc` ignores SIGTERM.
+- **Startup probe** — `verify_pi_rpc_support()` (boot `get_state` probe), run when any binding is rpc; logs `pi_rpc_probe_ok`/`pi_rpc_probe_failed`.
+- **Run timeout** — already enforced by #050's adapter (deadline → abort → `timed_out`).
+
+Still TODO here: **concurrency-cap accounting** is already satisfied structurally (RPC dispatch is synchronous inside the semaphore slot) but lacks an explicit asserting test; **steer-queue cleanup** is deferred to #056 (no steer channel yet). Keep this issue open for those.
 
 ## What to build
 

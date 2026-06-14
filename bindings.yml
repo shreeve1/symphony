@@ -6,6 +6,7 @@ bindings:
   repo_path: /home/james/homelab
   base_branch: main
   default_agent: pi
+  pi_mode: rpc
   approval:
     enabled: false
   landing:
@@ -17,6 +18,7 @@ bindings:
   repo_path: /home/james/trading/crypto-trading-agents
   base_branch: main
   default_agent: pi
+  pi_mode: rpc
   approval:
     enabled: false
   landing:
@@ -28,6 +30,7 @@ bindings:
   repo_path: /home/james/symphony
   base_branch: main
   default_agent: pi
+  pi_mode: rpc
   approval:
     enabled: false
   landing:

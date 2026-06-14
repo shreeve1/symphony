@@ -583,3 +583,13 @@ Append entries with this format:
 - Finding 2 (by-design, NOT a bug): `verdict=done` parks the issue in `in_review` ("awaiting review", `scheduler.py:1907-1994`), not terminal `done`; agent never auto-closes (coding-binding model). `reason=agent-marker-review` = "a result marker was emitted", `in-review` is the destination for both done and review. Investigated per operator request; no fix needed.
 - Outputs: ADR-0010 `proposed`→`accepted` (disk; slice-a-soak note); claim **C-0190**; updated C-0189 + the #050-landed claim + C-0178-adjacent pointers. Live `podium.db` migrated 0006→0007 (backup kept).
 - Teardown (operator chose): rpcsoak binding removed from `bindings.yml` + Podium DB, repo + smoke issue removed, restart to unload. `pi_mode: rpc` NOT enabled on any real binding (separate operator decision). No secrets / `.env` read.
+
+## [2026-06-14] feat + flip | #058 orphan-reaper/probe; all bindings → pi_mode: rpc
+
+- Actor: Claude (operator: "flip now, finish issues later" → chose land-reaper-then-flip, then all-three-at-once).
+- Reaper/probe (commit `44e72c9`): `reap_orphan_rpc_processes()` (boot sweep, SIGKILLs leftover `pi --mode rpc` whose `/proc` start-time matches the launch-recorded pidfile) + `verify_pi_rpc_support()` (boot `get_state` probe, only when a binding is rpc). `run_pi_rpc_agent` writes/removes `<runtime>/rpc/<pid>.pid`. Wired into `run_bindings_loop`.
+- Two real-pi facts faked tests missed (verified live, mirrors the #050 lesson): pi masks argv (cmdline = `pi`) → start-time guard not cmdline; pi `--mode rpc` ignores SIGTERM → reaper uses SIGKILL (orphan died `returncode -9`).
+- Tests: `tests/test_agent_runner.py` +reaper/probe/pidfile (29 tests, 1 skipped real-pi); #050 suite 173 passed. ruff clean.
+- Flip: `bindings.yml` homelab/trading/symphony all `pi_mode: rpc`; config validated; restart healthy (`code_sha 44e72c9`, 3 bindings, `rpc_orphan_reap_done count=0`, `pi_rpc_probe_ok`, reconciles clean, 0 errors). All pi dispatch is now RPC; Claude-routed issues still tmux.
+- Outputs: claim **C-0191**; #058 note (reaper+probe slice done). Pending for operator: #055, #056/#057 (live steer), #058 remainder.
+- Guardrails: per-run timeout already in #050; steer-queue cleanup deferred to #056. No secrets / `.env` read.
