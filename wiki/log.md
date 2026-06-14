@@ -11,6 +11,15 @@ Append entries with this format:
 
 ---
 
+## [2026-06-14] session-update | #058 pi RPC lifecycle hardening
+
+- Actor: agent (Pi, Ralph + wiki update)
+- Inputs: issue #058 implementation; commits `84f1c45`, `50ad752`, `65035b3`; `.kanban/issues/058-rpc-lifecycle-ops.md`; `.kanban/progress.md`; `agent_runner.py`; `web/api/steer_queue.py`; `tests/test_agent_runner.py`; `tests/test_scheduler.py`; existing ADR-0010 and Session Resume wiki pages.
+- Outputs: updated `wiki/analyses/adr-0010-pi-rpc-dispatch-for-live-steering.md`; updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/CLAIMS.md` (C-0194 added; C-0191 note updated); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Captured per-run steer queue cleanup on pi RPC adapter exit, stale queue cleanup during RPC orphan startup sweep, `rpc_orphan_reap_done` logging of process and queue counts, and explicit semaphore-cap test coverage for live RPC dispatches. Verification passed: `uv run pytest tests/test_agent_runner*.py tests/test_scheduler*.py tests/test_main*.py -q` (179 passed, 1 skipped), full `uv run pytest -q` (776 passed, 2 skipped), `uv run ruff check`, touched-file LSP diagnostics clean, `git diff --check`, secret-pattern diff scan, and fresh Ralph review `RALPH_REVIEW: PASS`. No secrets, no `.env` contents, no transcript.
+
+---
+
 ## [2026-06-14] session-update | #057 Podium flyout Steering UI
 
 - Actor: agent (Pi, Ralph + wiki update)
