@@ -3,12 +3,13 @@ title: "#042 Claude tmux adapter component"
 type: analysis
 status: promoted
 created: 2026-06-13
-updated: 2026-06-13
+updated: 2026-06-14
 sources:
   - .kanban/issues/042-claude-tmux-adapter.md
   - claude_runner.py
   - tests/test_claude_runner.py
   - docs/adr/0001-claude-via-tmux-send-keys.md
+  - wiki/raw/sessions/2026-06-14-claude-runner-idle-completion-nudge.md
 confidence: high
 tags: [podium, dispatch, claude, tmux, adapter, ralph]
 ---
@@ -36,6 +37,12 @@ Prompt delivery writes a wrapper to the prompt file, then uses `tmux load-buffer
 Completion requires both a done file and a non-empty result file. On success, `stdout` is the result-file content and `stderr` is the ANSI-stripped full pane capture; markerless non-empty result content still exits `0`, preserving scheduler markerless-default behavior [source: claude_runner.py; source: tests/test_claude_runner.py]. Session death without a done file exits `1` with pane-tail diagnostics; done-with-empty/missing result exits `137` as a loud silent-exit analogue; wall-clock timeout kills the session and returns `AgentResult(-1, timed_out=True)` [source: claude_runner.py; source: tests/test_claude_runner.py].
 
 Cleanup is `finally`-guaranteed and idempotent: kill tmux session, unlink socket, remove temp dir, and tolerate repeated cleanup calls [source: claude_runner.py; source: tests/test_claude_runner.py]. Tests also assert no production code invokes `engine.sh` or `claude -p` [source: tests/test_claude_runner.py].
+
+## Idle-at-prompt detection + nudge (2026-06-14)
+
+The completion contract above depends on the agent performing a closing ritual (write result file, then touch done file). Because the tmux REPL never exits, an agent that *ends its turn without that ritual* is alive with no done file — indistinguishable from a working agent — so the original poll loop waited out the full `run_timeout_ms` (1h default). Run #23 hit this: the agent made one edit, ended its turn, and the run sat `running` for ~43 min [source: wiki/raw/sessions/2026-06-14-claude-runner-idle-completion-nudge.md]. This is the same failure surface as the paste/Enter race above ("idles to the 60-min timeout"), generalized to any idle cause.
+
+The fix (commit `9c058b7`) makes idle observable: while Claude works, its spinner/elapsed-timer redraws the pane at least once a second, so the poll loop counts consecutive byte-unchanged pane captures, and a pane unchanged across `IDLE_POLLS_BEFORE_NUDGE=30` one-second polls means the agent is parked [source: claude_runner.py]. On idle with no done file it pastes a completion-protocol reminder into the live session (`_send_nudge` reuses `_paste_and_submit`, so the paste/Enter race handling carries over) up to `IDLE_NUDGE_ATTEMPTS=2` times; if still no done file it gives up early returning the same shape as the hard timeout — `AgentResult(-1, timed_out=True)` — plus a distinct `claude_idle_no_completion` log line, so downstream lands on the existing failed/blocked terminal path in ~90s instead of an hour [source: claude_runner.py; source: scheduler.py]. Idle is tracked with an unchanged-pane counter rather than wall-clock, adding no `clock()` calls so the existing timing tests are unaffected; done-file and session-dead branches are unchanged and still checked first. Three tests cover nudge-then-complete, nudge-exhaustion failure, and a changing pane that is never falsely nudged [source: tests/test_claude_runner.py]. Headless `claude -p` (which would replace the whole sentinel protocol with a process-exit signal) was considered and rejected by the operator [source: wiki/raw/sessions/2026-06-14-claude-runner-idle-completion-nudge.md].
 
 ## Live paste/submit + result races (2026-06-13)
 

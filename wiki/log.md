@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-14] session-update | claude_runner idle-at-prompt stall fix (Run #23)
+
+- Actor: agent
+- Inputs: live diagnosis of Run #23/#25 (`podium.db`, `ps`/`ss`, agent transcripts, journal), `claude_runner.py`, `scheduler.py:1656`, `config.py:132`, commit `9c058b7`
+- Outputs: raw `wiki/raw/sessions/2026-06-14-claude-runner-idle-completion-nudge.md`; promoted `analyses/podium-042-claude-tmux-adapter.md` (new "Idle-at-prompt detection + nudge" section, sources + date bumped); claim **C-0205** added; **C-0151** note updated (refined by C-0205); `index.md` row + `ROUTING.md` (claude-dispatch route page + idle keywords) updated
+- Notes: Root cause — interactive tmux REPL has no process-exit signal, so an agent that ends its turn without writing the done file is indistinguishable from a working one and the poll loop waited out the full 1h `run_timeout_ms`. Fix detects idle via consecutive unchanged-pane captures, nudges twice, then fails fast (`-1`/`timed_out=True` + `claude_idle_no_completion`). Operator rejected headless `claude -p` (option A) → option B. Live-verified: Run #23 reconciled `failed`/`blocked`; Run #25 completed normally (non-instance). Open: pane-stability assumption is coupled to the Claude TUI redrawing while working.
+
 ## [2026-06-14] session-update | #058 pi RPC lifecycle hardening
 
 - Actor: agent (Pi, Ralph + wiki update)
