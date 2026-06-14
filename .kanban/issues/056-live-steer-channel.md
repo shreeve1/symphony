@@ -1,7 +1,7 @@
 ---
 id: 056
 title: Live mid-run Steering channel (pi RPC) — Slice C
-status: review
+status: done
 blocked_by: [050, 054]
 parent: null
 priority: 0
@@ -25,13 +25,13 @@ Steering messages must be persisted/observable enough to show in the UI (#057) a
 
 ## Acceptance criteria
 
-- [ ] A steer POST for an issue with a live RPC run writes a record the adapter forwards as an RPC `steer` command; the agent visibly acts on it after the current tool call.
-- [ ] Accepting a steer appends a distinct `### Operator Steer (<ISO>)` block to `comments_md` with NO state flip and NO prompt re-injection (durable record; queue stays transient).
-- [ ] Steering an issue with no active RPC run is rejected cleanly (no crash, clear response).
-- [ ] An abort record forwarded as RPC `abort` stops the run and maps to the existing timeout/abort `AgentResult` path.
-- [ ] The channel is restart-tolerant (stale queue on boot does not wedge or mis-deliver) and decoupled (web never touches the subprocess directly).
-- [ ] Claude runs reject/ignore steer with a clear "park-and-reply only" response (no tmux send-keys steering).
-- [ ] Tests cover queue write→poll→forward with a faked RPC stdio and a faked clock/poll.
+- [x] A steer POST for an issue with a live RPC run writes a record the adapter forwards as an RPC `steer` command; the agent visibly acts on it after the current tool call.
+- [x] Accepting a steer appends a distinct `### Operator Steer (<ISO>)` block to `comments_md` with NO state flip and NO prompt re-injection (durable record; queue stays transient).
+- [x] Steering an issue with no active RPC run is rejected cleanly (no crash, clear response).
+- [x] An abort record forwarded as RPC `abort` stops the run and maps to the existing timeout/abort `AgentResult` path.
+- [x] The channel is restart-tolerant (stale queue on boot does not wedge or mis-deliver) and decoupled (web never touches the subprocess directly).
+- [x] Claude runs reject/ignore steer with a clear "park-and-reply only" response (no tmux send-keys steering).
+- [x] Tests cover queue write→poll→forward with a faked RPC stdio and a faked clock/poll.
 
 ## Verification
 
@@ -40,3 +40,7 @@ Steering messages must be persisted/observable enough to show in the UI (#057) a
 ## Blocked by
 
 - Blocked by #050 (the RPC adapter + event-pump loop that forwards `steer`), #054 (the web→scheduler wake-sentinel seam this channel extends from a bare signal to a payload queue — the inward-write pattern and runtime-dir conventions are reused here)
+
+## Implementation Notes
+
+Implemented file-backed live steer queue under `SYMPHONY_RUNTIME_DIR/steer/<run_id>.jsonl`, wired `POST /api/issues/{id}/steer` for pi RPC runs, and added adapter polling that forwards queued `steer` / `abort` records to pi RPC stdin. Steer and abort requests append durable `Operator Steer` / `Operator Abort` comments without flipping issue state or waking prompt re-dispatch. Verification passed with `uv run pytest tests/test_scheduler*.py tests/test_agent_runner*.py web/api/tests/ -q` and full `uv run pytest -q`; fresh review returned `RALPH_REVIEW: PASS_WITH_NOTES` with only cosmetic formatting notes.

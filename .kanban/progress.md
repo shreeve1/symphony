@@ -79,3 +79,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept checkpointing as prompt/Skill policy, not a new engine state machine. The directive is emitted only for `preferred_skill=checkpointed-exploration` and survives resume prompts.
 **Conventions established:** Exploration checkpointing uses `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END`; agents should not emit `SYMPHONY_RESULT: done` until the operator explicitly says exploration is complete.
 **Notes for next iteration:** #056 can implement live pi RPC steering independently; #057 remains blocked until #056 lands.
+
+## #056 Live mid-run Steering channel — 2026-06-14
+
+**What changed:** Added a file-backed live steering queue, `POST /api/issues/{id}/steer`, durable `Operator Steer` / `Operator Abort` comments, and pi RPC adapter polling/forwarding for `steer` and `abort` records.
+**Files:** `web/api/steer_queue.py`, `web/api/main.py`, `agent_runner.py`, `scheduler.py`, `plane_adapter.py`, `tracker_podium.py`, `tests/test_agent_runner.py`, `web/api/tests/test_steer.py`, `.kanban/issues/056-live-steer-channel.md`.
+**Decisions:** Used `SYMPHONY_RUNTIME_DIR/steer/<run_id>.jsonl` as the transient decoupled queue; kept comments as the durable human-facing record; rejected live steering for Claude with a park-and-reply response.
+**Conventions established:** Running pi RPC candidates carry `active_run_id` from the scheduler's Run row into the adapter; live steer queue readers consume only complete newline-delimited JSON records and tolerate missing/stale queue files.
+**Notes for next iteration:** #057 can build UI on `POST /api/issues/{id}/steer`; #058 can extend lifecycle controls without changing the queue record shape.
