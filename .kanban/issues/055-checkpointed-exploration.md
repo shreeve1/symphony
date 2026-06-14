@@ -1,7 +1,7 @@
 ---
 id: 055
 title: Checkpointed exploration mode
-status: in-progress
+status: review
 blocked_by: [050, 051, 052]
 parent: null
 priority: 0
