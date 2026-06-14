@@ -3,7 +3,7 @@ title: ADR-0009 — Session-resume continuity, best-effort over a re-feed floor
 type: analysis
 status: promoted
 created: 2026-06-13
-updated: 2026-06-13
+updated: 2026-06-14
 sources:
   - wiki/raw/adr-0009-session-resume-continuity.md
   - docs/adr/0009-session-resume-continuity.md
@@ -13,6 +13,9 @@ sources:
   - .kanban/issues/052-question-park.md
   - .kanban/issues/053-live-session-tail.md
   - .kanban/issues/054-fast-redispatch-on-reply.md
+  - .kanban/issues/055-checkpointed-exploration.md
+  - .claude/skills/checkpointed-exploration/SKILL.md
+  - .claude/skills/symphony-workflow-author/SKILL.md
   - scheduler.py
   - agent_runner.py
   - claude_runner.py
@@ -27,7 +30,7 @@ sources:
   - web/frontend/tests/session-tail.spec.ts
   - tests/test_scheduler.py
 confidence: high
-tags: [adr, session-resume, continuity, re-feed, decision, design-stage, partially-implemented]
+tags: [adr, session-resume, continuity, re-feed, decision, checkpointed-exploration, implemented]
 ---
 
 # ADR-0009 — Session-resume continuity
@@ -58,8 +61,8 @@ Continuity now depends on hidden filesystem state (`~/.claude/projects`, `~/.pi/
 
 ## Scope note
 
-`accepted` and **partially implemented** as of 2026-06-13. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`), #050 pi RPC dispatch/resume wiring, #051 Claude tmux resume wiring, #052 Question Park, #053 Live Session Tail, and #054 Fast re-dispatch. Pi RPC and Claude runs can now take the Session Resume path when eligibility passes; non-RPC Pi, ineligible, and runtime-failed paths still fall back to re-feed. Question Park adds a `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` outcome that parks the issue to `in_review`, posts the question, and relies on the existing operator-reply redispatch/resume path for the answer. Session Tail adds a web/API-process read-only JSONL tailer that emits `run.tail` WebSocket events to the flyout without changing the scheduler process model. Fast re-dispatch adds a filesystem wake sentinel touched by replies/state-to-`todo` PATCHes and consumed by the scheduler during poll sleeps so the next candidate scan starts within the short sentinel interval instead of waiting the full poll. Remaining backlog `.kanban/issues/055` covers checkpointed exploration; #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
+`accepted` and implemented through the between-Run continuity backlog as of 2026-06-14. Implemented slices: #047 run columns, #048 pure decision core (`session_continuity.py` + `tests/test_session_continuity.py`), #049 delta-only resume prompt rendering (`render_prompt(..., resume=True)`), #050 pi RPC dispatch/resume wiring, #051 Claude tmux resume wiring, #052 Question Park, #053 Live Session Tail, #054 Fast re-dispatch, and #055 Checkpointed exploration. Pi RPC and Claude runs can now take the Session Resume path when eligibility passes; ineligible and runtime-failed paths still fall back to re-feed. Question Park adds a `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` outcome that parks the issue to `in_review`, posts the question, and relies on the existing operator-reply redispatch/resume path for the answer. Session Tail adds a web/API-process read-only JSONL tailer that emits `run.tail` WebSocket events to the flyout without changing the scheduler process model. Fast re-dispatch adds a filesystem wake sentinel touched by replies/state-to-`todo` PATCHes and consumed by the scheduler during poll sleeps so the next candidate scan starts within the short sentinel interval instead of waiting the full poll. Checkpointed exploration adds a repo-local Skill and prompt directive that force one bounded exploration step per Run followed by Question Park review. #056/#057/#058 add pi RPC Steering follow-ups. See [session-resume-continuity concept](../concepts/session-resume-continuity.md).
 
 ## Claims
 
-C-0175, C-0177, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, C-0186, and C-0187 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0177, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, C-0186, C-0187, and C-0192 in [CLAIMS.md](../CLAIMS.md).

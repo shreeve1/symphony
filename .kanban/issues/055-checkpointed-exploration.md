@@ -1,7 +1,7 @@
 ---
 id: 055
 title: Checkpointed exploration mode
-status: review
+status: done
 blocked_by: [050, 051, 052]
 parent: null
 priority: 0
@@ -20,10 +20,10 @@ A prompt-policy pattern (not engine plumbing) that makes exploratory issues proc
 
 ## Acceptance criteria
 
-- [ ] An exploration Skill exists in the catalog with a SKILL.md describing bounded-step-then-park.
-- [ ] When that skill is selected, the rendered prompt contains the checkpoint/bounded-step directive; when not selected, it does not.
-- [ ] The directive instructs a Question-Park-style park after each bounded step (no completion claimed until the operator signals done).
-- [ ] Documented in the WORKFLOW-author guidance so future bindings can adopt it.
+- [x] An exploration Skill exists in the catalog with a SKILL.md describing bounded-step-then-park.
+- [x] When that skill is selected, the rendered prompt contains the checkpoint/bounded-step directive; when not selected, it does not.
+- [x] The directive instructs a Question-Park-style park after each bounded step (no completion claimed until the operator signals done).
+- [x] Documented in the WORKFLOW-author guidance so future bindings can adopt it.
 
 ## Verification
 
@@ -32,3 +32,7 @@ A prompt-policy pattern (not engine plumbing) that makes exploratory issues proc
 ## Blocked by
 
 - Blocked by #050, #051, #052
+
+## Implementation Notes
+
+Added the repo-local `checkpointed-exploration` Skill, a prompt-renderer directive emitted only when that Skill is selected, and workflow-author guidance for documenting bounded exploration on future bindings. Covered catalog scanning, prompt emission/omission, resume prompt preservation, and workflow-author documentation with tests.

@@ -71,3 +71,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Used a filesystem sentinel (`SYMPHONY_WAKE_SENTINEL_PATH`, else `SYMPHONY_RUNTIME_DIR/reply-wake`, else `/tmp/symphony/reply-wake`) instead of an API push path, preserving ADR-0006 separate-process boundaries.
 **Conventions established:** Any successful API-side action that flips an issue back to `todo` for scheduler re-dispatch should touch the wake sentinel after the durable DB commit.
 **Notes for next iteration:** #056/#057 steering can rely on faster between-run reply pickup; this does not add live mid-run steering.
+
+## #055 Checkpointed exploration mode — 2026-06-14
+
+**What changed:** Added a `checkpointed-exploration` Skill and prompt-renderer directive so exploratory issues do one bounded step, summarize evidence, then park via Question Park for operator review.
+**Files:** `.claude/skills/checkpointed-exploration/SKILL.md`, `prompt_renderer.py`, `.claude/skills/symphony-workflow-author/SKILL.md`, `tests/test_prompt_renderer_podium.py`, `tests/skills/test_catalog_maintenance_skills.py`, `tests/skills/test_workflow_author.py`, `.kanban/issues/055-checkpointed-exploration.md`.
+**Decisions:** Kept checkpointing as prompt/Skill policy, not a new engine state machine. The directive is emitted only for `preferred_skill=checkpointed-exploration` and survives resume prompts.
+**Conventions established:** Exploration checkpointing uses `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END`; agents should not emit `SYMPHONY_RESULT: done` until the operator explicitly says exploration is complete.
+**Notes for next iteration:** #056 can implement live pi RPC steering independently; #057 remains blocked until #056 lands.

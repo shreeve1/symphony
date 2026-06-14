@@ -593,3 +593,11 @@ Append entries with this format:
 - Flip: `bindings.yml` homelab/trading/symphony all `pi_mode: rpc`; config validated; restart healthy (`code_sha 44e72c9`, 3 bindings, `rpc_orphan_reap_done count=0`, `pi_rpc_probe_ok`, reconciles clean, 0 errors). All pi dispatch is now RPC; Claude-routed issues still tmux.
 - Outputs: claim **C-0191**; #058 note (reaper+probe slice done). Pending for operator: #055, #056/#057 (live steer), #058 remainder.
 - Guardrails: per-run timeout already in #050; steer-queue cleanup deferred to #056. No secrets / `.env` read.
+
+## [2026-06-14] ingest | #055 checkpointed exploration mode
+
+- Source: Ralph #055 implementation (`.kanban/issues/055-checkpointed-exploration.md`) plus changed skill/prompt/test files.
+- Change: added repo-local `checkpointed-exploration` Skill; `prompt_renderer` now prepends a bounded-step/Question-Park directive only when that Skill is selected, including resume prompts; `symphony-workflow-author` now tells future Workflow authors to document the Skill for incremental investigation.
+- Verification: issue command `uv run pytest tests/test_prompt_renderer*.py tests/skills/ -q` passed; full `uv run pytest -q` passed (762 passed, 2 skipped); `uv run ruff check` passed on touched Python files; touched-file LSP diagnostics clean; fresh review returned `RALPH_REVIEW: PASS`.
+- Wiki updates: `concepts/session-resume-continuity.md`, `analyses/adr-0009-session-resume-continuity.md`, `index.md`, `ROUTING.md`, and claim **C-0192** updated.
+- No secrets / `.env` read.
