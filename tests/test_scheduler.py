@@ -3312,6 +3312,53 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(
 
 
 @pytest.mark.asyncio
+async def test_rpc_dispatch_holds_global_cap_until_agent_returns(
+    tmp_path: Path,
+) -> None:
+    """A live RPC-style agent occupies the existing semaphore slot until exit."""
+    repo = tmp_path / "homelab"
+    _init_tmp_repo(repo)
+    config = _config(repo, run_cap=1)
+    init_run_semaphore(config)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
+    transport.issues["issue-2"] = {**_issue("issue-2"), "identifier": "issue-2"}
+    adapter = _adapter(transport)
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def rpc_agent(issue: CandidateIssue, prompt: str) -> AgentResult:
+        calls.append(issue.id)
+        entered.set()
+        assert release.wait(timeout=2)
+        return AgentResult(0, 50, False, stdout="SYMPHONY_RESULT: review\n")
+
+    tasks = [
+        asyncio.create_task(
+            _dispatch_one(
+                config, adapter, rpc_agent, lambda issue: "prompt", None, False
+            )
+        )
+        for _ in range(2)
+    ]
+
+    await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=2)
+    await asyncio.sleep(0.05)
+    assert calls == ["issue-1"]
+    assert transport.issues["issue-2"]["state"] == PlaneState.TODO.value
+
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert calls == ["issue-1", "issue-2"]
+    assert [result.reason for result in results] == [
+        "agent-marker-review",
+        "agent-marker-review",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_dispatch_one_does_not_duplicate_in_flight_issue(tmp_path: Path) -> None:
     """Two dispatch tasks sharing one Todo issue must not run it twice."""
     repo = tmp_path / "homelab"

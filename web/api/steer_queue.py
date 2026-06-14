@@ -106,3 +106,38 @@ def read_steer_records(
             continue
         records.append(record)
     return records, new_offset
+
+
+def clear_steer_queue(
+    run_id: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """Remove one transient queue file. Returns True when a file was removed."""
+
+    path = steer_queue_path(str(run_id), environ)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def clear_stale_steer_queues(*, environ: Mapping[str, str] | None = None) -> int:
+    """Remove all transient queue files at scheduler startup."""
+
+    directory = steer_queue_dir(environ)
+    try:
+        paths = sorted(directory.glob("*.jsonl"))
+    except OSError:
+        return 0
+    count = 0
+    for path in paths:
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        count += 1
+    return count

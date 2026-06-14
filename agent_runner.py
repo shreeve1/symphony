@@ -381,6 +381,7 @@ def run_pi_rpc_agent(
     started = clock()
     process: RpcProcessLike | None = None
     pidfile: Path | None = None
+    run_id = str(getattr(issue, "active_run_id", "") or "")
 
     try:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -448,11 +449,9 @@ def run_pi_rpc_agent(
         error_seen = False
         event_exit_code: int | None = None
         deadline = started + (config.run_timeout_ms / 1000)
-        run_id = str(getattr(issue, "active_run_id", "") or "")
         steer_offset = 0
-        read_queued_steers = (
-            import_module("web.api.steer_queue").read_steer_records if run_id else None
-        )
+        steer_queue = import_module("web.api.steer_queue") if run_id else None
+        read_queued_steers = steer_queue.read_steer_records if steer_queue else None
 
         # pi RPC is a persistent session server: it streams its event burst then
         # stays alive idle, so stdout never reaches EOF on a normal completion.
@@ -568,6 +567,11 @@ def run_pi_rpc_agent(
             "".join(stderr_parts),
         )
     finally:
+        if run_id:
+            with suppress(Exception):
+                import_module("web.api.steer_queue").clear_steer_queue(
+                    run_id, environ=environ
+                )
         if pidfile is not None:
             with suppress(OSError):
                 pidfile.unlink(missing_ok=True)
@@ -593,6 +597,7 @@ def reap_orphan_rpc_processes(
     kill_group: Callable[[int, int], object] = os.killpg,
     glob_func: Callable[[Path], Iterable[Path]] | None = None,
     unlink_func: Callable[[Path], object] | None = None,
+    clear_stale_queues: Callable[..., int] | None = None,
 ) -> int:
     """Kill orphan `pi --mode rpc` processes left behind by a prior scheduler.
 
@@ -616,10 +621,16 @@ def reap_orphan_rpc_processes(
         glob_func = _default_pid_glob
     if pidfile_dir is None:
         pidfile_dir = _rpc_pidfile_dir(environ)
+    clear_queue_files = clear_stale_queues
+    if clear_queue_files is None:
+        clear_queue_files = import_module(
+            "web.api.steer_queue"
+        ).clear_stale_steer_queues
 
+    queue_count = clear_queue_files(environ=environ)
     count = 0
     if not pidfile_dir.exists():
-        LOGGER.info("rpc_orphan_reap_done count=0")
+        LOGGER.info("rpc_orphan_reap_done count=0 steer_queues=%d", queue_count)
         return 0
     for raw in glob_func(pidfile_dir):
         pidfile = Path(raw)
@@ -644,7 +655,7 @@ def reap_orphan_rpc_processes(
             count += 1
         with suppress(OSError, FileNotFoundError):
             unlink_func(pidfile)
-    LOGGER.info("rpc_orphan_reap_done count=%d", count)
+    LOGGER.info("rpc_orphan_reap_done count=%d steer_queues=%d", count, queue_count)
     return count
 
 

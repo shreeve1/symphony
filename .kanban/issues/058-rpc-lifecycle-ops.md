@@ -1,12 +1,13 @@
 ---
 id: 058
 title: pi RPC lifecycle & ops (orphan reaping, timeout, concurrency) — Slice E
-status: pending
+status: in-progress
 blocked_by: [050]
 parent: null
 priority: 0
 created: 2026-06-13
 updated: 2026-06-14
+actor: ralph
 ---
 
 ## PARTIAL 2026-06-14 — orphan-reaper + startup probe landed (commit 44e72c9)

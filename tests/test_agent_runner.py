@@ -772,6 +772,70 @@ def test_run_pi_rpc_agent_cleans_up_pidfile(tmp_path: Path) -> None:
     assert list(rpc_dir.glob("*.pid")) == []  # pidfile removed on clean exit
 
 
+def test_run_pi_rpc_agent_cleans_up_steer_queue_on_completion(tmp_path: Path) -> None:
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess([json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"])
+    environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record("run-1", _issue().id, kind="abort", environ=environ)
+    issue = CandidateIssue(
+        id="issue-123",
+        identifier="HOM-123",
+        name="Test issue",
+        description="Test description",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        active_run_id="run-1",
+    )
+
+    result = run_pi_rpc_agent(
+        _config(tmp_path),
+        issue,
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(tmp_path / "helper"),
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ=environ,
+    )
+
+    assert result.exit_code == 0
+    assert not steer_queue.steer_queue_path("run-1", environ).exists()
+
+
+def test_run_pi_rpc_agent_cleans_up_steer_queue_on_timeout(tmp_path: Path) -> None:
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess([])
+    environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record("run-2", _issue().id, kind="abort", environ=environ)
+    issue = CandidateIssue(
+        id="issue-123",
+        identifier="HOM-123",
+        name="Test issue",
+        description="Test description",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        active_run_id="run-2",
+    )
+
+    result = run_pi_rpc_agent(
+        _config(tmp_path),
+        issue,
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(tmp_path / "helper"),
+        kill_process_group=lambda pid, sig: None,
+        clock=iter([0.0, 2.0, 2.1]).__next__,
+        environ=environ,
+    )
+
+    assert result.timed_out is True
+    assert not steer_queue.steer_queue_path("run-2", environ).exists()
+
+
 def test_reap_orphan_rpc_processes_kills_alive_matching(tmp_path: Path) -> None:
     rpc_dir = tmp_path / "rpc"
     rpc_dir.mkdir()
@@ -789,6 +853,21 @@ def test_reap_orphan_rpc_processes_kills_alive_matching(tmp_path: Path) -> None:
     assert count == 1
     assert killed == [(111, signal.SIGKILL)]  # pi ignores SIGTERM
     assert list(rpc_dir.glob("*.pid")) == []  # both pidfiles cleaned up
+
+
+def test_reap_orphan_rpc_processes_clears_stale_steer_queues(tmp_path: Path) -> None:
+    environ = {"SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record(
+        "stale-run-1", _issue().id, kind="abort", environ=environ
+    )
+    steer_queue.write_steer_record(
+        "stale-run-2", _issue().id, kind="steer", message="cancel", environ=environ
+    )
+
+    count = reap_orphan_rpc_processes(environ=environ, kill_group=lambda pid, sig: None)
+
+    assert count == 0
+    assert list(steer_queue.steer_queue_dir(environ).glob("*.jsonl")) == []
 
 
 def test_reap_orphan_rpc_processes_skips_pid_reuse(tmp_path: Path) -> None:
