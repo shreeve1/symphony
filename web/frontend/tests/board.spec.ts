@@ -22,8 +22,12 @@ test("board renders state columns and opens a flyout on card click", async ({
 		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
-	// Clicking the backdrop (outside) closes it.
-	await page.getByTestId("flyout-backdrop").click({ position: { x: 5, y: 5 } });
+	// Clicking the backdrop (outside) closes it. Click the central strip of the
+	// backdrop: the sidebar (z-50) sits above the z-40 backdrop on the left and
+	// the flyout panel (~480px) covers the right, so {5,5} hits the sidebar.
+	await page
+		.getByTestId("flyout-backdrop")
+		.click({ position: { x: 400, y: 360 } });
 	await expect(page.getByTestId("issue-flyout")).toBeHidden();
 
 	// Re-open the flyout: run history shows runs without any cost element.
