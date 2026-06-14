@@ -24,7 +24,7 @@ const waitForPatch = (page: Page) =>
 
 // Edits target whichever value the field does NOT currently hold, so the test
 // is idempotent against a database that already absorbed a previous run.
-test("typed column and comments edits persist across reload", async ({
+test("typed column edits persist across reload", async ({
 	page,
 	problems,
 }) => {
@@ -57,18 +57,6 @@ test("typed column and comments edits persist across reload", async ({
 	await worktree.click();
 	await patched;
 
-	// context_md editor (view-first; Edit reveals a textarea that commits on
-	// blur). Comments are AI-posted and read-only, so persistence is exercised
-	// through context instead.
-	const marker = `e2e edit marker ${Date.now()}`;
-	await page.getByTestId("tab-context").click();
-	await page.getByTestId("edit-toggle-context_md").click();
-	const context = page.getByTestId("edit-context_md");
-	await context.fill(`# Operator context\n\n${marker}`);
-	patched = waitForPatch(page);
-	await context.blur();
-	await patched;
-
 	// Close, reload, reopen: every edit persisted through SQLite.
 	await page.keyboard.press("Escape");
 	await expect(page.getByTestId("issue-flyout")).toBeHidden();
@@ -85,8 +73,6 @@ test("typed column and comments edits persist across reload", async ({
 		"aria-pressed",
 		String(!wasActive),
 	);
-	await page.getByTestId("tab-context").click();
-	await expect(page.getByTestId("view-context_md")).toContainText(marker);
 
 	expectCleanConsole(problems);
 });

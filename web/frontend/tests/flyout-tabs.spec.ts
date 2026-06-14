@@ -1,6 +1,6 @@
 import { expect, expectCleanConsole, test } from "./fixtures";
 
-test("flyout switches between Comments and Context tabs", async ({
+test("flyout switches between Comments and Session tabs", async ({
 	page,
 	problems,
 }) => {
@@ -24,11 +24,9 @@ test("flyout switches between Comments and Context tabs", async ({
 		"Replace with real operator thread",
 	);
 
-	// Switching to Context shows the seeded context_md instead (also rendered).
-	await page.getByTestId("tab-context").click();
-	await expect(page.getByTestId("view-context_md")).toContainText(
-		"Synthetic context for",
-	);
+	// Switching to Session swaps in the steer composer + live session tail.
+	await page.getByTestId("tab-session").click();
+	await expect(page.getByTestId("tabpanel-session")).toBeVisible();
 
 	// And back to Comments.
 	await page.getByTestId("tab-comments").click();

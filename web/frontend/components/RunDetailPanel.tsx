@@ -50,7 +50,6 @@ export function RunDetailPanel({
 		["provider", formatValue(run.data?.provider)],
 		["model", formatValue(run.data?.model)],
 		["verdict", formatValue(run.data?.verdict)],
-		["summary", formatValue(run.data?.summary)],
 		[
 			"tokens",
 			`${formatValue(run.data?.input_tokens)} in / ${formatValue(run.data?.output_tokens)} out`,

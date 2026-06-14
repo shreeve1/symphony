@@ -351,77 +351,10 @@ function MetadataChips({
 	);
 }
 
-// Markdown blob editor: view-first. The rendered markdown is the default,
-// matching how operators read a thread; an Edit button swaps in a plain
-// textarea that commits on blur and returns to the rendered view. Comments are
-// AI-posted, so they pass readOnly to drop the editor entirely.
-function MarkdownEditor({
-	value,
-	field,
-	onPatch,
-	readOnly = false,
-}: {
-	value: string;
-	field: "comments_md" | "context_md";
-	onPatch: OnPatch;
-	readOnly?: boolean;
-}) {
-	const [draft, setDraft] = useDraft(value);
-	const [editing, setEditing] = useState(false);
-	const commit = () => {
-		if (draft !== value) onPatch({ [field]: draft });
-		setEditing(false);
-	};
-	if (editing) {
-		return (
-			<textarea
-				data-testid={`edit-${field}`}
-				value={draft}
-				rows={10}
-				autoFocus
-				onChange={(e) => setDraft(e.target.value)}
-				onBlur={commit}
-				className="min-h-40 w-full rounded-md border bg-transparent p-2 font-mono text-xs outline-none"
-			/>
-		);
-	}
-	return (
-		<div className="space-y-2">
-			{!readOnly && (
-				<div className="flex justify-end">
-					<button
-						type="button"
-						data-testid={`edit-toggle-${field}`}
-						onClick={() => setEditing(true)}
-						className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-					>
-						Edit
-					</button>
-				</div>
-			)}
-			<div
-				data-testid={`view-${field}`}
-				className="min-h-40 overflow-y-auto rounded-md border p-2"
-			>
-				{value.trim() ? (
-					<Markdown source={value} />
-				) : (
-					<p className="text-xs text-muted-foreground">
-						{field === "comments_md"
-							? "No comments yet."
-							: "No context yet. Click Edit to add."}
-					</p>
-				)}
-			</div>
-		</div>
-	);
-}
-
 // Operator reply composer: appends an attributed reply to the comment thread
 // and flips the issue back to todo so the agent re-runs (server-side, atomic).
 // Sits at the top of the comments tab, above the thread, so it never gets
-// buried as Runs accumulate. Distinct from the raw-blob MarkdownEditor, which
-// still allows free restructuring of the whole thread (context tab).
+// buried as Runs accumulate.
 function ReplyComposer({ issue }: { issue: IssueDetail }) {
 	const queryClient = useQueryClient();
 	const [draft, setDraft] = useState("");
@@ -682,7 +615,7 @@ function CommentsThread({ source }: { source: string }) {
 	);
 }
 
-const TABS = ["comments", "context", "session"] as const;
+const TABS = ["comments", "session"] as const;
 type Tab = (typeof TABS)[number];
 
 export function IssueFlyout({
@@ -852,7 +785,7 @@ export function IssueFlyout({
 											<ReplyComposer issue={issue} />
 											<CommentsThread source={issue.comments_md} />
 										</div>
-									) : tab === "session" ? (
+									) : (
 										<div className="space-y-3">
 											<SteerComposer
 												issue={issue}
@@ -861,15 +794,6 @@ export function IssueFlyout({
 											/>
 											<SessionTailPanel issueId={issue.id} />
 										</div>
-									) : (
-										// key resets the draft when switching issues, so an
-										// uncommitted context draft can't bleed across issues.
-										<MarkdownEditor
-											key={`${issue.id}-context`}
-											field="context_md"
-											value={issue.context_md}
-											onPatch={onPatch}
-										/>
 									)}
 								</div>
 							</div>
