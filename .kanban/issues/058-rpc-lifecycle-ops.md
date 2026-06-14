@@ -1,7 +1,7 @@
 ---
 id: 058
 title: pi RPC lifecycle & ops (orphan reaping, timeout, concurrency) — Slice E
-status: review
+status: done
 blocked_by: [050]
 parent: null
 priority: 0
@@ -31,15 +31,19 @@ Operational hardening for long-lived `pi --mode rpc` processes — the RPC analo
 
 ## Acceptance criteria
 
-- [ ] A run exceeding `run_timeout_ms` (including a between-events stall) is aborted and returns `timed_out=True`; no hung tick.
-- [ ] Startup sweep kills orphan RPC processes and clears stale steer queues; idempotent; logs a count like the socket reaper.
-- [ ] Live RPC runs are counted by the global concurrency cap (test asserts the cap blocks an over-limit dispatch).
-- [ ] `verify_pi_rpc_support` runs at boot when any binding is RPC-enabled and records a probe-failure reason without failing scheduler boot (mirrors `claude_probe_failed`).
-- [ ] Steer queues are cleaned on completion/abort and on restart.
+- [x] A run exceeding `run_timeout_ms` (including a between-events stall) is aborted and returns `timed_out=True`; no hung tick.
+- [x] Startup sweep kills orphan RPC processes and clears stale steer queues; idempotent; logs a count like the socket reaper.
+- [x] Live RPC runs are counted by the global concurrency cap (test asserts the cap blocks an over-limit dispatch).
+- [x] `verify_pi_rpc_support` runs at boot when any binding is RPC-enabled and records a probe-failure reason without failing scheduler boot (mirrors `claude_probe_failed`).
+- [x] Steer queues are cleaned on completion/abort and on restart.
 
 ## Verification
 
 `uv run pytest tests/test_agent_runner*.py tests/test_scheduler*.py tests/test_main*.py -q`
+
+## Implementation Notes
+
+Completed the remaining #058 hardening gaps by adding transient steer-queue cleanup helpers, clearing per-run queues from `run_pi_rpc_agent` on every exit path, clearing stale steer queue files during the RPC orphan startup sweep, and adding explicit tests for queue cleanup and semaphore cap accounting. Existing timeout, pidfile reaper, and startup probe behavior stayed intact.
 
 ## Blocked by
 

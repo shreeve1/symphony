@@ -95,3 +95,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Exposed binding `pi_mode` through `/api/bindings` so the UI can enable steering only for live pi RPC runs without duplicating bindings.yml parsing in the frontend.
 **Conventions established:** Frontend live-control affordances use the existing tail buffer for optimistic queued/delivered operator events, while `comments_md` remains the durable operator-command record after the API response.
 **Notes for next iteration:** #058 can focus on RPC lifecycle/ops hardening; the steer UI already covers disabled non-RPC/Claude/idle states.
+
+## #058 pi RPC lifecycle & ops — 2026-06-14
+
+**What changed:** Completed the remaining pi RPC lifecycle hardening by clearing per-run steer queues on `run_pi_rpc_agent` completion/timeout/abort paths, clearing stale steer queues during the RPC orphan startup sweep, and adding an explicit semaphore-cap test showing a live RPC dispatch occupies the global Run slot.
+**Files:** `agent_runner.py`, `web/api/steer_queue.py`, `tests/test_agent_runner.py`, `tests/test_scheduler.py`, `.kanban/issues/058-rpc-lifecycle-ops.md`.
+**Decisions:** Kept steer queues transient and file-backed; cleanup remains best-effort so queue-file IO never fails dispatch. Reused the existing `_dispatch_one` semaphore instead of adding RPC-specific concurrency accounting.
+**Conventions established:** RPC lifecycle tests should cover both process/pidfile cleanup and transient steer queue cleanup. Startup RPC reaping logs both orphan-process and stale queue counts in one `rpc_orphan_reap_done` line.
+**Notes for next iteration:** No further #058 follow-up remains; future RPC lifecycle controls can build on `clear_steer_queue` / `clear_stale_steer_queues` without changing queue record shape.
