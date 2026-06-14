@@ -1,7 +1,7 @@
 ---
 id: 057
 title: Podium flyout steer box + tail panel (pi live Steering UI) — Slice D
-status: in-progress
+status: review
 blocked_by: [053, 056]
 parent: null
 priority: 0
