@@ -54,6 +54,15 @@ class PodiumBindingScaffoldResult:
     bindings_path: Path
 
 
+@dataclass(frozen=True)
+class PodiumBindingRemovalResult:
+    binding_name: str
+    removed_from_bindings_yml: bool
+    db_action: str  # "archived" | "deleted" | "absent"
+    deleted_issue_count: int
+    deleted_run_count: int
+
+
 def scaffold_podium_binding(
     request: PodiumBindingScaffoldRequest,
     *,
@@ -99,6 +108,74 @@ def scaffold_podium_binding(
         binding_name=request.name,
         db_path=db_path,
         bindings_path=bindings_path,
+    )
+
+
+def remove_podium_binding(
+    name: str,
+    *,
+    db_path: Path,
+    bindings_path: Path,
+    purge: bool = False,
+) -> PodiumBindingRemovalResult:
+    """Remove a Symphony binding. Inverse of ``scaffold_podium_binding``.
+
+    Default (``purge=False``) is reversible: the binding row is archived
+    (``archived = TRUE``) and its ``bindings.yml`` entry is dropped, which stops
+    the dispatch loop from picking it up while preserving Issue/Run history.
+
+    ``purge=True`` is destructive: it deletes the binding's Runs, Issues,
+    ``binding_settings`` row, and ``binding`` row, then drops the ``bindings.yml``
+    entry. Use only when history is not worth keeping.
+
+    No Plane API, Plane transport, or ``plane_adapter`` dependency is involved.
+    """
+
+    _validate_binding_name(name)
+
+    removed_from_yaml = _remove_binding(bindings_path, name)
+
+    db_action = "absent"
+    deleted_issue_count = 0
+    deleted_run_count = 0
+    with connect(db_path) as connection:
+        _ensure_schema(connection)
+        exists = connection.execute(
+            "SELECT name FROM binding WHERE name = ?", (name,)
+        ).fetchone()
+        if exists is not None:
+            if purge:
+                deleted_run_count = connection.execute(
+                    """
+                    DELETE FROM run WHERE issue_id IN (
+                      SELECT id FROM issue WHERE binding_name = ?
+                    )
+                    """,
+                    (name,),
+                ).rowcount
+                deleted_issue_count = connection.execute(
+                    "DELETE FROM issue WHERE binding_name = ?", (name,)
+                ).rowcount
+                connection.execute("DELETE FROM binding WHERE name = ?", (name,))
+                db_action = "deleted"
+            else:
+                connection.execute(
+                    "UPDATE binding SET archived = TRUE WHERE name = ?", (name,)
+                )
+                db_action = "archived"
+            connection.commit()
+
+    if not removed_from_yaml and db_action == "absent":
+        raise ValueError(
+            f"binding not found in bindings.yml or Podium DB: {name}"
+        )
+
+    return PodiumBindingRemovalResult(
+        binding_name=name,
+        removed_from_bindings_yml=removed_from_yaml,
+        db_action=db_action,
+        deleted_issue_count=deleted_issue_count,
+        deleted_run_count=deleted_run_count,
     )
 
 
@@ -229,6 +306,28 @@ def _append_binding(path: Path, binding: dict[str, Any]) -> None:
     raw["bindings"].append(binding)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+
+def _remove_binding(path: Path, name: str) -> bool:
+    """Drop the binding entry named ``name`` from bindings.yml.
+
+    Returns True if an entry was removed, False if the file or entry is absent.
+    """
+    if not path.exists():
+        return False
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("bindings"), list):
+        raise ValueError(f"{path}: expected mapping with bindings list")
+    kept = [
+        b
+        for b in raw["bindings"]
+        if not (isinstance(b, dict) and b.get("name") == name)
+    ]
+    if len(kept) == len(raw["bindings"]):
+        return False
+    raw["bindings"] = kept
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    return True
 
 
 def _validate_binding_name(name: str) -> None:
