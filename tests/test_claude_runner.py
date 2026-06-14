@@ -926,6 +926,8 @@ class _IdleThenNudgeCompletesTmux:
 
 def test_claude_idle_without_done_is_nudged_then_completes(tmp_path: Path) -> None:
     fake = _IdleThenNudgeCompletesTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
 
     result = run_claude_agent(
         _config(tmp_path),
@@ -937,6 +939,7 @@ def test_claude_idle_without_done_is_nudged_then_completes(tmp_path: Path) -> No
         nonce_factory=lambda: "abc",
         clock=lambda: 0.0,
         sleep=lambda _: None,
+        session_file=transcript,
     )
 
     assert fake.nudge_count == 1  # parked agent reminded once, then finished
@@ -970,6 +973,8 @@ class _IdleNeverCompletesTmux:
 
 def test_claude_idle_exhausts_nudges_and_fails_fast(tmp_path: Path) -> None:
     fake = _IdleNeverCompletesTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
 
     result = run_claude_agent(
         _config(tmp_path),
@@ -981,6 +986,7 @@ def test_claude_idle_exhausts_nudges_and_fails_fast(tmp_path: Path) -> None:
         nonce_factory=lambda: "abc",
         clock=lambda: 0.0,  # never trips run_timeout_ms; idle give-up terminates
         sleep=lambda _: None,
+        session_file=transcript,
     )
 
     assert fake.nudge_count == claude_runner.IDLE_NUDGE_ATTEMPTS
@@ -1032,6 +1038,8 @@ class _ChangingPaneCompletesTmux:
 
 def test_claude_changing_pane_is_never_nudged(tmp_path: Path) -> None:
     fake = _ChangingPaneCompletesTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # transcript static; only pane moves
 
     result = run_claude_agent(
         _config(tmp_path),
@@ -1043,10 +1051,84 @@ def test_claude_changing_pane_is_never_nudged(tmp_path: Path) -> None:
         nonce_factory=lambda: "abc",
         clock=lambda: 0.0,
         sleep=lambda _: None,
+        session_file=transcript,
     )
 
-    # A working agent (pane redraws every poll) is never treated as idle, even
-    # across far more polls than IDLE_POLLS_BEFORE_NUDGE.
+    # A working agent (pane redraws every poll) is never treated as idle even with
+    # a static transcript, across far more polls than IDLE_POLLS_BEFORE_NUDGE.
+    assert fake.captures > claude_runner.IDLE_POLLS_BEFORE_NUDGE
+    assert fake.nudge_count == 0
+    assert result.exit_code == 0
+
+
+class _StaticPaneCompletesTmux:
+    """Pane never changes (e.g. an alt-screen capture), so only the transcript
+    signal can tell working from idle; done lands after a while."""
+
+    def __init__(
+        self,
+        pane: str = "bypass permissions on",
+        result_text: str = "SYMPHONY_RESULT: done",
+        complete_after: int = 50,
+    ):
+        self.calls: list[list[str]] = []
+        self.pane = pane
+        self.captures = 0
+        self.complete_after = complete_after
+        self.result_text = result_text
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.nudge_count = 0
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            if "appear to have stopped" in prompt:
+                self.nudge_count += 1
+            return Completed()
+        if "capture-pane" in command:
+            self.captures += 1
+            if (
+                self.captures >= self.complete_after
+                and self.result_file is not None
+                and self.done_file is not None
+            ):
+                self.result_file.write_text(self.result_text, encoding="utf-8")
+                self.done_file.write_text("", encoding="utf-8")
+            return Completed(stdout=self.pane)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_static_pane_but_active_transcript_is_never_nudged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _StaticPaneCompletesTmux()
+    # Transcript mtime advances every poll (agent is producing events) even though
+    # the captured pane is byte-identical -- the complementary signal that keeps an
+    # alt-screen working agent from being treated as idle.
+    ticks = iter(range(10_000))
+    monkeypatch.setattr(
+        claude_runner, "_session_file_mtime", lambda _path: float(next(ticks))
+    )
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        session_file=tmp_path / "session.jsonl",
+    )
+
     assert fake.captures > claude_runner.IDLE_POLLS_BEFORE_NUDGE
     assert fake.nudge_count == 0
     assert result.exit_code == 0

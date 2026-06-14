@@ -26,7 +26,7 @@ from agent_runner import (
 )
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
-from session_continuity import derive_session_id
+from session_continuity import derive_session_id, session_file_path
 
 
 LOGGER = logging.getLogger(__name__)
@@ -374,6 +374,7 @@ def run_claude_agent(
     create_worktree_func: Callable[[Path, str, str, str], Path] | None = None,
     ready_timeout_s: float = READY_TIMEOUT_SECONDS,
     pidfile_dir: Path | None = None,
+    session_file: Path | None = None,
 ) -> AgentResult:
     """Run Claude for an issue using tmux send-keys and file completion."""
 
@@ -404,6 +405,7 @@ def run_claude_agent(
         )
         resume_requested = bool(getattr(issue, "resumed", False))
         session_arg = "--resume" if resume_requested else "--session-id"
+        transcript_file = session_file or session_file_path("claude", cwd, session_id)
         LOGGER.info(
             "claude_dispatch issue_id=%s model=%s cwd=%s session_id=%s resumed=%s",
             issue.id,
@@ -470,6 +472,7 @@ def run_claude_agent(
 
         deadline = started + (config.run_timeout_ms / 1000)
         last_pane: str | None = None
+        last_mtime: float | None = None
         unchanged_polls = 0
         nudges_used = 0
         while clock() <= deadline:
@@ -496,12 +499,21 @@ def run_claude_agent(
                     socket_path, session_name, run_func=run_func
                 )
                 return _logged_result(issue, 1, duration_ms, False, "", stderr)
+            # Idle requires BOTH the pane and the agent's session transcript to
+            # stop changing. The two signals are complementary: a long tool call
+            # leaves the transcript static but the pane's spinner/timer still
+            # redrawing, while an alt-screen pane that captures empty leaves the
+            # transcript still being appended. Treating activity on either channel
+            # as "not idle" stops a working agent from being nudged or killed. A
+            # missing transcript (mtime is None) counts as activity, never idle.
             pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
-            if pane == last_pane:
+            mtime = _session_file_mtime(transcript_file)
+            if mtime is not None and pane == last_pane and mtime == last_mtime:
                 unchanged_polls += 1
             else:
                 unchanged_polls = 0
                 last_pane = pane
+                last_mtime = mtime
             if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
                 if nudges_used >= IDLE_NUDGE_ATTEMPTS:
                     duration_ms = int((clock() - started) * 1000)
@@ -534,6 +546,7 @@ def run_claude_agent(
                 nudges_used += 1
                 unchanged_polls = 0
                 last_pane = None
+                last_mtime = None
                 LOGGER.info(
                     "claude_idle_nudge issue_id=%s nudge=%s", issue.id, nudges_used
                 )
@@ -754,6 +767,19 @@ def _read_result_with_grace(
                 return text
         sleep(step_s)
     return result_file.read_text(encoding="utf-8") if result_file.exists() else ""
+
+
+def _session_file_mtime(path: Path) -> float | None:
+    """Modification time of the agent's session transcript, or None if absent.
+
+    Claude appends to this jsonl on every conversation event, so an advancing
+    mtime means the agent is actively producing output; a frozen mtime is the
+    ground-truth idle signal that the pane-stability check is gated against.
+    """
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
 
 
 def _session_alive(
