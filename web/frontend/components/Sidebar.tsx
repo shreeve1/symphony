@@ -25,12 +25,6 @@ function relativeAge(iso: string | null | undefined): string {
 	return `${days}d`;
 }
 
-function stateBadge(state: string): { label: string; className: string } {
-	if (state === "in_review")
-		return { label: "In Review", className: "bg-yellow-100 text-yellow-800" };
-	return { label: "Blocked", className: "bg-red-100 text-red-800" };
-}
-
 function InboxCard({
 	item,
 	color,
@@ -42,7 +36,6 @@ function InboxCard({
 	active: boolean;
 	onDismiss: (id: number) => void;
 }) {
-	const badge = stateBadge(item.state);
 	return (
 		<div
 			data-testid="inbox-card"
@@ -61,14 +54,6 @@ function InboxCard({
 					style={{ backgroundColor: color }}
 				/>
 				<span className="flex-1 truncate">{item.title}</span>
-				<span
-					className={cn(
-						"shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none",
-						badge.className,
-					)}
-				>
-					{badge.label}
-				</span>
 				<span className="shrink-0 text-[10px] text-sidebar-foreground/50">
 					{relativeAge(item.last_event_at ?? item.updated_at)}
 				</span>

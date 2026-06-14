@@ -40,8 +40,9 @@ test.describe
 			const card = page.getByTestId("inbox-card").filter({ hasText: title });
 			await expect(card).toBeVisible({ timeout: 15_000 });
 
-			// State badge is visible.
-			await expect(card).toContainText("In Review");
+			// Inbox cards omit redundant state badges.
+			await expect(card).not.toContainText("In Review");
+			await expect(card).not.toContainText("Blocked");
 
 			// Binding color dot is present (a small span with background color).
 			await expect(card.locator("span").first()).toBeVisible();
