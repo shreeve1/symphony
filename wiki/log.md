@@ -650,3 +650,14 @@ Append entries with this format:
 - Apply (done, same session, James-approved): stopped `podium-api` → backed up `podium.db.bak.pre-0008.20260614-151731` → `uv run alembic upgrade head` (0007→0008) → started `podium-api` clean. Verified live `alembic_version=0008`, `issue.state` CHECK includes `'archived'`, BEGIN/ROLLBACK archive UPDATE accepted, 5 rows intact, API healthy (401). Archive bug resolved live.
 - Unresolved: C-0147 CHECK-drift detection gap (ensure_schema compares revision + columns, not CHECK DDL); defence-in-depth: scope `reap_orphan_claude_sockets` to the current run/PID or a service-only guard; #2 issue #15's frontend edits + `web/frontend/tests/inbox.spec.ts` working-tree change still uncommitted.
 - No secrets / `.env` read.
+
+## 2026-06-14 — session-update: board drag-to-column issue moves (#18 follow-up)
+
+- Inputs: this session implemented drag-to-column on the Podium Kanban board (commit `2e75d83`), the unimplemented half of issue #18. Started from `a4ea162` (handoff `/tmp/handoff-TNpd15.md`).
+- Findings: `KanbanBoard` previously wrapped a placeholder `<DndContext>` with no handlers. Board cards come from the `["issues", binding]` React Query cache (polling + `issue.updated` WS upsert). Server `patch_issue` applies no run-state gating for `state` (only archive teardown / done FF-merge are state-conditional), so no card needs to be drag-disabled. `@dnd-kit/utilities`/`sortable` not hoisted/installed → used the DragOverlay pattern (no transform helper).
+- Change: `IssueCard` gained optional drag props (renders plain when omitted); `KanbanBoard` got `PointerSensor` (5px activation preserves click-to-open), `useDroppable` columns (expanded + collapsed rail), `DragOverlay`, and an optimistic `patchIssue(id,{state})` mutation against `["issues",binding]` with rollback. New e2e `web/frontend/tests/board-dnd.spec.ts`.
+- Verification: `npx tsc --noEmit` clean; `npx playwright test board-dnd.spec.ts` 2 passed; related board specs green except pre-existing `board.spec.ts:4` backdrop-click failure (reproduced with changes stashed → unrelated, not fixed).
+- Wiki updates: new raw capture `wiki/raw/sessions/2026-06-14-board-drag-to-column.md`; promoted `analyses/podium-issue-archive-design.md` follow-up marked gap RESOLVED + frontmatter sources/date bumped; claim **C-0201** added; `index.md` row + `ROUTING.md` Podium Web UI keywords updated.
+- Outdated-source check: the 2026-06-14 #18 follow-up bullet on the archive-design page (which flagged the gap) is now superseded by the resolution bullet directly beneath it; both retained per provenance rule. No other cited sources drifted.
+- Not deployed: frontend committed only; podium-web needs `deploy.sh` rebuild + restart (ask James). Unrelated `claude_runner.py` working-tree change left untouched.
+- No secrets / `.env` read.

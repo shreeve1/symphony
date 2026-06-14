@@ -3,7 +3,7 @@ title: Podium issue archive ("delete button") design
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-13
+updated: 2026-06-14
 sources:
   - wiki/raw/sessions/2026-06-12-issue-archive-state-design.md
   - wiki/raw/sessions/2026-06-13-remove-flyout-archive-button.md
@@ -17,6 +17,10 @@ sources:
   - web/api/tests/test_archive_purge.py
   - tests/test_trading_podium_dispatch.py
   - web/frontend/lib/issues.ts
+  - web/frontend/components/KanbanBoard.tsx
+  - web/frontend/components/IssueCard.tsx
+  - web/frontend/tests/board-dnd.spec.ts
+  - wiki/raw/sessions/2026-06-14-board-drag-to-column.md
 confidence: high
 tags: [podium, archive, board-ui, retention, design-decision]
 ---
@@ -53,3 +57,4 @@ The board, counts, and flyout state chip all derive from the `STATES` array [sou
 - ADR offered for archived-as-state; declined.
 - 2026-06-13: flyout Archive button removed (state chip is now the sole archive path); change is in the working tree, not committed/deployed — needs a frontend rebuild + `deploy.sh` staging swap to go live. See C-0164.
 - 2026-06-14 (#18): "archive does nothing" reconfirmed as the same CHECK-drift bug fixed by #17's migration `0008_fix_issue_archived_check`; live `podium.db` verified at `alembic_version=0008` with `'archived'` in the `issue.state` CHECK, 81 targeted tests green. No new code needed. **Separate gap:** "change the *column* to archive" by dragging never worked — `KanbanBoard.tsx:4-5` wires dnd-kit as a placeholder with no drag handlers attached for any column; archiving is state-chip-only. Drag-to-column archiving is unimplemented feature work, not a regression [source: web/frontend/components/KanbanBoard.tsx#L4] [source: tickets/18.md].
+- 2026-06-14 (#18 follow-up): **drag-to-column gap RESOLVED** (commit `2e75d83`, C-0201). `KanbanBoard` now attaches dnd-kit handlers — `PointerSensor` (5px activation so taps still open the flyout), `useDroppable` per column (expanded panel + collapsed rail, both keyed by state), a `DragOverlay` clone, and an optimistic `patchIssue(id, { state })` against the `["issues", binding]` query cache with rollback (idempotent with the `issue.updated` WS upsert). Dropping onto **Archived** is a real archive (engine-terminal teardown). The server `patch_issue` applies no run-state gating for `state`, so no card is drag-disabled. e2e: `web/frontend/tests/board-dnd.spec.ts`. Committed, **not yet deployed** (needs `deploy.sh` rebuild + restart) [source: web/frontend/components/KanbanBoard.tsx] [source: web/frontend/components/IssueCard.tsx] [source: web/frontend/tests/board-dnd.spec.ts] [source: wiki/raw/sessions/2026-06-14-board-drag-to-column.md].
