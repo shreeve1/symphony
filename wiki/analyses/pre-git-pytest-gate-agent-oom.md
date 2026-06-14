@@ -131,9 +131,23 @@ caller, mirroring the mature `reap_orphan_rpc_processes` ownership guard (#058).
   the sidecar pidfile and **skips** the socket when the recorded pid is alive AND its start-time
   still matches (a live run — logged `claude_socket_skipped_live`). It reaps only true orphans —
   pidfile missing, server pid dead, or start-time mismatch (pid reuse) — killing the tmux server and
-  unlinking both the stale socket and the sidecar. This inverts the RPC reaper's kill condition
+  unlinking the stale socket. A final `_sweep_orphan_claude_pidfiles` pass then unlinks any sidecar
+  whose run is gone (covers crash-leaked sidecars whose socket tmux already removed, so the glob never
+  sees them), keeping only live-owned sidecars. This inverts the RPC reaper's kill condition
   (RPC kills alive+match under the boot-once assumption; the Claude reaper can be reached mid-run, so
   it *protects* alive+match). The start-time guard survives pid reuse and argv masking.
+- **The guard is best-effort and registration-dependent** (independent dev-review-claude pass,
+  2026-06-14, opus — 0 Critical / 2 Warning / 6 Note). Protection of a run begins only once
+  `_register_claude_run` has written its sidecar — the tmux server pid is only knowable after
+  `new-session` returns — so a live socket whose registration failed or has not yet landed is
+  indistinguishable from an orphan and would be reaped (W1/W2). The strong "never kills a live run"
+  property in production therefore rests on the **call-site invariant** — the reaper fires once at
+  startup (`main.py:150`, before any dispatch, under the single-instance lock + `PrivateTmp`-fresh
+  `/tmp`), so no live run exists at that moment — not on this guard alone. This is defence-in-depth
+  atop that invariant. The reviewer found no Critical issues and confirmed: `kill-server` targets the
+  socket (never a recorded pid, so a reused pid is never signalled), the PrivateTmp/`/proc` assumption
+  holds (mount-namespace only, shared PID namespace), the `display-message '#{pid}'` query is correct,
+  and pidfile parsing fails closed.
 - Injection surface mirrors the RPC reaper: `pidfile_dir`, `environ`, `is_alive`, `read_start_time`,
   plus the existing `glob_func`/`run_func`/`unlink_func`, so unit tests stay hermetic.
 - Boot-sweep purpose preserved: stale sockets whose tmux server died are still cleaned (dead → reap).

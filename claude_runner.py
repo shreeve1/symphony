@@ -125,10 +125,22 @@ def reap_orphan_claude_sockets(
     tmux server pid and its ``/proc/<pid>/stat`` start-time. A socket is reaped
     only when its recorded run is gone — the pidfile is missing, the server pid is
     dead, or the start-time no longer matches (pid reuse). A socket whose tmux
-    server is still alive with a matching start-time is a LIVE run and is skipped,
-    so this reaper can never kill a live agent's own socket even if it is reached
-    outside the genuine boot sweep. Stale-server sockets from a crashed prior run
-    are still cleaned, preserving the boot-sweep purpose.
+    server is still alive with a matching start-time is a LIVE run and is skipped.
+
+    The guard is **best-effort and registration-dependent**: protection of a given
+    run begins only once ``_register_claude_run`` has written its sidecar (the tmux
+    server pid is only knowable after ``new-session`` returns), and a live socket
+    whose registration failed or has not yet landed is indistinguishable from an
+    orphan and would be reaped. The strong "never kills a live run" property in
+    production rests on the call-site invariant — the reaper fires once at startup
+    (``main.run_dispatcher``) before any dispatch, under the single-instance lock,
+    so no live run exists at that moment — not on this guard alone. This guard is
+    defence-in-depth atop that invariant, not a replacement for it.
+
+    Stale-server sockets from a crashed prior run are still cleaned, preserving the
+    boot-sweep purpose. A final pass also sweeps sidecar pidfiles whose run is gone
+    (their socket may already have vanished), so sidecars cannot leak across boots
+    if ``<runtime>`` is relocated off a ``PrivateTmp`` mount.
     """
 
     if glob_func is None:
@@ -159,13 +171,40 @@ def reap_orphan_claude_sockets(
             )
         with suppress(OSError, FileNotFoundError):
             unlink_func(socket_path)
-        if pidfile.exists():
-            with suppress(OSError, FileNotFoundError):
-                unlink_func(pidfile)
         LOGGER.info("claude_socket_reaped path=%s", socket_path)
         count += 1
+    _sweep_orphan_claude_pidfiles(
+        pidfile_dir,
+        unlink_func=unlink_func,
+        is_alive=is_alive,
+        read_start_time=read_start_time,
+    )
     LOGGER.info("claude_socket_reap_done count=%d", count)
     return count
+
+
+def _sweep_orphan_claude_pidfiles(
+    pidfile_dir: Path,
+    *,
+    unlink_func: Callable[[Path], object],
+    is_alive: Callable[[int], bool],
+    read_start_time: Callable[[int], str],
+) -> None:
+    """Unlink sidecar pidfiles whose recorded run is gone.
+
+    Covers the reaped-socket sidecars and crash-leaked ones whose tmux server
+    died (tmux removes the socket on crash, so the socket glob never sees them).
+    A sidecar naming a still-live, matching run is kept.
+    """
+    if not pidfile_dir.exists():
+        return
+    for pidfile in sorted(pidfile_dir.glob("*.pid")):
+        if _claude_run_owned_live(
+            pidfile, is_alive=is_alive, read_start_time=read_start_time
+        ):
+            continue
+        with suppress(OSError, FileNotFoundError):
+            unlink_func(pidfile)
 
 
 def _claude_pidfile_dir(environ: Mapping[str, str] | None = None) -> Path:

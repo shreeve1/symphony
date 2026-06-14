@@ -185,6 +185,7 @@ def test_reap_orphan_claude_sockets_kills_removes_and_logs(
         glob_func=lambda pattern: sockets,
         run_func=fake_run,
         unlink_func=lambda path: removed.append(path),
+        pidfile_dir=tmp_path / "claude",
     )
 
     assert count == 2
@@ -197,12 +198,13 @@ def test_reap_orphan_claude_sockets_kills_removes_and_logs(
     assert "claude_socket_reap_done count=2" in caplog.text
 
 
-def test_reap_orphan_claude_sockets_no_sockets_skips_tmux() -> None:
+def test_reap_orphan_claude_sockets_no_sockets_skips_tmux(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     count = reap_orphan_claude_sockets(
         glob_func=lambda pattern: [],
         run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        pidfile_dir=tmp_path / "claude",
     )
 
     assert count == 0
@@ -287,6 +289,31 @@ def test_reap_orphan_claude_sockets_reaps_on_start_time_mismatch(
     assert count == 1
     assert calls == [["tmux", "-S", str(socket), "kill-server"]]
     assert removed == [socket, pidfile]
+
+
+def test_reap_orphan_claude_sockets_sweeps_leaked_sidecar(tmp_path: Path) -> None:
+    """A sidecar whose tmux server crashed (its socket already gone, so absent
+    from the glob) is still swept when its recorded pid is dead; a live one is
+    kept. Prevents sidecar leak across boots off a PrivateTmp mount."""
+    pid_dir = tmp_path / "claude"
+    pid_dir.mkdir()
+    live = pid_dir / "symphony-claude-8-y.pid"
+    live.write_text("999 67890", encoding="utf-8")
+    leaked = pid_dir / "symphony-claude-9-z.pid"
+    leaked.write_text("404 12345", encoding="utf-8")
+    removed: list[Path] = []
+
+    count = reap_orphan_claude_sockets(
+        glob_func=lambda pattern: [],
+        run_func=lambda command, **kwargs: Completed(),
+        unlink_func=lambda path: removed.append(path),
+        pidfile_dir=pid_dir,
+        is_alive=lambda pid: pid == 999,
+        read_start_time=lambda pid: "67890" if pid == 999 else "12345",
+    )
+
+    assert count == 0
+    assert removed == [leaked]
 
 
 def test_register_claude_run_writes_server_pid_and_start_time(
