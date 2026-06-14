@@ -628,7 +628,10 @@ def list_bindings(
         ORDER BY sort_order, name
         """
     ).fetchall()
-    return [_row(row) for row in rows]
+    result = [_row(row) for row in rows]
+    for binding in result:
+        binding["pi_mode"] = _binding_pi_mode_for(str(binding["name"]))
+    return result
 
 
 @app.get("/api/skills")

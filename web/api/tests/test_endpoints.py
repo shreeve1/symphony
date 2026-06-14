@@ -31,6 +31,7 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         bindings = bindings_response.json()
         binding_names = {binding["name"] for binding in bindings}
         assert {"homelab", "trading"}.issubset(binding_names)
+        assert all(binding["pi_mode"] in {"one-shot", "rpc"} for binding in bindings)
 
         trading_issues_response = client.get("/api/bindings/trading/issues")
         assert trading_issues_response.status_code == 200

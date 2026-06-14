@@ -28,9 +28,14 @@ export interface TailEvent {
 }
 
 const TailContext = createContext<TailEvent[]>([]);
+const TailAppendContext = createContext<(event: TailEvent) => void>(() => {});
 
 export function useTailEvents(): TailEvent[] {
 	return useContext(TailContext);
+}
+
+export function useAppendTailEvent(): (event: TailEvent) => void {
+	return useContext(TailAppendContext);
 }
 
 interface LiveMessage {
@@ -221,10 +226,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
 	return (
 		<QueryClientProvider client={client}>
 			<ConnectionContext.Provider value={connection}>
-				<TailContext.Provider value={tailEvents}>
-					<LiveUpdates onState={setConnection} onTail={handleTail} />
-					{children}
-				</TailContext.Provider>
+				<TailAppendContext.Provider value={handleTail}>
+					<TailContext.Provider value={tailEvents}>
+						<LiveUpdates onState={setConnection} onTail={handleTail} />
+						{children}
+					</TailContext.Provider>
+				</TailAppendContext.Provider>
 			</ConnectionContext.Provider>
 		</QueryClientProvider>
 	);

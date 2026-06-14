@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useTailEvents } from "@/components/QueryProvider";
 
 /** Format a single JSONL line for human-readable display. Tries to pretty-print the JSON. */
-function formatJsonlLine(raw: string): string {
+function formatSessionTailLine(raw: string): string {
 	try {
 		const parsed = JSON.parse(raw);
 		return JSON.stringify(parsed, null, 2);
@@ -53,7 +53,7 @@ export function SessionTailPanel({ issueId }: { issueId: number | null }) {
 							data-testid="session-tail-line"
 							className="whitespace-pre-wrap break-all"
 						>
-							{formatJsonlLine(line)}
+							{formatSessionTailLine(line)}
 						</pre>
 					))}
 				</div>

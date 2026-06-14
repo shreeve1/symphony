@@ -7,6 +7,7 @@ export interface Binding {
 	color: string;
 	sort_order: number;
 	archived: boolean;
+	pi_mode: "one-shot" | "rpc";
 }
 
 export interface Issue {
@@ -273,6 +274,37 @@ export async function postReply(
 	if (!res.ok) {
 		throw new Error(
 			`POST /api/issues/${id}/reply -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}
+
+export async function postSteer(
+	id: number,
+	body: string,
+): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/steer`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ action: "steer", body }),
+	});
+	if (!res.ok) {
+		throw new Error(
+			`POST /api/issues/${id}/steer -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}
+
+export async function postAbort(id: number): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/steer`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ action: "abort" }),
+	});
+	if (!res.ok) {
+		throw new Error(
+			`POST /api/issues/${id}/steer -> ${res.status} ${res.statusText}`,
 		);
 	}
 	return res.json() as Promise<IssueDetail>;

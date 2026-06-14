@@ -152,7 +152,11 @@ print(json.dumps(True))
 	runDbScript<boolean>(script);
 }
 
-export function seedRunningRunIssue(binding: string, title: string) {
+export function seedRunningRunIssue(
+	binding: string,
+	title: string,
+	agent = "pi",
+) {
 	const script = `
 import json
 from datetime import UTC, datetime
@@ -160,6 +164,7 @@ from pathlib import Path
 from web.api.db import connect
 binding = ${JSON.stringify(binding)}
 title = ${JSON.stringify(title)}
+agent = ${JSON.stringify(agent)}
 now = datetime.now(UTC).replace(microsecond=0).isoformat()
 log_dir = Path(${JSON.stringify(path.resolve(__dirname, "../test-results"))})
 log_dir.mkdir(parents=True, exist_ok=True)
@@ -170,9 +175,9 @@ with connect() as connection:
           binding_name, title, description, state, priority, preferred_agent,
           reasoning_effort, worktree_active, base_branch, comments_md, context_md,
           created_at, updated_at, last_event_at
-        ) VALUES (?, ?, ?, 'running', 'med', 'pi', 'high', FALSE, 'main', '', '', ?, ?, ?)
+        ) VALUES (?, ?, ?, 'running', 'med', ?, 'high', FALSE, 'main', '', '', ?, ?, ?)
         """,
-        (binding, title, f"E2E running run fixture for {binding}.", now, now, now),
+        (binding, title, f"E2E running run fixture for {binding}.", agent, now, now, now),
     )
     issue_id = issue_cursor.lastrowid
     run_cursor = connection.execute(
@@ -181,10 +186,10 @@ with connect() as connection:
           issue_id, agent, provider, model, state, verdict, summary, exit_code,
           cost_usd, input_tokens, output_tokens, worktree_path, branch_name,
           base_branch, log_path, skill_invoked, started_at, ended_at
-        ) VALUES (?, 'pi', 'e2e', 'glm-5.1:high', 'running', NULL, NULL, NULL,
+        ) VALUES (?, ?, 'e2e', 'glm-5.1:high', 'running', NULL, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, 'main', NULL, NULL, ?, NULL)
         """,
-        (issue_id, now),
+        (issue_id, agent, now),
     )
     run_id = run_cursor.lastrowid
     log_path = log_dir / f"polling-run-{run_id}.log"

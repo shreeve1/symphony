@@ -4,13 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+	fetchBindings,
 	fetchIssue,
 	fetchIssueRuns,
 	fetchSkills,
 	patchIssue,
+	postAbort,
 	postReply,
+	postSteer,
 	type IssueDetail,
 	type IssuePatch,
+	type Run,
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
 import { isActiveRunState } from "@/lib/polling";
@@ -19,6 +23,7 @@ import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
 import { RunHistoryList } from "@/components/RunHistoryList";
 import { SessionTailPanel } from "@/components/SessionTailPanel";
+import { useAppendTailEvent } from "@/components/QueryProvider";
 
 // Width persistence — the operator's chosen flyout width survives reopen and
 // reload. The #012c spec's "~480px" is only the default; validated by the
@@ -493,6 +498,145 @@ function ReplyComposer({ issue }: { issue: IssueDetail }) {
 	);
 }
 
+function SteerComposer({
+	issue,
+	latestRun,
+	bindingPiMode,
+}: {
+	issue: IssueDetail;
+	latestRun: Run | null;
+	bindingPiMode: "one-shot" | "rpc" | null;
+}) {
+	const queryClient = useQueryClient();
+	const appendTail = useAppendTailEvent();
+	const [draft, setDraft] = useState("");
+	const [lastStatus, setLastStatus] = useState<string | null>(null);
+	const taRef = useRef<HTMLTextAreaElement>(null);
+
+	useEffect(() => {
+		const el = taRef.current;
+		if (!el) return;
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight}px`;
+	}, [draft]);
+
+	const latestRunAgent = latestRun?.agent?.trim().toLowerCase() ?? null;
+	const liveRun =
+		issue.state === "running" &&
+		issue.latest_run_state === "running" &&
+		issue.latest_run_id != null;
+	const canSteer = liveRun && latestRunAgent === "pi" && bindingPiMode === "rpc";
+	const disabledReason = !liveRun
+		? "Live steering is available only while a pi RPC run is active."
+		: latestRun == null
+			? "Loading latest run details…"
+			: latestRunAgent === "claude"
+				? "Claude runs use park-and-reply only."
+				: bindingPiMode !== "rpc"
+					? "This binding is not using pi RPC live steering."
+					: "Live steering is available only for pi RPC runs.";
+
+	const appendLocalTail = (payload: Record<string, unknown>) => {
+		appendTail({ issue_id: issue.id, lines: [JSON.stringify(payload)] });
+	};
+	const invalidateIssue = () => {
+		queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+		queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
+	};
+
+	const steer = useMutation({
+		mutationFn: (body: string) => postSteer(issue.id, body),
+		onMutate: (body) => {
+			appendLocalTail({ type: "operator_steer", state: "queued", body });
+			setLastStatus("Steer queued");
+		},
+		onSuccess: (_data, body) => {
+			setDraft("");
+			appendLocalTail({ type: "operator_steer", state: "delivered", body });
+			setLastStatus("Steer delivered");
+			invalidateIssue();
+		},
+		onError: (_error, body) => {
+			appendLocalTail({ type: "operator_steer", state: "failed", body });
+			setLastStatus("Steer failed");
+		},
+	});
+	const abort = useMutation({
+		mutationFn: () => postAbort(issue.id),
+		onMutate: () => {
+			appendLocalTail({ type: "operator_abort", state: "queued" });
+			setLastStatus("Abort queued");
+		},
+		onSuccess: () => {
+			appendLocalTail({ type: "operator_abort", state: "delivered" });
+			setLastStatus("Abort delivered");
+			invalidateIssue();
+		},
+		onError: () => {
+			appendLocalTail({ type: "operator_abort", state: "failed" });
+			setLastStatus("Abort failed");
+		},
+	});
+	const isPending = steer.isPending || abort.isPending;
+
+	return (
+		<div className="space-y-2 rounded-md border p-3" data-testid="steer-composer">
+			<div className="flex items-center justify-between gap-2">
+				<div>
+					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Live steering
+					</p>
+					{!canSteer && (
+						<p data-testid="steer-disabled-hint" className="text-xs text-muted-foreground">
+							{disabledReason}
+						</p>
+					)}
+					{lastStatus && (
+						<p data-testid="steer-status" className="text-xs text-muted-foreground">
+							{lastStatus}
+						</p>
+					)}
+				</div>
+				<button
+					type="button"
+					data-testid="steer-abort"
+					disabled={!canSteer || isPending}
+					onClick={() => abort.mutate()}
+					className="rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+				>
+					Abort
+				</button>
+			</div>
+			<textarea
+				ref={taRef}
+				data-testid="steer-input"
+				value={draft}
+				rows={1}
+				placeholder="Redirect the running pi agent…"
+				disabled={!canSteer || isPending}
+				onChange={(e) => setDraft(e.target.value)}
+				className="max-h-40 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
+			/>
+			{(steer.isError || abort.isError) && (
+				<p data-testid="steer-error" className="text-xs text-red-500">
+					Steer request failed — the run may have finished or changed agent.
+				</p>
+			)}
+			<div className="flex justify-end">
+				<button
+					type="button"
+					data-testid="steer-send"
+					disabled={!canSteer || isPending || draft.trim() === ""}
+					onClick={() => steer.mutate(draft)}
+					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
+				>
+					Send steer
+				</button>
+			</div>
+		</div>
+	);
+}
+
 // Comments are stored as one chronological markdown blob; each entry is an
 // appended block headed `### Operator Reply (…)` or `### Symphony AI Summary`.
 // Split on those headings so the thread can render newest-first without
@@ -570,6 +714,7 @@ export function IssueFlyout({
 	// Skill catalog feeds the preferred_skill picker; free text would 422
 	// against the FK and silently roll back.
 	const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
+	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
 	const skillNames = (skills.data ?? []).map((s) => s.name);
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
@@ -598,6 +743,15 @@ export function IssueFlyout({
 	if (issueId == null) return null;
 
 	const issue = detail.data;
+	const latestRun =
+		issue && runs.data
+			? (runs.data.find((run) => run.id === issue.latest_run_id) ?? null)
+			: null;
+	const bindingPiMode =
+		issue && bindings.data
+			? (bindings.data.find((binding) => binding.name === issue.binding_name)
+					?.pi_mode ?? null)
+			: null;
 
 	return (
 		<>
@@ -699,7 +853,14 @@ export function IssueFlyout({
 											<CommentsThread source={issue.comments_md} />
 										</div>
 									) : tab === "session" ? (
-										<SessionTailPanel issueId={issue.id} />
+										<div className="space-y-3">
+											<SteerComposer
+												issue={issue}
+												latestRun={latestRun}
+												bindingPiMode={bindingPiMode}
+											/>
+											<SessionTailPanel issueId={issue.id} />
+										</div>
 									) : (
 										// key resets the draft when switching issues, so an
 										// uncommitted context draft can't bleed across issues.
