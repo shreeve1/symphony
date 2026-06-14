@@ -14,8 +14,9 @@ import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import suppress
-from io import TextIOBase
 from dataclasses import dataclass
+from importlib import import_module
+from io import TextIOBase
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -29,6 +30,7 @@ TERMINATE_GRACE_SECONDS = 5
 PI_HELP_TIMEOUT_SECONDS = 30
 PI_PROBE_TIMEOUT_SECONDS = 30
 PI_RPC_PROBE_TIMEOUT_SECONDS = 20
+RPC_STEER_POLL_INTERVAL_SECONDS = 0.5
 # Pidfile registry for live `pi --mode rpc` processes. Each dispatch writes
 # <runtime_dir>/rpc/<pid>.pid on launch and removes it on exit; a boot sweep
 # (reap_orphan_rpc_processes) kills any that a crashed scheduler left behind,
@@ -446,6 +448,13 @@ def run_pi_rpc_agent(
         error_seen = False
         event_exit_code: int | None = None
         deadline = started + (config.run_timeout_ms / 1000)
+        run_id = str(getattr(issue, "active_run_id", "") or "")
+        steer_offset = 0
+        read_queued_steers = (
+            import_module("web.api.steer_queue").read_steer_records
+            if run_id
+            else None
+        )
 
         # pi RPC is a persistent session server: it streams its event burst then
         # stays alive idle, so stdout never reaches EOF on a normal completion.
@@ -474,7 +483,15 @@ def run_pi_rpc_agent(
                         "".join(stderr_parts),
                     )
 
-                line, eof = read_line(remaining)
+                if read_queued_steers is not None:
+                    steer_records, steer_offset = read_queued_steers(
+                        run_id, steer_offset, environ=source_env
+                    )
+                    _forward_steer_records(process, steer_records)
+
+                line, eof = read_line(
+                    min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS)
+                )
                 if eof:
                     # stdout closed: process exited on its own (crash / fake).
                     if process.poll() is not None:
@@ -783,6 +800,27 @@ def _send_rpc_abort(process: RpcProcessLike) -> None:
         process.stdin.flush()
     except Exception:
         return
+
+
+def _forward_steer_records(
+    process: RpcProcessLike, records: Iterable[Mapping[str, object]]
+) -> None:
+    for record in records:
+        kind = str(record.get("kind") or "")
+        if kind == "abort":
+            payload = {"type": "abort"}
+        elif kind == "steer":
+            message = str(record.get("message") or "").strip()
+            if not message:
+                continue
+            payload = {"type": "steer", "message": message}
+        else:
+            continue
+        try:
+            process.stdin.write(json.dumps(payload) + "\n")
+            process.stdin.flush()
+        except Exception:
+            return
 
 
 def _rpc_line_reader(

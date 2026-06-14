@@ -77,6 +77,7 @@ class CandidateIssue:
     agent_session_id: str = ""
     agent_session_sha: str = ""
     resumed: bool = False
+    active_run_id: str = ""
 
 
 def stable_external_id(runbook: str, external_key: str) -> str:

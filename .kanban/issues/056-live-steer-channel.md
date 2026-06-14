@@ -1,12 +1,12 @@
 ---
 id: 056
 title: Live mid-run Steering channel (pi RPC) — Slice C
-status: pending
+status: in-progress
 blocked_by: [050, 054]
 parent: null
 priority: 0
 created: 2026-06-13
-updated: 2026-06-13
+updated: 2026-06-14
 ---
 
 ## What to build

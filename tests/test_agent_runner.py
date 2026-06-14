@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import subprocess
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,8 @@ from agent_runner import (
 )
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
+
+steer_queue = import_module("web.api.steer_queue")
 
 
 class Completed:
@@ -572,6 +575,84 @@ def test_run_pi_rpc_agent_sends_prompt_and_returns_final_text(tmp_path: Path) ->
     assert captured["cwd"] == str(tmp_path)
     sent = json.loads(process.stdin.getvalue().strip())
     assert sent == {"type": "prompt", "message": "rendered prompt"}
+
+
+def test_run_pi_rpc_agent_forwards_queued_steer(tmp_path: Path) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess(
+        [json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"]
+    )
+    environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record(
+        "77",
+        _issue().id,
+        kind="steer",
+        message="switch to safer approach",
+        environ=environ,
+    )
+    issue = CandidateIssue(
+        id="issue-123",
+        identifier="HOM-123",
+        name="Test issue",
+        description="Test description",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        active_run_id="77",
+    )
+
+    result = run_pi_rpc_agent(
+        _config(tmp_path),
+        issue,
+        "prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(temp_dir),
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ=environ,
+    )
+
+    assert result.exit_code == 0
+    commands = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
+    assert commands[0] == {"type": "prompt", "message": "prompt"}
+    assert {"type": "steer", "message": "switch to safer approach"} in commands
+
+
+def test_run_pi_rpc_agent_forwards_queued_abort(tmp_path: Path) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess(
+        [json.dumps({"type": "agent_end", "exit_code": 0}) + "\n"]
+    )
+    environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record("78", _issue().id, kind="abort", environ=environ)
+    issue = CandidateIssue(
+        id="issue-123",
+        identifier="HOM-123",
+        name="Test issue",
+        description="Test description",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        active_run_id="78",
+    )
+
+    run_pi_rpc_agent(
+        _config(tmp_path),
+        issue,
+        "prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(temp_dir),
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ=environ,
+    )
+
+    commands = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
+    assert {"type": "abort"} in commands
 
 
 def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:

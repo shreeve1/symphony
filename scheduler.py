@@ -1432,6 +1432,7 @@ async def run_tick(
             run_id, run_log_path = await _start_run_record(
                 adapter, config, candidate, binding=tick_binding
             )
+            candidate = replace(candidate, active_run_id=run_id or "")
             # preferred_skill is consume-on-dispatch (ADR-0008): captured into
             # run.skill_invoked above, cleared once the Run row is recorded.
             # Compare-and-clear so a concurrent operator re-pick survives; only
@@ -1511,6 +1512,7 @@ async def run_tick(
                         run_id, run_log_path = await _start_run_record(
                             adapter, config, candidate, binding=tick_binding
                         )
+                        candidate = replace(candidate, active_run_id=run_id or "")
                         claim_time = now().isoformat()
                         await _mark_run_record_running(
                             adapter,
@@ -1607,6 +1609,7 @@ async def run_tick(
                     run_id, run_log_path = await _start_run_record(
                         adapter, config, candidate, binding=tick_binding
                     )
+                    candidate = replace(candidate, active_run_id=run_id or "")
                     claim_time = now().isoformat()
                     await _mark_run_record_running(
                         adapter,

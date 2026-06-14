@@ -14,7 +14,13 @@ from typing import Any, Literal
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
@@ -35,12 +41,14 @@ if __package__:
     _db = import_module(f"{__package__}.db")
     _schema = import_module(f"{__package__}.schema")
     _seed = import_module(f"{__package__}.seed")
+    _steer_queue = import_module(f"{__package__}.steer_queue")
     _wake_signal = import_module(f"{__package__}.wake_signal")
 else:  # pragma: no cover - supports uvicorn main:app from web/api
     _auth = import_module("auth")
     _db = import_module("db")
     _schema = import_module("schema")
     _seed = import_module("seed")
+    _steer_queue = import_module("steer_queue")
     _wake_signal = import_module("wake_signal")
 
 COOKIE_NAME = _auth.COOKIE_NAME
@@ -62,6 +70,7 @@ MODELS_PATH = BINDINGS_PATH.parent / "models.yml"
 _load_bindings = _seed._load_bindings
 seed_if_empty = _seed.seed_if_empty
 touch_wake_sentinel = _wake_signal.touch_wake_sentinel
+write_steer_record = _steer_queue.write_steer_record
 
 try:
     _model_catalog = import_module("model_catalog")
@@ -528,6 +537,19 @@ class ReplyCreate(BaseModel):
         return value
 
 
+class SteerCreate(BaseModel):
+    """Live pi RPC steering payload.
+
+    `action=steer` requires a non-empty body. `action=abort` may omit body and
+    forwards an RPC abort command to the active pi run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["steer", "abort"] = "steer"
+    body: str | None = None
+
+
 # state (todo, running) returns 409.
 ALLOWED_REPLY_STATES = ("in_review", "blocked", "done")
 # Run states that mean a run is in flight; a reply during these races the run's
@@ -822,6 +844,18 @@ def _binding_type_for(name: str) -> str:
             binding_type = str(binding.get("type") or "infra")
             return binding_type if binding_type in {"infra", "coding"} else "infra"
     return "infra"
+
+
+def _binding_pi_mode_for(name: str) -> str:
+    try:
+        bindings = _load_bindings(BINDINGS_PATH)
+    except (OSError, yaml.YAMLError):
+        return "one-shot"
+    for binding in bindings:
+        if binding.get("name") == name:
+            mode = str(binding.get("pi_mode") or "one-shot")
+            return mode if mode in {"one-shot", "rpc"} else "one-shot"
+    return "one-shot"
 
 
 def _base_branch_for(name: str) -> str:
@@ -1138,6 +1172,94 @@ async def reply_to_issue(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )
     touch_wake_sentinel()
+    return result
+
+
+@app.post("/api/issues/{issue_id}/steer")
+async def steer_issue(
+    issue_id: int,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
+
+    try:
+        steer = SteerCreate.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+    message = (steer.body or "").strip()
+    if steer.action == "steer" and not message:
+        raise HTTPException(status_code=422, detail="body cannot be empty for steer")
+    if steer.action == "abort" and not message:
+        message = "Abort requested."
+
+    run_id = str(current.get("latest_run_id") or "")
+    if current.get("state") != "running" or current.get("latest_run_state") != "running" or not run_id:
+        raise HTTPException(
+            status_code=409,
+            detail="steer requires an active running pi RPC run",
+        )
+
+    run = connection.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+    if run is None or str(run["state"] or "") != "running":
+        raise HTTPException(
+            status_code=409,
+            detail="steer requires an active running pi RPC run",
+        )
+    agent = str(run["agent"] or "").strip().lower()
+    if agent == "claude":
+        raise HTTPException(
+            status_code=409,
+            detail="Claude runs do not support live steering; use park-and-reply only",
+        )
+    if agent != "pi" or _binding_pi_mode_for(str(current.get("binding_name") or "")) != "rpc":
+        raise HTTPException(
+            status_code=409,
+            detail="steer requires an active running pi RPC run",
+        )
+
+    now = _next_updated_at(current["updated_at"])
+    heading = "Operator Steer" if steer.action == "steer" else "Operator Abort"
+    appended = f"\n\n### {heading} ({now})\n\n{message}"
+    cursor = connection.execute(
+        """
+        UPDATE issue
+           SET comments_md = COALESCE(comments_md, '') || ?,
+               updated_at = ?
+         WHERE id = ?
+           AND state = 'running'
+           AND latest_run_id = ?
+           AND latest_run_state = 'running'
+        """,
+        (appended, now, issue_id, run_id),
+    )
+    connection.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="steer requires an active running pi RPC run",
+        )
+
+    write_steer_record(
+        run_id,
+        str(issue_id),
+        kind=steer.action,
+        message=message,
+        created_at=now,
+    )
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
     return result
 
 
