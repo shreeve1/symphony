@@ -69,6 +69,10 @@ _PLANE_COOLDOWN_UNTIL: datetime | None = None
 # historical issues. New claim time comes from the Run record's ``started_at``.
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 2048
+# The on-disk run log keeps far more than the 2 KB comment/context bound so the
+# run-detail pane can show full output; still capped (tail-kept) so a runaway
+# agent cannot grow the run-log dir without limit.
+LOG_MAX_BYTES = 1_048_576
 STDERR_SUMMARY_MAX_LINES = 8
 STDERR_SUMMARY_MAX_CHARS = 900
 PREVIOUS_COMMENT_MAX_CHARS = 1500
@@ -396,16 +400,18 @@ class SchedulerContextCompactionError(RuntimeError):
     """Raised when pre-dispatch context compaction fails safely."""
 
 
-def _sanitize_report(text: str, secrets: Sequence[str]) -> str:
+def _sanitize_report(
+    text: str, secrets: Sequence[str], *, max_bytes: int = REPORT_MAX_BYTES
+) -> str:
     report = _ANSI_ESCAPE_RE.sub("", text).strip()
     for secret in secrets:
         if secret:
             report = report.replace(secret, _REDACTED)
     encoded = report.encode("utf-8", errors="replace")
-    if len(encoded) > REPORT_MAX_BYTES:
+    if len(encoded) > max_bytes:
         # Keep the tail: failure context (final error, traceback footer) is
         # almost always more useful than the head of a long pi trace.
-        tail = encoded[-REPORT_MAX_BYTES:].decode("utf-8", errors="replace")
+        tail = encoded[-max_bytes:].decode("utf-8", errors="replace")
         report = "... [output truncated]\n\n" + tail
     return report
 
@@ -937,8 +943,7 @@ async def _finish_run_record(
     log_path: Path | None,
     *,
     result: AgentResult,
-    stdout: str,
-    stderr: str,
+    secrets: Sequence[str],
     state: str,
     verdict: str | None,
     summary: str | None,
@@ -946,7 +951,14 @@ async def _finish_run_record(
 ) -> None:
     if not run_id or log_path is None:
         return
-    _write_run_log(log_path, stdout, stderr)
+    # The run log carries far more than the 2 KB comment/context report so the
+    # run-detail pane shows full output; secrets are still redacted and ANSI
+    # stripped, only the truncation bound differs.
+    _write_run_log(
+        log_path,
+        _sanitize_report(result.stdout, secrets, max_bytes=LOG_MAX_BYTES),
+        _sanitize_report(result.stderr, secrets, max_bytes=LOG_MAX_BYTES),
+    )
     update_run = getattr(adapter, "update_run", None)
     if not callable(update_run):
         return
@@ -1479,8 +1491,7 @@ async def run_tick(
                         run_id,
                         run_log_path,
                         result=AgentResult(1, 0, False, stdout="", stderr=str(exc)),
-                        stdout="",
-                        stderr=str(exc),
+                        secrets=secrets,
                         state="failed",
                         verdict="blocked",
                         summary=resume_summary,
@@ -1535,8 +1546,7 @@ async def run_tick(
                         run_id,
                         run_log_path,
                         result=result,
-                        stdout="",
-                        stderr=str(exc),
+                        secrets=secrets,
                         state="failed",
                         verdict="blocked",
                         summary=f"Agent crashed: {exc}",
@@ -1576,8 +1586,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=result.stdout,
-                    stderr=result.stderr,
+                    secrets=secrets,
                     state="failed",
                     verdict="blocked",
                     summary=resume_summary,
@@ -1626,8 +1635,7 @@ async def run_tick(
                         run_id,
                         run_log_path,
                         result=result,
-                        stdout="",
-                        stderr=str(exc),
+                        secrets=secrets,
                         state="failed",
                         verdict="blocked",
                         summary=f"Agent crashed: {exc}",
@@ -1656,8 +1664,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=stdout,
-                    stderr=stderr,
+                    secrets=secrets,
                     state="failed",
                     verdict="blocked",
                     summary=summary or "Agent timed out.",
@@ -1686,8 +1693,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=stdout,
-                    stderr=stderr,
+                    secrets=secrets,
                     state="failed",
                     verdict="blocked",
                     summary=summary
@@ -1737,8 +1743,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=stdout,
-                    stderr=stderr,
+                    secrets=secrets,
                     state="failed",
                     verdict="blocked",
                     summary=summary or msg,
@@ -1767,8 +1772,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=stdout,
-                    stderr=stderr,
+                    secrets=secrets,
                     state="failed",
                     verdict="blocked",
                     summary=summary or msg,
@@ -1810,8 +1814,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=stdout,
-                    stderr=stderr,
+                    secrets=secrets,
                     state="failed",
                     verdict="blocked",
                     summary=summary or "Agent reported a blocked result.",
@@ -1837,8 +1840,7 @@ async def run_tick(
                     run_id,
                     run_log_path,
                     result=result,
-                    stdout=stdout,
-                    stderr=stderr,
+                    secrets=secrets,
                     state="succeeded",
                     verdict="question",
                     summary=question,
@@ -1925,8 +1927,7 @@ async def run_tick(
                 run_id,
                 run_log_path,
                 result=result,
-                stdout=stdout,
-                stderr=stderr,
+                secrets=secrets,
                 state="succeeded",
                 verdict=verdict or "review",
                 summary=summary,
