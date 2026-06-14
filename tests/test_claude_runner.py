@@ -884,6 +884,174 @@ def test_claude_fresh_launch_uses_session_id_when_issue_is_not_resumed(
     assert "-c" not in command
 
 
+class _IdleThenNudgeCompletesTmux:
+    """Static pane with no done file (agent parked at the prompt) until a
+    completion nudge arrives, then writes the result + done file -- an agent that
+    forgot the protocol and complies once reminded."""
+
+    def __init__(
+        self,
+        pane: str = "bypass permissions on",
+        result_text: str = "SYMPHONY_RESULT: done",
+    ):
+        self.calls: list[list[str]] = []
+        self.pane = pane
+        self.result_text = result_text
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.nudged = False
+        self.nudge_count = 0
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            if "appear to have stopped" in prompt:
+                self.nudged = True
+                self.nudge_count += 1
+            return Completed()
+        if "send-keys" in command:
+            if self.nudged and self.result_file and self.done_file:
+                self.result_file.write_text(self.result_text, encoding="utf-8")
+                self.done_file.write_text("", encoding="utf-8")
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout=self.pane)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_idle_without_done_is_nudged_then_completes(tmp_path: Path) -> None:
+    fake = _IdleThenNudgeCompletesTmux()
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    assert fake.nudge_count == 1  # parked agent reminded once, then finished
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert result.stdout == "SYMPHONY_RESULT: done"
+
+
+class _IdleNeverCompletesTmux:
+    """Static pane that never produces a done file even after nudges -- an agent
+    that ended its turn and will not come back."""
+
+    def __init__(self, pane: str = "bypass permissions on"):
+        self.calls: list[list[str]] = []
+        self.pane = pane
+        self.nudge_count = 0
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            if "appear to have stopped" in prompt:
+                self.nudge_count += 1
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout=self.pane)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_idle_exhausts_nudges_and_fails_fast(tmp_path: Path) -> None:
+    fake = _IdleNeverCompletesTmux()
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,  # never trips run_timeout_ms; idle give-up terminates
+        sleep=lambda _: None,
+    )
+
+    assert fake.nudge_count == claude_runner.IDLE_NUDGE_ATTEMPTS
+    assert result.exit_code == -1
+    assert result.timed_out is True
+    assert "completion nudges" in result.stderr
+    assert any("kill-session" in call for call in fake.calls)
+
+
+class _ChangingPaneCompletesTmux:
+    """Pane changes on every capture (the working spinner/elapsed timer redraws),
+    so the idle detector must never fire; done lands after a while."""
+
+    def __init__(
+        self, result_text: str = "SYMPHONY_RESULT: done", complete_after: int = 50
+    ):
+        self.calls: list[list[str]] = []
+        self.captures = 0
+        self.complete_after = complete_after
+        self.result_text = result_text
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.nudge_count = 0
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            if "appear to have stopped" in prompt:
+                self.nudge_count += 1
+            return Completed()
+        if "capture-pane" in command:
+            self.captures += 1
+            if (
+                self.captures >= self.complete_after
+                and self.result_file is not None
+                and self.done_file is not None
+            ):
+                self.result_file.write_text(self.result_text, encoding="utf-8")
+                self.done_file.write_text("", encoding="utf-8")
+            # Ready pattern stays present; the trailing counter changes each call.
+            return Completed(stdout=f"bypass permissions on\nworking {self.captures}")
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_changing_pane_is_never_nudged(tmp_path: Path) -> None:
+    fake = _ChangingPaneCompletesTmux()
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    # A working agent (pane redraws every poll) is never treated as idle, even
+    # across far more polls than IDLE_POLLS_BEFORE_NUDGE.
+    assert fake.captures > claude_runner.IDLE_POLLS_BEFORE_NUDGE
+    assert fake.nudge_count == 0
+    assert result.exit_code == 0
+
+
 def test_claude_runner_does_not_invoke_engine_sh_or_print_mode() -> None:
     source = Path("claude_runner.py").read_text(encoding="utf-8")
     assert "engine.sh" not in source

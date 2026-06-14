@@ -46,6 +46,16 @@ SUBMIT_RETRY_INTERVAL_SECONDS = 1.0
 # done-but-empty result as a failure.
 RESULT_GRACE_SECONDS = 3.0
 RESULT_GRACE_STEP_SECONDS = 0.5
+# When Claude ends its turn without performing the completion protocol it sits
+# idle at the prompt: the tmux session stays alive and no done file ever lands,
+# so the poll loop would otherwise wait out the full run_timeout_ms (an hour by
+# default). Detect that stall by watching for the pane to stop changing -- while
+# Claude is working its spinner/elapsed-timer redraws the pane at least once a
+# second, so a pane that is byte-for-byte unchanged across this many 1s polls
+# means the agent is parked. On idle, nudge it to complete the protocol a bounded
+# number of times, then give up early rather than burning the full timeout.
+IDLE_POLLS_BEFORE_NUDGE = 30
+IDLE_NUDGE_ATTEMPTS = 2
 _CLAUDE_PROBE_FAILURE_REASON: str | None = None
 
 
@@ -459,6 +469,9 @@ def run_claude_agent(
         _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
 
         deadline = started + (config.run_timeout_ms / 1000)
+        last_pane: str | None = None
+        unchanged_polls = 0
+        nudges_used = 0
         while clock() <= deadline:
             if done_file.exists():
                 stdout = _read_result_with_grace(result_file, sleep=sleep)
@@ -483,6 +496,47 @@ def run_claude_agent(
                     socket_path, session_name, run_func=run_func
                 )
                 return _logged_result(issue, 1, duration_ms, False, "", stderr)
+            pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
+            if pane == last_pane:
+                unchanged_polls += 1
+            else:
+                unchanged_polls = 0
+                last_pane = pane
+            if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
+                if nudges_used >= IDLE_NUDGE_ATTEMPTS:
+                    duration_ms = int((clock() - started) * 1000)
+                    tail = _capture_pane_tail(
+                        socket_path, session_name, run_func=run_func
+                    )
+                    stderr = (
+                        "claude idle at prompt with no done file after "
+                        f"{IDLE_NUDGE_ATTEMPTS} completion nudges; agent ended its "
+                        "turn without completing the Symphony completion "
+                        f"protocol\n{tail}"
+                    )
+                    LOGGER.info(
+                        "claude_idle_no_completion issue_id=%s nudges=%s "
+                        "duration_ms=%s",
+                        issue.id,
+                        nudges_used,
+                        duration_ms,
+                    )
+                    return _logged_result(issue, -1, duration_ms, True, "", stderr)
+                _send_nudge(
+                    run_func,
+                    socket_path,
+                    session_name,
+                    prompt_file,
+                    result_file,
+                    done_file,
+                    sleep=sleep,
+                )
+                nudges_used += 1
+                unchanged_polls = 0
+                last_pane = None
+                LOGGER.info(
+                    "claude_idle_nudge issue_id=%s nudge=%s", issue.id, nudges_used
+                )
             sleep(1.0)
 
         duration_ms = int((clock() - started) * 1000)
@@ -641,6 +695,41 @@ def _paste_and_submit(
 def _paste_pending(pane: str) -> bool:
     """True when the pane still shows an unsubmitted pasted-prompt placeholder."""
     return "pasted text" in pane.lower()
+
+
+def _nudge_text(result_file: Path, done_file: Path) -> str:
+    """Reminder pasted into an idle session to finish the completion protocol."""
+    return (
+        "You appear to have stopped without completing the Symphony completion "
+        "protocol. Nobody can respond live. Finish now, in order:\n"
+        "1. Use your Write tool to write your full final output (the "
+        "SYMPHONY_RESULT line plus the SYMPHONY_SUMMARY_BEGIN/SYMPHONY_SUMMARY_END "
+        "block, or a SYMPHONY_QUESTION_BEGIN/SYMPHONY_QUESTION_END block) to this "
+        f"literal result file path: {result_file}\n"
+        f"2. Confirm the result file exists and is non-empty (test -s {result_file}).\n"
+        f"3. ONLY after that confirmation, create this literal done file path: "
+        f"{done_file}\n"
+        "Do NOT create the done file if the result file is missing or empty."
+    )
+
+
+def _send_nudge(
+    run_func: Callable[..., CompletedLike],
+    socket_path: Path,
+    session_name: str,
+    prompt_file: Path,
+    result_file: Path,
+    done_file: Path,
+    *,
+    sleep: Callable[[float], object],
+) -> None:
+    """Paste a completion-protocol reminder into an idle session and submit it.
+
+    Reuses ``_paste_and_submit`` so the same paste/Enter race handling applies.
+    The idle input box is empty, so the reminder is submitted as a fresh turn.
+    """
+    prompt_file.write_text(_nudge_text(result_file, done_file), encoding="utf-8")
+    _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
 
 
 def _read_result_with_grace(
