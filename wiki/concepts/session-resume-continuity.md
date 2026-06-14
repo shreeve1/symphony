@@ -52,7 +52,7 @@ tags: [session-resume, continuity, re-feed, question-park, session-tail, checkpo
 
 Symphony's **Continuity** model is how a re-dispatched Issue picks up where the agent left off. Two modes (CONTEXT.md glossary: Continuity / Re-feed / Session Resume):
 
-- **Re-feed** — stateless, the guaranteed floor. Re-render full `comments_md` + `context_md` into a fresh prompt; a new process re-reads them. This is today's only mode and stays the fallback. [source: wiki/concepts/operator-reply.md]
+- **Re-feed** — stateless, the guaranteed floor. Re-render full `comments_md` + `context_md` into a fresh prompt; a new process re-reads them. Stays the fallback whenever Session Resume is ineligible. [source: wiki/concepts/operator-reply.md]
 - **Session Resume** — stateful optimization. Resume the agent's own on-disk CLI session (verbatim conversation history) via a derived id, sending only the new operator-reply delta. Best-effort. [source: docs/adr/0009-session-resume-continuity.md]
 
 A session persists the **conversation, not the filesystem** — resume restores what the agent read/decided, not the working tree. [source: wiki/raw/sessions/2026-06-13-session-resume-continuity-design.md]
@@ -86,7 +86,7 @@ A session persists the **conversation, not the filesystem** — resume restores 
 
 ## Relation to existing knowledge
 
-This conditionally reverses the "transcript re-feed, not session resume" stance in [operator-reply](operator-reply.md) (line 60-62) for **pi RPC and Claude runs that pass eligibility** — but **re-feed remains the floor**, so that page stays accurate for fallback, non-RPC Pi, and any ineligible run.
+This **supersedes** the original "transcript re-feed, not session resume" stance in [operator-reply](operator-reply.md) (that section is now marked superseded): Session Resume is live for eligible pi RPC and Claude runs — but **re-feed remains the floor**, so that page's historical paragraph stays accurate for any ineligible run (agent/cwd/SHA change, missing session).
 
 ## Claims
 
