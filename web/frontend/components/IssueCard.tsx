@@ -1,3 +1,7 @@
+import type {
+  DraggableAttributes,
+  DraggableSyntheticListeners,
+} from "@dnd-kit/core";
 import { Bot } from "lucide-react";
 
 import type { Issue } from "@/lib/api";
@@ -51,20 +55,36 @@ function AgentTag({
   );
 }
 
-// A single board card: title, agent/model quick-view, age.
+// A single board card: title, agent/model quick-view, age. The drag props are
+// supplied by KanbanBoard's useDraggable wrapper; when omitted (e.g. the
+// DragOverlay clone) the card renders as a plain clickable button.
 export function IssueCard({
   issue,
   onClick,
+  dragRef,
+  dragListeners,
+  dragAttributes,
+  isDragging,
 }: {
   issue: Issue;
-  onClick: () => void;
+  onClick?: () => void;
+  dragRef?: (element: HTMLElement | null) => void;
+  dragListeners?: DraggableSyntheticListeners;
+  dragAttributes?: DraggableAttributes;
+  isDragging?: boolean;
 }) {
   return (
     <button
+      ref={dragRef}
       type="button"
       data-testid="issue-card"
       onClick={onClick}
-      className="w-full rounded-lg border bg-background p-3 text-left shadow-sm transition hover:border-foreground/30 hover:shadow"
+      className={cn(
+        "w-full rounded-lg border bg-background p-3 text-left shadow-sm transition hover:border-foreground/30 hover:shadow",
+        isDragging && "opacity-40",
+      )}
+      {...dragAttributes}
+      {...dragListeners}
     >
       <p className="text-sm font-medium leading-snug">{issue.title}</p>
       <div className="mt-2 flex items-center justify-between gap-2">
