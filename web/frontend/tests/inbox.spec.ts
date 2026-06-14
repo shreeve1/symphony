@@ -143,7 +143,9 @@ test.describe
 			).not.toBeVisible({ timeout: 15_000 });
 
 			await page.goto("/homelab");
-			const boardCard = page.getByTestId("issue-card").filter({ hasText: title });
+			const boardCard = page
+				.getByTestId("issue-card")
+				.filter({ hasText: title });
 			await expect(boardCard).toBeVisible();
 
 			expectCleanConsole(problems);
