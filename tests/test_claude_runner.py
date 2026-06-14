@@ -209,6 +209,139 @@ def test_reap_orphan_claude_sockets_no_sockets_skips_tmux() -> None:
     assert calls == []
 
 
+def test_reap_orphan_claude_sockets_skips_live_owned(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A socket whose sidecar pidfile names a still-live, matching tmux server is
+    a live run and must never be killed, even outside the boot sweep."""
+    caplog.set_level(logging.INFO)
+    pid_dir = tmp_path / "claude"
+    pid_dir.mkdir()
+    socket = tmp_path / "symphony-claude-1-a.sock"
+    (pid_dir / "symphony-claude-1-a.pid").write_text("999 12345", encoding="utf-8")
+    calls: list[list[str]] = []
+    removed: list[Path] = []
+
+    count = reap_orphan_claude_sockets(
+        glob_func=lambda pattern: [socket],
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        unlink_func=lambda path: removed.append(path),
+        pidfile_dir=pid_dir,
+        is_alive=lambda pid: pid == 999,
+        read_start_time=lambda pid: "12345",
+    )
+
+    assert count == 0
+    assert calls == []
+    assert removed == []
+    assert f"claude_socket_skipped_live path={socket}" in caplog.text
+
+
+def test_reap_orphan_claude_sockets_reaps_dead_owner(tmp_path: Path) -> None:
+    """A socket whose recorded tmux server pid is dead is a true orphan: the
+    stale socket and its sidecar pidfile are reaped."""
+    pid_dir = tmp_path / "claude"
+    pid_dir.mkdir()
+    socket = tmp_path / "symphony-claude-1-a.sock"
+    pidfile = pid_dir / "symphony-claude-1-a.pid"
+    pidfile.write_text("999 12345", encoding="utf-8")
+    calls: list[list[str]] = []
+    removed: list[Path] = []
+
+    count = reap_orphan_claude_sockets(
+        glob_func=lambda pattern: [socket],
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        unlink_func=lambda path: removed.append(path),
+        pidfile_dir=pid_dir,
+        is_alive=lambda pid: False,
+        read_start_time=lambda pid: "12345",
+    )
+
+    assert count == 1
+    assert calls == [["tmux", "-S", str(socket), "kill-server"]]
+    assert removed == [socket, pidfile]
+
+
+def test_reap_orphan_claude_sockets_reaps_on_start_time_mismatch(
+    tmp_path: Path,
+) -> None:
+    """An alive pid whose start-time no longer matches the recorded value (pid
+    reuse) is not the original tmux server, so the stale socket is reaped."""
+    pid_dir = tmp_path / "claude"
+    pid_dir.mkdir()
+    socket = tmp_path / "symphony-claude-1-a.sock"
+    pidfile = pid_dir / "symphony-claude-1-a.pid"
+    pidfile.write_text("999 12345", encoding="utf-8")
+    calls: list[list[str]] = []
+    removed: list[Path] = []
+
+    count = reap_orphan_claude_sockets(
+        glob_func=lambda pattern: [socket],
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        unlink_func=lambda path: removed.append(path),
+        pidfile_dir=pid_dir,
+        is_alive=lambda pid: True,
+        read_start_time=lambda pid: "99999",
+    )
+
+    assert count == 1
+    assert calls == [["tmux", "-S", str(socket), "kill-server"]]
+    assert removed == [socket, pidfile]
+
+
+def test_register_claude_run_writes_server_pid_and_start_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid_dir = tmp_path / "claude"
+    monkeypatch.setattr(claude_runner, "_pid_start_time", lambda pid: "778899")
+
+    def fake_run(command, **kwargs):
+        assert "display-message" in command
+        return Completed(stdout="4242\n")
+
+    pidfile = claude_runner._register_claude_run(
+        Path("/tmp/symphony-claude-1-a.sock"),
+        "symphony-claude-1-a",
+        run_func=fake_run,
+        pidfile_dir=pid_dir,
+    )
+
+    assert pidfile == pid_dir / "symphony-claude-1-a.pid"
+    assert pidfile.read_text(encoding="utf-8") == "4242 778899"
+
+
+def test_register_claude_run_skips_when_server_pid_unavailable(
+    tmp_path: Path,
+) -> None:
+    pid_dir = tmp_path / "claude"
+
+    pidfile = claude_runner._register_claude_run(
+        Path("/tmp/symphony-claude-1-a.sock"),
+        "symphony-claude-1-a",
+        run_func=lambda command, **kwargs: Completed(stdout=""),
+        pidfile_dir=pid_dir,
+    )
+
+    assert pidfile is None
+    assert not pid_dir.exists()
+
+
+def test_claude_cleanup_removes_pidfile(tmp_path: Path) -> None:
+    pidfile = tmp_path / "symphony-claude-1-a.pid"
+    pidfile.write_text("4242 778899", encoding="utf-8")
+
+    cleanup = ClaudeRunCleanup(
+        tmp_path / "missing.sock",
+        "missing-session",
+        tmp_path / "missing-dir",
+        run_func=lambda *a, **k: Completed(),
+        pidfile_path=pidfile,
+    )
+    cleanup.cleanup()
+
+    assert not pidfile.exists()
+
+
 def test_claude_success_uses_result_file_stdout_and_pane_stderr(tmp_path: Path) -> None:
     fake = TmuxFake(
         pane="\x1b[31mshift+tab to cycle\x1b[0m", result_text="hello without marker"

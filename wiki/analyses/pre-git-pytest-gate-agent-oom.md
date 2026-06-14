@@ -113,8 +113,42 @@ hook scoping never engaged. The hook change (C-0198) is retained as hygiene only
 `issue.state` CHECK now lists `'archived'`, and a BEGIN/ROLLBACK `state='archived'` UPDATE was accepted. The
 original "archive does nothing" report is resolved.
 
+## Defence-in-depth: PID/start-time ownership guard in the reaper (C-0202)
+
+The `tests/conftest.py` fix (C-0200) stops *tests* reaping live sockets. The remaining
+belt-and-suspenders makes the *reaper code itself* refuse to kill a live-run socket regardless of
+caller, mirroring the mature `reap_orphan_rpc_processes` ownership guard (#058).
+
+- **Launch side** (`claude_runner.run_claude_agent`): after a successful `tmux new-session`,
+  `_register_claude_run` queries the real tmux **server** pid via `display-message -p '#{pid}'`
+  (tmux double-forks, so the `new-session` caller pid is not the server pid) and writes a sidecar
+  pidfile `<runtime>/claude/<namespace>.pid` containing `"<server_pid> <start_time>"`, where
+  `start_time` is `/proc/<pid>/stat` field 22 (reused from `agent_runner._pid_start_time`). Runtime
+  dir = `SYMPHONY_RUNTIME_DIR` (default `/tmp/symphony`), the same root the RPC reaper uses. The
+  pidfile is removed on per-run teardown via `ClaudeRunCleanup.pidfile_path`. Best-effort: pidfile
+  IO never breaks dispatch.
+- **Reaper** (`reap_orphan_claude_sockets`): for each globbed `/tmp/symphony-claude-*.sock`, it reads
+  the sidecar pidfile and **skips** the socket when the recorded pid is alive AND its start-time
+  still matches (a live run — logged `claude_socket_skipped_live`). It reaps only true orphans —
+  pidfile missing, server pid dead, or start-time mismatch (pid reuse) — killing the tmux server and
+  unlinking both the stale socket and the sidecar. This inverts the RPC reaper's kill condition
+  (RPC kills alive+match under the boot-once assumption; the Claude reaper can be reached mid-run, so
+  it *protects* alive+match). The start-time guard survives pid reuse and argv masking.
+- Injection surface mirrors the RPC reaper: `pidfile_dir`, `environ`, `is_alive`, `read_start_time`,
+  plus the existing `glob_func`/`run_func`/`unlink_func`, so unit tests stay hermetic.
+- Boot-sweep purpose preserved: stale sockets whose tmux server died are still cleaned (dead → reap).
+  Under `PrivateTmp` the service gets a fresh `/tmp` per start, so cross-instance orphans don't
+  surface via the socket glob anyway.
+
+Tests (`tests/test_claude_runner.py`): live-owned socket skipped; dead-owner and start-time-mismatch
+sockets reaped (socket + sidecar); `_register_claude_run` writes/omits the pidfile; cleanup removes
+it. Targeted `uv run pytest tests/test_claude_runner.py tests/test_main.py -q` green (41 passed);
+full suite green except the known-flaky `test_two_sqlite_writers_succeed_without_busy_errors`
+(passes in isolation, unrelated).
+
 ## Related claims
 
+- C-0202 — the reaper's PID/start-time ownership guard (defence-in-depth atop C-0200).
 - C-0200 — real root cause (test reaps live sockets) + the `tests/conftest.py` fix; corrects C-0198.
 - C-0197 — the `...sock` string is a capture-after-death artifact (still correct).
 - C-0198 — pre-git hook hygiene change; its OOM rationale is corrected by C-0200.

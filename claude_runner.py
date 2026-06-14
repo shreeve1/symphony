@@ -14,7 +14,16 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent_runner import AgentResult, AgentRunnerError, CompletedLike, _strip_ansi
+from agent_runner import (
+    _DEFAULT_RUNTIME_DIR,
+    RPC_RUNTIME_DIR_ENV,
+    AgentResult,
+    AgentRunnerError,
+    CompletedLike,
+    _pid_alive,
+    _pid_start_time,
+    _strip_ansi,
+)
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
 from session_continuity import derive_session_id
@@ -104,16 +113,43 @@ def reap_orphan_claude_sockets(
     glob_func: Callable[[str], Iterable[str | Path]] | None = None,
     run_func: Callable[..., CompletedLike] = subprocess.run,
     unlink_func: Callable[[Path], object] | None = None,
+    pidfile_dir: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    is_alive: Callable[[int], bool] | None = None,
+    read_start_time: Callable[[int], str] | None = None,
 ) -> int:
-    """Kill orphan Claude tmux servers left behind by prior scheduler runs."""
+    """Kill orphan Claude tmux servers left behind by prior scheduler runs.
+
+    Ownership guard (the tmux-socket analogue of ``reap_orphan_rpc_processes``):
+    each dispatch records a sidecar pidfile under ``<runtime>/claude`` naming the
+    tmux server pid and its ``/proc/<pid>/stat`` start-time. A socket is reaped
+    only when its recorded run is gone — the pidfile is missing, the server pid is
+    dead, or the start-time no longer matches (pid reuse). A socket whose tmux
+    server is still alive with a matching start-time is a LIVE run and is skipped,
+    so this reaper can never kill a live agent's own socket even if it is reached
+    outside the genuine boot sweep. Stale-server sockets from a crashed prior run
+    are still cleaned, preserving the boot-sweep purpose.
+    """
 
     if glob_func is None:
         glob_func = _default_claude_socket_glob
     if unlink_func is None:
         unlink_func = _default_unlink
+    if is_alive is None:
+        is_alive = _pid_alive
+    if read_start_time is None:
+        read_start_time = _pid_start_time
+    if pidfile_dir is None:
+        pidfile_dir = _claude_pidfile_dir(environ)
     count = 0
     for raw_path in glob_func("/tmp/symphony-claude-*.sock"):
         socket_path = Path(raw_path)
+        pidfile = pidfile_dir / f"{socket_path.stem}.pid"
+        if _claude_run_owned_live(
+            pidfile, is_alive=is_alive, read_start_time=read_start_time
+        ):
+            LOGGER.info("claude_socket_skipped_live path=%s", socket_path)
+            continue
         with suppress(OSError):
             run_func(
                 ["tmux", "-S", str(socket_path), "kill-server"],
@@ -123,10 +159,98 @@ def reap_orphan_claude_sockets(
             )
         with suppress(OSError, FileNotFoundError):
             unlink_func(socket_path)
+        if pidfile.exists():
+            with suppress(OSError, FileNotFoundError):
+                unlink_func(pidfile)
         LOGGER.info("claude_socket_reaped path=%s", socket_path)
         count += 1
     LOGGER.info("claude_socket_reap_done count=%d", count)
     return count
+
+
+def _claude_pidfile_dir(environ: Mapping[str, str] | None = None) -> Path:
+    source = os.environ if environ is None else environ
+    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(_DEFAULT_RUNTIME_DIR)))
+    return runtime_dir / "claude"
+
+
+def _claude_run_owned_live(
+    pidfile: Path,
+    *,
+    is_alive: Callable[[int], bool],
+    read_start_time: Callable[[int], str],
+) -> bool:
+    """True when the sidecar pidfile names a still-live, matching tmux server."""
+    try:
+        recorded = pidfile.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    parts = recorded.split()
+    if len(parts) != 2:
+        return False
+    try:
+        pid = int(parts[0])
+    except ValueError:
+        return False
+    start_time = parts[1]
+    return is_alive(pid) and read_start_time(pid) == start_time
+
+
+def _claude_server_pid(
+    socket_path: Path,
+    session_name: str,
+    *,
+    run_func: Callable[..., CompletedLike],
+) -> int | None:
+    """Return the tmux server pid for a socket, or None if it cannot be read.
+
+    tmux double-forks the server, so the ``new-session`` caller pid is not the
+    server pid; ``display-message '#{pid}'`` queries the real server pid.
+    """
+    try:
+        result = _tmux(
+            run_func,
+            socket_path,
+            "display-message",
+            "-p",
+            "-t",
+            session_name,
+            "#{pid}",
+        )
+    except OSError:
+        return None
+    text = (result.stdout or "").strip()
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _register_claude_run(
+    socket_path: Path,
+    session_name: str,
+    *,
+    run_func: Callable[..., CompletedLike],
+    pidfile_dir: Path,
+) -> Path | None:
+    """Record a sidecar pidfile so the reaper can recognise this live run.
+
+    Best-effort: never let pidfile IO break dispatch. The pidfile names the tmux
+    server pid and its start-time; the boot reaper uses both to tell a live run
+    from a stale socket (the start-time guard survives pid reuse).
+    """
+    server_pid = _claude_server_pid(socket_path, session_name, run_func=run_func)
+    if server_pid is None:
+        return None
+    start_time = _pid_start_time(server_pid)
+    if not start_time:
+        return None
+    pidfile = pidfile_dir / f"{socket_path.stem}.pid"
+    with suppress(OSError):
+        pidfile_dir.mkdir(parents=True, exist_ok=True)
+        pidfile.write_text(f"{server_pid} {start_time}", encoding="utf-8")
+        return pidfile
+    return None
 
 
 def _default_claude_socket_glob(pattern: str) -> Iterable[Path]:
@@ -146,6 +270,7 @@ class ClaudeRunCleanup:
     temp_dir: Path
     run_func: Callable[..., CompletedLike] = subprocess.run
     remove_tree: Callable[[str], object] = shutil.rmtree
+    pidfile_path: Path | None = None
     cleaned: bool = field(default=False, init=False)
 
     def cleanup(self) -> None:
@@ -168,6 +293,9 @@ class ClaudeRunCleanup:
             )
         with suppress(OSError):
             self.socket_path.unlink(missing_ok=True)
+        if self.pidfile_path is not None:
+            with suppress(OSError):
+                self.pidfile_path.unlink(missing_ok=True)
         with suppress(FileNotFoundError):
             self.remove_tree(str(self.temp_dir))
 
@@ -196,6 +324,7 @@ def run_claude_agent(
     nonce_factory: Callable[[], str] | None = None,
     create_worktree_func: Callable[[Path, str, str, str], Path] | None = None,
     ready_timeout_s: float = READY_TIMEOUT_SECONDS,
+    pidfile_dir: Path | None = None,
 ) -> AgentResult:
     """Run Claude for an issue using tmux send-keys and file completion."""
 
@@ -261,6 +390,13 @@ def run_claude_agent(
             duration_ms = int((clock() - started) * 1000)
             stderr = _strip_ansi(f"{launch.stdout}\n{launch.stderr}".strip())
             return _logged_result(issue, 1, duration_ms, False, "", stderr)
+
+        cleanup.pidfile_path = _register_claude_run(
+            socket_path,
+            session_name,
+            run_func=run_func,
+            pidfile_dir=pidfile_dir or _claude_pidfile_dir(source_env),
+        )
 
         ready = _wait_until_ready(
             socket_path,
