@@ -1,7 +1,7 @@
 ---
 id: 057
 title: Podium flyout steer box + tail panel (pi live Steering UI) — Slice D
-status: review
+status: done
 blocked_by: [053, 056]
 parent: null
 priority: 0
@@ -21,11 +21,11 @@ The operator-facing surface for live Steering: extend the #053 tail flyout with 
 
 ## Acceptance criteria
 
-- [ ] Steer box appears and is enabled only for an issue with a live pi RPC run; absent/disabled for Claude and idle issues.
-- [ ] Submitting a steer posts to the #056 endpoint and the operator sees it reflected in the live tail (queued/delivered).
-- [ ] Abort control stops the run and the flyout reflects completion.
-- [ ] Switching issues rebinds tail + steer to the newly-open issue; no cross-issue leakage.
-- [ ] e2e covers: open a (faked) live run, stream tail, submit a steer, see it appear.
+- [x] Steer box appears and is enabled only for an issue with a live pi RPC run; absent/disabled for Claude and idle issues.
+- [x] Submitting a steer posts to the #056 endpoint and the operator sees it reflected in the live tail (queued/delivered).
+- [x] Abort control stops the run and the flyout reflects completion.
+- [x] Switching issues rebinds tail + steer to the newly-open issue; no cross-issue leakage.
+- [x] e2e covers: open a (faked) live run, stream tail, submit a steer, see it appear.
 
 ## Verification
 
@@ -34,3 +34,7 @@ The operator-facing surface for live Steering: extend the #053 tail flyout with 
 ## Blocked by
 
 - Blocked by #053, #056
+
+## Implementation Notes
+
+Added a live steering composer to the Session tab that enables only for active pi RPC runs, posts steer/abort requests to the existing `/api/issues/{id}/steer` endpoint, appends local queued/delivered tail entries, and refreshes issue comments so the durable `Operator Steer` / `Operator Abort` blocks appear. Exposed binding `pi_mode` through `/api/bindings`, added typed frontend steer/abort clients, and covered live steer, disabled Claude/idle states, abort, and tail/comment visibility with `steer-flyout.spec.ts`.

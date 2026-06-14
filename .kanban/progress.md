@@ -87,3 +87,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Used `SYMPHONY_RUNTIME_DIR/steer/<run_id>.jsonl` as the transient decoupled queue; kept comments as the durable human-facing record; rejected live steering for Claude with a park-and-reply response.
 **Conventions established:** Running pi RPC candidates carry `active_run_id` from the scheduler's Run row into the adapter; live steer queue readers consume only complete newline-delimited JSON records and tolerate missing/stale queue files.
 **Notes for next iteration:** #057 can build UI on `POST /api/issues/{id}/steer`; #058 can extend lifecycle controls without changing the queue record shape.
+
+## #057 Podium flyout steer box + tail panel — 2026-06-14
+
+**What changed:** Added the Session-tab live steering composer, typed steer/abort API clients, local queued/delivered tail echoes, and e2e coverage for live steer, abort, and disabled states.
+**Files:** `web/api/main.py`, `web/api/tests/test_endpoints.py`, `web/frontend/components/IssueFlyout.tsx`, `web/frontend/components/QueryProvider.tsx`, `web/frontend/components/SessionTailPanel.tsx`, `web/frontend/lib/api.ts`, `web/frontend/tests/fixtures.ts`, `web/frontend/tests/steer-flyout.spec.ts`, `.kanban/issues/057-steer-ui-flyout.md`.
+**Decisions:** Exposed binding `pi_mode` through `/api/bindings` so the UI can enable steering only for live pi RPC runs without duplicating bindings.yml parsing in the frontend.
+**Conventions established:** Frontend live-control affordances use the existing tail buffer for optimistic queued/delivered operator events, while `comments_md` remains the durable operator-command record after the API response.
+**Notes for next iteration:** #058 can focus on RPC lifecycle/ops hardening; the steer UI already covers disabled non-RPC/Claude/idle states.
