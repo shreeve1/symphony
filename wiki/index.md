@@ -6,7 +6,7 @@
 |------|---------|---------|---------|
 | [sources/symphony-context.md](sources/symphony-context.md) | Summary of `CONTEXT.md` — Symphony's canonical domain glossary | `wiki/raw/symphony-context.md`, `CONTEXT.md` | 2026-06-09 |
 | [sources/runbook-symphony.md](sources/runbook-symphony.md) | Summary of the homelab Symphony Automation Runbook | `wiki/raw/runbook-symphony.md`, `~/homelab/docs/runbooks/automation/symphony.md` | 2026-06-09 |
-| [sources/symphony-host-service-unit.md](sources/symphony-host-service-unit.md) | Live systemd unit snapshot — env block, dead OpenCode drift, secrets-via-env-file convention | `wiki/raw/symphony-host.service` | 2026-06-09 |
+| [sources/symphony-host-service-unit.md](sources/symphony-host-service-unit.md) | Live systemd unit snapshot — env block, dead OpenCode drift, secrets-via-env-file convention, and 2026-06-15 `NoNewPrivileges=no` drop-in override | `wiki/raw/symphony-host.service`, `wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md` | 2026-06-15 |
 | [sources/podium-systemd-units.md](sources/podium-systemd-units.md) | Live Podium systemd unit snapshots — api loopback / web now LAN-bound (`HOST=10.20.20.16`, #023d), `--workers 1`, telegram-alert failure hook wiring, wiring-only alert verification convention | `wiki/raw/podium-api.service`, `wiki/raw/podium-web.service`, `wiki/raw/telegram-alert@.service`, `wiki/raw/send-telegram-systemd-alert` | 2026-06-12 |
 
 ## Entities
@@ -24,7 +24,7 @@
 | Page | Summary | Sources | Updated |
 |------|---------|---------|---------|
 | [concepts/symphony-engine.md](concepts/symphony-engine.md) | Engine model — core loop, Bindings, Mode, Agent, Workflow, Tracker abstraction, Run lifecycle, Landing | `wiki/raw/symphony-context.md` | 2026-06-09 |
-| [concepts/symphony-operations.md](concepts/symphony-operations.md) | Operational model — service, restart ritual, scheduling, blocked reconciler, Telegram, failure pointers | `wiki/raw/runbook-symphony.md`, CLAUDE.md | 2026-06-09 |
+| [concepts/symphony-operations.md](concepts/symphony-operations.md) | Operational model — service, restart ritual, agent sudo posture, scheduling, blocked reconciler, Telegram, failure pointers | `wiki/raw/runbook-symphony.md`, CLAUDE.md, `wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md` | 2026-06-15 |
 | [concepts/tracker-contract.md](concepts/tracker-contract.md) | Tracker Contract — engine Roles, required/optional, data shape, resolvers | `wiki/raw/tracker_contract.py`, `wiki/raw/adr-0004-tracker-contract.md` | 2026-06-09 |
 | [concepts/scheduler-loop.md](concepts/scheduler-loop.md) | `scheduler.py` — constants, semaphore concurrency, rate-limit cooldown, dirty-base approval, top-level coroutines | `scheduler.py` | 2026-06-09 |
 | [concepts/agent-runner-and-worktree.md](concepts/agent-runner-and-worktree.md) | Pre-thin-engine — `run_worktree.py`, `ClaudeAgentAdapter`, worktree lifecycle. Superseded by `concepts/thin-engine-v2.md` for coding bindings. | `agent_runner.py`, `run_worktree.py` | 2026-06-09 |
@@ -48,7 +48,7 @@
 | [analyses/symphony-plan-history.md](analyses/symphony-plan-history.md) | Five plans under `plans/` — landed status, key decisions, open follow-ups | 5 plan raw files | 2026-06-09 |
 | [analyses/brainstorm-pi-swap.md](analyses/brainstorm-pi-swap.md) | Pi-executor-swap brainstorm — rejected designs, silent-failure rationale, locked-decisions table | `wiki/raw/brainstorm-pi-swap.md` | 2026-06-09 |
 | [analyses/pi-swap-review-specs.md](analyses/pi-swap-review-specs.md) | 4 reviewer PRD artifacts — multi-round audit discipline against the pi-swap plan | 4 spec PRD files | 2026-06-09 |
-| [analyses/symphony-skills-index.md](analyses/symphony-skills-index.md) | Podium-era `symphony-*` skill suite — binding-scaffold, smoke/status Podium API paths, Plane retirement split, catalog maintenance skills, repo-local restart/troubleshooter, lifecycle map | `.claude/skills/symphony-*`, `skill_migration.py`, `tests/skills/` | 2026-06-12 |
+| [analyses/symphony-skills-index.md](analyses/symphony-skills-index.md) | Podium-era `symphony-*` skill suite — binding-scaffold + binding-remove pair, onboard/offboard umbrellas, smoke/status Podium API paths, Plane retirement split, catalog maintenance skills, repo-local restart/troubleshooter, lifecycle map | `.claude/skills/symphony-*`, `skill_migration.py`, `tests/skills/` | 2026-06-14 |
 | [analyses/symphony-tests-index.md](analyses/symphony-tests-index.md) | 14 test files, 435 tests — coverage map and validation contract | `tests/*.py` | 2026-06-09 |
 | [analyses/trading-smoke-rate-limit-debugging.md](analyses/trading-smoke-rate-limit-debugging.md) | Trading smoke debugging — post-agent Plane 429 recovery, shared cooldown, optional-label scan fix, conversation-mode landing-proof gap | session capture, `scheduler.py`, `prompt_renderer.py` | 2026-06-09 |
 | [analyses/podium-014-new-issue-flow.md](analyses/podium-014-new-issue-flow.md) | Podium #014 — POST issues endpoint contract, INSERT OR IGNORE seeding pivot, /options dropdown endpoint, optimistic modal UX, cross-slice constraints for #015/#020 | `wiki/raw/sessions/2026-06-10-podium-014-new-issue-flow.md`, `web/api/main.py`, `web/api/seed.py` | 2026-06-10 |

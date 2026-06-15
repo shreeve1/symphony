@@ -145,6 +145,11 @@ def remove_podium_binding(
         ).fetchone()
         if exists is not None:
             if purge:
+                # issue.latest_run_id and run.issue_id reference each other, so
+                # no single delete order satisfies the cycle while foreign_keys
+                # is ON (db.connect enables it). Defer FK checks to commit, by
+                # which point every row in the cycle is gone.
+                connection.execute("PRAGMA defer_foreign_keys = ON")
                 deleted_run_count = connection.execute(
                     """
                     DELETE FROM run WHERE issue_id IN (

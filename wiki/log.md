@@ -11,6 +11,34 @@ Append entries with this format:
 
 ---
 
+## [2026-06-15] session-update | symphony-host NoNewPrivileges disabled
+
+- Actor: agent + operator
+- Inputs: current session decision; `systemctl show symphony-host.service --property=NoNewPrivileges,ActiveState,SubState,MainPID,ActiveEnterTimestamp`; `systemctl cat symphony-host.service`; Run #33 log evidence (`/home/james/symphony/runs/33.log`)
+- Outputs: new raw capture `wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md`; updated `wiki/sources/symphony-host-service-unit.md`; updated `wiki/concepts/symphony-operations.md`; claims **C-0209** and **C-0210** added; `wiki/index.md` and `wiki/ROUTING.md` updated
+- Notes: James chose the global option to remove the `NoNewPrivileges` boundary from `symphony-host.service` so scheduler-launched agents can attempt sudo-backed service/system changes if sudoers permits. Pi harness blocked direct unit-file editing; operator applied the drop-in manually. Base unit still declares `NoNewPrivileges=yes`, but the live drop-in sets `NoNewPrivileges=no`; verified active/running with `MainPID=562675`. This applies to all bindings, not just `symphony`; self-binding remains highest-risk. No secrets or env contents captured.
+
+## [2026-06-14] session-update | #023 symphony-binding-remove skill
+
+- Actor: agent
+- Inputs: issue #023 ("remove binding skill"), `.claude/skills/symphony-binding-scaffold/SKILL.md`, `skill_migration.py` (`remove_podium_binding` already present), `tests/skills/test_binding_scaffold.py`, `web/api/schema.py`
+- Outputs: new `.claude/skills/symphony-binding-remove/SKILL.md`; new `tests/skills/test_binding_remove.py` (4 cases); `analyses/symphony-skills-index.md` (sources + lifecycle map + per-skill section + date); claim **C-0206** added; `index.md` row + `ROUTING.md` keywords updated
+- Notes: Inverse of `symphony-binding-scaffold`. Helper `remove_podium_binding` already existed in `skill_migration.py:114-179` (archive default `purge=False`; destructive `purge=True`); this issue authored the operator-facing SKILL.md (pre-flight Issue/Run count check, purge confirmation gate, diff-before-commit, no-Plane rules) and the missing regression test. New skill auto-discovered by `scan_skills` (appears in the Podium dropdown after `symphony-skills` refresh). Tests: `tests/skills/` 24 passed. Not committed/restarted; no `.env` read.
+
+## [2026-06-14] session-update | #023 skill review — purge FK bug fixed
+
+- Actor: agent
+- Inputs: operator reply "review the skill for any gaps"; `skill_migration.py:remove_podium_binding`, `web/api/db.py:39-52`, `web/api/schema.py`, `.claude/skills/symphony-binding-remove/SKILL.md`
+- Outputs: fix in `skill_migration.py` (purge `PRAGMA defer_foreign_keys = ON`); `tests/skills/test_binding_remove.py` (purge test now sets `latest_run_id` + asserts no `binding_settings` orphan); SKILL.md safety additions (yaml comment-stripping, self-binding caveat, archive-reversal section); claim **C-0208** added + C-0206 refined; `analyses/symphony-skills-index.md` per-skill section extended
+- Notes: Real bug — `remove_podium_binding(purge=True)` raised `FOREIGN KEY constraint failed` for any binding whose issues had `latest_run_id` set (i.e. all dispatched issues), because `connect()` runs with `foreign_keys=ON` and `issue.latest_run_id`↔`run.issue_id` is a cycle no single delete order satisfies. Original test missed it (NULL `latest_run_id`). Fix defers FK checks to COMMIT. Reproduced live on a tmp DB (pre-fix fail, post-fix clean; `binding_settings` cascades). Archive path unaffected. Doc gaps also closed: comment-stripping (C-0171 parity), `symphony` self-binding removal caveat, how to reverse an archive. Tests: `tests/skills/` 26 passed. Not committed/restarted; no `.env` read.
+
+## [2026-06-14] session-update | #023 follow-ups — offboard umbrella + catalog index
+
+- Actor: agent
+- Inputs: operator reply "proceed with the follow-ups"; `.claude/skills/symphony-onboard-project/SKILL.md` + `tests/skills/test_onboard_project.py` (mirror pattern); `~/dotfiles/.claude/skills/SYMPHONY.md` (stale Plane-era catalog)
+- Outputs: new `.claude/skills/symphony-offboard-project/SKILL.md` + `tests/skills/test_offboard_project.py` (2 cases); dotfiles `SYMPHONY.md` gained a "Teardown a binding" section + corrected `bindings.yml` ownership line; `analyses/symphony-skills-index.md` (sources, lifecycle map, per-skill section); claim **C-0207** added + C-0206 note; `index.md` + `ROUTING.md` updated
+- Notes: `symphony-offboard-project` chains `symphony-bindings-status` → `symphony-binding-remove` → `symphony-restart`, archive-default/purge-gated, no auto-rollback, no Plane. dotfiles `SYMPHONY.md` is otherwise still Plane-era stale (onboarding names `symphony-project-scaffold` as primary, omits binding-scaffold/skills/models); only the teardown addition + ownership line corrected — full Podium rewrite of that catalog deferred (cross-repo, separate scope). Tests: `tests/skills/` all pass. Not committed/restarted; no `.env` read.
+
 ## [2026-06-14] session-update | claude_runner idle-at-prompt stall fix (Run #23)
 
 - Actor: agent

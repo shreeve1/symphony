@@ -3,12 +3,13 @@ title: Symphony operations
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-15
 sources:
   - wiki/raw/runbook-symphony.md
   - wiki/raw/symphony-context.md
+  - wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md
 confidence: high
-tags: [operations, runbook, blocked-reconciler, telegram, scheduling, troubleshooting]
+tags: [operations, runbook, blocked-reconciler, telegram, scheduling, troubleshooting, privileges]
 ---
 
 # Symphony operations
@@ -22,6 +23,7 @@ Distilled operational model for `symphony-host.service` on `aidev`. Source: home
 - Secrets env file: `/home/james/symphony-host.env` (mode `0600`; never print contents).
 - Failure alert: `OnFailure=telegram-alert@%n.service`.
 - Lock file: `SYMPHONY_LOCK_PATH=/run/symphony/symphony.lock`.
+- Privilege posture as of 2026-06-15: live `symphony-host.service` runs with `NoNewPrivileges=no` via its `override.conf` drop-in, even though the base unit still declares `NoNewPrivileges=yes` [source: wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md#durable-facts].
 
 ## Expected idle state
 
@@ -36,6 +38,14 @@ Distilled operational model for `symphony-host.service` on `aidev`. Source: home
 Use the `symphony-restart` skill: pre-sanity → ask James → restart → verify-log-lines (`symphony_started`, `reconcile_startup_*`, `dispatch_completed`).
 
 Autonomous healthcheck remediation may restart `symphony-host.service` and `homelab-temporal-patrol-worker.service` with cooldowns and post-restart verification. Human approval is required for `systemctl stop`, non-remediation changes, direct Plane mutations outside approved automation, Temporal schedule changes, smoke requeues, env edits, destructive actions [source: wiki/raw/runbook-symphony.md#68-75].
+
+## Agent sudo posture
+
+Before 2026-06-15, agents launched by `symphony-host.service` inherited `NoNewPrivileges=yes`, so `sudo systemctl ...` failed inside runs even when the operator wanted a restart. Run #33 in the `symphony` binding hit this while trying to restart `podium-web.service` after a clean frontend rebuild [source: wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md#durable-facts].
+
+James accepted the global safety tradeoff and changed the live service to `NoNewPrivileges=no`. This is not scoped per binding: all scheduler-dispatched agents can now attempt sudo-backed service or system changes if sudoers permits. The `symphony` self-binding has the largest blast radius because it can modify the scheduler repo while running under this broader privilege posture [source: wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md#decisions].
+
+Policy gates still matter. Unit edits, service restarts/stops, Plane mutations, smoke requeues, env edits, and destructive operations still require James approval per project instructions; the kernel no-new-privileges flag no longer enforces that boundary for scheduler-launched agents [source: CLAUDE.md#safety].
 
 ## Ticket scheduling
 
