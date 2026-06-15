@@ -35,6 +35,7 @@ const MAX_W = 900;
 
 function useFlyoutWidth() {
 	const [width, setWidth] = useState(DEFAULT_W);
+	const [isMaximized, setIsMaximized] = useState(false);
 	// Tracks the teardown for an in-flight drag so a mid-drag unmount can't leak
 	// window listeners (or fire onUp on an unmounted component).
 	const cleanupRef = useRef<(() => void) | null>(null);
@@ -69,8 +70,19 @@ function useFlyoutWidth() {
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", onUp);
 	}, []);
+	const toggleMaximized = useCallback(
+		() => setIsMaximized((value) => !value),
+		[],
+	);
+	const restoreNormalWidth = useCallback(() => setIsMaximized(false), []);
 
-	return { width, startDrag };
+	return {
+		panelWidth: isMaximized ? "100vw" : width,
+		isMaximized,
+		startDrag,
+		toggleMaximized,
+		restoreNormalWidth,
+	};
 }
 
 // Optimistic PATCH (#013): the flyout cache updates immediately, rolls back on
@@ -458,7 +470,8 @@ function SteerComposer({
 		issue.state === "running" &&
 		issue.latest_run_state === "running" &&
 		issue.latest_run_id != null;
-	const canSteer = liveRun && latestRunAgent === "pi" && bindingPiMode === "rpc";
+	const canSteer =
+		liveRun && latestRunAgent === "pi" && bindingPiMode === "rpc";
 	const disabledReason = !liveRun
 		? "Live steering is available only while a pi RPC run is active."
 		: latestRun == null
@@ -513,19 +526,28 @@ function SteerComposer({
 	const isPending = steer.isPending || abort.isPending;
 
 	return (
-		<div className="space-y-2 rounded-md border p-3" data-testid="steer-composer">
+		<div
+			className="space-y-2 rounded-md border p-3"
+			data-testid="steer-composer"
+		>
 			<div className="flex items-center justify-between gap-2">
 				<div>
 					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 						Live steering
 					</p>
 					{!canSteer && (
-						<p data-testid="steer-disabled-hint" className="text-xs text-muted-foreground">
+						<p
+							data-testid="steer-disabled-hint"
+							className="text-xs text-muted-foreground"
+						>
 							{disabledReason}
 						</p>
 					)}
 					{lastStatus && (
-						<p data-testid="steer-status" className="text-xs text-muted-foreground">
+						<p
+							data-testid="steer-status"
+							className="text-xs text-muted-foreground"
+						>
 							{lastStatus}
 						</p>
 					)}
@@ -625,7 +647,13 @@ export function IssueFlyout({
 	issueId: number | null;
 	onClose: () => void;
 }) {
-	const { width, startDrag } = useFlyoutWidth();
+	const {
+		panelWidth,
+		isMaximized,
+		startDrag,
+		toggleMaximized,
+		restoreNormalWidth,
+	} = useFlyoutWidth();
 	const [tab, setTab] = useState<Tab>("comments");
 	const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 	const panelRef = useRef<HTMLElement | null>(null);
@@ -655,7 +683,8 @@ export function IssueFlyout({
 	useEffect(() => {
 		setTab("comments");
 		setSelectedRunId(null);
-	}, [issueId]);
+		restoreNormalWidth();
+	}, [issueId, restoreNormalWidth]);
 
 	// Escape closes (click-outside is handled by the backdrop).
 	useEffect(() => {
@@ -700,19 +729,21 @@ export function IssueFlyout({
 				aria-modal="true"
 				aria-labelledby="flyout-title"
 				tabIndex={-1}
-				style={{ width }}
+				style={{ width: panelWidth }}
 				className="fixed inset-y-0 right-0 z-50 flex overflow-hidden border-l bg-background shadow-xl outline-none"
 			>
 				{/* Resize handle — drag the left edge. Lives on the non-scrolling
             wrapper so it stays put while the body scrolls. */}
-				<div
-					onPointerDown={startDrag}
-					className="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize"
-					role="separator"
-					aria-orientation="vertical"
-				>
-					<div className="h-full w-px bg-border transition-colors group-hover:w-0.5 group-hover:bg-foreground/40" />
-				</div>
+				{!isMaximized && (
+					<div
+						onPointerDown={startDrag}
+						className="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize"
+						role="separator"
+						aria-orientation="vertical"
+					>
+						<div className="h-full w-px bg-border transition-colors group-hover:w-0.5 group-hover:bg-foreground/40" />
+					</div>
+				)}
 
 				<div className="flex-1 overflow-y-auto">
 					{detail.isError ? (
@@ -723,13 +754,34 @@ export function IssueFlyout({
 						<p className="p-6 text-sm text-muted-foreground">Loading…</p>
 					) : (
 						<div className="space-y-4 p-6">
-							<h2
-								id="flyout-title"
-								className="text-lg font-semibold leading-tight"
-								data-testid="flyout-title"
-							>
-								{issue.title}
-							</h2>
+							<div className="flex items-start justify-between gap-3">
+								<h2
+									id="flyout-title"
+									className="text-lg font-semibold leading-tight"
+									data-testid="flyout-title"
+								>
+									{issue.title}
+								</h2>
+								<div className="flex shrink-0 gap-2">
+									<button
+										type="button"
+										data-testid="toggle-flyout-maximize"
+										aria-pressed={isMaximized}
+										onClick={toggleMaximized}
+										className="rounded-md border px-3 py-1.5 text-sm"
+									>
+										{isMaximized ? "Restore" : "Maximize"}
+									</button>
+									<button
+										type="button"
+										data-testid="close-issue-flyout"
+										onClick={onClose}
+										className="rounded-md border px-3 py-1.5 text-sm"
+									>
+										Close
+									</button>
+								</div>
+							</div>
 
 							{issue.description && (
 								<div className="text-muted-foreground">

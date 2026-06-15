@@ -34,5 +34,26 @@ test("flyout switches between Comments and Session tabs", async ({
 		"Operator comments",
 	);
 
+	const flyout = page.getByTestId("issue-flyout");
+	const normalWidth = (await flyout.boundingBox())?.width ?? 0;
+	const viewportWidth = page.viewportSize()?.width ?? 0;
+	await page.getByTestId("toggle-flyout-maximize").click();
+	await expect(page.getByTestId("toggle-flyout-maximize")).toHaveText(
+		"Restore",
+	);
+	await expect
+		.poll(async () => (await flyout.boundingBox())?.width ?? 0)
+		.toBeGreaterThanOrEqual(viewportWidth - 1);
+	const maximizedWidth = (await flyout.boundingBox())?.width ?? 0;
+	await page.getByTestId("toggle-flyout-maximize").click();
+	await expect(page.getByTestId("toggle-flyout-maximize")).toHaveText(
+		"Maximize",
+	);
+	await expect
+		.poll(async () => (await flyout.boundingBox())?.width ?? 0)
+		.toBeCloseTo(normalWidth, 0);
+	const restoredWidth = (await flyout.boundingBox())?.width ?? 0;
+	expect(restoredWidth).toBeLessThan(maximizedWidth);
+
 	expectCleanConsole(problems);
 });
