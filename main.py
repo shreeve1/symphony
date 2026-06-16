@@ -13,6 +13,7 @@ from agent_runner import (
     AgentAdapter,
     PiAgentAdapter,
     PiRpcAgentAdapter,
+    RemoteAgentAdapter,
     RoutingAgentAdapter,
     reap_orphan_rpc_processes,
     verify_pi_rpc_support,
@@ -123,6 +124,11 @@ def _build_binding_runtime(
     pi_dispatch_adapter: AgentAdapter = (
         PiRpcAgentAdapter(binding_config) if binding.pi_mode == "rpc" else pi_adapter
     )
+    remote_adapter: AgentAdapter | None = (
+        RemoteAgentAdapter(config=binding_config, binding=binding)
+        if binding.is_remote
+        else None
+    )
     return BindingRuntime(
         name=binding.name,
         config=binding_config,
@@ -132,6 +138,7 @@ def _build_binding_runtime(
             binding=binding,
             pi_adapter=pi_dispatch_adapter,
             claude_adapter=ClaudeAgentAdapter(binding_config),
+            remote_adapter=remote_adapter,
         ),
         pi_adapter=pi_adapter,
         binding=binding,

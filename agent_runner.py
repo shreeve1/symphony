@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import selectors
+import shlex
 import shutil
 import signal
 import subprocess
@@ -356,6 +357,204 @@ def run_agent(
             return AgentResult(-1, duration_ms, True, stdout, stderr)
     finally:
         remove_tree(temp_dir)
+
+
+def _remote_callback_port(api_url: str) -> int:
+    """Port the remote agent reaches over the SSH reverse tunnel (ADR-0012).
+
+    The tracker API is loopback-only on aidev; the remote writes to its own
+    ``127.0.0.1:<port>`` which ``ssh -R`` tunnels back. Defaults to 8000 when
+    the URL carries no explicit port.
+    """
+
+    match = re.search(r":(\d+)(?:/|$)", api_url)
+    return int(match.group(1)) if match else 8000
+
+
+def _remote_exports(config: SymphonyConfig, issue: CandidateIssue) -> dict[str, str]:
+    """Tracker-callback env forwarded to the remote agent.
+
+    Mirrors the SYMPHONY_* keys from ``_agent_env`` but omits local-only values
+    (PATH/HOME/PYTHONPATH/TMPDIR) — the remote host supplies its own. The
+    loopback API URL is preserved verbatim so it resolves through the tunnel.
+    """
+
+    return {
+        "SYMPHONY_ISSUE_ID": issue.id,
+        "SYMPHONY_PLANE_API_URL": config.plane_api_url,
+        "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
+        "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
+        "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
+        "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
+        "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
+        "TERM": "dumb",
+        "NO_COLOR": "1",
+    }
+
+
+def _build_remote_command(
+    *,
+    repo_path: str,
+    exports: Mapping[str, str],
+    pi_command: list[str],
+    helper_dir: str,
+) -> str:
+    """A single shell command line to run on the remote host over SSH.
+
+    ``cd <repo> && export K=V... && PATH=<helper_dir>:$PATH <pi ...>`` — every
+    value shell-quoted so prompts, paths, and secrets survive the remote shell.
+    The helper dir (carrying the shipped ``plane`` callback CLI) is prepended to
+    PATH so the agent can report back through the reverse tunnel.
+    """
+
+    export_str = " ".join(
+        f"export {key}={shlex.quote(value)};" for key, value in exports.items()
+    )
+    pi_str = " ".join(shlex.quote(part) for part in pi_command)
+    return (
+        f"cd {shlex.quote(repo_path)} && {export_str} "
+        f"PATH={shlex.quote(helper_dir)}:$PATH {pi_str}"
+    )
+
+
+def _ssh_base_args(remote, *, reverse_port: int | None = None) -> list[str]:
+    args = ["ssh", "-o", "BatchMode=yes"]
+    if remote.identity:
+        args += ["-i", remote.identity]
+    if reverse_port is not None:
+        args += ["-R", f"{reverse_port}:127.0.0.1:{reverse_port}"]
+    args.append(f"{remote.user}@{remote.host}")
+    return args
+
+
+def run_remote_agent(
+    config: SymphonyConfig,
+    issue: CandidateIssue,
+    rendered_prompt: str,
+    *,
+    binding: ProjectBinding,
+    plane_cli_source: Path | None = None,
+    run_func: Callable[..., CompletedLike] = subprocess.run,
+    popen_factory: Callable[..., ProcessLike] | None = None,
+    kill_process_group: Callable[[int, int], object] = os.killpg,
+    clock: Callable[[], float] = time.monotonic,
+) -> AgentResult:
+    """Run pi one-shot on a remote host over SSH (ADR-0012, v1).
+
+    Ships the ``plane`` callback helper to a remote temp dir, then executes
+    ``ssh -R <port>:127.0.0.1:<port> user@host 'cd <repo> && ... pi --print ...'``
+    so the loopback-only tracker API stays reachable through the reverse tunnel
+    without any LAN exposure. Verdict-only: Session Tail, steering, and remote
+    orphan reaping are deferred to v2. The local SSH process is the handle —
+    killing its group closes the channel and SIGHUPs the remote agent.
+    """
+
+    remote = binding.remote
+    if remote is None:
+        raise AgentRunnerError("run_remote_agent called for a non-remote binding")
+    if popen_factory is None:
+        popen_factory = cast(Callable[..., ProcessLike], subprocess.Popen)
+
+    helper_source = plane_cli_source or Path(__file__).with_name("plane_cli.py")
+    helper_text = helper_source.read_text()
+    remote_tmp = f"/tmp/symphony-remote-{issue.id}"
+    started = clock()
+
+    provider = getattr(issue, "resolved_provider", "") or config.pi_provider
+    model = getattr(issue, "resolved_model", "") or config.pi_model
+    # Remote PATH resolves the agent binary; the local absolute pi_bin path does
+    # not exist on the remote, so dispatch by basename (probe confirmed `pi` is
+    # on the remote PATH). A per-binding remote pi path is a future refinement.
+    pi_name = Path(config.pi_bin).name or "pi"
+    pi_command = [pi_name, "--print", "--no-session", "--provider", provider, "--model", model]
+    skill_source = getattr(issue, "skill_source", "")
+    if skill_source:
+        pi_command += ["--skill", str(Path(skill_source).parent)]
+    pi_command.append(rendered_prompt)
+
+    port = _remote_callback_port(config.plane_api_url)
+    remote_command = _build_remote_command(
+        repo_path=str(binding.repo_path),
+        exports=_remote_exports(config, issue),
+        pi_command=pi_command,
+        helper_dir=remote_tmp,
+    )
+
+    # 1. Ship the plane callback helper to the remote temp dir.
+    ship = run_func(
+        _ssh_base_args(remote)
+        + [
+            f"mkdir -p {shlex.quote(remote_tmp)} && cat > {shlex.quote(remote_tmp)}/plane "
+            f"&& chmod 700 {shlex.quote(remote_tmp)}/plane"
+        ],
+        input=helper_text,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=PI_HELP_TIMEOUT_SECONDS,
+    )
+    if ship.returncode != 0:
+        raise AgentRunnerError(
+            f"Failed to ship plane helper to {remote.user}@{remote.host}: "
+            f"{ship.stderr.strip()}"
+        )
+
+    process: ProcessLike | None = None
+    try:
+        LOGGER.info(
+            "remote_dispatch issue_id=%s host=%s repo=%s port=%s",
+            issue.id,
+            remote.host,
+            binding.repo_path,
+            port,
+        )
+        process = popen_factory(
+            _ssh_base_args(remote, reverse_port=port) + [remote_command],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=config.run_timeout_ms / 1000)
+            duration_ms = int((clock() - started) * 1000)
+            exit_code = int(process.returncode or 0)
+            LOGGER.info(
+                "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=false remote=true",
+                issue.id,
+                exit_code,
+                duration_ms,
+            )
+            if exit_code == 0 and not stdout.strip() and not stderr.strip():
+                message = (
+                    "remote pi exited 0 with empty stdout/stderr; treating as failure "
+                    "(provider/model/auth or SSH misconfiguration can look successful)"
+                )
+                LOGGER.warning("remote_pi_silent_exit issue_id=%s", issue.id)
+                return AgentResult(137, duration_ms, False, stdout, message)
+            return AgentResult(exit_code, duration_ms, False, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = _terminate_process_group(
+                process,
+                kill_process_group=kill_process_group,
+            )
+            duration_ms = int((clock() - started) * 1000)
+            LOGGER.info(
+                "agent_exited issue_id=%s exit_code=-1 duration_ms=%s timed_out=true remote=true",
+                issue.id,
+                duration_ms,
+            )
+            return AgentResult(-1, duration_ms, True, stdout, stderr)
+    finally:
+        # Best-effort remote cleanup; the SSH channel close already SIGHUPs pi.
+        with suppress(Exception):
+            run_func(
+                _ssh_base_args(remote) + [f"rm -rf {shlex.quote(remote_tmp)}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=PI_HELP_TIMEOUT_SECONDS,
+            )
 
 
 def run_pi_rpc_agent(
@@ -785,15 +984,40 @@ class PiAgentAdapter:
 
 
 @dataclass(frozen=True)
+class RemoteAgentAdapter:
+    """Pi one-shot adapter that dispatches over SSH to a remote host (ADR-0012)."""
+
+    config: SymphonyConfig
+    binding: ProjectBinding
+
+    def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
+        return run_remote_agent(
+            self.config, issue, rendered_prompt, binding=self.binding
+        )
+
+
+@dataclass(frozen=True)
 class RoutingAgentAdapter:
     """Route each issue to the agent resolved by its binding labels."""
 
     binding: ProjectBinding
     pi_adapter: AgentAdapter
     claude_adapter: AgentAdapter
+    remote_adapter: AgentAdapter | None = None
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
         agent = self.binding.resolve_agent(issue.labels)
+        if self.binding.is_remote:
+            if agent != "pi":
+                raise AgentRunnerError(
+                    f"Remote binding `{self.binding.name}` supports only pi dispatch "
+                    f"in v1 (ADR-0012); got `{agent}`"
+                )
+            if self.remote_adapter is None:
+                raise AgentRunnerError(
+                    f"Remote binding `{self.binding.name}` has no remote adapter configured"
+                )
+            return self.remote_adapter(issue, rendered_prompt)
         if agent == "pi":
             return self.pi_adapter(issue, rendered_prompt)
         if agent == "claude":
