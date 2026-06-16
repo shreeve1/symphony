@@ -3,17 +3,20 @@ title: Run-log size decouple + fly-out comments/context/run-summary dedup
 type: analysis
 status: promoted
 created: 2026-06-14
-updated: 2026-06-14
+updated: 2026-06-16
 sources:
   - scheduler.py
   - agent_runner.py
   - web/frontend/components/IssueFlyout.tsx
   - web/frontend/components/RunDetailPanel.tsx
   - web/frontend/tests/flyout-tabs.spec.ts
+  - web/frontend/tests/steer-flyout.spec.ts
+  - web/frontend/tests/global-setup.mjs
   - web/frontend/tests/editing.spec.ts
   - CONTEXT.md
   - docs/adr/0007-agent-summary-as-human-comment.md
   - wiki/raw/sessions/2026-06-14-flyout-dedup-and-run-log-cap.md
+  - wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md
 confidence: high
 tags: [podium, run-log, context_md, comments_md, run.summary, sanitize, truncation, flyout, pi-rpc, scheduler]
 ---
@@ -62,7 +65,18 @@ The first edit used `replace_all` on the generic `stdout=stdout / stderr=stderr`
 
 `uv run pytest` 776 passed / 2 skipped. Restart to `code_sha=e0c02b4`; `reconcile_startup_begin/done` ×3 bindings, `run_reconcile_done reaped=0`, `dispatch_completed`, `rpc_orphan_reap_done count=0`, `pi_rpc_probe_ok`, zero errors.
 
+## Follow-on (2026-06-16) — comment thread ordering + single-blob render
+
+A later session reworked the same `CommentsThread` component again. The #014-era version split `comments_md` on any heading (`splitCommentEntries`, regex `/\n(?=#{1,6} )/g`), wrapped each fragment in a `comment-entry` card, and rendered **newest-first** (`.reverse()`). Two problems: (1) the operator found newest-first hard to follow; (2) the `#{1,6}` split shredded any `### Symphony AI Summary` that contained sub-headings into multiple out-of-order cards.
+
+Fix (display-only, `IssueFlyout.tsx`): render `comments_md` as a single `<Markdown>` block inside one bordered card, in stored chronological order (**oldest-first**), with auto-scroll to the bottom on open via a `ref` + `useEffect` **keyed on `issueId`** (not `source`, so a background poll never yanks the operator mid-read). `splitCommentEntries` and the `comment-entry` testid were removed; the `view-comments_md` container testid is retained, so `steer-flyout.spec.ts` / `flyout-tabs.spec.ts` `toContainText` assertions still hold. Verified: `tsc --noEmit` clean; `steer-flyout` specs pass [source: wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md].
+
+### e2e drift surfaced while verifying (pre-existing, unrelated)
+
+`flyout-tabs.spec.ts`, `board.spec.ts`, and `run-detail.spec.ts` hard-depend on a `trading` binding (`page.goto("/trading")` + seed card "Seed running issue for trading"). `tests/global-setup.mjs` mirrors the **live** `bindings.yml` into the fixture; the `trading` binding was offboarded/purged, so the fixture has no `trading` binding and those specs time out at the `issue-card` click. Confirmed identical on clean HEAD (stash + re-run) — not caused by the render change [source: wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md].
+
 ## Follow-ups
 
 - Frontend changes uncommitted at capture; Podium frontend needs `next build` + restart (or dev hot-reload) to show them; `npm run test:e2e` not yet run.
 - ADR-0007 (`agent-summary-as-human-comment`) has no promoted wiki analysis page — candidate ingest opportunity.
+- (2026-06-16) The `trading`-bound e2e specs (`flyout-tabs`, `board`, `run-detail`) are broken by the trading offboarding; reseed them against a live binding (e.g. `homelab`, already used by `editing.spec.ts`) or add a fixture-only `trading` binding in `global-setup.mjs`. This blocks `flyout-tabs`'s own coverage of the new render.
