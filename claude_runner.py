@@ -611,7 +611,7 @@ def _wrap_prompt(
     skill_directive = (
         f"\nInvoke the `{skill}` skill by name before doing the work." if skill else ""
     )
-    return f"""You are running unattended for Symphony. Nobody can respond live.
+    return f"""You are running unattended for Symphony. Nobody can respond live. Do not use the ask_user_question tool. Do not use any other interactive tools that require the user.
 If you need operator clarification, park the turn with the `SYMPHONY_QUESTION_BEGIN`/`SYMPHONY_QUESTION_END` protocol from the rendered Symphony output contract. If genuinely blocked on an error, still complete the two steps below with `SYMPHONY_RESULT: blocked` as the result content.{skill_directive}
 
 Completion protocol — follow exactly, in order:

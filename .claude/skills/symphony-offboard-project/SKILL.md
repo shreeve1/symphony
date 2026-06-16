@@ -13,7 +13,8 @@ Coordinate the removal of one Podium-backed binding from live status check to a 
 2. Run `symphony-binding-remove`:
    - **archive** (default, `purge=False`) — reversible: drops the `bindings.yml` entry and sets `binding.archived = TRUE`, preserving Issue/Run history.
    - **purge** (`purge=True`) — destructive: also deletes the binding's Runs, Issues, and `binding_settings`/`binding` rows. Only after the operator confirms the Issue/Run counts from step 1 are disposable.
-3. Run `symphony-restart` so the live scheduler reloads `bindings.yml` and stops dispatching the removed binding. Until this runs, the removed binding stays live in the running process.
+3. **Clean up leftover test/code references.** `symphony-binding-remove` step 5 owns this in detail; it is not optional here. Dropping the `bindings.yml` entry changes the test seed (`web/api/seed.py` seeds the test DB from `bindings.yml`), so any test that hardcodes the removed binding name starts returning 404 / `KeyError: 0`. The `.claude/hooks/pre-git-checks.sh` gate runs the full `uv run pytest` suite on every Python commit, so this drift blocks the commit that lands the offboarding itself. `grep -rn "<name>" web/api/tests tests`, retarget seed-dependent tests to a surviving same-`type` binding (`symphony` for coding, `homelab` for infra), flag any non-test code that still names the binding, and confirm `uv run pytest` is green before restarting. Self-contained tests that build their own binding in a tmp DB or via `_bindings_override` can keep the removed name and should not be renamed unnecessarily.
+4. Run `symphony-restart` so the live scheduler reloads `bindings.yml` and stops dispatching the removed binding. Until this runs, the removed binding stays live in the running process.
 
 ## Safety rules
 

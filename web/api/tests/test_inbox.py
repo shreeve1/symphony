@@ -19,7 +19,7 @@ def test_inbox_returns_in_review_and_blocked_across_bindings(
         client,
         [
             ("homelab", "HL inbox 1", "in_review"),
-            ("trading", "TR inbox 1", "blocked"),
+            ("symphony", "TR inbox 1", "blocked"),
             ("homelab", "HL inbox 2", "in_review"),
         ],
     )
@@ -45,7 +45,7 @@ def test_inbox_excludes_archived_binding_issues(client: TestClient) -> None:
         client,
         [
             ("homelab", "archived binding", "in_review"),
-            ("trading", "live binding", "blocked"),
+            ("symphony", "live binding", "blocked"),
         ],
     )
 
@@ -59,7 +59,7 @@ def test_inbox_excludes_archived_binding_issues(client: TestClient) -> None:
 
 def test_inbox_excludes_dismissed_issues(client: TestClient) -> None:
     now = datetime.now(UTC).isoformat()
-    ids = _seed_inbox_issues(client, [("trading", "dismissed", "in_review")])
+    ids = _seed_inbox_issues(client, [("symphony", "dismissed", "in_review")])
     dismissed_id = ids[0]
 
     # Set inbox_dismissed_at >= last_event_at → excluded.
@@ -80,7 +80,7 @@ def test_inbox_includes_redismissed_issues(client: TestClient) -> None:
     """Issue with dismissal older than last_event_at should reappear."""
     older = datetime(2026, 1, 1, tzinfo=UTC).isoformat()
     newer = datetime(2026, 6, 1, tzinfo=UTC).isoformat()
-    ids = _seed_inbox_issues(client, [("trading", "redismissed", "in_review")])
+    ids = _seed_inbox_issues(client, [("symphony", "redismissed", "in_review")])
     redismissed_id = ids[0]
 
     with main.connect() as connection:
@@ -102,11 +102,11 @@ def test_inbox_excludes_todo_and_running_and_done_and_archived(
     ids = _seed_inbox_issues(
         client,
         [
-            ("trading", "in_review", "in_review"),
-            ("trading", "todo", "todo"),
-            ("trading", "running", "running"),
-            ("trading", "done", "done"),
-            ("trading", "archived", "archived"),
+            ("symphony", "in_review", "in_review"),
+            ("symphony", "todo", "todo"),
+            ("symphony", "running", "running"),
+            ("symphony", "done", "done"),
+            ("symphony", "archived", "archived"),
         ],
     )
 
@@ -129,21 +129,21 @@ def test_inbox_requires_auth() -> None:
 def test_inbox_returns_binding_name_and_inbox_dismissed_at(
     client: TestClient,
 ) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "detail check", "in_review")])
+    ids = _seed_inbox_issues(client, [("symphony", "detail check", "in_review")])
 
     response = client.get("/api/inbox")
     assert response.status_code == 200
     data = response.json()
     item = next(item for item in data if item["id"] == ids[0])
     assert "binding_name" in item
-    assert item["binding_name"] == "trading"
+    assert item["binding_name"] == "symphony"
     assert "inbox_dismissed_at" in item
     assert item["state"] == "in_review"
     assert "last_event_at" in item
 
 
 def test_inbox_omits_comments_md_and_context_md(client: TestClient) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "no md", "in_review")])
+    ids = _seed_inbox_issues(client, [("symphony", "no md", "in_review")])
 
     response = client.get("/api/inbox")
     assert response.status_code == 200
@@ -156,7 +156,7 @@ def test_inbox_omits_comments_md_and_context_md(client: TestClient) -> None:
 def test_dismiss_sets_timestamp_bumps_updated_and_broadcasts(
     client: TestClient,
 ) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "dismiss me", "in_review")])
+    ids = _seed_inbox_issues(client, [("symphony", "dismiss me", "in_review")])
     issue_id = ids[0]
     before = client.get(f"/api/issues/{issue_id}").json()
 
@@ -174,7 +174,7 @@ def test_dismiss_sets_timestamp_bumps_updated_and_broadcasts(
 
 
 def test_dismiss_rejects_invalid_state_and_unknown_issue(client: TestClient) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "todo dismiss", "todo")])
+    ids = _seed_inbox_issues(client, [("symphony", "todo dismiss", "todo")])
 
     response = client.post(f"/api/issues/{ids[0]}/dismiss")
     assert response.status_code == 409
@@ -184,7 +184,7 @@ def test_dismiss_rejects_invalid_state_and_unknown_issue(client: TestClient) -> 
 
 
 def test_dismiss_removes_issue_from_inbox(client: TestClient) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "dismissed hidden", "blocked")])
+    ids = _seed_inbox_issues(client, [("symphony", "dismissed hidden", "blocked")])
 
     response = client.post(f"/api/issues/{ids[0]}/dismiss")
     assert response.status_code == 200
@@ -197,7 +197,7 @@ def test_dismiss_removes_issue_from_inbox(client: TestClient) -> None:
 def test_inbox_resurfaces_when_run_projection_is_newer_than_dismissal(
     client: TestClient,
 ) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "run resurface", "in_review")])
+    ids = _seed_inbox_issues(client, [("symphony", "run resurface", "in_review")])
     issue_id = ids[0]
     dismissed = datetime(2026, 6, 1, tzinfo=UTC)
     newer = dismissed + timedelta(minutes=1)
@@ -223,8 +223,8 @@ def test_patch_to_in_review_or_blocked_clears_inbox_dismissal(
     ids = _seed_inbox_issues(
         client,
         [
-            ("trading", "patch review", "todo"),
-            ("trading", "patch blocked", "done"),
+            ("symphony", "patch review", "todo"),
+            ("symphony", "patch blocked", "done"),
         ],
     )
     with main.connect() as connection:
@@ -244,7 +244,7 @@ def test_patch_to_in_review_or_blocked_clears_inbox_dismissal(
 
 
 def test_patch_to_other_states_leaves_inbox_dismissal(client: TestClient) -> None:
-    ids = _seed_inbox_issues(client, [("trading", "patch todo", "blocked")])
+    ids = _seed_inbox_issues(client, [("symphony", "patch todo", "blocked")])
     dismissed = datetime.now(UTC).isoformat()
     with main.connect() as connection:
         connection.execute(

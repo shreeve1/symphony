@@ -65,7 +65,12 @@ Two modes, both drop the `bindings.yml` entry so the dispatch loop stops picking
    ```
 
    The call raises `ValueError` if `name` is absent from both `bindings.yml` and the Podium DB. If the entry exists in only one place, it removes what it finds and reports the rest as `absent` / `removed_from_bindings_yml=False` rather than failing.
-5. The removed binding stays live in memory until `symphony-host.service` reloads `bindings.yml`. Restart via the `symphony-restart` skill (ask James) when ready.
+5. **Clean up leftover test/code references (required for `bindings.yml` removals).** Removing the entry from `bindings.yml` changes what the test seed produces, so any test that hardcodes the removed binding name breaks the moment it is gone. `web/api/seed.py:seed_if_empty` seeds the test DB straight from `bindings.yml`, and the API rejects unknown bindings (`_get_binding_or_404`), so a purged or archived name turns every test that posts to / lists / asserts on it into a 404 (and the shared `web/api/tests/conftest.py` `issue_id` fixture into a `KeyError: 0`). The `.claude/hooks/pre-git-checks.sh` gate runs the full `uv run pytest` suite on any Python commit, so this drift blocks every later commit until fixed. After the removal:
+   - `grep -rn "<name>" web/api/tests tests` (skip `__pycache__`) to find references.
+   - Retarget seed-dependent tests to a binding that still exists in `bindings.yml` — prefer a stable same-`type` survivor (`symphony` is the permanent coding self-binding; `homelab` the infra one) so existing `binding_type`/`base_branch` assertions still hold. Self-contained tests that build their own binding in a tmp DB or via `_bindings_override` do not read the live seed and need no change.
+   - Leave the rest of the codebase's references for the operator to triage, but call out any non-test code (`scheduler.py`, docs, wiki entity pages) that still names the removed binding.
+   - Confirm green with `cd /home/james/symphony && uv run pytest` before handing back; a red suite means the gate will block the commit.
+6. The removed binding stays live in memory until `symphony-host.service` reloads `bindings.yml`. Restart via the `symphony-restart` skill (ask James) when ready.
 
 ## Result shape
 
@@ -84,6 +89,7 @@ Two modes, both drop the `bindings.yml` entry so the dispatch loop stops picking
 - Show the `bindings.yml` diff before committing. `_remove_binding` round-trips the file through `yaml.safe_load` → `yaml.safe_dump`, so any comments in `bindings.yml` are stripped (same side effect as `symphony-binding-scaffold`, C-0171). The diff is the only guard against silent comment loss; restore wanted comments from git if needed.
 - Default to archive. Only `purge` when the operator has confirmed the Issue/Run history is disposable.
 - `bindings.yml` mutation here is the deliberate inverse of `symphony-binding-scaffold`; no other skill should remove binding entries.
+- When cleaning up leftover test references (step 5), retarget seed-dependent tests rather than deleting them — they still guard real behavior. Do not touch self-contained tests that build their own binding in a tmp DB; they pass regardless and renaming them is needless churn.
 - **Self-binding caveat.** Removing the `symphony` binding tears down Symphony's binding to its own repo (`/home/james/symphony`) — the highest-risk of the live bindings. Do not remove `symphony` (or any binding the operator did not name) without explicit confirmation; after a restart the scheduler will no longer dispatch Issues filed against it.
 
 ## Reversing an archive

@@ -36,7 +36,7 @@ def test_tailer_reads_empty_session_file(monkeypatch, tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         login(client)
-        issues = client.get("/api/bindings/trading/issues").json()
+        issues = client.get("/api/bindings/symphony/issues").json()
         issue_id = issues[0]["id"]
 
         # Fake a running run to make the issue show up in the poll query
@@ -87,7 +87,7 @@ def test_tailer_reads_new_lines(monkeypatch, tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         login(client)
-        issues = client.get("/api/bindings/trading/issues").json()
+        issues = client.get("/api/bindings/symphony/issues").json()
         issue_id = issues[0]["id"]
 
         # Fake a running run with pi agent
@@ -153,7 +153,7 @@ def test_tailer_only_returns_new_lines_on_subsequent_polls(
 
     with TestClient(app) as client:
         login(client)
-        issues = client.get("/api/bindings/trading/issues").json()
+        issues = client.get("/api/bindings/symphony/issues").json()
         issue_id = issues[0]["id"]
 
         with sqlite3.connect(db_path) as connection:

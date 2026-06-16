@@ -25,7 +25,7 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
 
 
 def _first_issue_id(client: TestClient) -> int:
-    issues = client.get("/api/bindings/trading/issues").json()
+    issues = client.get("/api/bindings/symphony/issues").json()
     return int(issues[0]["id"])
 
 
@@ -59,7 +59,7 @@ def test_two_clients_receive_issue_updated_within_one_second(
         ("patch", "/api/issues/{issue_id}", {"state": "blocked"}, "issue.updated"),
         (
             "post",
-            "/api/bindings/trading/issues",
+            "/api/bindings/symphony/issues",
             {"title": "websocket created issue"},
             "issue.created",
         ),

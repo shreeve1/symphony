@@ -30,26 +30,26 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         assert bindings_response.status_code == 200
         bindings = bindings_response.json()
         binding_names = {binding["name"] for binding in bindings}
-        assert {"homelab", "trading"}.issubset(binding_names)
+        assert {"homelab", "symphony"}.issubset(binding_names)
         assert all(binding["pi_mode"] in {"one-shot", "rpc"} for binding in bindings)
 
-        trading_issues_response = client.get("/api/bindings/trading/issues")
-        assert trading_issues_response.status_code == 200
-        trading_issues = trading_issues_response.json()
-        assert len(trading_issues) >= 2
-        assert all("latest_verdict" in issue for issue in trading_issues)
-        assert all("latest_run_state" in issue for issue in trading_issues)
-        assert all(issue["binding_type"] == "coding" for issue in trading_issues)
-        assert all(issue["approval_required"] is False for issue in trading_issues)
-        assert all(issue["approved"] is False for issue in trading_issues)
-        assert all(issue["scheduled_for"] is None for issue in trading_issues)
+        symphony_issues_response = client.get("/api/bindings/symphony/issues")
+        assert symphony_issues_response.status_code == 200
+        symphony_issues = symphony_issues_response.json()
+        assert len(symphony_issues) >= 2
+        assert all("latest_verdict" in issue for issue in symphony_issues)
+        assert all("latest_run_state" in issue for issue in symphony_issues)
+        assert all(issue["binding_type"] == "coding" for issue in symphony_issues)
+        assert all(issue["approval_required"] is False for issue in symphony_issues)
+        assert all(issue["approved"] is False for issue in symphony_issues)
+        assert all(issue["scheduled_for"] is None for issue in symphony_issues)
 
         homelab_issues_response = client.get("/api/bindings/homelab/issues")
         assert homelab_issues_response.status_code == 200
         homelab_issues = homelab_issues_response.json()
         assert all(issue["binding_type"] == "infra" for issue in homelab_issues)
 
-        issue_id = trading_issues[0]["id"]
+        issue_id = symphony_issues[0]["id"]
         issue_response = client.get(f"/api/issues/{issue_id}")
         assert issue_response.status_code == 200
         issue = issue_response.json()
@@ -107,6 +107,36 @@ def test_skills_endpoint_returns_rows_sorted_by_name(
         },
         {"name": "zulu", "description": "Zulu skill", "source": "/tmp/zulu/SKILL.md"},
     ]
+
+
+def test_bindings_endpoint_surfaces_remote_repo_name(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Issue 34: a remote binding's card/sidebar label should read "name — repo".
+    # The API enriches /api/bindings with is_remote + repo_name from bindings.yml.
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
+
+    with TestClient(app) as client:
+        login(client)
+        with main.connect(db_path) as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO binding(name, display_name, sort_order) VALUES (?, ?, 99)",
+                (REMOTE_BINDING_NAME, REMOTE_BINDING_NAME),
+            )
+            connection.commit()
+        monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
+        bindings = client.get("/api/bindings").json()
+
+    by_name = {binding["name"]: binding for binding in bindings}
+    remote = by_name[REMOTE_BINDING_NAME]
+    assert remote["is_remote"] is True
+    assert remote["repo_name"] == "itastack"
+
+    local = by_name["symphony"]
+    assert local["is_remote"] is False
+    assert local["repo_name"] is None
 
 
 def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:

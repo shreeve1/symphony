@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import UTC, datetime
 from importlib import import_module
@@ -14,7 +15,11 @@ except ImportError:  # pragma: no cover - supports uvicorn main:app from web/api
     resolve_run_log_root = import_module("db").resolve_run_log_root
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BINDINGS_PATH = REPO_ROOT / "bindings.yml"
+BINDINGS_PATH = (
+    Path(os.environ["PODIUM_BINDINGS_PATH"])
+    if os.environ.get("PODIUM_BINDINGS_PATH")
+    else (REPO_ROOT / "bindings.yml")
+)
 
 
 def seed_if_empty(

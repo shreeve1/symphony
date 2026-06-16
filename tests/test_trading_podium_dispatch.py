@@ -173,6 +173,61 @@ async def test_trading_podium_dispatch_records_run_log_and_context(
 
 
 @pytest.mark.asyncio
+async def test_podium_question_marker_persists_schema_safe_review_verdict(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    question = "Should I add a Maximize/Restore button?"
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout=(f"SYMPHONY_QUESTION_BEGIN\n{question}\nSYMPHONY_QUESTION_END\n"),
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+    issue = await adapter.get_issue(str(issue_id))
+    run = await adapter.get_run(str(issue["latest_run_id"]))
+
+    assert result.reason == "agent-question-park"
+    assert issue["state"] == "in_review"
+    assert issue["latest_run_state"] == "succeeded"
+    assert issue["latest_verdict"] == "review"
+    assert "**Symphony question:**" in issue["comments_md"]
+    assert question in issue["comments_md"]
+    assert run is not None
+    assert run["state"] == "succeeded"
+    assert run["verdict"] == "review"
+    assert run["summary"] == question
+    assert run["ended_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_claude_podium_dispatch_records_bare_model_and_stdout_only_parsing(
     tmp_path: Path,
 ) -> None:
@@ -437,16 +492,16 @@ def test_trading_binding_uses_podium_without_plane_transport(
         "PI_BIN": "pi",
     }
     config = SymphonyConfig.from_env(env)
-    trading = next(binding for binding in config.bindings if binding.name == "trading")
+    binding = next(b for b in config.bindings if b.name == "symphony")
     monkeypatch.setattr(main, "verify_pi_support", lambda *args, **kwargs: None)
 
     def fail_plane_transport(*args, **kwargs):
-        raise AssertionError("trading cutover must not build a Plane transport")
+        raise AssertionError("podium binding must not build a Plane transport")
 
     monkeypatch.setattr(main, "HttpxPlaneTransport", fail_plane_transport)
 
-    runtime = main._build_binding_runtime(config, trading)
+    runtime = main._build_binding_runtime(config, binding)
 
-    assert trading.tracker == "podium"
+    assert binding.tracker == "podium"
     assert runtime.transport is None
     assert isinstance(runtime.adapter, PodiumTrackerAdapter)

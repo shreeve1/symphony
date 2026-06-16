@@ -17,7 +17,9 @@ app = main.app
 SKILL_PATH = Path(".claude/skills/symphony-bindings-status/SKILL.md")
 
 
-def test_bindings_status_reads_podium_bindings_and_issues(monkeypatch, tmp_path: Path) -> None:
+def test_bindings_status_reads_podium_bindings_and_issues(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "podium.db"
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
     monkeypatch.setenv("PODIUM_PASSWORD_HASH", web_conftest.TEST_PASSWORD_HASH)
@@ -29,9 +31,15 @@ def test_bindings_status_reads_podium_bindings_and_issues(monkeypatch, tmp_path:
         rows = podium_bindings_status(client)
 
     by_name = {row["name"]: row for row in rows}
-    assert "trading" in by_name
-    assert by_name["trading"]["open_issue_count"] >= 1
-    assert by_name["trading"]["latest_issue_state"] in {"todo", "running", "in_review", "blocked", "done"}
+    assert "symphony" in by_name
+    assert by_name["symphony"]["open_issue_count"] >= 1
+    assert by_name["symphony"]["latest_issue_state"] in {
+        "todo",
+        "running",
+        "in_review",
+        "blocked",
+        "done",
+    }
 
 
 def test_bindings_status_skill_reads_podium_not_plane() -> None:

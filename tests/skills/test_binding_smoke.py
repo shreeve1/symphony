@@ -20,7 +20,9 @@ app = main.app
 SKILL_PATH = Path(".claude/skills/symphony-binding-smoke/SKILL.md")
 
 
-def test_binding_smoke_posts_podium_issue_and_polls_run(monkeypatch, tmp_path: Path) -> None:
+def test_binding_smoke_posts_podium_issue_and_polls_run(
+    monkeypatch, tmp_path: Path
+) -> None:
     db_path = tmp_path / "podium.db"
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
     monkeypatch.setenv("PODIUM_PASSWORD_HASH", web_conftest.TEST_PASSWORD_HASH)
@@ -31,11 +33,11 @@ def test_binding_smoke_posts_podium_issue_and_polls_run(monkeypatch, tmp_path: P
         login(client)
         issue = create_podium_smoke_issue(
             client,
-            "trading",
+            "symphony",
             title="[smoke] 2026-06-11T00:00:00Z Symphony binding verification",
         )
 
-        assert issue["binding_name"] == "trading"
+        assert issue["binding_name"] == "symphony"
         assert issue["state"] == "todo"
         assert issue["title"].startswith("[smoke]")
 
