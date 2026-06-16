@@ -17,8 +17,11 @@ sources:
   - tests/test_remote_agent.py, tests/test_repo_host.py, tests/test_ssh_support.py
   - web/api/schema.py (binding table)
   - plans/remote-binding-dispatch-pipeline.md
+  - web/api/main.py (list_bindings is_remote/repo_name enrichment, Issue 34)
+  - web/frontend/lib/api.ts, web/frontend/components/Sidebar.tsx, web/frontend/app/page.tsx (host label)
+  - web/frontend/deploy.sh (podium-web atomic deploy)
 confidence: high
-tags: [adr, remote-binding, ssh, dispatch, podium, issue-27, repo-host, seam, n8n]
+tags: [adr, remote-binding, ssh, dispatch, podium, issue-27, issue-34, repo-host, seam, n8n, host-label, deploy]
 ---
 
 # ADR-0012 — Remote Bindings dispatch over SSH-exec, not a remote daemon
@@ -82,3 +85,14 @@ What landed:
 **Still deferred (v2):** remote worktrees + over-SSH merge/teardown; remote context compaction; remote `preferred_skill`; `_branches_for` degrades to `[]` for remote (non-blocking); Session Tail / Steering / remote orphan-reaping. Host badge UI still pending.
 
 Evidence: `wiki/raw/sessions/2026-06-16-remote-binding-dispatch-pipeline.md`, `plans/remote-binding-dispatch-pipeline.md`, `plans/.remote-binding-dispatch-pipeline.state.yml`, `runs/56.log`.
+
+## Host label landed 2026-06-16 (Issue 34) — "name — repo" for remote bindings
+
+The deferred "host badge UI" got its first slice (text label only). Operator wanted a remote binding shown as **"n8n — itastack"** rather than bare `n8n`; scope per operator reply is name + repo only — **no host/IP chip, no fly-out** in v1 (see claim **C-0218**).
+
+- **API** (`web/api/main.py` `list_bindings`, commit `ad00b0b`): each `/api/bindings` row is enriched with `is_remote` (`_is_remote_binding`) and `repo_name` (basename of `_repo_path_for_binding`), reusing the existing `pi_mode` enrichment pattern. No `binding`-table column and no migration — `bindings.yml` stays the source of truth.
+- **Frontend**: `web/frontend/lib/api.ts` `Binding` gains `is_remote: boolean` + `repo_name: string | null`; `Sidebar.tsx` and the dashboard `BindingCard` (`app/page.tsx`, via `BindingSummary.repoName`/`isRemote`) append ` — {repo_name}` only when `is_remote && repo_name`. Local bindings keep single-name labels (remote-only, avoids "homelab — homelab").
+- **Test**: `web/api/tests/test_endpoints.py::test_bindings_endpoint_surfaces_remote_repo_name`.
+- **Still deferred:** a styled host chip (`user@host`) — the operator explicitly dropped the IP for v1.
+
+**Deploy topology (load-bearing):** this change spans two services, *not* the scheduler. `podium-api.service` (loopback `127.0.0.1:8090`) serves the new JSON fields and needs a `systemctl restart`. `podium-web.service` (`10.20.20.16:8091`, `next start`) serves a **prebuilt** bundle and needs `web/frontend/deploy.sh` (build into staging → atomic stop/swap/start), *not* a plain restart. `symphony-host.service` (the scheduler) serves neither — restarting it does nothing for this label. First deploy went live 2026-06-16 (podium-api restarted 15:49 UTC, podium-web 15:52 UTC, root=200); live helpers confirm `is_remote(n8n)=True` / `repo_name=itastack`.
