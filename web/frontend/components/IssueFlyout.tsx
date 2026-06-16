@@ -592,46 +592,41 @@ function SteerComposer({
 	);
 }
 
-// Comments are stored as one chronological markdown blob; each entry is an
-// appended block headed `### Operator Reply (…)` or `### Symphony AI Summary`.
-// Split on those headings so the thread can render newest-first without
-// mutating the stored order. Leading text with no heading (rare bare-note
-// appends) stays as its own oldest entry.
-function splitCommentEntries(md: string): string[] {
-	const text = md.trim();
-	if (!text) return [];
-	return text
-		.split(/\n(?=#{1,6} )/g)
-		.map((p) => p.trim())
-		.filter(Boolean);
-}
-
-// Read-only comment thread, newest entry first, directly under the reply
-// composer. Keeps the `view-comments_md` testid as the container so existing
-// coverage (text presence) still holds.
-function CommentsThread({ source }: { source: string }) {
-	const entries = splitCommentEntries(source);
+// Comments are stored as one chronological markdown blob (oldest first); each
+// entry is an appended block headed `### Operator Reply (…)` or `### Symphony AI
+// Summary`. Render the blob straight through so the headings act as the natural
+// separators, and auto-scroll to the newest entry when the flyout opens. Keeps
+// the `view-comments_md` testid as the container so existing coverage (text
+// presence) still holds.
+function CommentsThread({
+	issueId,
+	source,
+}: {
+	issueId: number;
+	source: string;
+}) {
+	const scrollRef = useRef<HTMLDivElement>(null);
+	// Land on the newest comment when the flyout opens. Keyed on issueId (not
+	// source) so a background poll never yanks the operator down mid-read.
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (el) el.scrollTop = el.scrollHeight;
+	}, [issueId]);
+	const hasComments = source.trim().length > 0;
 	return (
 		<div
+			ref={scrollRef}
 			data-testid="view-comments_md"
-			className="max-h-[60vh] space-y-3 overflow-y-auto"
+			className="max-h-[60vh] overflow-y-auto"
 		>
-			{entries.length === 0 ? (
+			{hasComments ? (
+				<div className="rounded-md border p-2">
+					<Markdown source={source} />
+				</div>
+			) : (
 				<p className="rounded-md border p-2 text-xs text-muted-foreground">
 					No comments yet.
 				</p>
-			) : (
-				entries
-					.map((entry, i) => (
-						<div
-							key={i}
-							data-testid="comment-entry"
-							className="rounded-md border p-2"
-						>
-							<Markdown source={entry} />
-						</div>
-					))
-					.reverse()
 			)}
 		</div>
 	);
@@ -832,10 +827,14 @@ export function IssueFlyout({
 								>
 									{tab === "comments" ? (
 										// Reply composer on top so it never gets buried as Runs
-										// accumulate; thread below renders newest-first.
+										// accumulate; thread below renders oldest-first,
+										// scrolled to the newest entry on open.
 										<div className="space-y-3">
 											<ReplyComposer issue={issue} />
-											<CommentsThread source={issue.comments_md} />
+											<CommentsThread
+												issueId={issue.id}
+												source={issue.comments_md}
+											/>
 										</div>
 									) : (
 										<div className="space-y-3">
