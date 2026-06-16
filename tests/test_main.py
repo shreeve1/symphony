@@ -374,6 +374,49 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
     assert "verify" not in calls
 
 
+def test_build_binding_runtime_remote_skips_local_pi_probe(monkeypatch, tmp_path):
+    # ADR-0012: a remote binding's repo_path lives on the remote host, so the
+    # LOCAL verify_pi_support probe must be skipped (else it crashes startup with
+    # PermissionError/FileNotFoundError on the unreadable path).
+    from config import RemotePolicy
+    from agent_runner import RemoteAgentAdapter
+
+    calls = {}
+    config = main.SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.test",
+            "PLANE_API_KEY": "key",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PLANE_PROJECT_ID": "project",
+            "HOMELAB_REPO_PATH": str(tmp_path),
+            "PI_BIN": "pi",
+            "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
+        }
+    )
+    base = config.bindings[0]
+    binding = type(base)(
+        name="n8n",
+        plane_project_id="n8n",
+        repo_path=base.repo_path,
+        base_branch=base.base_branch,
+        tracker_contract=base.tracker_contract,
+        default_agent="pi",
+        tracker="podium",
+        approval_policy=base.approval_policy,
+        landing_policy=base.landing_policy,
+        remote=RemotePolicy(host="100.95.224.218", user="itadmin"),
+    )
+
+    monkeypatch.setattr(
+        main, "verify_pi_support", lambda *args: calls.setdefault("verify", args)
+    )
+
+    runtime = main._build_binding_runtime(config, binding)
+
+    assert "verify" not in calls  # local probe skipped for the remote binding
+    assert isinstance(runtime.agent_adapter.remote_adapter, RemoteAgentAdapter)
+
+
 def test_build_binding_runtime_verifier_failure_aborts_before_transport(
     monkeypatch, tmp_path
 ):
