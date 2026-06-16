@@ -58,6 +58,19 @@ class LandingPolicy:
 
 
 @dataclass(frozen=True)
+class RemotePolicy:
+    """Per-binding remote execution target (ADR-0012).
+
+    Absent means local dispatch. When present, the agent is dispatched over
+    SSH (``user@host``) and ``repo_path`` denotes the checkout on that host.
+    """
+
+    host: str
+    user: str
+    identity: str | None = None
+
+
+@dataclass(frozen=True)
 class ProjectBinding:
     """One Plane project ↔ repository binding."""
 
@@ -72,6 +85,11 @@ class ProjectBinding:
     pi_mode: Literal["one-shot", "rpc"] = "one-shot"
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
+    remote: RemotePolicy | None = None
+
+    @property
+    def is_remote(self) -> bool:
+        return self.remote is not None
 
     def resolve_agent(self, labels: Iterable[str] = ()) -> str:
         """Resolve default agent with optional `agent:pi` / `agent:claude` override."""
@@ -372,6 +390,7 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
     if pi_mode_raw not in {"one-shot", "rpc"}:
         raise ConfigError(f"{prefix}.pi_mode: must be 'one-shot' or 'rpc', got '{pi_mode_raw}'")
     pi_mode: Literal["one-shot", "rpc"] = "rpc" if pi_mode_raw == "rpc" else "one-shot"
+    remote = _remote_from_mapping(raw.get("remote"), prefix=f"{prefix}.remote")
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),
         plane_project_id=plane_project_id,
@@ -384,7 +403,21 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),
+        remote=remote,
     )
+
+
+def _remote_from_mapping(raw: Any, *, prefix: str) -> RemotePolicy | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{prefix}: expected mapping")
+    host = _required_string(raw, "host", prefix)
+    user = _required_string(raw, "user", prefix)
+    identity = raw.get("identity")
+    if identity is not None and not isinstance(identity, str):
+        raise ConfigError(f"{prefix}.identity: expected string")
+    return RemotePolicy(host=host, user=user, identity=identity or None)
 
 
 def _contract_from_mapping(

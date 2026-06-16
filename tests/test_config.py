@@ -265,6 +265,100 @@ bindings:
         )
 
 
+def test_bindings_yml_parses_remote_block(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: n8n
+    plane_project_id: project-a
+    repo_path: /home/itadmin/repo
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+    remote:
+      host: 100.95.224.218
+      user: itadmin
+      identity: ~/.ssh/id_remote
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    binding = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    ).bindings[0]
+
+    assert binding.is_remote
+    assert binding.remote is not None
+    assert binding.remote.host == "100.95.224.218"
+    assert binding.remote.user == "itadmin"
+    assert binding.remote.identity == "~/.ssh/id_remote"
+
+
+def test_bindings_yml_without_remote_block_is_local(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: local-test
+    plane_project_id: project-a
+    repo_path: /srv/local
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    binding = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    ).bindings[0]
+
+    assert binding.remote is None
+    assert not binding.is_remote
+
+
+def test_bindings_yml_remote_block_requires_host(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: bad-remote
+    plane_project_id: project-a
+    repo_path: /srv/bad
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+    remote:
+      user: itadmin
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="remote.host"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
+
+
 def test_binding_resolves_agent_label_override():
     binding = SymphonyConfig.from_env(_env(SYMPHONY_DEFAULT_AGENT="pi")).bindings[0]
 
