@@ -404,8 +404,20 @@ def run_claude_agent(
             issue.id
         )
         resume_requested = bool(getattr(issue, "resumed", False))
-        session_arg = "--resume" if resume_requested else "--session-id"
         transcript_file = session_file or session_file_path("claude", cwd, session_id)
+        # `claude --session-id <id>` creates a fresh session and aborts when a
+        # transcript for that id already exists; `--resume <id>` attaches to it.
+        # The per-issue session id is deterministic, so a refeed (resumed=false,
+        # e.g. after sha-drift) targets the same transcript an earlier successful
+        # run wrote. Forcing --session-id there collides and claude exits before
+        # readiness, surfacing as claude_ready_timeout. Pick the flag by
+        # transcript existence; the resumed flag governs prompt *content*
+        # (incremental vs full re-feed) upstream, not this launch flag.
+        session_arg = (
+            "--resume"
+            if (resume_requested or transcript_file.exists())
+            else "--session-id"
+        )
         LOGGER.info(
             "claude_dispatch issue_id=%s model=%s cwd=%s session_id=%s resumed=%s",
             issue.id,

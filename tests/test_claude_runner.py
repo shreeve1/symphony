@@ -884,6 +884,38 @@ def test_claude_fresh_launch_uses_session_id_when_issue_is_not_resumed(
     assert "-c" not in command
 
 
+def test_claude_refeed_uses_resume_when_transcript_already_exists(
+    tmp_path: Path,
+) -> None:
+    # A sha-drift refeed arrives with resumed=False but the deterministic
+    # session transcript from an earlier successful run is still on disk.
+    # Launching with --session-id would collide and the agent would exit before
+    # readiness; the runner must attach with --resume instead.
+    fake = TmuxFake(result_text="SYMPHONY_RESULT: done")
+    session_id = issue_session_id("42")
+    transcript = tmp_path / f"{session_id}.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    run_claude_agent(
+        _config(tmp_path),
+        _issue(agent_session_id=session_id, resumed=False),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        session_file=transcript,
+    )
+
+    launch_call = next(call for call in fake.calls if "new-session" in call[0])
+    command = launch_call[0]
+    assert "--resume" in command
+    assert command[command.index("--resume") + 1] == session_id
+    assert "--session-id" not in command
+
+
 class _IdleThenNudgeCompletesTmux:
     """Static pane with no done file (agent parked at the prompt) until a
     completion nudge arrives, then writes the result + done file -- an agent that
