@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-16] session-update | Issue #38 Dashboard totals omit terminal states
+
+- Actor: agent
+- Inputs: Podium issue #38 request; `web/frontend/app/page.tsx`; `web/frontend/tests/dashboard.spec.ts`; existing dashboard wiki page
+- Outputs: updated dashboard implementation and spec; updated `wiki/analyses/podium-031-board-overview-dashboard.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0222 added)
+- Notes: Dashboard totals and badges now include only active states (`todo`, `running`, `in_review`, `blocked`), omitting `done` and `archived`. Verification: touched-file LSP diagnostics clean; `cd web/frontend && pnpm exec tsc --noEmit` passed; first Playwright run failed because `uv` was not on PATH, then `PATH=/home/james/.local/bin:$PATH pnpm exec playwright test dashboard.spec.ts` passed (1 test).
+
 ## [2026-06-15] session-update | Issue #25 Question Park verdict drift
 
 - Actor: agent
@@ -805,3 +812,11 @@ Append entries with this format:
 - Outputs: raw session capture `wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md`; claims **C-0220** (oldest-first single-blob render + issueId-keyed auto-scroll; removes `splitCommentEntries`/`#{1,6}` shredding) and **C-0221** (trading-bound e2e specs broken by trading offboarding); promoted-page follow-on section + frontmatter/source bump on `wiki/analyses/podium-run-log-cap-and-flyout-dedup.md`; index row + ROUTING keyword updates; this log entry.
 - Notes: Display-only frontend change — `comments_md` storage/append-order/API untouched. Verified `tsc --noEmit` clean and `steer-flyout` specs pass (cover `view-comments_md`). `flyout-tabs:3` failed but is PRE-EXISTING and unrelated: confirmed identical on clean HEAD (stash + re-run). Root cause = `global-setup.mjs` mirrors the live `bindings.yml`, which no longer has `trading` after the 2026-06-15 offboarding (C-0212), so the `/trading` board + seed card never render. Change uncommitted; live UI needs `web/frontend/deploy.sh` (prebuilt bundle), not a plain restart (cf. C-0218). Open follow-up: reseed the trading-bound e2e specs against a live binding or add a fixture-only trading binding.
 - Unresolved: trading-bound e2e specs (`flyout-tabs`/`board`/`run-detail`) remain red until reseeded; flyout change not yet deployed/committed.
+
+## [2026-06-16] session-update | e2e binding fixture decoupled from live bindings.yml (C-0221 resolved)
+
+- Actor: agent
+- Inputs: operator "reseed against the live binding now"; full e2e run (17 failed/31 passed) → root cause = `global-setup.mjs` mirrors live `bindings.yml`, `trading` offboarded. Files: `web/frontend/tests/global-setup.mjs`, `web/api/seed.py`, `web/api/schema.py`, `web/frontend/components/IssueFlyout.tsx`, `web/api/main.py`.
+- Outputs: code commit `b3e0f58` (synthesize fixture-only `trading` binding in `global-setup.mjs`); updated claim **C-0221** to `resolved`; updated `wiki/analyses/podium-run-log-cap-and-flyout-dedup.md` (e2e-drift section + follow-up); same-session addendum on `wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md`; ROUTING keywords; this log entry.
+- Notes: Decision **decouple over migrate** — operator picked the fixture-binding option after I surfaced that the breakage was 16 specs (not 3) and that migrating mutating specs (dnd/archive/dashboard) to a shared homelab board would break `fullyParallel` isolation. Fix clones a local binding, forces `type=coding` (flyout 7-chip coding layout; infra adds 3 chips), drops `remote:`. No spec edits. Full suite 47 passed; lone miss = unrelated `new-issue` combobox keyboard flake (green in isolation).
+- Unresolved: `new-issue.spec.ts:124` combobox keyboard-nav flake under full-suite parallelism (not investigated; passes alone). Flyout render change (C-0220) + this fix still uncommitted-to-remote / not deployed to live UI (needs `web/frontend/deploy.sh`).

@@ -32,4 +32,11 @@
 ## Open Questions And Follow-Ups
 
 - The flyout change is uncommitted at capture and lives only in the working tree; `podium-web.service` serves a prebuilt bundle, so showing it in the live UI needs `web/frontend/deploy.sh` (rebuild + atomic swap), not a plain restart (per C-0218 deploy topology).
-- Follow-up (not done this session): the `trading`-bound e2e specs (`flyout-tabs`, `board`, `run-detail`) are broken by the trading offboarding. Either reseed those specs against a still-live binding (e.g. `homelab` — `editing.spec.ts` already uses "Seed running issue for homelab") or restore a fixture-only `trading` binding in `global-setup.mjs`. This blocks `flyout-tabs`'s own coverage of the new render.
+- Follow-up (not done at first capture): the `trading`-bound e2e specs are broken by the trading offboarding. Either reseed those specs against a still-live binding or restore a fixture-only `trading` binding in `global-setup.mjs`.
+
+## Addendum (same session) — e2e drift resolved
+
+- Full-suite run revealed the breakage was **16 specs, not 3**: `seedIssue("trading", …)` hit `FOREIGN KEY constraint failed` (`issue.binding_name REFERENCES binding(name)`, `web/api/schema.py:28`) for the mutating specs (`board-dnd`/`archive`/`dashboard`/`reply`); the read-only specs (`board`/`run-detail`/`flyout-tabs`) timed out on the missing seed card.
+- Operator chose **decouple over migrate**: migrating to `homelab` would collide because the mutating specs use `trading` as a board isolated from the homelab specs under `fullyParallel` (dashboard counts, dnd/archive state).
+- Fix (commit `b3e0f58`): `global-setup.mjs` synthesizes a fixture-only `trading` binding — deep-copy a local binding, force `type=coding`, drop any `remote:` block. `type=coding` is required because the flyout's 7-chip layout is the coding layout; infra bindings add 3 chips (`IssueFlyout.tsx:314`, `web/api/main.py:859`). No spec edits.
+- Verified: full suite **47 passed**, lone miss is an unrelated `new-issue` combobox keyboard-timing flake (green in isolation). — Evidence: `web/frontend/tests/global-setup.mjs`, commit `b3e0f58`
