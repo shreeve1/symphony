@@ -9,6 +9,8 @@ podium.db.predelete-bak-*
 runs/
 *.env
 plans/
+Plans/
+test-results/
 .bindings.yml.preview
 .WORKFLOW.md.preview
 .pi-lens/
