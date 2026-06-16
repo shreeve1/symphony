@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import os
 import sqlite3
 import subprocess
 from contextlib import asynccontextmanager
@@ -43,6 +44,7 @@ if __package__:
     _seed = import_module(f"{__package__}.seed")
     _steer_queue = import_module(f"{__package__}.steer_queue")
     _wake_signal = import_module(f"{__package__}.wake_signal")
+    _files = import_module(f"{__package__}.files")
 else:  # pragma: no cover - supports uvicorn main:app from web/api
     _auth = import_module("auth")
     _db = import_module("db")
@@ -50,6 +52,7 @@ else:  # pragma: no cover - supports uvicorn main:app from web/api
     _seed = import_module("seed")
     _steer_queue = import_module("steer_queue")
     _wake_signal = import_module("wake_signal")
+    _files = import_module("files")
 
 COOKIE_NAME = _auth.COOKIE_NAME
 SESSION_MAX_AGE_SECONDS = _auth.SESSION_MAX_AGE_SECONDS
@@ -66,7 +69,14 @@ get_connection = _db.get_connection
 INITIAL_REVISION = _schema.INITIAL_REVISION
 SCHEMA_SQL = _schema.SCHEMA_SQL
 BINDINGS_PATH = _seed.BINDINGS_PATH
-MODELS_PATH = BINDINGS_PATH.parent / "models.yml"
+MODELS_PATH = (
+    Path(os.environ["PODIUM_MODELS_PATH"])
+    if os.environ.get("PODIUM_MODELS_PATH")
+    # Default to the stable repo root, NOT BINDINGS_PATH.parent: BINDINGS_PATH is
+    # overridable via PODIUM_BINDINGS_PATH (e2e isolation), and deriving from it
+    # would point the model catalog at a nonexistent test-results/models.yml.
+    else (_seed.REPO_ROOT / "models.yml")
+)
 _load_bindings = _seed._load_bindings
 seed_if_empty = _seed.seed_if_empty
 touch_wake_sentinel = _wake_signal.touch_wake_sentinel
@@ -630,7 +640,11 @@ def list_bindings(
     ).fetchall()
     result = [_row(row) for row in rows]
     for binding in result:
-        binding["pi_mode"] = _binding_pi_mode_for(str(binding["name"]))
+        name = str(binding["name"])
+        binding["pi_mode"] = _binding_pi_mode_for(name)
+        binding["is_remote"] = _is_remote_binding(name)
+        repo_path = _repo_path_for_binding(name)
+        binding["repo_name"] = repo_path.name if repo_path is not None else None
     return result
 
 
@@ -1791,3 +1805,8 @@ def _get_run_or_404(connection: sqlite3.Connection, run_id: int) -> sqlite3.Row:
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
     return row
+
+
+# Register the file browser/editor router. require_auth (defined above) gates
+# all /api/* paths, so these endpoints inherit session-cookie auth.
+app.include_router(_files.files_router)

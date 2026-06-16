@@ -74,6 +74,13 @@ export { expect };
 
 const E2E_DB_PATH = path.resolve(__dirname, "../test-results/podium-e2e.db");
 const E2E_PI_SESSION_DIR = path.resolve(__dirname, "../test-results/pi-sessions");
+// Same fixture bindings.yml the API webServer + global-setup use (see
+// playwright.config.ts). Helper subprocesses must read the throwaway repo paths
+// from here, not the live bindings.yml, or session-tail writes land in a real repo.
+const E2E_BINDINGS_PATH = path.resolve(
+	__dirname,
+	"../test-results/e2e-bindings.yml",
+);
 
 function runDbScript<T>(script: string): T {
 	const stdout = execFileSync("uv", ["run", "python", "-c", script], {
@@ -82,6 +89,7 @@ function runDbScript<T>(script: string): T {
 			...process.env,
 			PODIUM_DB_PATH: E2E_DB_PATH,
 			PI_CODING_AGENT_SESSION_DIR: E2E_PI_SESSION_DIR,
+			PODIUM_BINDINGS_PATH: E2E_BINDINGS_PATH,
 		},
 		stdio: "pipe",
 	});
@@ -213,6 +221,7 @@ with connect() as connection:
 export function appendSessionTail(issueId: number, line: unknown) {
 	const script = `
 import json
+import os
 import yaml
 from pathlib import Path
 from session_continuity import derive_session_id, session_file_path
@@ -231,7 +240,7 @@ with connect() as connection:
     ).fetchone()
     binding = row["binding_name"]
     agent = row["agent"]
-raw_bindings = yaml.safe_load(Path("bindings.yml").read_text())
+raw_bindings = yaml.safe_load(Path(os.environ.get("PODIUM_BINDINGS_PATH", "bindings.yml")).read_text())
 repo_path = next(
     item["repo_path"]
     for item in raw_bindings["bindings"]

@@ -143,22 +143,37 @@ export function Sidebar() {
 				)}
 
 				{bindings?.map((binding) => (
-					<Link
-						key={binding.name}
-						href={`/${binding.name}`}
-						data-testid="binding-row"
-						className={cn(
-							"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
-							active === binding.name && "bg-sidebar-accent font-medium",
+					<div key={binding.name}>
+						<Link
+							href={`/${binding.name}`}
+							data-testid="binding-row"
+							className={cn(
+								"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
+								active === binding.name && "bg-sidebar-accent font-medium",
+							)}
+						>
+							<span
+								aria-hidden
+								className="size-2 shrink-0 rounded-full"
+								style={{ backgroundColor: binding.color }}
+							/>
+							<span className="truncate">
+								{binding.display_name}
+								{binding.is_remote && binding.repo_name
+									? ` — ${binding.repo_name}`
+									: ""}
+							</span>
+						</Link>
+						{active === binding.name && (
+							<Link
+								href={`/${binding.name}/files`}
+								data-testid="binding-files-link"
+								className="ml-4 flex items-center rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent"
+							>
+								Files
+							</Link>
 						)}
-					>
-						<span
-							aria-hidden
-							className="size-2 shrink-0 rounded-full"
-							style={{ backgroundColor: binding.color }}
-						/>
-						<span className="truncate">{binding.display_name}</span>
-					</Link>
+					</div>
 				))}
 
 				{inbox && inbox.length > 0 && (

@@ -8,6 +8,8 @@ export interface Binding {
 	sort_order: number;
 	archived: boolean;
 	pi_mode: "one-shot" | "rpc";
+	is_remote: boolean;
+	repo_name: string | null;
 }
 
 export interface Issue {
@@ -162,6 +164,26 @@ export interface IssueOptions {
 	branches: string[];
 }
 
+export interface FileEntry {
+	name: string;
+	path: string;
+	is_directory: boolean;
+}
+
+export interface DirListing {
+	items: FileEntry[];
+	path: string;
+}
+
+export interface FileContent {
+	path: string;
+	content: string;
+	size: number;
+	modified: string;
+	editable: boolean;
+	language: string;
+}
+
 async function getJSON<T>(path: string): Promise<T> {
 	const res = await fetch(path);
 	if (!res.ok) {
@@ -199,6 +221,33 @@ export const fetchIssueRuns = (id: number) =>
 	getJSON<Run[]>(`/api/issues/${id}/runs`);
 
 export const fetchRun = (id: number) => getJSON<RunDetail>(`/api/runs/${id}`);
+
+export const fetchDir = (binding: string, path: string) =>
+	getJSON<DirListing>(
+		`/api/bindings/${encodeURIComponent(binding)}/files?path=${encodeURIComponent(path)}`,
+	);
+
+export const fetchFile = (binding: string, path: string) =>
+	getJSON<FileContent>(
+		`/api/bindings/${encodeURIComponent(binding)}/files/content?path=${encodeURIComponent(path)}`,
+	);
+
+export async function saveFile(
+	binding: string,
+	path: string,
+	content: string,
+): Promise<{ message: string; path: string; size: number }> {
+	const url = `/api/bindings/${encodeURIComponent(binding)}/files/content`;
+	const res = await fetch(url, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, content }),
+	});
+	if (!res.ok) {
+		throw new Error(`PUT ${url} -> ${res.status} ${res.statusText}`);
+	}
+	return res.json() as Promise<{ message: string; path: string; size: number }>;
+}
 
 export async function login(password: string): Promise<void> {
 	const res = await fetch("/api/auth/login", {

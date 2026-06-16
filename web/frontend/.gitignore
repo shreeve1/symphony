@@ -11,3 +11,6 @@ next-env.d.ts
 /playwright/.cache
 *.tsbuildinfo
 .DS_Store
+
+# Self-hosted Monaco assets, regenerated via `pnpm copy:monaco`
+/public/monaco
