@@ -121,6 +121,39 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 	expectCleanConsole(problems);
 });
 
+test("combobox arrow keys highlight and Enter selects; Escape closes only the popup", async ({
+	page,
+	problems,
+}) => {
+	seedSkills([
+		{ name: "alpha", description: "first" },
+		{ name: "beta", description: "second" },
+	]);
+
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+
+	// Open the skill combobox and walk down with the arrow key: index 0 is the
+	// empty "—" row, index 1 is the first real option (alpha).
+	await page.getByTestId("new-issue-skill").click();
+	await expect(page.getByTestId("new-issue-skill-option").first()).toBeVisible();
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Enter");
+	await expect(page.getByTestId("new-issue-skill")).toHaveValue("alpha");
+
+	// ArrowDown reopens the closed popup (input keeps focus after selection);
+	// Escape then closes only the popup, leaving the modal open.
+	await page.keyboard.press("ArrowDown");
+	await expect(page.getByTestId("new-issue-skill-option").first()).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(page.getByTestId("new-issue-skill-option")).toHaveCount(0);
+	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+
+	expectCleanConsole(problems);
+});
+
 test("create failure rolls back the card and keeps the modal open", async ({
 	page,
 	problems,

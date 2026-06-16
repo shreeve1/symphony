@@ -127,6 +127,9 @@ function FieldCombobox({
 }) {
 	const [open, setOpen] = useState(false);
 	const [draft, setDraft] = useState(labelFor(options, value));
+	const [activeIndex, setActiveIndex] = useState(-1);
+	const listRef = useRef<HTMLDivElement | null>(null);
+	const listId = `${testid}-listbox`;
 	const normalizedDraft = draft.trim().toLowerCase();
 	// A draft that still mirrors the selected value (e.g. the preselected
 	// default model) is not a search: show the full list until the operator
@@ -143,14 +146,56 @@ function FieldCombobox({
 		);
 	});
 
+	// Selectable rows shown in the popup: leading empty option + filtered list.
+	const emptyLabel = emptyHint ? `— (${emptyHint})` : "—";
+	const entries: ComboOption[] = [{ value: "", label: emptyLabel }, ...filtered];
+
 	useEffect(() => {
 		setDraft(labelFor(options, value));
 	}, [options, value]);
+
+	// Reset the highlight whenever the popup reopens or the visible list changes.
+	useEffect(() => {
+		setActiveIndex(-1);
+	}, [open, normalizedDraft]);
+
+	// Keep the highlighted row scrolled into view as arrow keys move it.
+	useEffect(() => {
+		if (!open || activeIndex < 0) return;
+		listRef.current
+			?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
+			?.scrollIntoView({ block: "nearest" });
+	}, [open, activeIndex]);
 
 	const choose = (next: string) => {
 		onChange(next);
 		setDraft(labelFor(options, next));
 		setOpen(false);
+		setActiveIndex(-1);
+	};
+
+	const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+		if (e.key === "ArrowDown") {
+			e.preventDefault();
+			if (!open) setOpen(true);
+			else setActiveIndex((i) => Math.min(i + 1, entries.length - 1));
+		} else if (e.key === "ArrowUp") {
+			e.preventDefault();
+			if (!open) setOpen(true);
+			else setActiveIndex((i) => Math.max(i - 1, 0));
+		} else if (e.key === "Enter") {
+			if (open && activeIndex >= 0 && activeIndex < entries.length) {
+				e.preventDefault();
+				choose(entries[activeIndex].value);
+			}
+		} else if (e.key === "Escape" && open) {
+			// Close only the popup; stop the modal's window-level Escape handler.
+			e.preventDefault();
+			e.stopPropagation();
+			setOpen(false);
+			setActiveIndex(-1);
+			if (!allowFreeText) setDraft(labelFor(options, value));
+		}
 	};
 
 	return (
@@ -158,9 +203,17 @@ function FieldCombobox({
 			<span className="text-xs font-medium text-muted-foreground">{label}</span>
 			<input
 				data-testid={testid}
+				role="combobox"
+				aria-expanded={open}
+				aria-controls={listId}
+				aria-autocomplete="list"
+				aria-activedescendant={
+					open && activeIndex >= 0 ? `${testid}-option-${activeIndex}` : undefined
+				}
 				value={draft}
-				placeholder={emptyHint ? `— (${emptyHint})` : "—"}
+				placeholder={emptyLabel}
 				onFocus={() => setOpen(true)}
+				onKeyDown={onKeyDown}
 				onChange={(e) => {
 					setDraft(e.target.value);
 					setOpen(true);
@@ -174,28 +227,35 @@ function FieldCombobox({
 				className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
 			/>
 			{open && (
-				<div className="absolute z-50 mt-1 max-h-44 w-full overflow-auto rounded-md border bg-background p-1 shadow-lg">
-					<button
-						type="button"
-						data-testid={`${testid}-option`}
-						onMouseDown={(e) => e.preventDefault()}
-						onClick={() => choose("")}
-						className="block w-full rounded px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted"
-					>
-						{emptyHint ? `— (${emptyHint})` : "—"}
-					</button>
-					{filtered.map((option) => (
-						<button
-							type="button"
-							key={option.value}
-							data-testid={`${testid}-option`}
-							onMouseDown={(e) => e.preventDefault()}
-							onClick={() => choose(option.value)}
-							className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted"
-						>
-							{option.label ?? option.value}
-						</button>
-					))}
+				<div
+					ref={listRef}
+					id={listId}
+					role="listbox"
+					className="absolute z-50 mt-1 max-h-44 w-full overflow-auto rounded-md border bg-background p-1 shadow-lg"
+				>
+					{entries.map((option, index) => {
+						const active = index === activeIndex;
+						const isEmpty = option.value === "";
+						return (
+							<button
+								type="button"
+								key={option.value || "__empty__"}
+								id={`${testid}-option-${index}`}
+								data-index={index}
+								data-testid={`${testid}-option`}
+								role="option"
+								aria-selected={active}
+								onMouseEnter={() => setActiveIndex(index)}
+								onMouseDown={(e) => e.preventDefault()}
+								onClick={() => choose(option.value)}
+								className={`block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted ${
+									isEmpty ? "text-muted-foreground" : ""
+								} ${active ? "bg-muted" : ""}`}
+							>
+								{option.label ?? option.value}
+							</button>
+						);
+					})}
 					{filtered.length === 0 && (
 						<div className="px-2 py-1.5 text-sm text-muted-foreground">
 							No matches

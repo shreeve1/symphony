@@ -11,6 +11,8 @@ type StateKey = (typeof STATES)[number]["key"];
 interface BindingSummary {
 	name: string;
 	displayName: string;
+	repoName: string | null;
+	isRemote: boolean;
 	color: string;
 	counts: Record<StateKey, number>;
 	total: number;
@@ -80,7 +82,12 @@ function BindingCard({ summary }: { summary: BindingSummary }) {
 					className="size-3 shrink-0 rounded-full"
 					style={{ backgroundColor: summary.color }}
 				/>
-				<h3 className="font-semibold">{summary.displayName}</h3>
+				<h3 className="font-semibold">
+					{summary.displayName}
+					{summary.isRemote && summary.repoName
+						? ` — ${summary.repoName}`
+						: ""}
+				</h3>
 				<span className="ml-auto text-[11px] text-muted-foreground">
 					{formatAge(summary.lastEventAt)}
 				</span>
@@ -124,6 +131,8 @@ export default function DashboardPage() {
 		return {
 			name: b.name,
 			displayName: b.display_name,
+			repoName: b.repo_name,
+			isRemote: b.is_remote,
 			color: b.color,
 			counts: countByState(issues),
 			total: issues.length,
