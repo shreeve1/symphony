@@ -3,9 +3,10 @@ title: "Podium frontend deploy hazard + atomic deploy script + UI cosmetics"
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-15
 sources:
   - wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md
+  - wiki/raw/sessions/2026-06-15-podium-web-stale-build-client-exception.md
   - web/frontend/deploy.sh
   - web/frontend/next.config.mjs
   - web/frontend/playwright.config.ts
@@ -27,6 +28,8 @@ A cosmetic frontend change request (collapsible left sidebar, simplified issue-c
 `podium-web.service` runs `pnpm start -p 8091` → `next start -H ${HOST:-0.0.0.0} -p 8091` [source: wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md#durable-facts]. This serves a **prebuilt** `.next` and never hot-reloads, so source edits need a rebuild + restart to appear.
 
 `next build` overwrites `.next` in place. While the old server keeps serving the previous in-memory HTML (which references the old chunk hashes), the on-disk static chunks have new hashes, so asset requests in that window 400 with `text/html` MIME — the browser refuses the stylesheet/script and the app hangs at "Checking session…". Observed live: the served HTML referenced `296af0bbdbe2ffd4.css` while the disk had rebuilt to `47857b3ee08e2d46.css` [source: wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md#durable-facts].
+
+**Live recurrence 2026-06-15 (C-0213).** This hazard recurred in production: a bare `next build` ran against the live `web/frontend` dir (bypassing `deploy.sh`) ~3h after `podium-web` boot (server up 2026-06-14 23:43:01, `.next` rebuilt 02:24). The symptom this time was the browser **"Application error: a client-side exception has occurred (see the browser console for more information)"** — a React hydration failure, distinct from the "Checking session…" hang above but the same root cause: the served HTML referenced old app-router chunk hashes (`app/[binding]/page-d526ae8…js`, `app/layout-124a785…js`) that the rebuild had renamed on disk (to `page-ece4dea…js`, `layout-e593ac…js`), so those requests 400'd. `sudo systemctl restart podium-web.service` **alone** fixed it (the 02:24 build was already valid on disk; only the in-memory manifest was stale) — all 11 served chunks returned 200 afterward. So the in-place-rebuild symptom catalogue now includes both a stylesheet/script-MIME 400 hang *and* an app-router-chunk-400 client-side exception [source: wiki/raw/sessions/2026-06-15-podium-web-stale-build-client-exception.md#durable-facts].
 
 Recovery is a `sudo systemctl restart podium-web.service` (loads the new build cleanly) plus a browser **hard refresh** to drop stale cached HTML — **but only if a valid production `.next` exists on disk** (see next section).
 

@@ -3,18 +3,30 @@ title: trading Binding
 type: entity
 status: promoted
 created: 2026-06-09
-updated: 2026-06-11
+updated: 2026-06-15
 sources:
   - wiki/raw/bindings.yml
   - bindings.yml
   - wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md
+  - wiki/raw/sessions/2026-06-15-trading-binding-offboard.md
 confidence: high
-tags: [binding, trading, plane, project, default-agent, pi, multi-project, podium, archived]
+tags: [binding, trading, plane, project, default-agent, pi, multi-project, podium, archived, offboarded, removed]
 ---
 
 # trading Binding
 
 Second Project Binding, added after Symphony was generalized for multi-project use. Demonstrates a leaner Role set than homelab — no `scheduled`, no `approved`, no `has-worktree` UUID, no domain labels beyond `agent:*`.
+
+> **OFFBOARDED (2026-06-15, purge):** trading was removed via
+> `/symphony-offboard-project trading` in **purge** mode — its `bindings.yml`
+> entry was dropped and its Podium `binding`/`issue`/`run`/`binding_settings`
+> rows were **deleted** (`db_action='deleted'`, 1 issue + 1 run; irreversible
+> except from a `podium.db` backup). After restart the live binding set is
+> **2: homelab, symphony** — trading is no longer dispatched. Everything below
+> is **historical**. See
+> [offboard session](../raw/sessions/2026-06-15-trading-binding-offboard.md)
+> and C-0212. Live bindings: [homelab](binding-homelab.md),
+> [symphony](binding-symphony.md).
 
 > **Status (2026-06-11, #023d):** trading is on Podium (`tracker: podium`) and its
 > Plane project (`201a3995-...`) was **archived**. The `tracker_contract` block

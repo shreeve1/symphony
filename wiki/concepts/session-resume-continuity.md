@@ -3,7 +3,7 @@ title: Session Resume continuity
 type: concept
 status: promoted
 created: 2026-06-13
-updated: 2026-06-13
+updated: 2026-06-15
 sources:
   - docs/adr/0009-session-resume-continuity.md
   - wiki/raw/adr-0009-session-resume-continuity.md
@@ -12,6 +12,7 @@ sources:
   - .kanban/issues/050-pi-resume-end-to-end.md
   - .kanban/issues/051-claude-resume-end-to-end.md
   - .kanban/issues/052-question-park.md
+  - wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md
   - .kanban/issues/053-live-session-tail.md
   - .kanban/issues/054-fast-redispatch-on-reply.md
   - .kanban/issues/055-checkpointed-exploration.md
@@ -66,14 +67,14 @@ A session persists the **conversation, not the filesystem** — resume restores 
 - **Pi RPC dispatch (#050)** — `PiRpcAgentAdapter` launches `pi --mode rpc --provider ... --model ... --session-id <derive_session_id(issue.id)>` (plus `--skill <dir>` when present), sends the rendered prompt as a JSON command on stdin, pumps JSONL events until `agent_end`, sends `abort` on timeout, and maps the final assistant text into `AgentResult.stdout` so verdict/summary parsing stays adapter-neutral. One-shot `PiAgentAdapter` remains the default rollback path; bindings opt into RPC with `pi_mode: rpc`. [source: agent_runner.py] [source: config.py] [source: main.py]
 - **Claude tmux dispatch (#051)** — `run_claude_agent` now derives the same session id and launches fresh Claude runs with `--session-id <derived>` and resumed Claude runs with `--resume <derived>`; it never uses `--continue` / `-c`. Scheduler resume eligibility now covers Claude as well as pi RPC, so eligible Claude resume runs get the delta-only prompt, skip context compaction, record `resumed`/`agent_session_sha`, and fall back to fresh full re-feed on resume exceptions or non-zero results. [source: claude_runner.py] [source: scheduler.py] [source: tests/test_claude_runner.py] [source: tests/test_dispatch_compaction.py]
 - **Run observability** — Run rows carry `agent_session_sha` and `resumed`. Scheduler computes the current dispatch cwd/git sha, evaluates #048 eligibility for pi RPC and Claude bindings, records these fields when starting Run rows, skips `_maybe_compact_context` on resume, and falls back to fresh full re-feed on predicate miss or resume runtime/non-zero failure with `resume_skipped` / `resume_failed ... fell_back=true` markers. [source: scheduler.py] [source: tracker_podium.py] [source: tests/test_dispatch_compaction.py]
-- **Question Park (#052)** — `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` is a third terminal outcome in the shared output contract. Scheduler extracts the question, records the Run with verdict `question`, posts `**Symphony question:**` as the Issue comment, and transitions the Issue to `in_review`; blocked-on-error remains the existing `SYMPHONY_RESULT: blocked` path. Claude's wrapper permits this protocol instead of forbidding questions, while Pi receives it through the same rendered `OUTPUT_CONTRACT`. [source: prompt_renderer.py] [source: claude_runner.py] [source: scheduler.py] [source: tests/test_scheduler.py] [source: .kanban/issues/052-question-park.md]
+- **Question Park (#052)** — `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` is a third terminal outcome in the shared output contract. Scheduler extracts the question, records the Run with verdict `question`, posts `**Symphony question:**` as the Issue comment, and transitions the Issue to `in_review`; blocked-on-error remains the existing `SYMPHONY_RESULT: blocked` path. Claude's wrapper permits this protocol instead of forbidding questions, while Pi receives it through the same rendered `OUTPUT_CONTRACT`. **Known drift:** Issue `25` / Run `36` proved the persisted verdict path currently fails against Podium SQLite because the schema excludes `question` from `run.verdict` / `issue.latest_verdict`; until fixed, a Question Park can leave the Issue `in_review` while latest Run remains `running`. [source: prompt_renderer.py] [source: claude_runner.py] [source: scheduler.py] [source: tests/test_scheduler.py] [source: .kanban/issues/052-question-park.md] [source: wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md]
 - **Silent-failure guardrail** — never `--continue`; explicit id fails loud; runtime/non-zero resume errors are caught and re-fed in-tick (`resume_skipped`/`resume_failed`).
 
 [source: docs/adr/0009-session-resume-continuity.md]
 
 ## Paired CLI-fidelity features (same design)
 
-- **Question Park** — landed in #052. The agent may park to `in_review` carrying a clarifying question via `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END`, and the operator reply resumes the session with the answer. Turn-taking; only useful because resume preserves the thread. [source: CONTEXT.md] [source: scheduler.py] [source: .kanban/issues/052-question-park.md]
+- **Question Park** — landed in #052. The agent may park to `in_review` carrying a clarifying question via `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END`, and the operator reply resumes the session with the answer. Turn-taking; only useful because resume preserves the thread. Live caveat: persisted verdict `question` currently violates Podium CHECK constraints (C-0211), so the storage path needs repair. [source: CONTEXT.md] [source: scheduler.py] [source: .kanban/issues/052-question-park.md] [source: wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md]
 - **Session Tail (#053)** — the web/API process tails live-appended pi/Claude session `.jsonl` files for running issues and publishes appended lines as `run.tail` events over the existing in-process WS hub (#017), without changing the separate-process scheduler model (ADR-0006). `_SessionTailer` resolves the derived session path, reads byte ranges in `rb` mode only, tracks cursor/inode per issue, emits existing content on first detection, and treats missing/empty/locked files as no event. The flyout's Session tab renders lines from the shared `QueryProvider` WebSocket stream and filters by issue id. [source: web/api/main.py] [source: web/api/tests/test_session_tail.py] [source: web/frontend/components/SessionTailPanel.tsx] [source: web/frontend/components/QueryProvider.tsx] [source: web/frontend/tests/session-tail.spec.ts]
 - **Fast re-dispatch (#054)** — successful operator replies and API PATCH transitions to `todo` touch a filesystem wake sentinel. The scheduler consumes the sentinel during its poll sleep at a one-second cadence, clears it with `unlink`, and immediately starts another candidate scan; absent sentinel preserves normal poll cadence, and a stale sentinel is consumed without sleeping so restart cannot wedge the loop. Config knobs: `SYMPHONY_WAKE_SENTINEL_PATH`, else `SYMPHONY_RUNTIME_DIR/reply-wake`, else `/tmp/symphony/reply-wake`. [source: web/api/wake_signal.py] [source: web/api/main.py] [source: scheduler.py] [source: web/api/tests/test_reply.py] [source: tests/test_scheduler.py]
 - **Checkpointed exploration (#055)** — a repo-local `checkpointed-exploration` Skill plus prompt-renderer directive tells agents to do exactly one bounded exploration step, summarize evidence, then park with `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` until the operator replies; it emits only when that Skill is selected and is documented in `symphony-workflow-author` guidance. [source: .claude/skills/checkpointed-exploration/SKILL.md] [source: prompt_renderer.py] [source: tests/test_prompt_renderer_podium.py] [source: .kanban/issues/055-checkpointed-exploration.md]
@@ -90,4 +91,4 @@ This **supersedes** the original "transcript re-feed, not session resume" stance
 
 ## Claims
 
-C-0175, C-0176, C-0177, C-0178, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, C-0186, C-0187, C-0192, C-0193, and C-0194 in [CLAIMS.md](../CLAIMS.md).
+C-0175, C-0176, C-0177, C-0178, C-0180, C-0181, C-0182, C-0183, C-0184, C-0185, C-0186, C-0187, C-0192, C-0193, C-0194, and C-0211 in [CLAIMS.md](../CLAIMS.md).

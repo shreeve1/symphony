@@ -3,7 +3,7 @@ title: Symphony skills index
 type: analysis
 status: promoted
 created: 2026-06-09
-updated: 2026-06-14
+updated: 2026-06-16
 sources:
   - .claude/skills/symphony-binding-scaffold/SKILL.md
   - .claude/skills/symphony-binding-remove/SKILL.md
@@ -39,7 +39,7 @@ new Podium binding flow:
   └── orchestrated by: symphony-onboard-project
 
 binding teardown (inverse of onboard):
-  symphony-bindings-status → symphony-binding-remove → symphony-restart
+  symphony-bindings-status → symphony-binding-remove → cleanup leftover references/tests → symphony-restart
   ├── archive (default, reversible) | purge (destructive)
   └── orchestrated by: symphony-offboard-project
 
@@ -82,7 +82,7 @@ Creates a Podium-backed binding by inserting the binding row in Podium SQLite an
 
 ### `symphony-binding-remove`
 
-Inverse of `symphony-binding-scaffold`. Removes a binding by dropping its `bindings.yml` entry and either archiving (default, reversible — sets `binding.archived = TRUE`, preserves Issue/Run history) or purging (destructive — deletes the binding's Runs, Issues, `binding_settings`, and `binding` row). The helper `remove_podium_binding(...)` raises if the name is absent from both `bindings.yml` and the Podium DB; if present in only one, it removes what it finds and reports the other as `absent`. No Plane API or `plane_adapter` path participates. The removed binding stays live in memory until `symphony-host.service` reloads `bindings.yml` via `symphony-restart` [source: skill_migration.py] [source: tests/skills/test_binding_remove.py]. The purge path issues `PRAGMA defer_foreign_keys = ON` to resolve the `issue.latest_run_id` ↔ `run.issue_id` FK cycle that otherwise fails under `foreign_keys = ON` (C-0208); `binding_settings` is removed by its `ON DELETE CASCADE`. SKILL.md additionally documents the `bindings.yml` comment-stripping yaml round-trip (shared with scaffold, C-0171), a self-binding caveat for the `symphony` binding, and how to reverse an archive [source: web/api/db.py] [source: web/api/schema.py].
+Inverse of `symphony-binding-scaffold`. Removes a binding by dropping its `bindings.yml` entry and either archiving (default, reversible — sets `binding.archived = TRUE`, preserves Issue/Run history) or purging (destructive — deletes the binding's Runs, Issues, `binding_settings`, and `binding` row). The helper `remove_podium_binding(...)` raises if the name is absent from both `bindings.yml` and the Podium DB; if present in only one, it removes what it finds and reports the other as `absent`. No Plane API or `plane_adapter` path participates. The removed binding stays live in memory until `symphony-host.service` reloads `bindings.yml` via `symphony-restart` [source: skill_migration.py] [source: tests/skills/test_binding_remove.py]. The purge path issues `PRAGMA defer_foreign_keys = ON` to resolve the `issue.latest_run_id` ↔ `run.issue_id` FK cycle that otherwise fails under `foreign_keys = ON` (C-0208); `binding_settings` is removed by its `ON DELETE CASCADE`. SKILL.md additionally documents the `bindings.yml` comment-stripping yaml round-trip (shared with scaffold, C-0171), a self-binding caveat for the `symphony` binding, how to reverse an archive, and the required post-removal cleanup pass for seed-dependent tests/code references. That cleanup exists because test DB seeding follows live `bindings.yml`, so hardcoded references to a removed binding produce 404s or empty lists after teardown; seed-dependent tests should be retargeted to a surviving same-type binding, while self-contained tmp-DB or `_bindings_override` tests can keep the old name [source: .claude/skills/symphony-binding-remove/SKILL.md] [source: web/api/seed.py] [source: web/api/tests/test_endpoints.py] [source: tests/skills/test_binding_smoke.py] [source: tests/skills/test_bindings_status.py].
 
 ### `symphony-binding-smoke`
 
@@ -110,7 +110,7 @@ Umbrella for Podium onboarding. It composes binding scaffold, workflow authoring
 
 ### `symphony-offboard-project`
 
-Umbrella for Podium binding teardown, the inverse of `symphony-onboard-project`. It chains `symphony-bindings-status` → `symphony-binding-remove` → `symphony-restart` with a checkpoint between each step, owns no direct mutations, defaults to archive (purge stays gated behind the `symphony-binding-remove` confirmation), and does not call `symphony-plane-recover` (legacy Plane retirement, not Podium teardown) [source: .claude/skills/symphony-offboard-project/SKILL.md] [source: tests/skills/test_offboard_project.py].
+Umbrella for Podium binding teardown, the inverse of `symphony-onboard-project`. It chains `symphony-bindings-status` → `symphony-binding-remove` → cleanup leftover references/tests → `symphony-restart` with a checkpoint between each step, owns no direct mutations, defaults to archive (purge stays gated behind the `symphony-binding-remove` confirmation), and does not call `symphony-plane-recover` (legacy Plane retirement, not Podium teardown) [source: .claude/skills/symphony-offboard-project/SKILL.md] [source: tests/skills/test_offboard_project.py]. The cleanup checkpoint mirrors `symphony-binding-remove` step 5: scan for removed-binding references, retarget seed-dependent tests to a live same-type binding, leave self-contained tmp/override tests alone, and run `uv run pytest` before restart [source: .claude/skills/symphony-offboard-project/SKILL.md].
 
 ### `symphony-restart` and `symphony-troubleshooter`
 

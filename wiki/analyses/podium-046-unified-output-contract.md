@@ -3,7 +3,7 @@ title: "#046 Unify agent output contract and clean the comment stream"
 type: analysis
 status: promoted
 created: 2026-06-13
-updated: 2026-06-13
+updated: 2026-06-15
 sources:
   - .kanban/issues/046-unified-output-contract.md
   - prompt_renderer.py
@@ -16,6 +16,7 @@ sources:
   - tests/test_engine_against_podium.py
   - wiki/raw/sessions/2026-06-13-unified-output-contract.md
   - wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md
+  - wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md
   - .kanban/issues/052-question-park.md
 confidence: high
 tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflow]
@@ -36,6 +37,8 @@ Issue #046 collapses the agent end-of-run contract into one engine-owned source 
 ## Question Park block (#052)
 
 `scheduler._parse_question_block(*streams)` returns the last `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` block, strips ANSI/marker lines, and `_extract_question` redacts secrets before bounding with the same summary bound [source: scheduler.py]. In `run_tick`, a question block after a clean agent exit records the Run as `succeeded` with verdict `question`, posts `**Symphony question:**` with the extracted text, transitions the Issue to `in_review`, and notifies review; `SYMPHONY_RESULT: blocked` still takes the unchanged blocked path before question handling [source: scheduler.py; source: tests/test_scheduler.py; source: .kanban/issues/052-question-park.md]. This makes Question Park a third terminal outcome of the shared output contract, not a new issue state or separate state machine.
+
+**Known live drift (2026-06-15):** `symphony` Issue `25` / Run `36` showed that the scheduler's `verdict="question"` persistence path does not match the Podium schema: `run.verdict` and `issue.latest_verdict` still allow only `done|review|blocked`, so `_finish_run_record` raised a SQLite CHECK error after a clean agent exit. The Issue moved to `in_review` via stale-running fallback while the latest Run stayed `running`. See [podium-question-park-verdict-drift](podium-question-park-verdict-drift.md) and C-0211 [source: wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md].
 
 ## Verbatim posting, no header wrapper
 

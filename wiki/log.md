@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-15] session-update | Issue #25 Question Park verdict drift
+
+- Actor: agent
+- Inputs: operator request to review `symphony` binding Issue `issue max`; read-only Podium SQLite queries for Issue `25` / Run `36`; scheduler journal slice; `/home/james/symphony/runs/36.log`; `scheduler.py`; `web/api/schema.py`; `tests/test_scheduler.py`
+- Outputs: new raw capture `wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md`; new promoted analysis `wiki/analyses/podium-question-park-verdict-drift.md`; updated `wiki/analyses/podium-046-unified-output-contract.md`; updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0211 added, C-0185 note updated)
+- Notes: Root cause: the agent exited cleanly with a `SYMPHONY_QUESTION` block, but scheduler attempted to persist `verdict="question"` while Podium schema still restricts `run.verdict` and `issue.latest_verdict` to `done|review|blocked`. `_finish_run_record` raised SQLite CHECK failure, then stale-running fallback moved Issue `25` to `in_review` while latest Run `36` stayed `running`. No env files, secrets, DB writes, service restarts, systemd edits, or Podium state mutations were performed. Follow-up: decide schema vocabulary expansion vs mapping Question Park to an existing persisted verdict, then add Podium SQLite regression coverage and repair live row under normal approval gates.
+
 ## [2026-06-15] session-update | symphony-host NoNewPrivileges disabled
 
 - Actor: agent + operator
@@ -715,3 +722,64 @@ Append entries with this format:
 - Docs/wiki: ADR `docs/adr/0011-workflow-md-infra-only.md`; `CONTEXT.md` Workflow term rewritten inline; analysis `analyses/adr-0011-workflow-md-infra-only.md` (promoted); claims **C-0203**, **C-0204** added; **C-0005** superseded (mandatory-for-every-binding), **C-0029/C-0030** superseded (trading WORKFLOW.md deleted); `entities/workflow-trading.md` marked SUPERSEDED (file deleted), `entities/workflow-homelab.md` noted infra-only-but-active; `index.md` + `ROUTING.md` updated.
 - Outdated-source check: `wiki/raw/workflow-trading.md` is now an orphaned pre-deletion snapshot of a deleted file; retained per provenance rule (cited by superseded claims). `wiki/raw/symphony-context.md#24` (source of C-0005) predates the infra-only split.
 - Not restarted/committed at time of writing: live scheduler runs old code until a human-approved `symphony-restart`. No secrets / `.env` read.
+
+## 2026-06-15 — session-update: trading binding offboard (purge)
+
+- Inputs: `/symphony-offboard-project trading` session (this conversation) + live command outputs (pre-flight SQL, `remove_podium_binding` result, restart journal).
+- Action: offboarded the `trading` Podium binding in **purge** mode (James chose purge over default archive; 1 issue + 1 run history disposable). `remove_podium_binding("trading", purge=True)` → `db_action='deleted'`, `deleted_issue_count=1`, `deleted_run_count=1`, `removed_from_bindings_yml=True`. James-approved `symphony-restart` (PID 988767, `code_sha=48ca8c2`, 05:17:20 UTC) → live binding set now **2: homelab, symphony**; restart healthy (reconcile pair per binding, `rpc_orphan_reap_done count=0`, `pi_rpc_probe_ok`, dispatch loop alive, 0 errors).
+- Outputs: raw capture `wiki/raw/sessions/2026-06-15-trading-binding-offboard.md`; claim **C-0212** added; `entities/binding-trading.md` given an OFFBOARDED banner (frontmatter `updated`→2026-06-15, source + `offboarded`/`removed` tags added); `index.md` trading row + `ROUTING.md` Bindings keywords updated.
+- Reconcile: complements C-0207 (offboard umbrella) and C-0206/C-0208 (purge path + FK-defer fix) with the first live purge exercise. No claim superseded (binding-trading was already historical post-#023d). `wiki/raw/bindings.yml` snapshot remains a pre-removal historical source.
+- Unresolved: `CLAUDE.md` "Live bindings" table still lists `trading` (stale; not corrected in this wiki-only pass — James scoped to "update wiki"). No secrets / `.env` read.
+
+---
+
+## [2026-06-15] session-update | Podium web "client-side exception" = C-0110 hazard recurrence
+
+- Actor: agent
+- Inputs: operator report "Application error: a client-side exception has occurred"; diagnosis via `systemctl show podium-web.service`, `.next` mtimes, per-chunk `curl` status; James-approved `sudo systemctl restart podium-web.service`.
+- Outputs: raw capture `wiki/raw/sessions/2026-06-15-podium-web-stale-build-client-exception.md`; claim **C-0213** added (extends C-0110); `analyses/podium-frontend-deploy-cosmetics.md` got a "Live recurrence 2026-06-15" note + source + `updated`→2026-06-15; `index.md` analysis row + `ROUTING.md` Operations keywords updated.
+- Notes: Root cause already documented (C-0110 + analysis) — this is a live production recurrence (bare `next build` bypassed `deploy.sh`) with a NEW symptom string (client-side exception / app-router-chunk-400 hydration failure vs prior "Checking session…" hang) and confirmation that restart-alone fixes it when a valid on-disk `.next` exists. No claim superseded. No secrets read.
+- Unresolved: `deploy.sh` not consistently used for frontend rebuilds (recurrence proof) — consider a guard against bare `next build` on the live dir. File-browser feature (`FileBrowser`/`FileEditor`/Monaco/`/[binding]/files`) went live via the restart but is still uncommitted — confirm intended.
+
+## [2026-06-15] session-update | ADR-0012 Remote Bindings (SSH-exec) + first config slice — Issue #27
+
+- Actor: agent (grill-me design dialog, unattended Symphony run on Issue #27)
+- Inputs: Issue #27 "add other LAN systems to Podium"; operator approvals ("proceed with SSH exec remote binding", "include a host badge in proceed"); offered test host `itadmin@100.95.224.218`; read-only probe of that host; codebase reads (`agent_runner.py`, `config.py`, `web/api/schema.py`, `bindings.yml`); live `systemctl show` of `podium-api` + `symphony-host` env + `ss -tlnp`.
+- Outputs: new `docs/adr/0012-remote-binding-ssh-exec.md` (status `accepted`); new `wiki/analyses/adr-0012-remote-binding-ssh-exec.md` (promoted); claim **C-0214** added; `index.md` analysis row + `ROUTING.md` Design/ADR Pages+Keywords updated. Code: `config.py` gained `RemotePolicy`, `ProjectBinding.remote`/`is_remote`, `_remote_from_mapping` (additive `remote:` schema, no dispatch wiring); 3 new tests in `tests/test_config.py`; `tests/test_config.py` green (42 passed).
+- Notes: Decision = SSH-exec Remote Binding behind the `AgentAdapter` seam, NOT a deployed daemon (rejected the operator's "symphony-remote copied onto device" framing). Load-bearing finding = Podium API is loopback-only (`127.0.0.1:8000`), so remote agent callback uses an SSH `-R` reverse tunnel rather than LAN-exposing the API (probe from `n8n` to the API timed out, confirming). Host probe: SSH key auth already works; pi/claude/git/tmux all present on `n8n`. No live behavior change, no service restart, no tracker mutations.
+- Unresolved: build remaining slices — `RemoteAgentAdapter` (ssh-exec + `-R` tunnel + env forward), dispatch wiring (`main.py`/`RoutingAgentAdapter`), host-badge UI (likely a `binding` column + chip in the card/fly-out), and a smoke test against `n8n`. `bindings.yml` not yet given a `remote:` entry. `CLAUDE.md` "Live bindings" table still lists only homelab/symphony (no remote binding registered yet).
+
+## [2026-06-16] session-update | offboard skill seed-dependent test cleanup
+
+- Actor: agent
+- Inputs: operator reply to continue Run #51 with permission; `.claude/skills/symphony-binding-remove/SKILL.md`; `.claude/skills/symphony-offboard-project/SKILL.md`; `web/api/seed.py`; seed-dependent tests retargeted from removed `trading` binding to surviving `symphony` binding.
+- Outputs: updated `wiki/analyses/symphony-skills-index.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0215 added).
+- Notes: Captured new teardown process checkpoint: after a `bindings.yml` removal, scan for removed-binding references and retarget only seed-dependent tests to a surviving same-type binding, leaving self-contained tmp-DB/`_bindings_override` tests alone. Verification: focused skill/API tests passed (12 passed) and full `uv run pytest -q` passed (828 passed, 2 skipped). No secrets, no env files, no DB writes, and no service restart.
+
+## [2026-06-16] update | Issue #27 — RemoteAgentAdapter implemented (ADR-0012 dispatch slice)
+
+- Actor: agent
+- Inputs: Podium issue #27 ("Other systems") thread; `docs/adr/0012-remote-binding-ssh-exec.md`; `agent_runner.py` dispatch path (`run_agent`, `AgentAdapter`/`RoutingAgentAdapter`, `_agent_env`); `main.py` `_build_binding_runtime`; existing `wiki/analyses/adr-0012-remote-binding-ssh-exec.md` + C-0214.
+- Outputs: updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md` (Status of the build + sources + date); updated `wiki/CLAIMS.md` (C-0214 → two slices landed, v1 helper-shipping gap).
+- Notes: Cleared #27 commit blocker (full suite already green — `web/api/tests/conftest.py` fixture had been repointed `trading`→`symphony`). Committed config slice `80c5bb4` and dispatch adapter slice `ca01062` (`run_remote_agent` + `RemoteAgentAdapter`: ships `plane` helper to remote `/tmp/symphony-remote-<issue>`, `ssh -R <port>:127.0.0.1:<port>` reverse tunnel, pi by basename, pi-only routing; 12 new tests). Full `uv run pytest -q` green (840 passed, 2 skipped). v1 gap surfaced: `run_agent`'s `plane` helper rides a local temp-dir PATH, so the remote adapter must ship it per run for the callback to resolve. Remaining slices (host badge UI, `n8n` smoke) are gated on adding the `n8n` `remote:` entry to `bindings.yml` + a James-approved `symphony-restart`; not done. No secrets, no DB writes, no Plane/Podium mutation, no service restart.
+
+## [2026-06-16] update | Issue #27 — live remote-binding validation + rollback (ADR-0012)
+
+- Actor: agent
+- Inputs: staged `n8n` remote binding (`itadmin@100.95.224.218`, `repo_path=/home/itadmin/itastack`) in `bindings.yml` + Podium `binding` row; `symphony-restart`; `symphony-binding-smoke n8n`; live journal for pid 2810668/2813435/2815352/2836504; `main.py`, `scheduler.py:635`, `prompt_renderer.py`.
+- Outputs: updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md` (Live validation section); updated `wiki/CLAIMS.md` (C-0214: live-validation finding + startup fix + open pipeline gap).
+- Notes: End-to-end smoke against the live scheduler proved the `RemoteAgentAdapter` is necessary but not sufficient. (1) Startup crash-loop fixed (commit `dab2b45`): `_build_binding_runtime` ran the LOCAL `verify_pi_support` with a remote `repo_path` → `PermissionError` → crash; guarded behind `not binding.is_remote`. (2) Dispatch still blocked: issue #31 → `reason=workflow-missing` wrapping `PermissionError: /home/itadmin/itastack` from `_prepare_resume_candidate`→`resolve_code_sha`; the local-`repo_path` assumption recurs in worktree/compaction/landing. Root: `/home/itadmin` is mode 750 on aidev so `james` can't traverse it. Operator chose to roll back the live binding: removed `bindings.yml` `n8n` entry, deleted the Podium `n8n` `binding` row, archived smoke issue #31, restarted to known-good 3-binding state (code_sha `dab2b45`, all reconciled, dispatch alive, no errors). Committed code (config + adapter + startup guard) retained as foundation. Remaining pipeline work (remote-aware `resolve_code_sha`/worktree/compaction/landing) is a tracked follow-up on Issue #27 — NOT auto-dispatched. No secrets read; the only live mutations were the approved restart cycle and the binding/issue rollback rows.
+
+## [2026-06-16] session-update | Claude refeed session-id collision (issue 27 runs 54/55)
+
+- Actor: agent
+- Inputs: `podium.db` run/issue rows for issue 27; `runs/54.log`, `runs/55.log`; journal `resume_skipped reason=sha-drift` + `claude_dispatch`/`agent_exited`; `claude_runner.py`, `session_continuity.py`, `scheduler.py`; live claude-CLI repro (`--session-id` collide vs `--resume`).
+- Outputs: raw session capture `wiki/raw/sessions/2026-06-16-claude-refeed-session-id-collision.md`; promoted analysis `wiki/analyses/analysis-session-claude-refeed-session-id-collision.md`; claim C-0216; index Analyses row + ROUTING entries (Continuity & Session Resume, Executor / Agent). Code: commit `4521730` (`claude_runner.py` session_arg keyed on `transcript_file.exists()` + regression test).
+- Notes: Runs 54/55 failed `claude_ready_timeout` because the deterministic per-issue transcript (from resumed runs 45-49) collided with the refeed's `--session-id` create (`Session ID already in use`, exit 1 → tmux server dies). Fix selects `--resume` vs `--session-id` by transcript existence, not the `resumed` flag; `resumed` still governs prompt content upstream. Non-destructive. Live in the running service (fixed file on disk before the 02:40 restart) but not yet exercised by a real refeed. Full `uv run pytest` 841 passed, 2 skipped. No secrets, no DB/Plane/service mutation in the wiki pass; issue 27 recovery de-scoped per operator. Open: push decision for 8 unpushed commits on `main` (operator-owned).
+
+## [2026-06-16] session-update | ADR-0012 v1 remote-binding dispatch pipeline (RepoHost seam) + live n8n smoke passed
+
+- Actor: agent
+- Inputs: plan `plans/remote-binding-dispatch-pipeline.md` + sidecar `plans/.remote-binding-dispatch-pipeline.state.yml` (build_audits + live_smoke); new code `repo_host.py`, `ssh_support.py` + edits to `code_version.py`, `config.py`, `scheduler.py`, `agent_runner.py`, `main.py`, `web/api/main.py`; `runs/56.log` + `podium.db` Issue 32/Run 56; journal `symphony-host.service` 2026-06-16 07:06–07:12 (`symphony_started bindings=4`, `remote_repo_reachable binding=n8n sha=7f91558`).
+- Outputs: raw session capture `wiki/raw/sessions/2026-06-16-remote-binding-dispatch-pipeline.md`; promoted-page maintenance edit `wiki/analyses/adr-0012-remote-binding-ssh-exec.md` (new "Resolution 2026-06-16" section + frontmatter sources/tags); claim **C-0217** (supersedes the pipeline-deferred/rolled-back portion of **C-0214**, which got a supersession note); `wiki/index.md` adr-0012 row refreshed (date 2026-06-16); `wiki/ROUTING.md` ADR branch keywords expanded (RepoHost seam, repo_host_for, ssh_support, remote invariants, n8n live, C-0217).
+- Notes: Built via `/dev-build` (Strategy A: seam + config invariants, not scattered guards). Closes the "adapter necessary but not sufficient" gap. n8n kept as a permanent 4th live binding (homelab, symphony, dotfiles, n8n) per operator. pi wave audits: wave 1 passed, wave 2 `audit_skipped` (reviewer_timeout — pi/gpt-5.5 hung; builder self-validated), wave 3 passed (0 critical / 0 warning / 2 note via inlined-diff + `--no-tools` retry). `uv run pytest -q` → 874 passed, 2 skipped (+32; new `tests/test_repo_host.py`, `tests/test_ssh_support.py`); ruff clean. No secrets written; no DB/Plane mutation in the wiki pass. Open: changes uncommitted on `main` (operator commit pending, mixed with an unrelated file-browser feature); v2 follow-ups (remote worktrees/compaction/skill, host badge UI); stale `CLAUDE.md` "Live bindings" table (lists homelab+trading; trading offboarded per C-0212, n8n now live).
