@@ -13,7 +13,7 @@ import pytest
 
 import scheduler
 from agent_runner import AgentResult
-from config import ApprovalPolicy, SymphonyConfig
+from config import ApprovalPolicy, ProjectBinding, RemotePolicy, SymphonyConfig
 from plane_poller import CandidateIssue
 from scheduler import (
     reconcile_startup,
@@ -4089,3 +4089,230 @@ async def test_post_agent_transition_429_no_duplicate_comment(
     assert issue_id in state.pending_review_issue_ids
     assert issue_id not in state.pending_completion_bodies
     assert call_count == 2
+
+
+# --- Remote-binding pipeline (ADR-0012) ---------------------------------
+
+
+def _local_binding(config: SymphonyConfig) -> ProjectBinding:
+    return config.bindings[0]
+
+
+def _remote_binding(config: SymphonyConfig) -> ProjectBinding:
+    return replace(
+        config.bindings[0],
+        name="n8n",
+        binding_type="coding",
+        tracker="podium",
+        default_agent="pi",
+        remote=RemotePolicy(host="100.95.224.218", user="itadmin"),
+    )
+
+
+class _NoStoreAdapter:
+    """Minimal adapter without a Run store (stores_context falsy)."""
+
+    stores_context = False
+    contract = DEFAULT_CONTRACT
+
+
+class _ColumnsAdapter:
+    """Adapter recording _update_issue_columns calls for archive tests."""
+
+    contract = DEFAULT_CONTRACT
+
+    def __init__(self, issue: dict[str, Any]) -> None:
+        self._issue = issue
+        self.column_updates: list[tuple[str, dict[str, Any]]] = []
+
+    async def get_issue(self, issue_id: str) -> dict[str, Any]:
+        return self._issue
+
+    async def _update_issue_columns(
+        self, issue_id: str, columns: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.column_updates.append((issue_id, columns))
+        self._issue.update(columns)
+        return self._issue
+
+
+class _RecordingRepoHost:
+    def __init__(self, sha: str) -> None:
+        self.sha = sha
+        self.calls = 0
+
+    def code_sha(self) -> str:
+        self.calls += 1
+        return self.sha
+
+
+# T.6.1
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_remote_uses_seam_no_fs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config)
+    host = _RecordingRepoHost("remote99")
+    seen: dict[str, Any] = {}
+
+    def fake_repo_host_for(b, *, cwd=None, **kwargs):
+        seen["binding"] = b
+        seen["cwd"] = cwd
+        return host
+
+    monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
+    # Fail loud if any local sha resolution is attempted for the remote path.
+    monkeypatch.setattr(
+        scheduler,
+        "resolve_code_sha",
+        lambda *a, **k: pytest.fail("local resolve_code_sha called for remote"),
+    )
+
+    candidate = _candidate("issue-1")
+    result, decision = await scheduler._prepare_resume_candidate(
+        _NoStoreAdapter(), config, candidate, {}, binding=binding
+    )
+
+    assert host.calls == 1
+    assert seen["binding"] is binding
+    assert result.agent_session_sha == "remote99"
+    assert decision is None
+
+
+# T.6.2
+def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config)
+    candidate = replace(_candidate("issue-1"), worktree_active=True)
+    assert (
+        scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
+    )
+
+
+# T.6.3
+@pytest.mark.asyncio
+async def test_maybe_compact_context_early_returns_for_remote(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config)
+
+    class _CompactAdapter:
+        stores_context = True
+
+        def replace_context(self, *a, **k):  # pragma: no cover - must not run
+            raise AssertionError("compaction ran for a remote binding")
+
+    candidate = replace(_candidate("issue-1"), context_md="x" * 200_000)
+    result = await scheduler._maybe_compact_context(
+        config,
+        _CompactAdapter(),
+        candidate,
+        lambda issue, prompt: AgentResult(0, 1, False),
+        now=lambda: datetime.now(UTC),
+        binding=binding,
+    )
+    assert result is candidate
+
+
+# T.6.4
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_local_unchanged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _local_binding(config)
+    host = _RecordingRepoHost("localabc")
+    seen: dict[str, Any] = {}
+
+    def fake_repo_host_for(b, *, cwd=None, **kwargs):
+        seen["cwd"] = cwd
+        return host
+
+    monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
+    candidate = _candidate("issue-1")
+    result, decision = await scheduler._prepare_resume_candidate(
+        _NoStoreAdapter(), config, candidate, {}, binding=binding
+    )
+    # Local binding, no worktree → cwd is the repo path (homelab_repo_path).
+    assert seen["cwd"] == config.homelab_repo_path
+    assert result.agent_session_sha == "localabc"
+    assert decision is None
+
+
+# T.6.5
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_local_worktree_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _local_binding(config)
+    captured: dict[str, Any] = {}
+
+    def fake_repo_host_for(b, *, cwd=None, **kwargs):
+        captured["cwd"] = cwd
+        return _RecordingRepoHost("worktreehead")
+
+    monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
+    candidate = replace(
+        _candidate("issue-1"), worktree_active=True, binding_name=binding.name
+    )
+    result, _ = await scheduler._prepare_resume_candidate(
+        _NoStoreAdapter(), config, candidate, {}, binding=binding
+    )
+    expected_cwd = scheduler._dispatch_cwd(config, candidate, binding=binding)
+    # Worktree-active local binding records the worktree-HEAD sha (cwd-bound),
+    # not the base-repo path.
+    assert captured["cwd"] == expected_cwd
+    assert expected_cwd != config.homelab_repo_path
+    assert result.agent_session_sha == "worktreehead"
+
+
+# T.8.1
+def test_dispatch_gate_blocks_remote_claude(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config)
+    candidate = _candidate("issue-1", labels=("agent:claude",))
+    _, error = scheduler._apply_dispatch_gate(candidate, binding)
+    assert error is not None
+    assert "remote bindings support only pi" in error
+
+
+# T.8.2
+def test_dispatch_gate_blocks_remote_preferred_skill(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config)
+    candidate = replace(_candidate("issue-1"), preferred_skill="some-skill")
+    _, error = scheduler._apply_dispatch_gate(candidate, binding)
+    assert error is not None
+    assert "do not support preferred_skill" in error
+
+
+# T.9.1
+@pytest.mark.asyncio
+async def test_handle_archived_terminal_skips_worktree_for_remote(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config)
+    issue = {
+        "id": "issue-1",
+        "state": "archived",
+        "worktree_active": True,
+    }
+    adapter = _ColumnsAdapter(issue)
+
+    def _boom(*a, **k):  # pragma: no cover - must not run
+        raise AssertionError("local worktree op ran for a remote binding")
+
+    monkeypatch.setattr("web.api.worktree.worktree_exists", _boom)
+    monkeypatch.setattr("web.api.worktree.remove_worktree", _boom)
+
+    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+    handled = await scheduler._handle_archived_terminal(
+        adapter, config, candidate, "run-1", binding=binding
+    )
+    assert handled is True
+    # worktree_active still cleared despite skipping local FS ops.
+    assert adapter.column_updates == [("issue-1", {"worktree_active": False})]

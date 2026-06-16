@@ -33,6 +33,23 @@ def login(client: TestClient, password: str = TEST_PASSWORD) -> None:
     assert response.status_code == 200
 
 
+# Remote binding (ADR-0012): type:coding + pi_mode:one-shot + default_agent:pi
+# with a truthy `remote:` block. Mirrors the live n8n bindings.yml entry. n8n is
+# now a seeded binding, so tests that INSERT this row directly must use
+# `INSERT OR IGNORE` to tolerate the pre-seeded row.
+REMOTE_BINDING_NAME = "n8n"
+REMOTE_BINDING_ENTRY: dict[str, Any] = {
+    "name": REMOTE_BINDING_NAME,
+    "repo_path": "/home/itadmin/itastack",
+    "base_branch": "main",
+    "type": "coding",
+    "pi_mode": "one-shot",
+    "default_agent": "pi",
+    "tracker": "podium",
+    "remote": {"user": "itadmin", "host": "100.95.224.218"},
+}
+
+
 @pytest.fixture()
 def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
     db_path = tmp_path / "podium.db"
@@ -54,5 +71,5 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
 
 @pytest.fixture()
 def issue_id(client: TestClient) -> int:
-    issues = client.get("/api/bindings/trading/issues").json()
+    issues = client.get("/api/bindings/symphony/issues").json()
     return issues[0]["id"]

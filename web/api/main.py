@@ -798,6 +798,11 @@ async def create_binding_issue(
     if issue.preferred_skill is not None:
         _require_known_skill(connection, issue.preferred_skill)
 
+    # Remote bindings (ADR-0012) defer worktrees: the agent runs directly in the
+    # remote repo_path over SSH, so worktree_active is forced False at the source.
+    if issue.worktree_active and _is_remote_binding(name):
+        issue.worktree_active = False
+
     now = datetime.now(UTC).isoformat()
     cursor = connection.execute(
         """
@@ -924,6 +929,17 @@ async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
             status_code=422,
             detail=f"binding {binding_name!r} is not configured for compaction",
         )
+    # Context compaction is deferred for remote bindings (ADR-0012): the
+    # compaction agent's cwd would be a remote repo_path. Routing it through
+    # RemoteAgentAdapter is a documented follow-up; refuse here instead.
+    if _is_remote_binding(binding_name):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"context compaction is not supported for remote binding "
+                f"{binding_name!r} (ADR-0012)"
+            ),
+        )
     runtime = vars(engine_main)["_build_binding_runtime"](config, binding)
     adapter = runtime.adapter
     if not getattr(adapter, "stores_context", False):
@@ -1005,6 +1021,14 @@ async def patch_issue(
 
     if fields.get("preferred_skill") is not None:
         _require_known_skill(connection, fields["preferred_skill"])
+
+    # Remote bindings (ADR-0012) defer worktrees: a patch attempting to enable a
+    # worktree on a remote binding is coerced to False so the worktree machinery
+    # is never engaged against the remote repo_path.
+    if fields.get("worktree_active") and _is_remote_binding(
+        str(current.get("binding_name") or "")
+    ):
+        fields["worktree_active"] = False
 
     # No-op guard: an empty body or a patch echoing stored values must not bump
     # updated_at — the board orders by it, so a blind bump reorders cards.
@@ -1273,6 +1297,38 @@ async def steer_issue(
     return result
 
 
+async def _clear_worktree_active_remote(
+    issue_id: int,
+    current: dict[str, Any],
+    connection: sqlite3.Connection,
+) -> dict[str, Any]:
+    """Remote-binding worktree-path shortcut (ADR-0012).
+
+    Remote bindings have no local worktree, so the done-merge / archive-teardown
+    / toggle-off helpers must skip all local git/Path ops. They still clear and
+    publish ``worktree_active`` for any pre-existing remote row (defense against
+    rows that predate the API create/patch coercion), mirroring the column clear
+    in ``_maybe_teardown_archived_worktree``."""
+    if current.get("worktree_active") is True:
+        connection.execute(
+            "UPDATE issue SET worktree_active = FALSE, updated_at = ? WHERE id = ?",
+            (_next_updated_at(current.get("updated_at")), issue_id),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        result = _row(row)
+        await websocket_hub.publish(
+            {"type": "issue.updated", "id": issue_id, "row": result}
+        )
+        return result
+
+    return _row(
+        connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    )
+
+
 async def _maybe_merge_worktree(
     issue_id: int,
     current: dict[str, Any],
@@ -1307,6 +1363,12 @@ async def _maybe_merge_worktree(
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
     base_branch = current.get("base_branch") or "main"
+
+    # Remote bindings (ADR-0012) have no local worktree to merge — the remote
+    # agent commits directly in repo_path over SSH. Skip every local git/Path op,
+    # but still clear/publish worktree_active for any pre-existing remote row.
+    if _is_remote_binding(binding_name):
+        return await _clear_worktree_active_remote(issue_id, current, connection)
 
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
@@ -1361,6 +1423,11 @@ async def _maybe_teardown_archived_worktree(
 
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
+    # Remote bindings (ADR-0012): no local worktree to tear down. Skip the local
+    # probe/removal, still clear/publish worktree_active for pre-existing rows.
+    if _is_remote_binding(binding_name):
+        return await _clear_worktree_active_remote(issue_id, current, connection)
+
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
         return _row(
@@ -1413,6 +1480,12 @@ async def _maybe_archive_worktree(
 
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
+    # Remote bindings (ADR-0012): no local worktree exists, so there is nothing
+    # to archive and no archive comment to append. Skip local probe, still
+    # clear/publish worktree_active for pre-existing rows.
+    if _is_remote_binding(binding_name):
+        return await _clear_worktree_active_remote(issue_id, current, connection)
+
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
         return _row(
@@ -1514,6 +1587,29 @@ def _repo_path_for_binding(name: str) -> Path | None:
     return None
 
 
+def _is_remote_binding(name: str) -> bool:
+    """True when the binding has a truthy ``remote:`` key in bindings.yml.
+
+    Remote bindings (ADR-0012) run the agent over SSH against a non-local
+    ``repo_path``, so every local worktree/git/Path operation must be skipped
+    for them. Honors ``_bindings_override`` (test hook) like
+    ``_repo_path_for_binding``; any read failure degrades to ``False`` (treat
+    as local — the conservative default that preserves existing behavior)."""
+    import yaml
+
+    if _bindings_override is not None:
+        raw: Any = _bindings_override
+    else:
+        try:
+            raw = _load_bindings(BINDINGS_PATH)
+        except (OSError, yaml.YAMLError):
+            return False
+    for binding in raw if isinstance(raw, list) else raw.get("bindings", []):
+        if binding.get("name") == name:
+            return bool(binding.get("remote"))
+    return False
+
+
 def _purge_archived_issues(connection: sqlite3.Connection) -> None:
     """Hard-delete archived issues whose ``updated_at`` is > 14 days old.
 
@@ -1563,6 +1659,12 @@ def _purge_archived_issues(connection: sqlite3.Connection) -> None:
                 Path(log_path_str).unlink(missing_ok=True)
             except Exception:
                 logger.warning("archive_purge_log_unlink_failed path=%s", log_path_str)
+
+        # Remote bindings (ADR-0012) have no local worktree; skip the local
+        # git/Path probe/removal (the remote repo_path is not local).
+        if _is_remote_binding(binding_name):
+            purged += 1
+            continue
 
         # Post-commit: defensive worktree removal. Check the filesystem, not
         # only worktree_active, because archive cleanup is also a drift sweep.

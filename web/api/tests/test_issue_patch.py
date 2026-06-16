@@ -114,14 +114,14 @@ def test_list_issues_filters_archived_state(client: TestClient, issue_id: int) -
     response = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
     assert response.status_code == 200
 
-    archived = client.get("/api/bindings/trading/issues?state=archived")
+    archived = client.get("/api/bindings/symphony/issues?state=archived")
     assert archived.status_code == 200
     archived_issues = archived.json()
     assert archived_issues
     assert {issue["state"] for issue in archived_issues} == {"archived"}
     assert issue_id in {issue["id"] for issue in archived_issues}
 
-    invalid = client.get("/api/bindings/trading/issues?state=invalid_state")
+    invalid = client.get("/api/bindings/symphony/issues?state=invalid_state")
     assert invalid.status_code == 422
 
 
@@ -153,6 +153,46 @@ def test_patch_noop_does_not_bump_updated_at(client: TestClient, issue_id: int) 
     echo = client.patch(f"/api/issues/{issue_id}", json={"state": before["state"]})
     assert echo.status_code == 200
     assert echo.json()["updated_at"] == before["updated_at"]
+
+
+def test_patch_coerces_worktree_active_off_for_remote_binding(
+    client: TestClient, monkeypatch
+) -> None:
+    # Remote bindings (ADR-0012) defer worktrees: a PATCH setting
+    # worktree_active=true on a remote binding's issue is coerced to False.
+    import os
+    from pathlib import Path
+
+    import web.api.main as main
+    from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
+
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO binding(name) VALUES (?)", (REMOTE_BINDING_NAME,)
+        )
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, state, worktree_active, base_branch,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES (?, 'remote', 'todo', FALSE, 'main', '', '',
+              '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            """,
+            (REMOTE_BINDING_NAME,),
+        )
+        connection.commit()
+        remote_issue_id = cursor.lastrowid
+    monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
+
+    response = client.patch(
+        f"/api/issues/{remote_issue_id}", json={"worktree_active": True}
+    )
+    assert response.status_code == 200
+    assert response.json()["worktree_active"] is False
+    # Round-trip: nothing written through.
+    fetched = client.get(f"/api/issues/{remote_issue_id}").json()
+    assert fetched["worktree_active"] is False
 
 
 def test_list_skills_returns_catalog(client: TestClient) -> None:

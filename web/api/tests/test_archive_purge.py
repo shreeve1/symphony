@@ -136,6 +136,21 @@ def _binding_entry(name: str, repo_path: Path | None = None) -> dict:
     return entry
 
 
+def _remote_binding_entry(name: str) -> dict:
+    """Remote binding (ADR-0012): repo_path lives on another host; local git or
+    Path ops against it would fail, so purge must skip worktree teardown."""
+    return {
+        "name": name,
+        "repo_path": "/home/itadmin/itastack",
+        "base_branch": "main",
+        "default_agent": "pi",
+        "type": "coding",
+        "pi_mode": "one-shot",
+        "tracker": "podium",
+        "remote": {"user": "itadmin", "host": "100.95.224.218"},
+    }
+
+
 # ────────────────────────────── helpers ──────────────────────────────
 
 
@@ -495,6 +510,48 @@ def test_purge_defensive_worktree_removal(monkeypatch, tmp_path: Path) -> None:
 
     assert _count_issues(db_path, issue_id) == 0
     assert not wt_path.is_dir()
+
+
+def test_purge_remote_binding_skips_worktree_teardown(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Archived remote-binding rows are purged without any local worktree
+    teardown — the remote repo_path is not local (ADR-0012)."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setattr(main, "_bindings_override", [_remote_binding_entry("n8n")])
+    _seed_binding(db_path, "n8n")
+
+    # Stray worktree_active=True archived row for a remote binding.
+    conn = main.connect(db_path)
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, state, worktree_active, base_branch,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES (?, 'remote-wt', 'archived', TRUE, 'main', '', '', ?, ?)
+            """,
+            ("n8n", _old_ts(21), _old_ts(20)),
+        )
+        issue_id = int(cursor.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Any local worktree op against the remote repo_path must be skipped.
+    import web.api.worktree as wt
+
+    def _boom(*_a, **_k):
+        raise AssertionError("local worktree op ran for a remote binding")
+
+    monkeypatch.setattr(wt, "worktree_exists", _boom)
+    monkeypatch.setattr(wt, "remove_worktree", _boom)
+
+    with TestClient(app):
+        login(TestClient(app))
+
+    assert _count_issues(db_path, issue_id) == 0
 
 
 def test_purge_defensive_worktree_removal_ignores_stale_flag(

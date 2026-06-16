@@ -21,6 +21,7 @@ from io import TextIOBase
 from pathlib import Path
 from typing import Protocol, cast
 
+import ssh_support
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
 from session_continuity import derive_session_id
@@ -418,13 +419,7 @@ def _build_remote_command(
 
 
 def _ssh_base_args(remote, *, reverse_port: int | None = None) -> list[str]:
-    args = ["ssh", "-o", "BatchMode=yes"]
-    if remote.identity:
-        args += ["-i", remote.identity]
-    if reverse_port is not None:
-        args += ["-R", f"{reverse_port}:127.0.0.1:{reverse_port}"]
-    args.append(f"{remote.user}@{remote.host}")
-    return args
+    return ssh_support.ssh_base_args(remote, reverse_port=reverse_port)
 
 
 def run_remote_agent(
@@ -466,10 +461,27 @@ def run_remote_agent(
     # not exist on the remote, so dispatch by basename (probe confirmed `pi` is
     # on the remote PATH). A per-binding remote pi path is a future refinement.
     pi_name = Path(config.pi_bin).name or "pi"
-    pi_command = [pi_name, "--print", "--no-session", "--provider", provider, "--model", model]
+    pi_command = [
+        pi_name,
+        "--print",
+        "--no-session",
+        "--provider",
+        provider,
+        "--model",
+        model,
+    ]
     skill_source = getattr(issue, "skill_source", "")
     if skill_source:
-        pi_command += ["--skill", str(Path(skill_source).parent)]
+        # The skill_source path is a LOCAL aidev skill dir; the remote host
+        # cannot resolve it. Never pass --skill to remote pi (the dispatch gate
+        # already blocks remote preferred_skill, ADR-0012 task 8.2); this is a
+        # defense-in-depth guard. Proper remote skill support (ship the skill
+        # dir) is a documented follow-up.
+        LOGGER.info(
+            "remote_skill_skipped issue_id=%s skill_source=%s",
+            issue.id,
+            skill_source,
+        )
     pi_command.append(rendered_prompt)
 
     port = _remote_callback_port(config.plane_api_url)

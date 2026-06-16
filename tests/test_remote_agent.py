@@ -172,6 +172,29 @@ def test_run_remote_agent_identity_flag(tmp_path: Path) -> None:
     assert "/keys/id_ed25519" in exec_cmd
 
 
+def test_run_remote_agent_does_not_append_skill(tmp_path: Path) -> None:
+    # ADR-0012 defense-in-depth: skill_source is a local aidev path the remote
+    # host cannot resolve, so --skill must never reach the remote pi argv.
+    import dataclasses
+
+    issue = dataclasses.replace(
+        _issue(), skill_source="/home/james/.claude/skills/foo/SKILL.md"
+    )
+    popen_calls: list[list[str]] = []
+
+    run_remote_agent(
+        _config(tmp_path),
+        issue,
+        "go",
+        binding=_remote_binding(),
+        run_func=lambda *a, **k: Completed(returncode=0),
+        popen_factory=lambda c, **k: popen_calls.append(c) or FakeProcess([("x", "")]),
+    )
+
+    remote_command = popen_calls[0][-1]
+    assert "--skill" not in remote_command
+
+
 def test_run_remote_agent_silent_exit_is_failure(tmp_path: Path) -> None:
     result = run_remote_agent(
         _config(tmp_path),
@@ -216,7 +239,9 @@ def test_run_remote_agent_ship_failure_raises(tmp_path: Path) -> None:
             _issue(),
             "go",
             binding=_remote_binding(),
-            run_func=lambda *a, **k: Completed(stderr="permission denied", returncode=255),
+            run_func=lambda *a, **k: Completed(
+                stderr="permission denied", returncode=255
+            ),
             popen_factory=lambda *a, **k: FakeProcess(),
         )
 

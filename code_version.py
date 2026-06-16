@@ -36,7 +36,7 @@ def resolve_code_sha(repo_path: Path | str | None = None) -> str:
             check=False,
             timeout=5,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         LOGGER.debug("code_sha_resolve_failed cause=%s", exc.__class__.__name__)
         return UNKNOWN
     if result.returncode != 0:

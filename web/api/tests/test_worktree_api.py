@@ -99,6 +99,30 @@ def _binding_entry(name: str, repo_path: Path) -> dict:
     }
 
 
+def _remote_binding_entry(name: str) -> dict:
+    """Remote binding (ADR-0012): repo_path is on another host. Any local git
+    or Path op against it would fail — the guards must skip them."""
+    return {
+        "name": name,
+        "repo_path": "/home/itadmin/itastack",
+        "base_branch": "main",
+        "default_agent": "pi",
+        "type": "coding",
+        "pi_mode": "one-shot",
+        "tracker": "podium",
+        "remote": {"user": "itadmin", "host": "100.95.224.218"},
+    }
+
+
+@pytest.fixture
+def remote_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Seed a podium.db for a remote binding via _bindings_override (no repo)."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setattr(main, "_bindings_override", [_remote_binding_entry("n8n")])
+    return db_path
+
+
 @pytest.fixture
 def repo_and_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     """Create a git repo and a podium.db, wire them via _bindings_override."""
@@ -446,4 +470,80 @@ def test_toggle_worktree_off_no_worktree_no_comment(
     body = response.json()
     assert body["worktree_active"] is False
     # No archive comment because no worktree existed.
+    assert "Worktree archived" not in (body["comments_md"] or "")
+
+
+# --- remote-binding worktree-skip tests (ADR-0012) ---
+
+
+def _no_local_worktree_ops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every worktree helper blow up if a remote guard fails to skip it."""
+
+    def _boom(*_a, **_k):
+        raise AssertionError("local worktree op ran for a remote binding")
+
+    import web.api.worktree as wt
+
+    for fn in (
+        "worktree_exists",
+        "remove_worktree",
+        "merge_worktree",
+        "base_repo_dirty",
+    ):
+        monkeypatch.setattr(wt, fn, _boom)
+
+
+def test_remote_done_merge_skips_local_worktree_ops(
+    remote_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """State→done on a remote issue with a stray worktree_active row skips the
+    local merge entirely and clears worktree_active."""
+    _no_local_worktree_ops(monkeypatch)
+    issue = _seed_podium(remote_db, "n8n")
+    issue_id = issue["id"]
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "done"
+    assert body["worktree_active"] is False
+
+
+def test_remote_archive_teardown_skips_local_worktree_ops(
+    remote_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """State→archived on a remote idle issue skips local teardown and clears
+    worktree_active."""
+    _no_local_worktree_ops(monkeypatch)
+    issue = _seed_podium(remote_db, "n8n")
+    issue_id = issue["id"]
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "archived"
+    assert body["worktree_active"] is False
+
+
+def test_remote_toggle_off_skips_local_worktree_ops(
+    remote_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Toggling worktree_active off on a remote issue skips the local probe and
+    appends no archive comment."""
+    _no_local_worktree_ops(monkeypatch)
+    issue = _seed_podium(remote_db, "n8n")
+    issue_id = issue["id"]
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(
+            f"/api/issues/{issue_id}", json={"worktree_active": False}
+        )
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["worktree_active"] is False
     assert "Worktree archived" not in (body["comments_md"] or "")

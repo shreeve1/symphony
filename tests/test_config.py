@@ -100,19 +100,26 @@ def test_plane_dashboard_url_defaults_to_empty():
 
 
 def test_plane_dashboard_url_loaded_from_env():
-    config = SymphonyConfig.from_env(_env(PLANE_DASHBOARD_URL="http://plane.example.test/dash/"))
+    config = SymphonyConfig.from_env(
+        _env(PLANE_DASHBOARD_URL="http://plane.example.test/dash/")
+    )
     assert config.plane_dashboard_url == "http://plane.example.test/dash/"
 
 
 def test_plane_frontend_url_loaded_from_env_and_strips_trailing_slash():
-    config = SymphonyConfig.from_env(_env(PLANE_FRONTEND_URL="http://10.20.20.16:8000/"))
+    config = SymphonyConfig.from_env(
+        _env(PLANE_FRONTEND_URL="http://10.20.20.16:8000/")
+    )
     assert config.plane_frontend_url == "http://10.20.20.16:8000"
 
 
 def test_issue_url_returns_frontend_url():
     config = SymphonyConfig.from_env(_env())
     url = config.issue_url("abc-123")
-    assert url == "http://plane.example.test/homelab/projects/fake-project-uuid/issues/abc-123/"
+    assert (
+        url
+        == "http://plane.example.test/homelab/projects/fake-project-uuid/issues/abc-123/"
+    )
 
 
 def test_issue_url_returns_empty_for_empty_issue_id():
@@ -121,18 +128,25 @@ def test_issue_url_returns_empty_for_empty_issue_id():
 
 
 def test_issue_url_strips_api_path_prefix():
-    config = SymphonyConfig.from_env(_env(PLANE_API_URL="http://plane.example.test/api/v1"))
+    config = SymphonyConfig.from_env(
+        _env(PLANE_API_URL="http://plane.example.test/api/v1")
+    )
     url = config.issue_url("i-1")
     assert url.startswith("http://plane.example.test/homelab/")
     assert "i-1" in url
 
 
 def test_issue_url_prefers_frontend_url_over_local_api_url():
-    config = SymphonyConfig.from_env(_env(
-        PLANE_API_URL="http://127.0.0.1:8000",
-        PLANE_FRONTEND_URL="http://10.20.20.16:8000",
-    ))
-    assert config.issue_url("i-1") == "http://10.20.20.16:8000/homelab/projects/fake-project-uuid/issues/i-1/"
+    config = SymphonyConfig.from_env(
+        _env(
+            PLANE_API_URL="http://127.0.0.1:8000",
+            PLANE_FRONTEND_URL="http://10.20.20.16:8000",
+        )
+    )
+    assert (
+        config.issue_url("i-1")
+        == "http://10.20.20.16:8000/homelab/projects/fake-project-uuid/issues/i-1/"
+    )
 
 
 def test_from_env_without_bindings_yml_preserves_single_binding_defaults():
@@ -275,6 +289,8 @@ bindings:
     repo_path: /home/itadmin/repo
     base_branch: main
     default_agent: pi
+    type: coding
+    pi_mode: one-shot
     tracker: podium
     remote:
       host: 100.95.224.218
@@ -357,6 +373,75 @@ bindings:
                 "SYMPHONY_BINDINGS_PATH": str(bindings_path),
             }
         )
+
+
+def _write_remote_binding(
+    bindings_path: Path,
+    *,
+    binding_type: str = "coding",
+    pi_mode: str = "one-shot",
+    default_agent: str = "pi",
+) -> None:
+    bindings_path.write_text(
+        f"""
+bindings:
+  - name: n8n
+    plane_project_id: project-a
+    repo_path: /home/itadmin/repo
+    base_branch: main
+    default_agent: {default_agent}
+    type: {binding_type}
+    pi_mode: {pi_mode}
+    tracker: podium
+    remote:
+      host: 100.95.224.218
+      user: itadmin
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+
+def _load_remote_binding(bindings_path: Path):
+    return SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+
+def test_remote_binding_with_infra_type_rejected(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(bindings_path, binding_type="infra")
+    with pytest.raises(ConfigError, match="remote bindings require 'coding'"):
+        _load_remote_binding(bindings_path)
+
+
+def test_remote_binding_with_rpc_pi_mode_rejected(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(bindings_path, pi_mode="rpc")
+    with pytest.raises(ConfigError, match="remote bindings require 'one-shot'"):
+        _load_remote_binding(bindings_path)
+
+
+def test_remote_binding_with_claude_default_agent_rejected(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(bindings_path, default_agent="claude")
+    with pytest.raises(ConfigError, match="remote bindings require 'pi'"):
+        _load_remote_binding(bindings_path)
+
+
+def test_remote_binding_coding_oneshot_pi_parses(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(bindings_path)
+    binding = _load_remote_binding(bindings_path).bindings[0]
+    assert binding.is_remote
+    assert binding.binding_type == "coding"
+    assert binding.pi_mode == "one-shot"
+    assert binding.default_agent == "pi"
 
 
 def test_binding_resolves_agent_label_override():

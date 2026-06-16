@@ -36,7 +36,13 @@ _BINDINGS_ENV = (
     "PLANE_WORKSPACE_SLUG",
     "PI_BIN",
 )
-_SECRET_YAML_KEYS = {"plane_api_key", "api_key", "telegram_bot_token", "token", "secret"}
+_SECRET_YAML_KEYS = {
+    "plane_api_key",
+    "api_key",
+    "telegram_bot_token",
+    "token",
+    "secret",
+}
 
 
 class ConfigError(ValueError):
@@ -129,7 +135,9 @@ def _truthy(value: str | None, *, default: bool, name: str = "") -> bool:
     if name:
         LOGGER.warning(
             "config_truthy_unparseable name=%s value=%r default=%s",
-            name, value, default,
+            name,
+            value,
+            default,
         )
     return default
 
@@ -200,11 +208,11 @@ class SymphonyConfig:
             )
 
         bindings = (
-            _load_bindings_yml(bindings_path, workspace_slug=source["PLANE_WORKSPACE_SLUG"])
-            if use_bindings
-            else (
-                _binding_from_env(source),
+            _load_bindings_yml(
+                bindings_path, workspace_slug=source["PLANE_WORKSPACE_SLUG"]
             )
+            if use_bindings
+            else (_binding_from_env(source),)
         )
         first = bindings[0]
 
@@ -220,9 +228,12 @@ class SymphonyConfig:
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "3600000")),
             run_cap=int(source.get("SYMPHONY_RUN_CAP", "2")),
-            lock_path=Path(source["SYMPHONY_LOCK_PATH"]) if source.get("SYMPHONY_LOCK_PATH") else None,
+            lock_path=Path(source["SYMPHONY_LOCK_PATH"])
+            if source.get("SYMPHONY_LOCK_PATH")
+            else None,
             telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),
-            telegram_chat_id=source.get("TELEGRAM_CHAT_ID") or source.get("TELEGRAM_HOME_CHANNEL"),
+            telegram_chat_id=source.get("TELEGRAM_CHAT_ID")
+            or source.get("TELEGRAM_HOME_CHANNEL"),
             plane_frontend_url=source.get("PLANE_FRONTEND_URL", "").rstrip("/"),
             plane_dashboard_url=source.get("PLANE_DASHBOARD_URL", ""),
             worktrees_root=(
@@ -257,7 +268,8 @@ class SymphonyConfig:
             base_branch=binding.base_branch,
             bindings=(binding,),
             lock_path=binding.repo_path / ".symphony.lock",
-            worktrees_root=binding.repo_path.parent / f".{binding.repo_path.name}-symphony-worktrees",
+            worktrees_root=binding.repo_path.parent
+            / f".{binding.repo_path.name}-symphony-worktrees",
             run_cap=self.run_cap,
         )
 
@@ -266,6 +278,7 @@ class SymphonyConfig:
         if not issue_id:
             return ""
         from urllib.parse import urlparse
+
         if self.plane_frontend_url:
             base = self.plane_frontend_url
         else:
@@ -330,7 +343,9 @@ def _binding_from_env(source: os._Environ[str] | dict[str, str]) -> ProjectBindi
     )
 
 
-def _load_bindings_yml(path: Path, *, workspace_slug: str) -> tuple[ProjectBinding, ...]:
+def _load_bindings_yml(
+    path: Path, *, workspace_slug: str
+) -> tuple[ProjectBinding, ...]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -346,7 +361,9 @@ def _load_bindings_yml(path: Path, *, workspace_slug: str) -> tuple[ProjectBindi
         prefix = f"bindings[{idx}]"
         if not isinstance(item, dict):
             raise ConfigError(f"{prefix}: expected mapping")
-        bindings.append(_binding_from_mapping(item, prefix=prefix, workspace_slug=workspace_slug))
+        bindings.append(
+            _binding_from_mapping(item, prefix=prefix, workspace_slug=workspace_slug)
+        )
     seen_project_ids: set[str] = set()
     for idx, binding in enumerate(bindings):
         if binding.plane_project_id in seen_project_ids:
@@ -359,7 +376,9 @@ def _load_bindings_yml(path: Path, *, workspace_slug: str) -> tuple[ProjectBindi
     return tuple(bindings)
 
 
-def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: str) -> ProjectBinding:
+def _binding_from_mapping(
+    raw: dict[str, Any], *, prefix: str, workspace_slug: str
+) -> ProjectBinding:
     _reject_yaml_secrets(raw, prefix)
     plane_project_id = _required_string(raw, "plane_project_id", prefix)
     repo_path = Path(_required_string(raw, "repo_path", prefix))
@@ -381,16 +400,40 @@ def _binding_from_mapping(raw: dict[str, Any], *, prefix: str, workspace_slug: s
     )
     binding_type = str(raw.get("type", "infra") or "infra")
     if binding_type not in {"infra", "coding"}:
-        raise ConfigError(f"{prefix}.type: must be 'infra' or 'coding', got '{binding_type}'")
+        raise ConfigError(
+            f"{prefix}.type: must be 'infra' or 'coding', got '{binding_type}'"
+        )
     tracker_raw = str(raw.get("tracker", "plane") or "plane")
     if tracker_raw not in {"plane", "podium"}:
-        raise ConfigError(f"{prefix}.tracker: must be 'plane' or 'podium', got '{tracker_raw}'")
-    tracker: Literal["plane", "podium"] = "podium" if tracker_raw == "podium" else "plane"
+        raise ConfigError(
+            f"{prefix}.tracker: must be 'plane' or 'podium', got '{tracker_raw}'"
+        )
+    tracker: Literal["plane", "podium"] = (
+        "podium" if tracker_raw == "podium" else "plane"
+    )
     pi_mode_raw = str(raw.get("pi_mode", "one-shot") or "one-shot")
     if pi_mode_raw not in {"one-shot", "rpc"}:
-        raise ConfigError(f"{prefix}.pi_mode: must be 'one-shot' or 'rpc', got '{pi_mode_raw}'")
+        raise ConfigError(
+            f"{prefix}.pi_mode: must be 'one-shot' or 'rpc', got '{pi_mode_raw}'"
+        )
     pi_mode: Literal["one-shot", "rpc"] = "rpc" if pi_mode_raw == "rpc" else "one-shot"
     remote = _remote_from_mapping(raw.get("remote"), prefix=f"{prefix}.remote")
+    if remote is not None:
+        if binding_type != "coding":
+            raise ConfigError(
+                f"{prefix}.type: remote bindings require 'coding' in v1 "
+                f"(ADR-0012), got '{binding_type}'"
+            )
+        if pi_mode != "one-shot":
+            raise ConfigError(
+                f"{prefix}.pi_mode: remote bindings require 'one-shot' in v1 "
+                f"(ADR-0012), got '{pi_mode}'"
+            )
+        if default_agent != "pi":
+            raise ConfigError(
+                f"{prefix}.default_agent: remote bindings require 'pi' in v1 "
+                f"(ADR-0012), got '{default_agent}'"
+            )
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),
         plane_project_id=plane_project_id,
@@ -451,7 +494,9 @@ def _contract_from_mapping(
             default=DEFAULT_CONTRACT.label_roles,
             prefix=f"{prefix}.label_roles",
         ),
-        extra_label_ids=dict(raw.get("extra_label_ids") or DEFAULT_CONTRACT.extra_label_ids),
+        extra_label_ids=dict(
+            raw.get("extra_label_ids") or DEFAULT_CONTRACT.extra_label_ids
+        ),
         users=_users(raw.get("users"), prefix=f"{prefix}.users"),
     )
     errors = contract.validate_shape()
@@ -460,7 +505,9 @@ def _contract_from_mapping(
     return contract
 
 
-def _role_bindings(raw: Any, *, default: dict[TrackerRole, RoleBinding], prefix: str) -> dict[TrackerRole, RoleBinding]:
+def _role_bindings(
+    raw: Any, *, default: dict[TrackerRole, RoleBinding], prefix: str
+) -> dict[TrackerRole, RoleBinding]:
     if raw is None:
         return dict(default)
     if not isinstance(raw, dict):
@@ -498,7 +545,9 @@ def _users(raw: Any, *, prefix: str) -> tuple[PlaneUserMapping, ...]:
             PlaneUserMapping(
                 homelab_user=_required_string(item, "homelab_user", user_prefix),
                 plane_uuid=_required_string(item, "plane_uuid", user_prefix),
-                plane_display_name=_required_string(item, "plane_display_name", user_prefix),
+                plane_display_name=_required_string(
+                    item, "plane_display_name", user_prefix
+                ),
                 role=str(item.get("role") or "admin"),
             )
         )
@@ -521,8 +570,12 @@ def _reject_yaml_secrets(raw: Any, prefix: str) -> None:
     if isinstance(raw, dict):
         for key, value in raw.items():
             key_text = str(key).lower()
-            if key_text in _SECRET_YAML_KEYS or key_text.endswith(("_token", "_secret")):
-                raise ConfigError(f"{prefix}.{key}: secrets must come from env, not bindings.yml")
+            if key_text in _SECRET_YAML_KEYS or key_text.endswith(
+                ("_token", "_secret")
+            ):
+                raise ConfigError(
+                    f"{prefix}.{key}: secrets must come from env, not bindings.yml"
+                )
             _reject_yaml_secrets(value, f"{prefix}.{key}")
     elif isinstance(raw, list):
         for idx, value in enumerate(raw):

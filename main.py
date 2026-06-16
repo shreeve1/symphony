@@ -34,6 +34,7 @@ from plane_adapter import (
     build_adapter,
 )
 from prompt_renderer import IssueData, render_prompt
+from repo_host import repo_host_for
 from scheduler import _resolve_mode, reconcile_startup, run_loop
 from tracker_contract import TrackerContract
 
@@ -114,6 +115,34 @@ def _build_binding_runtime(
             probe_model,
             binding_config.homelab_repo_path,
         )
+    elif binding.is_remote:
+        # Non-fatal remote reachability check (ADR-0012): read the remote repo's
+        # short SHA over SSH so an unreachable host / bad path surfaces at startup
+        # as a warning. Never raise — a failed check must not crash the scheduler.
+        try:
+            sha = repo_host_for(binding).code_sha()
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "remote_repo_unreachable binding=%s host=%s error=%s",
+                binding.name,
+                binding.remote.host if binding.remote else "?",
+                exc,
+            )
+        else:
+            host = binding.remote.host if binding.remote else "?"
+            if sha == "unknown":
+                logging.getLogger(__name__).warning(
+                    "remote_repo_unreachable binding=%s host=%s sha=unknown",
+                    binding.name,
+                    host,
+                )
+            else:
+                logging.getLogger(__name__).info(
+                    "remote_repo_reachable binding=%s host=%s sha=%s",
+                    binding.name,
+                    host,
+                    sha,
+                )
     if binding.tracker == "podium":
         transport = None
         adapter_cls = import_module("tracker_podium").PodiumTrackerAdapter

@@ -35,3 +35,11 @@ def test_resolve_code_sha_handles_timeout() -> None:
 
     with patch.object(subprocess, "run", side_effect=slow):
         assert code_version.resolve_code_sha() == code_version.UNKNOWN
+
+
+def test_resolve_code_sha_handles_permission_error() -> None:
+    def denied(*args, **kwargs):
+        raise PermissionError("git")
+
+    with patch.object(subprocess, "run", side_effect=denied):
+        assert code_version.resolve_code_sha() == code_version.UNKNOWN

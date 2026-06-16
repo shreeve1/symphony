@@ -20,6 +20,7 @@ from blocked_reconciler import reconcile_blocked
 from claude_runner import claude_probe_failure_reason
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
+from repo_host import repo_host_for
 from model_catalog import load_models, resolve_model
 from notifier import (
     TelegramNotifier,
@@ -566,11 +567,16 @@ def _worktree_run_fields(
 ) -> dict[str, str]:
     if not getattr(candidate, "worktree_active", False):
         return {}
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    if resolved_binding is not None and resolved_binding.is_remote:
+        # Worktrees are disabled for remote bindings (ADR-0012): the remote
+        # agent runs directly in binding.repo_path. Return no worktree fields so
+        # no local git/Path op is driven against the remote path.
+        return {}
     try:
         from web.api.worktree import branch_name, worktree_dir
     except ImportError:  # pragma: no cover - supports web/api import path
         from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
-    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
     binding_name = getattr(candidate, "binding_name", "") or (
         resolved_binding.name if resolved_binding is not None else ""
     )
@@ -632,7 +638,11 @@ async def _prepare_resume_candidate(
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
     session_id = derive_session_id(candidate.id)
     current_cwd = _dispatch_cwd(config, candidate, binding=binding)
-    current_sha = resolve_code_sha(current_cwd)
+    current_sha = (
+        repo_host_for(binding, cwd=current_cwd).code_sha()
+        if binding is not None
+        else resolve_code_sha(current_cwd)
+    )
     base_candidate = replace(
         candidate,
         agent_session_id=session_id,
@@ -733,6 +743,12 @@ async def _maybe_compact_context(
     resolved_binding = _binding_for_issue(config, candidate, binding=binding)
     if resolved_binding is None:
         return candidate
+    if resolved_binding.is_remote:
+        # Remote compaction is a documented follow-up (ADR-0012): the compaction
+        # agent's cwd would be the remote repo_path, so skip it for now and
+        # dispatch the candidate uncompacted. Routing the compaction agent
+        # through the remote adapter is deferred.
+        return candidate
     replace_context = getattr(adapter, "replace_context", None)
     if not callable(replace_context):
         return candidate
@@ -800,6 +816,18 @@ def _apply_dispatch_gate(
     defaults silently.
     """
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    if binding is not None and binding.is_remote:
+        if agent != "pi":
+            return candidate, (
+                "Dispatch blocked: remote bindings support only pi in v1 "
+                "(ADR-0012); clear the agent:claude label / preferred_agent."
+            )
+        if getattr(candidate, "preferred_skill", None):
+            return candidate, (
+                "Dispatch blocked: remote bindings do not support "
+                "preferred_skill in v1 (ADR-0012); clear preferred_skill or run "
+                "on a local binding."
+            )
     try:
         entry = resolve_model(
             getattr(candidate, "preferred_model", None), load_models(), agent=agent
@@ -1009,18 +1037,24 @@ async def _handle_archived_terminal(
     if not binding_name:
         return True
 
-    try:
-        from web.api.worktree import remove_worktree, worktree_exists
-    except ImportError:  # pragma: no cover - supports web/api import path
-        from worktree import remove_worktree, worktree_exists  # type: ignore[no-redef]
+    # Remote bindings have no local worktree (ADR-0012); the worktree_exists /
+    # remove_worktree helpers run local git/Path ops against
+    # config.homelab_repo_path, which is the remote path for a remote binding
+    # (→ PermissionError). Skip them but still clear the worktree_active column.
+    is_remote = resolved_binding is not None and resolved_binding.is_remote
+    if not is_remote:
+        try:
+            from web.api.worktree import remove_worktree, worktree_exists
+        except ImportError:  # pragma: no cover - supports web/api import path
+            from worktree import remove_worktree, worktree_exists  # type: ignore[no-redef]
 
-    issue_id = str(candidate.id)
-    if await asyncio.to_thread(
-        worktree_exists, config.homelab_repo_path, binding_name, issue_id
-    ):
-        await asyncio.to_thread(
-            remove_worktree, config.homelab_repo_path, binding_name, issue_id
-        )
+        issue_id = str(candidate.id)
+        if await asyncio.to_thread(
+            worktree_exists, config.homelab_repo_path, binding_name, issue_id
+        ):
+            await asyncio.to_thread(
+                remove_worktree, config.homelab_repo_path, binding_name, issue_id
+            )
 
     update_columns = getattr(adapter, "_update_issue_columns", None)
     if callable(update_columns) and issue.get("worktree_active"):
@@ -1502,11 +1536,16 @@ async def run_tick(
                         candidate.id,
                         exc,
                     )
+                    _fallback_cwd = _dispatch_cwd(
+                        config, candidate, binding=tick_binding
+                    )
                     candidate = replace(
                         candidate,
                         resumed=False,
-                        agent_session_sha=resolve_code_sha(
-                            _dispatch_cwd(config, candidate, binding=tick_binding)
+                        agent_session_sha=(
+                            repo_host_for(tick_binding, cwd=_fallback_cwd).code_sha()
+                            if tick_binding is not None
+                            else resolve_code_sha(_fallback_cwd)
                         ),
                     )
                     try:
@@ -1597,11 +1636,14 @@ async def run_tick(
                     candidate.id,
                     result.exit_code,
                 )
+                _fallback_cwd = _dispatch_cwd(config, candidate, binding=tick_binding)
                 candidate = replace(
                     candidate,
                     resumed=False,
-                    agent_session_sha=resolve_code_sha(
-                        _dispatch_cwd(config, candidate, binding=tick_binding)
+                    agent_session_sha=(
+                        repo_host_for(tick_binding, cwd=_fallback_cwd).code_sha()
+                        if tick_binding is not None
+                        else resolve_code_sha(_fallback_cwd)
                     ),
                 )
                 try:
@@ -1842,7 +1884,10 @@ async def run_tick(
                     result=result,
                     secrets=secrets,
                     state="succeeded",
-                    verdict="question",
+                    # Persist an allowed verdict while the question text and
+                    # agent-question-park reason carry the Question Park outcome.
+                    # Podium's schema constrains verdicts to done/review/blocked.
+                    verdict="review",
                     summary=question,
                     ended_at=now().isoformat(),
                 )

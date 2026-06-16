@@ -11,18 +11,6 @@ bindings:
     enabled: false
   landing:
     mode: local
-- name: trading
-  type: coding
-  tracker: podium
-  plane_project_id: 201a3995-c738-4f5a-acbe-7608f302301e
-  repo_path: /home/james/trading/crypto-trading-agents
-  base_branch: main
-  default_agent: pi
-  pi_mode: rpc
-  approval:
-    enabled: false
-  landing:
-    mode: local
 - name: symphony
   plane_project_id: symphony
   tracker: podium
@@ -35,3 +23,30 @@ bindings:
     enabled: false
   landing:
     mode: local
+- name: dotfiles
+  plane_project_id: dotfiles
+  tracker: podium
+  type: coding
+  repo_path: /home/james/dotfiles
+  base_branch: main
+  default_agent: pi
+  approval:
+    enabled: false
+  landing:
+    mode: local
+  pi_mode: rpc
+- name: n8n
+  plane_project_id: n8n
+  tracker: podium
+  type: coding
+  repo_path: /home/itadmin/itastack
+  base_branch: main
+  default_agent: pi
+  approval:
+    enabled: false
+  landing:
+    mode: local
+  pi_mode: one-shot
+  remote:
+    host: 100.95.224.218
+    user: itadmin

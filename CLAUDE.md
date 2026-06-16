@@ -22,7 +22,7 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 - `/home/james/symphony-host.env` — secrets (`PLANE_API_KEY`, etc.). File mode `0600`; never `cat` or print contents.
 - `/etc/systemd/system/symphony-host.service` — service unit. `OnFailure=telegram-alert@%n.service`.
 - `/etc/systemd/system/telegram-alert@.service` — failure-alert template; shares the same env file.
-- `/home/james/homelab/` and `/home/james/trading/crypto-trading-agents` — repos Symphony agents inspect and modify (per `bindings.yml`).
+- Bound repos that Symphony agents inspect and modify are listed in `bindings.yml` (`repo_path` per binding); remote bindings carry a `remote:` block and live on another host.
 - `/home/james/homelab/docs/runbooks/automation/symphony.md` — project runbook.
 
 ## Git Remote
@@ -59,12 +59,7 @@ Resolved 2026-06-12: the dead `OPENCODE_BIN`/`SYMPHONY_OPENCODE_AGENT` lines and
 
 ## Live bindings
 
-Source of truth: `/home/james/symphony/bindings.yml`.
-
-| name | repo |
-|---|---|
-| `homelab` | `/home/james/homelab` |
-| `trading` | `/home/james/trading/crypto-trading-agents` |
+Do not enumerate live bindings here — the list drifts. Source of truth is `/home/james/symphony/bindings.yml` (auto-discovered at CWD); the Podium `binding` table mirrors it. For the current set and live status run the `symphony-bindings-status` skill or `GET /api/bindings`. For narrative/history of each binding see the wiki (`wiki/entities/binding-*.md`, `wiki/index.md`).
 
 ## Common log queries
 
@@ -77,8 +72,8 @@ journalctl -u symphony-host.service --since=5m -n 200 --no-pager \
 journalctl -u symphony-host.service --since=2m -n 100 --no-pager \
   | grep 'dispatch_completed'
 
-# Filter by binding
-journalctl -u symphony-host.service --since=10m --no-pager | grep 'binding=trading'
+# Filter by binding (replace <name> with a binding from bindings.yml)
+journalctl -u symphony-host.service --since=10m --no-pager | grep 'binding=<name>'
 
 # Errors only
 journalctl -u symphony-host.service --since=15m --no-pager \
