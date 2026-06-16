@@ -11,7 +11,7 @@ Restart the host-native Symphony scheduler safely. This skill controls only `sym
 
 - Symphony repo at `/home/james/symphony`.
 - Service unit `symphony-host.service` exists.
-- Journal reads are available.
+- Journal reads are available. **On this host the invoking user is not in `adm`/`systemd-journal`, so plain `journalctl -u symphony-host.service` silently returns no service lines** (it prints a "you are not seeing messages from other users" hint and an empty result — running `code_sha` comes back unknown). Use **`sudo journalctl ... -q`** for every journal read in this skill; the `-q` suppresses the hint. If `sudo` is unavailable, report running-sha as `unknown (journal not readable)` rather than treating empty output as "no errors".
 - `sudo systemctl restart symphony-host.service` requires James's fresh approval in the current turn.
 
 ## Safety rules
@@ -35,10 +35,10 @@ git log --oneline -1
 git status --porcelain
 systemctl show symphony-host.service \
   --property=ActiveState,SubState,MainPID,ActiveEnterTimestamp,WorkingDirectory --no-pager
-journalctl -u symphony-host.service --since="5 minutes ago" -n 80 --no-pager \
+sudo journalctl -u symphony-host.service --since="5 minutes ago" -n 80 --no-pager -q \
   | grep -E 'ERROR|Traceback|ConfigError|reconcile_startup_failed|run_reconcile_failed' \
   || echo "no recent matched errors"
-journalctl -u symphony-host.service --since="2 hours ago" --no-pager \
+sudo journalctl -u symphony-host.service --since="2 hours ago" --no-pager -q \
   | grep 'symphony_started' | tail -1
 ```
 
@@ -97,7 +97,7 @@ systemctl show symphony-host.service \
 If not active/running, capture last 80 lines and stop:
 
 ```bash
-journalctl -u symphony-host.service --since="1 minute ago" -n 80 --no-pager
+sudo journalctl -u symphony-host.service --since="1 minute ago" -n 80 --no-pager -q
 ```
 
 ### 5. Verify scheduler lifecycle
@@ -106,11 +106,11 @@ Wait for the first dispatch/reconcile cycle:
 
 ```bash
 sleep 35
-journalctl -u symphony-host.service --since="1 minute ago" --no-pager -n 250 \
+sudo journalctl -u symphony-host.service --since="1 minute ago" --no-pager -n 250 -q \
   | grep -E 'symphony_started|reconcile_startup_(begin|done|failed)|run_reconcile_(begin|done|failed)|dispatch_completed|rpc_orphan_reap_done|pi_rpc_probe_(ok|failed)|ERROR|Traceback'
 ```
 
-Note: the reconcile/dispatch lines can lag `symphony_started` by up to ~90s (a startup probe runs first); the service shows `active/running` throughout. If the first grep shows only `symphony_started` + probe lines, wait and re-run before calling it stalled.
+Note: the reconcile/dispatch lines can lag `symphony_started` by up to ~90s (a startup probe runs first); the service shows `active/running` throughout. If the first grep shows only `symphony_started` + probe lines, wait and re-run before calling it stalled. To scope a re-run to the new process, add `_PID=<MainPID>` to the `journalctl` call.
 
 Expected evidence:
 
