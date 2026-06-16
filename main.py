@@ -92,7 +92,12 @@ def _build_binding_runtime(
     config: SymphonyConfig, binding: ProjectBinding
 ) -> BindingRuntime:
     binding_config = config.for_binding(binding)
-    if binding.default_agent == "pi":
+    # Remote bindings dispatch pi over SSH (ADR-0012); the startup probe runs a
+    # LOCAL pi in the binding's repo_path, which for a remote binding is a path
+    # on the remote host (unreadable locally → it would crash startup). Skip the
+    # local probe for remote bindings; remote pi readiness is the remote host's
+    # concern (a remote SSH probe is a future refinement).
+    if binding.default_agent == "pi" and not binding.is_remote:
         probe_provider = binding_config.pi_provider
         probe_model = binding_config.pi_model
         if binding.tracker == "podium":
