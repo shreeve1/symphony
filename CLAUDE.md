@@ -34,7 +34,8 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 
 - Treat as live infrastructure.
 - Do not print values from `/home/james/symphony-host.env`.
-- Ask James before `systemctl restart`, `stop`, unit edits, Plane API mutations, or smoke ticket requeues unless he has already approved that exact live mutation.
+- `systemctl restart symphony-host.service` is pre-approved: restart whenever needed without asking. Still run the pre-sanity and post-restart verification from the `symphony-restart` skill.
+- Ask James before `systemctl stop`, unit edits, Plane API mutations, or smoke ticket requeues unless he has already approved that exact live mutation.
 
 ## Env locations
 

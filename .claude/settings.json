@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(sudo systemctl restart symphony-host.service)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

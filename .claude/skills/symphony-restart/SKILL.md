@@ -1,6 +1,6 @@
 ---
 name: symphony-restart
-description: Restart symphony-host.service with a pre-sanity → restart → verify-log-lines ritual. Use when bringing the Symphony scheduler onto new code, recovering from a stale process, or after editing scheduler config. Read-only sanity gate runs first; sudo restart only after James approves at the moment of action.
+description: Restart symphony-host.service with a pre-sanity → restart → verify-log-lines ritual. Use when bringing the Symphony scheduler onto new code, recovering from a stale process, or after editing scheduler config. Read-only sanity gate runs first; the restart itself is pre-approved and runs without asking.
 ---
 
 # Symphony Restart
@@ -12,11 +12,11 @@ Restart the host-native Symphony scheduler safely. This skill controls only `sym
 - Symphony repo at `/home/james/symphony`.
 - Service unit `symphony-host.service` exists.
 - Journal reads are available. **On this host the invoking user is not in `adm`/`systemd-journal`, so plain `journalctl -u symphony-host.service` silently returns no service lines** (it prints a "you are not seeing messages from other users" hint and an empty result — running `code_sha` comes back unknown). Use **`sudo journalctl ... -q`** for every journal read in this skill; the `-q` suppresses the hint. If `sudo` is unavailable, report running-sha as `unknown (journal not readable)` rather than treating empty output as "no errors".
-- `sudo systemctl restart symphony-host.service` requires James's fresh approval in the current turn.
+- `sudo systemctl restart symphony-host.service` is pre-approved (harness allow-rule + `CLAUDE.md`): run it without asking. Pre-sanity and post-restart verification still run.
 
 ## Safety rules
 
-- Never restart, stop, start, reload, or edit units without explicit James approval.
+- Restart is pre-approved. Never stop, start, reload, or edit units without explicit James approval.
 - Never read or print `/home/james/symphony-host.env`.
 - Never mutate Podium, Plane, `bindings.yml`, issues, runs, or worktrees from this skill.
 - If sanity fails, stop and report evidence; do not repair inside this skill.
@@ -71,19 +71,18 @@ tests          not run | passed | failed
 
 Stop if service is unhealthy, recent errors are unexplained, or the tree has risky unrelated changes. Ask James before proceeding if the only issue is an expected dirty tree.
 
-### 3. Approval gate
+### 3. Restart decision
 
-Show exact command and reason:
+Restart is pre-approved — no y/n prompt. State the exact command and reason, then proceed:
 
 ```text
-About to run:
+Running:
   sudo systemctl restart symphony-host.service
 
 Reason: <stale code sha | config reload | manual operator request>
-Proceed? (y/n)
 ```
 
-Do not proceed without explicit approval.
+Skip the restart only when disk head and running `code_sha` already match — say no restart is needed and ask whether James still wants one.
 
 ### 4. Restart
 
