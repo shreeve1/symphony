@@ -12,7 +12,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import yaml
 
@@ -45,6 +45,12 @@ class PodiumBindingScaffoldRequest:
     approval_enabled: bool = False
     context_compact_threshold_tokens: int = 16_000
     context_compact_keep_recent_runs: int = 3
+    # Remote execution target (ADR-0012). When remote_host/remote_user are set,
+    # a ``remote:`` block is written to bindings.yml so the binding dispatches
+    # over SSH and the frontend "name — repo" label surfaces automatically.
+    remote_host: str | None = None
+    remote_user: str | None = None
+    remote_identity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +90,19 @@ def scaffold_podium_binding(
     if request.pi_mode not in {"one-shot", "rpc"}:
         raise ValueError("pi_mode must be 'one-shot' or 'rpc'")
 
+    is_remote = request.remote_host is not None or request.remote_user is not None
+    if is_remote:
+        # Mirror config.py remote v1 constraints so scaffolding fails fast
+        # rather than producing a bindings.yml entry config.py would reject.
+        if request.remote_host is None or request.remote_user is None:
+            raise ValueError("remote bindings require both remote_host and remote_user")
+        if request.binding_type != "coding":
+            raise ValueError("remote bindings require binding_type 'coding' (v1)")
+        if request.default_agent != "pi":
+            raise ValueError("remote bindings require default_agent 'pi' (v1)")
+        if request.pi_mode != "one-shot":
+            raise ValueError("remote bindings require pi_mode 'one-shot' (v1)")
+
     with connect(db_path) as connection:
         _ensure_schema(connection)
         _insert_binding_row(connection, request)
@@ -103,6 +122,14 @@ def scaffold_podium_binding(
     # pi_mode only governs pi dispatch; omit it for claude bindings.
     if request.default_agent == "pi":
         binding["pi_mode"] = request.pi_mode
+    if is_remote:
+        remote: dict[str, str] = {
+            "host": cast(str, request.remote_host),
+            "user": cast(str, request.remote_user),
+        }
+        if request.remote_identity is not None:
+            remote["identity"] = request.remote_identity
+        binding["remote"] = remote
     _append_binding(bindings_path, binding)
     return PodiumBindingScaffoldResult(
         binding_name=request.name,

@@ -88,6 +88,72 @@ def test_binding_scaffold_pi_mode_one_shot_and_claude_omits_it(tmp_path: Path) -
     assert "pi_mode" not in by_name["cl"]  # claude bindings carry no pi_mode
 
 
+def test_binding_scaffold_writes_remote_block(tmp_path: Path) -> None:
+    db_path = tmp_path / "podium.db"
+    bindings_path = tmp_path / "bindings.yml"
+
+    scaffold_podium_binding(
+        PodiumBindingScaffoldRequest(
+            name="n8n",
+            repo_path=Path("/home/itadmin/itastack"),
+            base_branch="main",
+            pi_mode="one-shot",
+            remote_host="100.95.224.218",
+            remote_user="itadmin",
+        ),
+        db_path=db_path,
+        bindings_path=bindings_path,
+    )
+
+    raw = yaml.safe_load(bindings_path.read_text(encoding="utf-8"))
+    [binding] = raw["bindings"]
+    assert binding["remote"] == {"host": "100.95.224.218", "user": "itadmin"}
+    assert "identity" not in binding["remote"]
+
+
+def test_binding_scaffold_remote_requires_one_shot_pi_coding(tmp_path: Path) -> None:
+    db_path = tmp_path / "podium.db"
+    bindings_path = tmp_path / "bindings.yml"
+
+    base = dict(
+        name="bad",
+        repo_path=Path("/home/itadmin/itastack"),
+        base_branch="main",
+        remote_host="100.95.224.218",
+        remote_user="itadmin",
+    )
+
+    # rpc rejected for remote (v1 requires one-shot)
+    try:
+        scaffold_podium_binding(
+            PodiumBindingScaffoldRequest(**base, pi_mode="rpc"),
+            db_path=db_path,
+            bindings_path=bindings_path,
+        )
+    except ValueError as exc:
+        assert "one-shot" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for remote pi_mode=rpc")
+
+    # host without user rejected
+    try:
+        scaffold_podium_binding(
+            PodiumBindingScaffoldRequest(
+                name="bad2",
+                repo_path=Path("/home/itadmin/itastack"),
+                base_branch="main",
+                pi_mode="one-shot",
+                remote_host="100.95.224.218",
+            ),
+            db_path=db_path,
+            bindings_path=bindings_path,
+        )
+    except ValueError as exc:
+        assert "remote_user" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for remote_host without remote_user")
+
+
 def test_binding_scaffold_skill_is_not_plane_coupled() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
 
