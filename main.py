@@ -86,9 +86,7 @@ def _render_candidate_prompt(
     return render_prompt(issue_data, path=workflow_path, binding_type=binding_type)
 
 
-def _build_binding_runtime(
-    config: SymphonyConfig, binding: ProjectBinding
-) -> BindingRuntime:
+def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> None:
     binding_config = config.for_binding(binding)
     # Remote bindings dispatch pi over SSH (ADR-0012); the startup probe runs a
     # LOCAL pi in the binding's repo_path, which for a remote binding is a path
@@ -138,6 +136,12 @@ def _build_binding_runtime(
                     host,
                     sha,
                 )
+
+
+def _build_binding_runtime(
+    config: SymphonyConfig, binding: ProjectBinding
+) -> BindingRuntime:
+    binding_config = config.for_binding(binding)
     if binding.tracker == "podium":
         transport = None
         # Defer the web.api.db edge for plane-only bindings.
@@ -193,7 +197,10 @@ async def run_bindings_loop(
     )
     if rpc_binding is not None:
         verify_pi_rpc_support(config.pi_bin, rpc_binding.repo_path)
-    runtimes = [_build_binding_runtime(config, binding) for binding in config.bindings]
+    runtimes = []
+    for binding in config.bindings:
+        _probe_binding(config, binding)
+        runtimes.append(_build_binding_runtime(config, binding))
     try:
         for runtime in runtimes:
             logging.getLogger(__name__).info(

@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent_runner import AgentRunnerError
+from agent_runner import AgentRunnerError, RemoteAgentAdapter, RoutingAgentAdapter
 from plane_poller import CandidateIssue
 
 import main
@@ -125,6 +125,7 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
         calls.append("run-loop")
         raise StopLoop
 
+    monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
@@ -180,6 +181,7 @@ async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings
         main, "reap_orphan_claude_sockets", lambda: calls.append("reap")
     )
     monkeypatch.setattr(main, "verify_claude_support", lambda: calls.append("probe"))
+    monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
@@ -190,6 +192,57 @@ async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings
     assert calls.count("reap") == 1
     assert calls.count("probe") == 1
     assert calls[:2] == ["reap", "probe"]
+
+
+@pytest.mark.asyncio
+async def test_run_bindings_loop_probes_before_runtime_construction(monkeypatch):
+    calls = []
+
+    class FakeConfig:
+        bindings = ("one",)
+
+    class FakeRuntimeConfig:
+        homelab_repo_path = Path("/tmp/repo")
+
+        @property
+        def bindings(self):
+            return (type("Binding", (), {"binding_type": "infra"})(),)
+
+    class FakeAdapter:
+        contract = None
+
+    def fake_probe_binding(config, binding):
+        calls.append(("probe", binding))
+
+    def fake_build_runtime(config, binding):
+        calls.append(("build", binding))
+        return main.BindingRuntime(
+            name=binding,
+            config=cast(Any, FakeRuntimeConfig()),
+            transport=None,
+            adapter=cast(Any, FakeAdapter()),
+            agent_adapter=cast(Any, "agent"),
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
+        calls.append(("reconcile", binding))
+        return 0
+
+    async def fake_run_loop(
+        config, adapter, *, agent_runner, render_prompt, notifier=None, binding=None
+    ):
+        calls.append(("run-loop", binding))
+        raise StopLoop
+
+    monkeypatch.setattr(main, "_probe_binding", fake_probe_binding)
+    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    with pytest.raises(StopLoop):
+        await main.run_bindings_loop(cast(Any, FakeConfig()))
+
+    assert calls[:2] == [("probe", "one"), ("build", "one")]
 
 
 @pytest.mark.asyncio
@@ -269,6 +322,7 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
         calls.append(("sleep", seconds))
         raise StopLoop
 
+    monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
@@ -326,6 +380,11 @@ def test_homelab_podium_binding_builds_without_plane_transport(monkeypatch):
     assert runtime.name == "homelab"
     assert runtime.transport is None
     assert runtime.binding is binding
+    assert "verify" not in calls
+    assert "transport" not in calls
+
+    main._probe_binding(config, binding)
+
     assert "verify" in calls
     assert "transport" not in calls
 
@@ -374,12 +433,11 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
     assert "verify" not in calls
 
 
-def test_build_binding_runtime_remote_skips_local_pi_probe(monkeypatch, tmp_path):
+def test_probe_binding_remote_skips_local_pi_probe(monkeypatch, tmp_path):
     # ADR-0012: a remote binding's repo_path lives on the remote host, so the
     # LOCAL verify_pi_support probe must be skipped (else it crashes startup with
     # PermissionError/FileNotFoundError on the unreadable path).
     from config import RemotePolicy
-    from agent_runner import RemoteAgentAdapter
 
     calls = {}
     config = main.SymphonyConfig.from_env(
@@ -411,13 +469,15 @@ def test_build_binding_runtime_remote_skips_local_pi_probe(monkeypatch, tmp_path
         main, "verify_pi_support", lambda *args: calls.setdefault("verify", args)
     )
 
+    main._probe_binding(config, binding)
     runtime = main._build_binding_runtime(config, binding)
 
     assert "verify" not in calls  # local probe skipped for the remote binding
+    assert isinstance(runtime.agent_adapter, RoutingAgentAdapter)
     assert isinstance(runtime.agent_adapter.remote_adapter, RemoteAgentAdapter)
 
 
-def test_build_binding_runtime_remote_reachability_never_raises(monkeypatch, tmp_path):
+def test_probe_binding_remote_reachability_never_raises(monkeypatch, tmp_path):
     # ADR-0012 task 10.1: the remote branch logs a reachability result via
     # repo_host_for(binding).code_sha() and must never raise — a "unknown" sha
     # (unreachable host / bad path) warns but lets startup proceed.
@@ -457,13 +517,14 @@ def test_build_binding_runtime_remote_reachability_never_raises(monkeypatch, tmp
 
     monkeypatch.setattr(main, "repo_host_for", lambda b: StubRepoHost())
 
+    main._probe_binding(config, binding)
     runtime = main._build_binding_runtime(config, binding)
 
     assert calls.get("code_sha") is True
     assert runtime.name == "n8n"
 
 
-def test_build_binding_runtime_verifier_failure_aborts_before_transport(
+def test_probe_binding_verifier_failure_aborts_before_transport(
     monkeypatch, tmp_path
 ):
     calls = {}
@@ -491,7 +552,7 @@ def test_build_binding_runtime_verifier_failure_aborts_before_transport(
     monkeypatch.setattr(main, "verify_pi_support", fake_verify_pi_support)
 
     with pytest.raises(AgentRunnerError, match="bad pi"):
-        main._build_binding_runtime(config, config.bindings[0])
+        main._probe_binding(config, config.bindings[0])
 
     assert "verify" in calls
     assert "transport" not in calls
@@ -544,6 +605,7 @@ async def test_rate_limited_binding_does_not_block_other_binding(monkeypatch):
             raise StopLoop
         await asyncio.sleep(10)
 
+    monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
