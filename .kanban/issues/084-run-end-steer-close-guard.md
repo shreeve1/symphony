@@ -1,7 +1,7 @@
 ---
 id: 084
 title: Run-end steer-close guard (no accepted-but-lost steer)
-status: in-progress
+status: review
 blocked_by: [83, 79]
 parent: null
 priority: 0
