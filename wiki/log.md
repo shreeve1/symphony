@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-17] session-update | Issue #68 resume fallback dedup
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/068-dedup-resume-fallback.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `scheduler.py`; `tests/test_dispatch_compaction.py`; `symphony-host.service` restart logs
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0231 added)
+- Notes: Captured Issue #68 landing the first T4 scheduler-decomposition step: `_dispatch_with_resume_fallback` now owns the resumed-dispatch fallback retry sequence and is used by both resumed exception and nonzero-exit paths. Verification: `uv run ruff check scheduler.py tests/test_dispatch_compaction.py` passed; `uv run pytest tests/test_dispatch_compaction.py -q` passed (7 passed); touched-file LSP diagnostics clean; full `uv run pytest -q` passed (888 passed, 2 skipped); `symphony-host.service` restarted cleanly on code SHA `ee967e3` with reconcile and dispatch-loop evidence. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Issue #67 Plane secret de-shipping for Podium agents
 
 - Actor: agent (Ralph)
