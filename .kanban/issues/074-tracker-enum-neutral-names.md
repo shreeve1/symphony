@@ -1,7 +1,7 @@
 ---
 id: 074
 title: Tracker enum neutral names with Plane* aliases
-status: review
+status: done
 blocked_by: [64]
 parent: null
 priority: 0
@@ -18,10 +18,10 @@ Rename the canonical names to `TrackerState` / `TrackerLabel` / `TrackerUserMapp
 
 ## Acceptance criteria
 
-- [ ] Canonical `TrackerState` / `TrackerLabel` / `TrackerUserMapping` defined in `tracker_contract.py`.
-- [ ] `PlaneState` / `PlaneLabel` / `PlaneUserMapping` / `PlaneContract` retained as compat aliases pointing at the canonical names.
-- [ ] `PODIUM_CONTRACT` and all importers resolve via either the canonical or alias name.
-- [ ] `uv run pytest` passes.
+- [x] Canonical `TrackerState` / `TrackerLabel` / `TrackerUserMapping` defined in `tracker_contract.py`.
+- [x] `PlaneState` / `PlaneLabel` / `PlaneUserMapping` / `PlaneContract` retained as compat aliases pointing at the canonical names.
+- [x] `PODIUM_CONTRACT` and all importers resolve via either the canonical or alias name.
+- [x] `uv run pytest` passes.
 
 ## Verification
 
@@ -30,3 +30,7 @@ Rename the canonical names to `TrackerState` / `TrackerLabel` / `TrackerUserMapp
 ## Blocked by
 
 - Blocked by #064 (tracker vocabulary home established first so the renames are coordinated).
+
+## Implementation Notes
+
+Added canonical `TrackerState`, `TrackerLabel`, and `TrackerUserMapping` names in `tracker_contract.py`, with `PlaneState`, `PlaneLabel`, `PlaneUserMapping`, and `PlaneContract` retained as compatibility aliases. Repointed tracker adapter, Podium tracker, and config annotations to the canonical names while leaving legacy importers on aliases. Added focused contract tests for canonical exports and alias identity.

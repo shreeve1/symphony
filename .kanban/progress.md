@@ -145,3 +145,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** New `SYMPHONY_TRACKER_*` env values win when both neutral and legacy names are set; existing `PLANE_*` names remain valid so `/home/james/symphony-host.env` and `symphony-host.service` do not need edits in this slice.
 **Verification:** `uv run pytest` (889 passed, 2 skipped); `uv run ruff check config.py tests/test_config.py`; touched-file LSP diagnostics clean.
 **Actionable review:** Initial implementation diff from `6ab45266bce534f3ea3023d44e316ade5982ad91` to `HEAD` was empty, so the review loop implemented the missing slice, read every changed file, verified all acceptance criteria, and added `action_reviewed: 2026-06-17`.
+
+## #074 Tracker enum neutral names with Plane* aliases — 2026-06-17
+
+**What changed:** Added canonical `TrackerState`, `TrackerLabel`, and `TrackerUserMapping` names in `tracker_contract.py`, retained `PlaneState`, `PlaneLabel`, `PlaneUserMapping`, and `PlaneContract` as compatibility aliases, and repointed tracker adapter, Podium tracker, and config annotations to canonical names.
+**Files:** `tracker_contract.py`, `tracker_adapter.py`, `tracker_podium.py`, `config.py`, `tests/test_tracker_contract.py`, `.kanban/issues/074-tracker-enum-neutral-names.md`.
+**Decisions:** Plane-prefixed names remain import-compatible aliases for one release while new shared tracker code uses canonical `Tracker*` names.
+**Conventions established:** New tracker contract annotations should use `TrackerState`, `TrackerLabel`, and `TrackerUserMapping`; existing Plane importers may continue using aliases until the planned compatibility cleanup.
+**Verification:** `uv run pytest` (891 passed, 2 skipped); `uv run ruff check tracker_contract.py tracker_adapter.py tracker_podium.py config.py tests/test_tracker_contract.py`; focused contract/Podium/config tests passed; touched-file LSP diagnostics clean; fresh review `RALPH_REVIEW: PASS`.
