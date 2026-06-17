@@ -1,11 +1,12 @@
 ---
 id: 078
 title: Warm reattach to a live Claude session on a second Run
-status: pending
+status: in-progress
 blocked_by: [77]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
 ---
 
 ## What to build

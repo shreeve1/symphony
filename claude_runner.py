@@ -300,6 +300,56 @@ def _register_claude_run(
     return None
 
 
+def _persistent_session_live(
+    socket_path: Path,
+    session_name: str,
+    *,
+    run_func: Callable[..., CompletedLike],
+) -> bool:
+    """True when a persistent tmux socket/session/server is safe to reuse."""
+
+    if not socket_path.exists():
+        return False
+    if not _session_alive(socket_path, session_name, run_func=run_func):
+        return False
+    server_pid = _claude_server_pid(socket_path, session_name, run_func=run_func)
+    return server_pid is not None and pid_alive(server_pid)
+
+
+def _cleanup_claude_session_artifacts(
+    socket_path: Path,
+    session_name: str,
+    *,
+    run_func: Callable[..., CompletedLike],
+    pidfile_path: Path | None = None,
+    metadata_path: Path | None = None,
+) -> None:
+    """Best-effort cleanup for a stale reusable Claude session."""
+
+    with suppress(OSError):
+        run_func(
+            [
+                "tmux",
+                "-S",
+                str(socket_path),
+                "kill-session",
+                "-t",
+                session_name,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    with suppress(OSError):
+        socket_path.unlink(missing_ok=True)
+    if pidfile_path is not None:
+        with suppress(OSError):
+            pidfile_path.unlink(missing_ok=True)
+    if metadata_path is not None:
+        with suppress(OSError):
+            metadata_path.unlink(missing_ok=True)
+
+
 def _default_claude_socket_glob(pattern: str) -> Iterable[Path]:
     return Path("/tmp").glob(Path(pattern).name)
 
@@ -495,14 +545,8 @@ def run_claude_agent(
         resume_requested = bool(getattr(issue, "resumed", False))
         transcript_file = session_file or session_file_path("claude", cwd, session_id)
         metadata_dir = pidfile_dir or _claude_pidfile_dir(source_env)
-        cleanup.metadata_path = _write_claude_session_metadata(
-            metadata_dir / f"{socket_path.stem}.meta.json",
-            issue_id=issue.id,
-            binding=binding_name,
-            cwd=cwd,
-            session_file=transcript_file,
-            session_name=session_name,
-        )
+        metadata_path = metadata_dir / f"{socket_path.stem}.meta.json"
+        pidfile_path = metadata_dir / f"{socket_path.stem}.pid"
         # `claude --session-id <id>` creates a fresh session and aborts when a
         # transcript for that id already exists; `--resume <id>` attaches to it.
         # The per-issue session id is deterministic, so a refeed (resumed=false,
@@ -524,61 +568,116 @@ def run_claude_agent(
             session_id,
             str(resume_requested).lower(),
         )
-        launch = run_func(
-            [
-                "tmux",
-                "-S",
-                str(socket_path),
-                "new-session",
-                "-d",
-                "-s",
-                session_name,
-                "claude",
-                "--permission-mode",
-                "bypassPermissions",
-                "--model",
-                model,
-                session_arg,
-                session_id,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=str(cwd),
-            env=env,
-        )
-        if int(launch.returncode) != 0:
-            duration_ms = int((clock() - started) * 1000)
-            stderr = strip_ansi(f"{launch.stdout}\n{launch.stderr}".strip())
-            return _logged_result(issue, 1, duration_ms, False, "", stderr)
-
-        cleanup.pidfile_path = _register_claude_run(
-            socket_path,
-            session_name,
-            run_func=run_func,
-            pidfile_dir=metadata_dir,
-        )
-
-        ready = _wait_until_ready(
-            socket_path,
-            session_name,
-            run_func=run_func,
-            clock=clock,
-            sleep=sleep,
-            timeout_s=ready_timeout_s,
-        )
-        if not ready:
-            stderr = "claude_ready_timeout\n" + _capture_pane_tail(
-                socket_path, session_name, run_func=run_func
-            )
-            duration_ms = int((clock() - started) * 1000)
-            return _logged_result(issue, 1, duration_ms, False, "", stderr)
-
         prompt_file.write_text(
             _wrap_prompt(rendered_prompt, result_file, done_file, issue),
             encoding="utf-8",
         )
-        _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
+        reattached = False
+        if persist and _persistent_session_live(
+            socket_path, session_name, run_func=run_func
+        ):
+            cleanup.metadata_path = _write_claude_session_metadata(
+                metadata_path,
+                issue_id=issue.id,
+                binding=binding_name,
+                cwd=cwd,
+                session_file=transcript_file,
+                session_name=session_name,
+            )
+            cleanup.pidfile_path = _register_claude_run(
+                socket_path,
+                session_name,
+                run_func=run_func,
+                pidfile_dir=metadata_dir,
+            )
+            reattached = _paste_and_submit(
+                run_func, socket_path, session_name, prompt_file, sleep=sleep
+            )
+            if reattached:
+                LOGGER.info(
+                    "claude_reattached issue_id=%s socket=%s", issue.id, socket_path
+                )
+            else:
+                _cleanup_claude_session_artifacts(
+                    socket_path,
+                    session_name,
+                    run_func=run_func,
+                    pidfile_path=cleanup.pidfile_path,
+                    metadata_path=cleanup.metadata_path,
+                )
+                cleanup.pidfile_path = None
+                cleanup.metadata_path = None
+
+        if not reattached:
+            if persist and socket_path.exists():
+                _cleanup_claude_session_artifacts(
+                    socket_path,
+                    session_name,
+                    run_func=run_func,
+                    pidfile_path=pidfile_path,
+                    metadata_path=metadata_path,
+                )
+            cleanup.metadata_path = _write_claude_session_metadata(
+                metadata_path,
+                issue_id=issue.id,
+                binding=binding_name,
+                cwd=cwd,
+                session_file=transcript_file,
+                session_name=session_name,
+            )
+            launch = run_func(
+                [
+                    "tmux",
+                    "-S",
+                    str(socket_path),
+                    "new-session",
+                    "-d",
+                    "-s",
+                    session_name,
+                    "claude",
+                    "--permission-mode",
+                    "bypassPermissions",
+                    "--model",
+                    model,
+                    session_arg,
+                    session_id,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=str(cwd),
+                env=env,
+            )
+            if int(launch.returncode) != 0:
+                duration_ms = int((clock() - started) * 1000)
+                stderr = strip_ansi(f"{launch.stdout}\n{launch.stderr}".strip())
+                return _logged_result(issue, 1, duration_ms, False, "", stderr)
+
+            cleanup.pidfile_path = _register_claude_run(
+                socket_path,
+                session_name,
+                run_func=run_func,
+                pidfile_dir=metadata_dir,
+            )
+
+            ready = _wait_until_ready(
+                socket_path,
+                session_name,
+                run_func=run_func,
+                clock=clock,
+                sleep=sleep,
+                timeout_s=ready_timeout_s,
+            )
+            if not ready:
+                stderr = "claude_ready_timeout\n" + _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func
+                )
+                duration_ms = int((clock() - started) * 1000)
+                return _logged_result(issue, 1, duration_ms, False, "", stderr)
+
+            _paste_and_submit(
+                run_func, socket_path, session_name, prompt_file, sleep=sleep
+            )
 
         deadline = started + (config.run_timeout_ms / 1000)
         poll_result = _poll_claude_until_done(
@@ -825,7 +924,7 @@ def _paste_and_submit(
     prompt_file: Path,
     *,
     sleep: Callable[[float], object],
-) -> None:
+) -> bool:
     """Paste the prompt and submit it, tolerating the tmux paste/Enter race.
 
     Settle after paste-buffer before the first Enter, then re-send Enter while
@@ -841,7 +940,8 @@ def _paste_and_submit(
         sleep(SUBMIT_RETRY_INTERVAL_SECONDS)
         pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
         if not _paste_pending(pane):
-            return
+            return True
+    return False
 
 
 def _paste_pending(pane: str) -> bool:

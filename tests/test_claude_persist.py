@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from itertools import chain, repeat
 from pathlib import Path
 
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
 
+import claude_runner
 from claude_runner import (
     ClaudeRunCleanup,
     issue_id_from_persistent_socket,
@@ -90,6 +92,45 @@ class PersistSuccessTmux:
         return Completed()
 
 
+class ReattachSuccessTmux(PersistSuccessTmux):
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if command[:1] != ["tmux"]:
+            return Completed()
+        if "display-message" in command:
+            return Completed(stdout=f"{os.getpid()}\n")
+        if "capture-pane" in command:
+            return Completed(stdout="bypass permissions on")
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            return Completed()
+        if "send-keys" in command:
+            assert self.result_file is not None
+            assert self.done_file is not None
+            self.result_file.write_text("SYMPHONY_RESULT: done", encoding="utf-8")
+            self.done_file.write_text("", encoding="utf-8")
+            return Completed()
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+class DeadSocketFallbackTmux(PersistSuccessTmux):
+    def __init__(self):
+        super().__init__()
+        self.launched = False
+
+    def __call__(self, command, **kwargs):
+        if command[:1] == ["tmux"] and "has-session" in command:
+            self.calls.append(command)
+            return Completed(returncode=0 if self.launched else 1)
+        if command[:1] == ["tmux"] and "new-session" in command:
+            self.launched = True
+        return super().__call__(command, **kwargs)
+
+
 def test_persistent_socket_path_is_deterministic_sanitized_and_round_trips() -> None:
     first = persistent_socket_path("home lab", "42")
     second = persistent_socket_path("home lab", "42")
@@ -98,6 +139,103 @@ def test_persistent_socket_path_is_deterministic_sanitized_and_round_trips() -> 
     assert first == Path("/tmp/symphony-claude-persist-home-lab-42.sock")
     assert issue_id_from_persistent_socket(first) == "42"
     assert issue_id_from_persistent_socket("/tmp/symphony-claude-42-abc.sock") is None
+
+
+def test_live_persistent_socket_reattaches_without_cold_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fake = ReattachSuccessTmux()
+    pid_dir = tmp_path / "runtime" / "claude"
+    session_file = tmp_path / "session.jsonl"
+    expected_socket = persistent_socket_path("homelab", "42")
+    expected_socket.write_text("", encoding="utf-8")
+    monkeypatch.setattr(claude_runner, "pid_start_time", lambda pid: "12345")
+    try:
+        result = run_claude_agent(
+            _config(tmp_path),
+            _issue(),
+            "prompt",
+            run_func=fake,
+            mkdtemp=lambda **_: str(tmp_path / "run"),
+            nonce_factory=lambda: "nonce",
+            clock=lambda: 0.0,
+            sleep=lambda _: None,
+            pidfile_dir=pid_dir,
+            session_file=session_file,
+            persist=True,
+        )
+
+        assert result.exit_code == 0
+        assert not any("new-session" in command for command in fake.calls)
+        load_index = next(
+            i for i, command in enumerate(fake.calls) if "load-buffer" in command
+        )
+        capture_index = next(
+            i for i, command in enumerate(fake.calls) if "capture-pane" in command
+        )
+        assert capture_index > load_index
+        assert (pid_dir / f"{expected_socket.stem}.pid").read_text(
+            encoding="utf-8"
+        ) == f"{os.getpid()} 12345"
+        metadata = json.loads(
+            (pid_dir / f"{expected_socket.stem}.meta.json").read_text(encoding="utf-8")
+        )
+        assert metadata["issue_id"] == "42"
+        assert metadata["binding"] == "homelab"
+        assert metadata["session_file"] == str(session_file)
+    finally:
+        expected_socket.unlink(missing_ok=True)
+
+
+def test_dead_persistent_socket_falls_back_to_cold_resume(tmp_path: Path) -> None:
+    fake = DeadSocketFallbackTmux()
+    pid_dir = tmp_path / "runtime" / "claude"
+    session_file = tmp_path / "session.jsonl"
+    session_file.write_text("{}\n", encoding="utf-8")
+    expected_socket = persistent_socket_path("homelab", "42")
+    expected_socket.write_text("stale", encoding="utf-8")
+    try:
+        result = run_claude_agent(
+            _config(tmp_path),
+            _issue(),
+            "prompt",
+            run_func=fake,
+            mkdtemp=lambda **_: str(tmp_path / "run"),
+            nonce_factory=lambda: "nonce",
+            clock=lambda: 0.0,
+            sleep=lambda _: None,
+            pidfile_dir=pid_dir,
+            session_file=session_file,
+            persist=True,
+        )
+
+        assert result.exit_code == 0
+        launch = next(command for command in fake.calls if "new-session" in command)
+        assert "--resume" in launch
+        assert any("kill-session" in command for command in fake.calls)
+    finally:
+        expected_socket.unlink(missing_ok=True)
+
+
+def test_persist_false_still_uses_run_scoped_nonce_socket(tmp_path: Path) -> None:
+    fake = PersistSuccessTmux()
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        persist=False,
+    )
+
+    assert result.exit_code == 0
+    launch = next(command for command in fake.calls if "new-session" in command)
+    assert str(launch[2]) == "/tmp/symphony-claude-42-abc.sock"
+    assert any("kill-session" in command for command in fake.calls)
 
 
 def test_cleanup_run_and_session_are_split_and_idempotent(tmp_path: Path) -> None:
@@ -136,7 +274,9 @@ def test_cleanup_run_and_session_are_split_and_idempotent(tmp_path: Path) -> Non
     assert len([command for command in calls if "kill-session" in command]) == 1
 
 
-def test_persist_success_leaves_session_socket_and_metadata_alive(tmp_path: Path) -> None:
+def test_persist_success_leaves_session_socket_and_metadata_alive(
+    tmp_path: Path,
+) -> None:
     fake = PersistSuccessTmux()
     pid_dir = tmp_path / "runtime" / "claude"
     session_file = tmp_path / "session.jsonl"
