@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-17] session-update | Issue #66 public runtime factory and web API reflection cleanup
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/066-public-build-binding-runtime-web-api-reflection.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `main.py`; `web/api/main.py`; `tests/test_main.py`; `tests/test_trading_podium_dispatch.py`
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0229 added)
+- Notes: Captured Issue #66 landing L0-02/L0-06: `main.build_binding_runtime(config, binding)` is now the public side-effect-free runtime factory, and Podium `_compact_issue_context` uses normal imports instead of `vars(engine_main)`/`vars(compaction)` reflection. Verification: `uv run pytest -q` passed (884 passed, 2 skipped), touched-file LSP diagnostics clean, `git diff --check` clean, `uv run ruff check` clean, and fresh Ralph review returned `RALPH_REVIEW: PASS`. No secrets or env files read.
+
 ## [2026-06-17] session-update | Issue #65 binding probe extraction
 
 - Actor: agent (Ralph)
