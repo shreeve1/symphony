@@ -924,7 +924,7 @@ async def compact_issue_context(
 
 async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
     compaction = import_module("context_compaction")
-    from tracker_podium import CandidateIssue
+    from tracker_types import CandidateIssue
 
     engine_main = import_module("main")
     config = vars(engine_main)["SymphonyConfig"].from_env()

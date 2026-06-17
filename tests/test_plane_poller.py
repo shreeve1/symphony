@@ -3,7 +3,8 @@ import logging
 import httpx
 import pytest
 
-from plane_adapter import InMemoryTransport, PlaneAdapter, TrackerAdapter
+from plane_adapter import InMemoryTransport, PlaneAdapter
+from tracker_adapter import TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 from plane_poller import (
     HttpxPlaneTransport,
@@ -198,10 +199,15 @@ class MixedStatePaginationTransport:
         self.paths.append(path)
         if len(self.paths) < MAX_PAGES_PER_TICK + 1:
             return {
-                "results": [_issue(f"done-{len(self.paths)}", state=PlaneState.DONE.value)],
+                "results": [
+                    _issue(f"done-{len(self.paths)}", state=PlaneState.DONE.value)
+                ],
                 "next_cursor": f"page-{len(self.paths) + 1}",
             }
-        return {"results": [_issue("late-todo", state=PlaneState.TODO.value)], "next_cursor": None}
+        return {
+            "results": [_issue("late-todo", state=PlaneState.TODO.value)],
+            "next_cursor": None,
+        }
 
     async def post(self, path, body):
         raise AssertionError("poller must not write")
@@ -229,7 +235,10 @@ class EmptyMixedStatePaginationTransport:
     async def get(self, path):
         self.paths.append(path)
         if len(self.paths) == 1:
-            return {"results": [_issue("done", state=PlaneState.DONE.value)], "next_cursor": "empty"}
+            return {
+                "results": [_issue("done", state=PlaneState.DONE.value)],
+                "next_cursor": "empty",
+            }
         return {"results": [], "next_cursor": "still-empty"}
 
     async def post(self, path, body):
@@ -377,7 +386,9 @@ class SchemaFailureTransport:
 
 @pytest.mark.asyncio
 async def test_schema_error_logs_error_and_raises(caplog):
-    adapter = PlaneAdapter(contract=DEFAULT_CONTRACT, transport=SchemaFailureTransport())
+    adapter = PlaneAdapter(
+        contract=DEFAULT_CONTRACT, transport=SchemaFailureTransport()
+    )
 
     with caplog.at_level(logging.ERROR), pytest.raises(PlanePollingSchemaError):
         await fetch_todo_issues(adapter)
@@ -414,7 +425,9 @@ async def test_httpx_transport_writes_with_plane_api_key():
 
     try:
         patched = await transport.patch("/issues/issue-1", {"state": "Running"})
-        posted = await transport.post("/issues/issue-1/comments", {"comment_html": "ok"})
+        posted = await transport.post(
+            "/issues/issue-1/comments", {"comment_html": "ok"}
+        )
     finally:
         await transport.aclose()
 
@@ -477,7 +490,10 @@ async def test_httpx_transport_wraps_bare_list_as_results():
     finally:
         await transport.aclose()
 
-    assert result == {"results": [{"id": "issue-1"}, {"id": "issue-2"}], "next_cursor": None}
+    assert result == {
+        "results": [{"id": "issue-1"}, {"id": "issue-2"}],
+        "next_cursor": None,
+    }
 
 
 @pytest.mark.asyncio

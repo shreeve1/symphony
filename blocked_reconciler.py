@@ -36,8 +36,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable, Sequence
 
-from plane_adapter import CommentPayload, TrackerAdapter
+from tracker_adapter import TrackerAdapter
 from tracker_contract import PlaneState, TrackerRole
+from tracker_types import (
+    CommentPayload,
+    _extract_labels,
+    _parse_iso,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -152,18 +157,6 @@ def _target_state_name(adapter: TrackerAdapter, state: PlaneState | TrackerRole)
     return state.value
 
 
-def _parse_iso(value: object) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
 def _comment_body(comment: dict[str, Any]) -> str:
     # The Plane adapter normalises to comment_html, but live API responses
     # also expose comment_stripped. We concatenate so a marker present in
@@ -176,26 +169,13 @@ def _comment_body(comment: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _extract_labels(issue: dict[str, Any], label_ids: dict[str, str] | None) -> tuple[str, ...]:
-    labels = issue.get("labels") or []
-    uuid_to_name: dict[str, str] = {}
-    if label_ids:
-        uuid_to_name = {v: k for k, v in label_ids.items()}
-    extracted: list[str] = []
-    for label in labels:
-        if isinstance(label, str):
-            extracted.append(uuid_to_name.get(label, label))
-        elif isinstance(label, dict):
-            value = label.get("name") or label.get("value")
-            if isinstance(value, str):
-                extracted.append(value)
-    return tuple(extracted)
-
-
 def _is_blocked(issue: dict[str, Any], adapter: TrackerAdapter) -> bool:
     state = issue.get("state")
     blocked_name = adapter.contract.state_name_for_role(TrackerRole.STATE_BLOCKED)
-    blocked_values = {blocked_name, adapter.contract.state_value_for_role(TrackerRole.STATE_BLOCKED)}
+    blocked_values = {
+        blocked_name,
+        adapter.contract.state_value_for_role(TrackerRole.STATE_BLOCKED),
+    }
     if isinstance(state, str):
         return state in blocked_values
     if isinstance(state, dict):
@@ -203,7 +183,9 @@ def _is_blocked(issue: dict[str, Any], adapter: TrackerAdapter) -> bool:
     return False
 
 
-def _select_rule(external_id: str, rules: Sequence[ReconcileRule]) -> ReconcileRule | None:
+def _select_rule(
+    external_id: str, rules: Sequence[ReconcileRule]
+) -> ReconcileRule | None:
     for rule in rules:
         if external_id.startswith(rule.external_id_prefix):
             return rule
@@ -275,7 +257,8 @@ def _evaluate_rule(
         return record.created_at > latest_fail.created_at
 
     pass_records_since_fail = [
-        record for record, klass in classified
+        record
+        for record, klass in classified
         if klass == "pass" and _is_after_fail(record)
     ]
 
@@ -296,7 +279,8 @@ def _evaluate_rule(
 
     if rule.require_symphony_completion:
         completion_after_fail = [
-            record for record, klass in classified
+            record
+            for record, klass in classified
             if klass == "completion" and _is_after_fail(record)
         ]
         if not completion_after_fail:
@@ -315,11 +299,15 @@ async def _fetch_blocked_issues(
     )
 
 
-async def _fetch_comments(adapter: TrackerAdapter, issue_id: str) -> list[_CommentRecord]:
+async def _fetch_comments(
+    adapter: TrackerAdapter, issue_id: str
+) -> list[_CommentRecord]:
     records: list[_CommentRecord] = []
-    raw_comments = await adapter.list_comments(issue_id, max_pages=MAX_COMMENT_PAGES_PER_ISSUE)
+    raw_comments = await adapter.list_comments(
+        issue_id, max_pages=MAX_COMMENT_PAGES_PER_ISSUE
+    )
     for idx, comment in enumerate(raw_comments):
-        created = _parse_iso(comment.get("created_at"))
+        created = _parse_iso(comment.get("created_at"), force_utc=True)
         # Fall back to insertion order for transports that don't track timestamps
         # (e.g. InMemoryTransport during tests). The Unix epoch + idx ordering
         # preserves comment order without polluting the "newer than failure"
@@ -356,7 +344,9 @@ async def reconcile_blocked(
 
     for issue in issues:
         issue_id = str(issue.get("id") or "")
-        identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
+        identifier = str(
+            issue.get("sequence_id") or issue.get("identifier") or issue_id
+        )
         name = str(issue.get("name") or "")
         external_id = str(issue.get("external_id") or "")
 
@@ -364,14 +354,19 @@ async def reconcile_blocked(
         if adapter.labels_contain_role(labels, TrackerRole.APPROVAL_REQUIRED):
             decisions.append(
                 ReconcileDecision(
-                    issue_id, identifier, name, external_id,
-                    rule=None, target_state=None,
+                    issue_id,
+                    identifier,
+                    name,
+                    external_id,
+                    rule=None,
+                    target_state=None,
                     reason="approval-required-label",
                 )
             )
             LOGGER.info(
                 "blocked_reconcile_skipped issue_id=%s identifier=%s reason=approval-required-label",
-                issue_id, identifier,
+                issue_id,
+                identifier,
             )
             continue
 
@@ -379,14 +374,20 @@ async def reconcile_blocked(
         if rule is None:
             decisions.append(
                 ReconcileDecision(
-                    issue_id, identifier, name, external_id,
-                    rule=None, target_state=None,
+                    issue_id,
+                    identifier,
+                    name,
+                    external_id,
+                    rule=None,
+                    target_state=None,
                     reason="no-matching-rule",
                 )
             )
             LOGGER.info(
                 "blocked_reconcile_skipped issue_id=%s identifier=%s external_id=%s reason=no-matching-rule",
-                issue_id, identifier, external_id,
+                issue_id,
+                identifier,
+                external_id,
             )
             continue
 
@@ -395,14 +396,19 @@ async def reconcile_blocked(
         except Exception as exc:
             decisions.append(
                 ReconcileDecision(
-                    issue_id, identifier, name, external_id,
-                    rule=rule, target_state=None,
+                    issue_id,
+                    identifier,
+                    name,
+                    external_id,
+                    rule=rule,
+                    target_state=None,
                     reason=f"comment-fetch-failed: {exc}",
                 )
             )
             LOGGER.warning(
                 "blocked_reconcile_comment_fetch_failed issue_id=%s error=%s",
-                issue_id, exc,
+                issue_id,
+                exc,
             )
             continue
 
@@ -410,20 +416,31 @@ async def reconcile_blocked(
         if not fires:
             decisions.append(
                 ReconcileDecision(
-                    issue_id, identifier, name, external_id,
-                    rule=rule, target_state=None,
+                    issue_id,
+                    identifier,
+                    name,
+                    external_id,
+                    rule=rule,
+                    target_state=None,
                     reason=reason,
                 )
             )
             LOGGER.info(
                 "blocked_reconcile_skipped issue_id=%s identifier=%s rule=%s reason=%s",
-                issue_id, identifier, rule.name, reason,
+                issue_id,
+                identifier,
+                rule.name,
+                reason,
             )
             continue
 
         decision = ReconcileDecision(
-            issue_id, identifier, name, external_id,
-            rule=rule, target_state=rule.target_state,
+            issue_id,
+            identifier,
+            name,
+            external_id,
+            rule=rule,
+            target_state=rule.target_state,
             reason=reason,
             applied=False,
         )
@@ -432,7 +449,10 @@ async def reconcile_blocked(
         if not apply:
             LOGGER.info(
                 "blocked_reconcile_would_apply issue_id=%s identifier=%s rule=%s target_state=%s",
-                issue_id, identifier, rule.name, target_state_name,
+                issue_id,
+                identifier,
+                rule.name,
+                target_state_name,
             )
             decisions.append(decision)
             continue
@@ -452,13 +472,19 @@ async def reconcile_blocked(
         except Exception as exc:
             LOGGER.warning(
                 "blocked_reconcile_apply_failed issue_id=%s rule=%s error=%s",
-                issue_id, rule.name, exc,
+                issue_id,
+                rule.name,
+                exc,
                 exc_info=True,
             )
             decisions.append(
                 ReconcileDecision(
-                    issue_id, identifier, name, external_id,
-                    rule=rule, target_state=rule.target_state,
+                    issue_id,
+                    identifier,
+                    name,
+                    external_id,
+                    rule=rule,
+                    target_state=rule.target_state,
                     reason=f"apply-failed: {exc}",
                     applied=False,
                 )
@@ -472,18 +498,27 @@ async def reconcile_blocked(
             # because the state change is the authoritative outcome.
             LOGGER.warning(
                 "blocked_reconcile_comment_failed_after_transition issue_id=%s rule=%s error=%s",
-                issue_id, rule.name, exc,
+                issue_id,
+                rule.name,
+                exc,
                 exc_info=True,
             )
 
         LOGGER.info(
             "blocked_reconcile_applied issue_id=%s identifier=%s rule=%s target_state=%s",
-            issue_id, identifier, rule.name, _target_state_name(adapter, rule.target_state),
+            issue_id,
+            identifier,
+            rule.name,
+            _target_state_name(adapter, rule.target_state),
         )
         decisions.append(
             ReconcileDecision(
-                issue_id, identifier, name, external_id,
-                rule=rule, target_state=rule.target_state,
+                issue_id,
+                identifier,
+                name,
+                external_id,
+                rule=rule,
+                target_state=rule.target_state,
                 reason=reason,
                 applied=True,
             )

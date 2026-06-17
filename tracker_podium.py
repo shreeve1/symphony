@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from skill_mode_map import mode_for_skill
+from tracker_types import CandidateIssue
 from tracker_contract import (
     DEFAULT_CONTRACT,
     PlaneLabel,
@@ -36,41 +37,6 @@ from web.api.db import resolve_db_path
 
 PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
-
-
-@dataclass(frozen=True)
-class CandidateIssue:
-    id: str
-    identifier: str
-    name: str
-    description: str
-    labels: tuple[str, ...]
-    created_at: str
-    schedule_not_before: str = ""
-    schedule_not_after: str = ""
-    schedule_reason: str = ""
-    schedule_source: str = ""
-    schedule_late: str = ""
-    comments_md: str = ""
-    context_md: str = ""
-    preferred_skill: str | None = None
-    worktree_active: bool = False
-    base_branch: str = ""
-    binding_name: str = ""
-    preferred_model: str | None = None
-    reasoning_effort: str = "high"
-    # Absolute SKILL.md path from the skill catalog row; empty when the issue
-    # has no preferred_skill or the catalog row is missing (dispatch blocks).
-    skill_source: str = ""
-    # Set by the scheduler's dispatch gate after models.yml resolution; the
-    # agent runner passes these to the pi CLI verbatim.
-    resolved_provider: str = ""
-    resolved_model: str = ""
-    agent_session_id: str = ""
-    # Binding-repo git short-sha at dispatch, not a session id; guards resume against code drift.
-    agent_session_sha: str = ""
-    resumed: bool = False
-    active_run_id: str = ""
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {

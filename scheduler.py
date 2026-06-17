@@ -28,11 +28,15 @@ from notifier import (
     format_blocked_message,
     format_review_message,
 )
-from plane_adapter import (
+from plane_adapter import PlaneRateLimitError
+from tracker_adapter import TrackerAdapter
+from tracker_types import (
     CandidateIssue,
     CommentPayload,
-    PlaneRateLimitError,
-    TrackerAdapter,
+    _extract_labels,
+    _is_state,
+    _candidate_from_issue,
+    _parse_iso,
 )
 from prompt_renderer import render_previous_comments_block
 from session_continuity import (
@@ -1332,7 +1336,11 @@ async def run_tick(
         mode = _resolve_mode(candidate.labels, adapter.contract)
 
         fresh = await _fetch_issue(adapter, candidate.id)
-        if not _is_state(fresh, adapter, TrackerRole.STATE_TODO):
+        if not _is_state(
+            fresh,
+            adapter.contract.state_name_for_role(TrackerRole.STATE_TODO),
+            adapter.contract.state_value_for_role(TrackerRole.STATE_TODO),
+        ):
             return TickResult(False, "state-changed", candidate.id)
         label_ids = adapter.contract.label_ids if adapter.contract else None
         fresh_labels = _extract_labels(fresh, label_ids=label_ids)
@@ -1953,9 +1961,17 @@ async def run_tick(
 
             if not is_coding:
                 after_agent = await _fetch_issue(adapter, candidate.id)
-                if _is_state(after_agent, adapter, TrackerRole.STATE_IN_REVIEW):
+                if _is_state(
+                    after_agent,
+                    adapter.contract.state_name_for_role(TrackerRole.STATE_IN_REVIEW),
+                    adapter.contract.state_value_for_role(TrackerRole.STATE_IN_REVIEW),
+                ):
                     return TickResult(True, "agent-review", candidate.id, mode=mode)
-                if _is_state(after_agent, adapter, TrackerRole.STATE_BLOCKED):
+                if _is_state(
+                    after_agent,
+                    adapter.contract.state_name_for_role(TrackerRole.STATE_BLOCKED),
+                    adapter.contract.state_value_for_role(TrackerRole.STATE_BLOCKED),
+                ):
                     return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
             reason_code = (
@@ -2104,7 +2120,11 @@ async def reconcile_pending_review(
         if issue_id in in_flight_ids:
             continue
         issue = await _fetch_issue(adapter, issue_id)
-        if not _is_state(issue, adapter, TrackerRole.STATE_RUNNING):
+        if not _is_state(
+            issue,
+            adapter.contract.state_name_for_role(TrackerRole.STATE_RUNNING),
+            adapter.contract.state_value_for_role(TrackerRole.STATE_RUNNING),
+        ):
             dispatch_state.pending_review_issue_ids.discard(issue_id)
             dispatch_state.pending_completion_bodies.pop(issue_id, None)
             continue
@@ -2689,33 +2709,6 @@ def _response_items(
     return []
 
 
-def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
-    if not isinstance(response, dict):
-        return None
-    cursor = response.get("next_cursor")
-    if cursor:
-        return str(cursor)
-    next_url = response.get("next")
-    if isinstance(next_url, str) and "cursor=" in next_url:
-        return next_url.split("cursor=", 1)[1].split("&", 1)[0]
-    return None
-
-
-def _candidate_from_issue(
-    issue: dict[str, Any], *, labels: tuple[str, ...]
-) -> CandidateIssue:
-    issue_id = str(issue.get("id", ""))
-    identifier = str(issue.get("sequence_id") or issue.get("identifier") or issue_id)
-    return CandidateIssue(
-        issue_id,
-        identifier,
-        str(issue.get("name") or ""),
-        str(issue.get("description_html") or issue.get("description") or ""),
-        labels,
-        str(issue.get("created_at") or ""),
-    )
-
-
 async def _latest_schedule_event(
     adapter: TrackerAdapter, issue_id: str
 ) -> ScheduleEvent | None:
@@ -2808,7 +2801,11 @@ async def _detect_agent_schedule(
     after_agent = await _fetch_issue(adapter, candidate.id)
     label_ids = adapter.contract.label_ids if adapter.contract else None
     labels = _extract_labels(after_agent, label_ids=label_ids)
-    if not _is_state(after_agent, adapter, TrackerRole.STATE_TODO):
+    if not _is_state(
+        after_agent,
+        adapter.contract.state_name_for_role(TrackerRole.STATE_TODO),
+        adapter.contract.state_value_for_role(TrackerRole.STATE_TODO),
+    ):
         return None
     if not adapter.labels_contain_role(labels, TrackerRole.SCHEDULED):
         return None
@@ -2880,13 +2877,6 @@ async def _fetch_issue_comment_bodies(
             continue
         bodies.append(body)
     return bodies
-
-
-def _parse_iso(raw: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 async def _run_started_at(adapter: TrackerAdapter, issue_id: str) -> datetime | None:
@@ -3001,35 +2991,3 @@ async def _block_issue(
             )
         except Exception as exc:
             LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)
-
-
-def _is_state(
-    issue: dict[str, Any], adapter: TrackerAdapter, state: TrackerRole
-) -> bool:
-    current = issue.get("state")
-    state_name = adapter.contract.state_name_for_role(state)
-    wanted = {state_name, adapter.contract.state_value_for_role(state)}
-    if isinstance(current, str):
-        return current in wanted
-    if isinstance(current, dict):
-        return current.get("name") == state_name or current.get("id") in wanted
-    return False
-
-
-def _extract_labels(
-    issue: dict[str, Any],
-    label_ids: dict[str, str] | None = None,
-) -> tuple[str, ...]:
-    labels = issue.get("labels") or []
-    uuid_to_name: dict[str, str] = {}
-    if label_ids:
-        uuid_to_name = {v: k for k, v in label_ids.items()}
-    names: list[str] = []
-    for label in labels:
-        if isinstance(label, str):
-            names.append(uuid_to_name.get(label, label))
-        elif isinstance(label, dict):
-            name = label.get("name") or label.get("value")
-            if isinstance(name, str):
-                names.append(name)
-    return tuple(names)

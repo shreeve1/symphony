@@ -22,6 +22,26 @@ from tracker_contract import (
     coerce_label_role,
     coerce_state_role,
 )
+from tracker_types import (
+    CandidateIssue,
+    CommentPayload,
+    IssuePayload,
+    _extract_labels,
+    _is_state,
+    _candidate_from_issue,
+    _page_items as _page_items_impl,
+    _next_cursor,
+)
+
+
+def _page_items(
+    response: dict[str, Any] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Wrap the neutral ``_page_items_impl`` to raise ``PlanePollingSchemaError``."""
+    try:
+        return _page_items_impl(response)
+    except ValueError as exc:
+        raise PlanePollingSchemaError(str(exc)) from exc
 
 
 LOGGER = logging.getLogger(__name__)
@@ -50,77 +70,9 @@ class PlaneContractError(RuntimeError):
     """Raised when the configured Plane contract fails validation."""
 
 
-@dataclass(frozen=True)
-class CandidateIssue:
-    id: str
-    identifier: str
-    name: str
-    description: str
-    labels: tuple[str, ...]
-    created_at: str
-    schedule_not_before: str = ""
-    schedule_not_after: str = ""
-    schedule_reason: str = ""
-    schedule_source: str = ""
-    schedule_late: str = ""
-    comments_md: str = ""
-    context_md: str = ""
-    preferred_skill: str | None = None
-    worktree_active: bool = False
-    base_branch: str = ""
-    binding_name: str = ""
-    preferred_model: str | None = None
-    reasoning_effort: str = "high"
-    skill_source: str = ""
-    resolved_provider: str = ""
-    resolved_model: str = ""
-    agent_session_id: str = ""
-    # Binding-repo git short-sha at dispatch, not a session id; guards resume against code drift.
-    agent_session_sha: str = ""
-    resumed: bool = False
-    active_run_id: str = ""
-
-
 def stable_external_id(runbook: str, external_key: str) -> str:
     digest = hashlib.sha256(external_key.encode()).hexdigest()[:8]
     return f"homelab-{runbook}-{digest}"
-
-
-@dataclass
-class CommentPayload:
-    body: str
-    outcome: str = ""
-    affected_service: str = ""
-    dependency_chain: str = ""
-    likely_cause: str = ""
-    suggested_next_step: str = ""
-    diagnostic_excerpt: str = ""
-
-    def render(self) -> str:
-        parts: list[str] = [self.body]
-        if self.outcome:
-            parts.append(f"\n**Outcome:** {self.outcome}")
-        if self.affected_service:
-            parts.append(f"\n**Affected service:** {self.affected_service}")
-        if self.dependency_chain:
-            parts.append(f"\n**Dependency chain:** {self.dependency_chain}")
-        if self.likely_cause:
-            parts.append(f"\n**Likely cause:** {self.likely_cause}")
-        if self.suggested_next_step:
-            parts.append(f"\n**Suggested next step:** {self.suggested_next_step}")
-        if self.diagnostic_excerpt:
-            parts.append(f"\n**Diagnostic:**\n```\n{self.diagnostic_excerpt}\n```")
-        return "\n".join(parts)
-
-
-@dataclass
-class IssuePayload:
-    external_id: str
-    name: str
-    description: str = ""
-    state: PlaneState | TrackerRole = PlaneState.TODO
-    labels: list[PlaneLabel | TrackerRole] = field(default_factory=list)
-    priority: str | None = None
 
 
 class PlaneTransport(Protocol):
@@ -131,52 +83,6 @@ class PlaneTransport(Protocol):
 
 class ClosablePlaneTransport(PlaneTransport, Protocol):
     async def aclose(self) -> None: ...
-
-
-class TrackerAdapter(Protocol):
-    """Issue-tracker operations the engine is allowed to use."""
-
-    contract: TrackerContract
-
-    def issue_labels(self, issue: dict[str, Any]) -> tuple[str, ...]: ...
-    def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool: ...
-    def labels_contain_role(
-        self, labels: tuple[str, ...] | list[str], role: TrackerRole
-    ) -> bool: ...
-    async def list_candidates(self) -> list[CandidateIssue]: ...
-    async def list_issues_by_state(
-        self,
-        state: PlaneState | TrackerRole,
-        *,
-        per_page: int = PAGE_SIZE,
-        max_pages: int = MAX_PAGES_PER_TICK,
-    ) -> list[dict[str, Any]]: ...
-    async def get_issue(self, issue_id: str) -> dict[str, Any]: ...
-    async def list_comments(
-        self, issue_id: str, *, max_pages: int = MAX_PAGES_PER_TICK
-    ) -> list[dict[str, Any]]: ...
-    async def add_comment(
-        self, issue_id: str, comment: CommentPayload
-    ) -> dict[str, Any]: ...
-    async def post_comment(self, issue_id: str, body: str) -> dict[str, Any]: ...
-    async def append_context(self, issue_id: str, body: str) -> dict[str, Any]: ...
-    async def transition_state(
-        self, issue_id: str, state: PlaneState | TrackerRole
-    ) -> dict[str, Any]: ...
-    async def add_label(
-        self, issue_id: str, label: PlaneLabel | TrackerRole
-    ) -> dict[str, Any]: ...
-    async def remove_label(
-        self, issue_id: str, label: PlaneLabel | TrackerRole
-    ) -> dict[str, Any]: ...
-    async def add_labels(
-        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
-    ) -> dict[str, Any]: ...
-    async def remove_labels(
-        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
-    ) -> dict[str, Any]: ...
-    async def get_run(self, run_id: str) -> dict[str, Any] | None: ...
-    async def record_run(self, run_row: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class InMemoryTransport:
@@ -296,7 +202,11 @@ class PlaneTrackerAdapter:
     def issue_is_state(self, issue: dict[str, Any], state: TrackerRole) -> bool:
         """Return whether a raw tracker issue currently satisfies a state role."""
 
-        return _is_state(issue, self, state)
+        return _is_state(
+            issue,
+            self.contract.state_name_for_role(state),
+            self.contract.state_value_for_role(state),
+        )
 
     def labels_contain_role(
         self, labels: tuple[str, ...] | list[str], role: TrackerRole
@@ -343,6 +253,40 @@ class PlaneTrackerAdapter:
         self.resolved_label_ids.update(subset)
         return subset
 
+    async def list_issues(
+        self,
+        state_filter: PlaneState | TrackerRole | None = None,
+        *,
+        per_page: int = PAGE_SIZE,
+        max_pages: int = MAX_PAGES_PER_TICK,
+    ) -> list[dict[str, Any]]:
+        if self.transport is None:
+            raise RuntimeError("Transport not configured")
+        state_id = self._resolve_state(state_filter) if state_filter is not None else None
+        state_role = coerce_state_role(state_filter) if state_filter is not None else None
+        issues: list[dict[str, Any]] = []
+        cursor: str | None = None
+        pages = 0
+        while pages < max_pages:
+            path = f"{self._issue_path()}?per_page={per_page}"
+            if state_id:
+                path = f"{path}&state={state_id}"
+            if cursor:
+                path = f"{path}&cursor={cursor}"
+            response = await self.transport.get(path)
+            pages += 1
+            items = _page_items(response)
+            if state_role is None:
+                issues.extend(items)
+            else:
+                for issue in items:
+                    if self.issue_is_state(issue, state_role):
+                        issues.append(issue)
+            cursor = _next_cursor(response)
+            if not cursor:
+                break
+        return issues
+
     async def list_issues_by_state(
         self,
         state: PlaneState | TrackerRole,
@@ -350,27 +294,11 @@ class PlaneTrackerAdapter:
         per_page: int = PAGE_SIZE,
         max_pages: int = MAX_PAGES_PER_TICK,
     ) -> list[dict[str, Any]]:
-        if self.transport is None:
-            raise RuntimeError("Transport not configured")
-        state_id = self._resolve_state(state)
-        state_role = coerce_state_role(state)
-        issues: list[dict[str, Any]] = []
-        cursor: str | None = None
-        pages = 0
-        while pages < max_pages:
-            path = f"{self._issue_path()}?per_page={per_page}&state={state_id}"
-            if cursor:
-                path = f"{path}&cursor={cursor}"
-            response = await self.transport.get(path)
-            pages += 1
-            items = _page_items(response)
-            for issue in items:
-                if self.issue_is_state(issue, state_role):
-                    issues.append(issue)
-            cursor = _next_cursor(response)
-            if not cursor:
-                break
-        return issues
+        return await self.list_issues(
+            state,
+            per_page=per_page,
+            max_pages=max_pages,
+        )
 
     async def list_candidates(self) -> list[CandidateIssue]:
         """Fetch Todo issues that are not held by scheduling."""
@@ -404,7 +332,12 @@ class PlaneTrackerAdapter:
                         mixed_state_seen = True
                         continue
                     candidates.append(
-                        _candidate_from_issue(issue, label_ids=self.contract.label_ids)
+                        _candidate_from_issue(
+                            issue,
+                            labels=_extract_labels(
+                                issue, label_ids=self.contract.label_ids
+                            ),
+                        )
                     )
                 cursor = _next_cursor(response)
                 if not cursor:
@@ -640,82 +573,6 @@ def build_adapter(
     if errors:
         raise PlaneContractError("Plane contract is invalid: " + "; ".join(errors))
     return PlaneTrackerAdapter(contract=resolved_contract, transport=transport)
-
-
-def _extract_labels(
-    issue: dict[str, Any],
-    label_ids: dict[str, str] | None = None,
-) -> tuple[str, ...]:
-    labels = issue.get("labels") or []
-    uuid_to_name: dict[str, str] = {}
-    if label_ids:
-        uuid_to_name = {v: k for k, v in label_ids.items()}
-    extracted: list[str] = []
-    for label in labels:
-        if isinstance(label, str):
-            extracted.append(uuid_to_name.get(label, label))
-        elif isinstance(label, dict):
-            name = label.get("name") or label.get("value")
-            if isinstance(name, str):
-                extracted.append(name)
-    return tuple(extracted)
-
-
-def _is_state(
-    issue: dict[str, Any], adapter: PlaneTrackerAdapter, state: TrackerRole
-) -> bool:
-    current = issue.get("state")
-    state_name = adapter.contract.state_name_for_role(state)
-    wanted = {state_name, adapter._resolve_state(state)}
-    if isinstance(current, str):
-        return current in wanted
-    if isinstance(current, dict):
-        return current.get("name") == state_name or current.get("id") in wanted
-    return False
-
-
-def _candidate_from_issue(
-    issue: dict[str, Any],
-    label_ids: dict[str, str] | None = None,
-) -> CandidateIssue:
-    try:
-        return CandidateIssue(
-            id=str(issue["id"]),
-            identifier=str(issue.get("identifier") or issue.get("sequence_id") or ""),
-            name=str(issue["name"]),
-            description=str(
-                issue.get("description") or issue.get("description_html") or ""
-            ),
-            labels=_extract_labels(issue, label_ids=label_ids),
-            created_at=str(issue.get("created_at") or ""),
-        )
-    except KeyError as exc:
-        raise PlanePollingSchemaError(
-            f"Plane issue missing field: {exc.args[0]}"
-        ) from exc
-
-
-def _page_items(
-    response: dict[str, Any] | list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if isinstance(response, list):
-        return response
-    results = response.get("results")
-    if isinstance(results, list):
-        return results
-    raise PlanePollingSchemaError("Plane response missing results list")
-
-
-def _next_cursor(response: dict[str, Any] | list[dict[str, Any]]) -> str | None:
-    if not isinstance(response, dict):
-        return None
-    cursor = response.get("next_cursor")
-    if cursor:
-        return str(cursor)
-    next_url = response.get("next")
-    if isinstance(next_url, str) and "cursor=" in next_url:
-        return next_url.split("cursor=", 1)[1].split("&", 1)[0]
-    return None
 
 
 def _parse_retry_after(value: str | None) -> float | None:

@@ -28,12 +28,8 @@ from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
 from notifier import TelegramNotifier
-from plane_adapter import (
-    ClosablePlaneTransport,
-    HttpxPlaneTransport,
-    TrackerAdapter,
-    build_adapter,
-)
+from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, build_adapter
+from tracker_adapter import TrackerAdapter
 from prompt_renderer import IssueData, render_prompt
 from repo_host import repo_host_for
 from scheduler import _resolve_mode, reconcile_startup, run_loop
