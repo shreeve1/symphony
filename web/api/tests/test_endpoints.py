@@ -130,7 +130,9 @@ def test_bindings_endpoint_surfaces_remote_repo_name(
             connection.commit()
         monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
         monkeypatch.setattr(
-            main, "_binding_claude_persist_for", lambda name: name == REMOTE_BINDING_NAME
+            main,
+            "_binding_claude_persist_for",
+            lambda name: name == REMOTE_BINDING_NAME,
         )
         bindings = client.get("/api/bindings").json()
 
