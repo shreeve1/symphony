@@ -1,7 +1,7 @@
 ---
 id: 078
 title: Warm reattach to a live Claude session on a second Run
-status: in-progress
+status: review
 blocked_by: [77]
 parent: null
 priority: 0
