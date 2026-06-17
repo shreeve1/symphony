@@ -4163,7 +4163,11 @@ async def test_prepare_resume_candidate_remote_uses_seam_no_fs(
 
     candidate = _candidate("issue-1")
     result, decision = await scheduler._prepare_resume_candidate(
-        cast(TrackerAdapter, _NoStoreAdapter()), config, candidate, {}, binding=binding  # pyright: ignore[reportArgumentType]
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        config,
+        candidate,
+        {},
+        binding=binding,  # pyright: ignore[reportArgumentType]
     )
 
     assert host.calls == 1
@@ -4225,7 +4229,11 @@ async def test_prepare_resume_candidate_local_unchanged(
     monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
     candidate = _candidate("issue-1")
     result, decision = await scheduler._prepare_resume_candidate(
-        cast(TrackerAdapter, _NoStoreAdapter()), config, candidate, {}, binding=binding  # pyright: ignore[reportArgumentType]
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        config,
+        candidate,
+        {},
+        binding=binding,  # pyright: ignore[reportArgumentType]
     )
     # Local binding, no worktree → cwd is the repo path (homelab_repo_path).
     assert seen["cwd"] == config.homelab_repo_path
@@ -4251,7 +4259,11 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
         _candidate("issue-1"), worktree_active=True, binding_name=binding.name
     )
     result, _ = await scheduler._prepare_resume_candidate(
-        cast(TrackerAdapter, _NoStoreAdapter()), config, candidate, {}, binding=binding  # pyright: ignore[reportArgumentType]
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        config,
+        candidate,
+        {},
+        binding=binding,  # pyright: ignore[reportArgumentType]
     )
     expected_cwd = scheduler._dispatch_cwd(config, candidate, binding=binding)
     # Worktree-active local binding records the worktree-HEAD sha (cwd-bound),

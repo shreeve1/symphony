@@ -1,7 +1,7 @@
 ---
 id: 069
 title: Scope cooldown to _DispatchState; migrate test-only globals
-status: blocked
+status: pending
 blocked_by: [68]
 parent: null
 priority: 0

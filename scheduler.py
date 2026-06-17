@@ -1645,7 +1645,9 @@ async def run_tick(
                         compaction_agent_runner=compaction_agent_runner,
                         run_id=run_id,
                         run_log_path=run_log_path,
-                        failed_result=AgentResult(1, 0, False, stdout="", stderr=str(exc)),
+                        failed_result=AgentResult(
+                            1, 0, False, stdout="", stderr=str(exc)
+                        ),
                         secrets=secrets,
                         resume_summary=f"resume_failed: {exc}; fell_back=true",
                         mode=mode,
