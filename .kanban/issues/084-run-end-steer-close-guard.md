@@ -1,7 +1,7 @@
 ---
 id: 084
 title: Run-end steer-close guard (no accepted-but-lost steer)
-status: pending
+status: in-progress
 blocked_by: [83, 79]
 parent: null
 priority: 0
@@ -16,8 +16,8 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` task 5.7 (round-3 W2 
 
 ## What to build (detail)
 
-- Immediately on `run_claude_agent` return (before result/verdict processing at `scheduler.py:1512-1516`), flip the run out of the steerable state — set `latest_run_state` to a non-`running` value (e.g. `completing`) OR write a per-run "steering closed" marker the endpoint checks.
-- The steer endpoint (`web/api/main.py:1245-1261`) must then reject (409) any steer once the supervised loop has exited, for both pi RPC and Claude.
+- Immediately on agent return (before result/verdict processing in `scheduler/__init__.py`), flip the run out of the steerable state — set `latest_run_state` to a non-`running` value OR write a per-run "steering closed" marker the endpoint checks.
+- The steer endpoint (`web/api/main.py`) must then reject (409) any steer once the supervised loop has exited, for both pi RPC and Claude.
 
 ## Acceptance criteria
 
@@ -27,7 +27,7 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` task 5.7 (round-3 W2 
 
 ## Verification
 
-`uv run pytest tests/test_scheduler.py tests/test_agent_runner.py` and `uv run python -m py_compile scheduler.py web/api/main.py`
+`uv run pytest tests/test_scheduler.py tests/test_agent_runner.py web/api/tests/test_steer.py` and `uv run python -m py_compile scheduler/__init__.py web/api/main.py`
 
 ## Blocked by
 

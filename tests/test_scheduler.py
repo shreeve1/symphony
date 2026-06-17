@@ -99,6 +99,35 @@ def _adapter(transport: FakeTransport) -> PlaneAdapter:
     return PlaneAdapter(contract=DEFAULT_CONTRACT, transport=transport)
 
 
+class RunStoreAdapter(PlaneAdapter):
+    stores_context = True
+
+    def __init__(self, transport: FakeTransport, db_path: Path) -> None:
+        super().__init__(contract=DEFAULT_CONTRACT, transport=transport)
+        self.fake_transport = transport
+        self.db_path = db_path
+        self.runs: dict[str, dict[str, Any]] = {}
+        self.run_updates: list[dict[str, Any]] = []
+
+    async def record_run(self, run_row: dict[str, Any]) -> dict[str, Any]:
+        row = {"id": "run-1", **run_row}
+        self.runs["run-1"] = row
+        self._project_run(row)
+        return row
+
+    async def update_run(self, run_id: str, run_row: dict[str, Any]) -> dict[str, Any]:
+        self.run_updates.append(dict(run_row))
+        self.runs[run_id].update(run_row)
+        self._project_run(self.runs[run_id])
+        return self.runs[run_id]
+
+    def _project_run(self, row: dict[str, Any]) -> None:
+        issue_id = str(row["issue_id"])
+        self.fake_transport.issues[issue_id]["latest_run_id"] = row["id"]
+        self.fake_transport.issues[issue_id]["latest_run_state"] = row["state"]
+        self.fake_transport.issues[issue_id]["latest_verdict"] = row.get("verdict")
+
+
 def _config_with_approval_policy(tmp_path: Path, *, enabled: bool) -> SymphonyConfig:
     config = _config(tmp_path)
     binding = replace(
@@ -320,6 +349,40 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
     )
     completion_comment = transport.comments["older"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_run_tick_closes_run_steering_before_terminal_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["i1"] = _issue("i1")
+    adapter = RunStoreAdapter(transport, tmp_path / "podium.db")
+    original_add_comment = adapter.add_comment
+
+    async def assert_steering_closed(issue_id: str, payload: Any) -> Any:
+        assert adapter.runs["run-1"]["state"] == "succeeded"
+        assert transport.issues[issue_id]["latest_run_state"] == "succeeded"
+        return await original_add_comment(issue_id, payload)
+
+    monkeypatch.setattr(adapter, "add_comment", assert_steering_closed)
+
+    result = await run_tick(
+        _config(tmp_path),
+        adapter,
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("i1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-clean-review"
+    assert [update["state"] for update in adapter.run_updates] == [
+        "running",
+        "succeeded",
+        "succeeded",
+    ]
 
 
 @pytest.mark.asyncio

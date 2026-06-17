@@ -718,6 +718,24 @@ async def _mark_run_record_running(
     )
 
 
+async def _close_run_record_steering(
+    adapter: TrackerAdapter,
+    run_id: str | None,
+    result: AgentResult,
+) -> None:
+    """Move a returned Run out of the steerable state before finalization."""
+
+    if not run_id:
+        return
+    update_run = getattr(adapter, "update_run", None)
+    if not callable(update_run):
+        return
+    state = "failed" if result.timed_out or result.exit_code != 0 else "succeeded"
+    await _maybe_await(
+        cast(Callable[[str, dict[str, Any]], Any], update_run)(run_id, {"state": state})
+    )
+
+
 async def _finish_run_record(
     adapter: TrackerAdapter,
     run_id: str | None,
@@ -1972,6 +1990,8 @@ async def run_tick(
         )
         if isinstance(dispatched, TickResult):
             return dispatched
+
+        await _close_run_record_steering(adapter, dispatched.run_id, dispatched.result)
 
         return await _classify_terminal(
             config,

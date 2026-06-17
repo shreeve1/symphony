@@ -13,15 +13,17 @@ main = import_module("web.api.main")
 steer_queue = import_module("web.api.steer_queue")
 
 
-def _insert_running_run(issue_id: int, *, agent: str = "pi") -> int:
+def _insert_running_run(
+    issue_id: int, *, agent: str = "pi", run_state: str = "running"
+) -> int:
     now = datetime.now(UTC).isoformat()
     with main.connect() as connection:
         cursor = connection.execute(
             """
             INSERT INTO run(issue_id, agent, provider, model, state, started_at)
-            VALUES (?, ?, ?, ?, 'running', ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (issue_id, agent, "test-provider", "test-model", now),
+            (issue_id, agent, "test-provider", "test-model", run_state, now),
         )
         run_id = int(cursor.lastrowid)
         connection.execute(
@@ -91,6 +93,24 @@ def test_steer_without_active_run_returns_409_and_no_queue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SYMPHONY_RUNTIME_DIR", str(tmp_path))
+
+    response = client.post(f"/api/issues/{issue_id}/steer", json={"body": "go left"})
+
+    assert response.status_code == 409
+    assert not (tmp_path / "steer").exists()
+
+
+@pytest.mark.parametrize("agent", ["pi", "claude"])
+def test_steer_rejects_after_run_record_leaves_running(
+    client: TestClient,
+    issue_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    agent: str,
+) -> None:
+    monkeypatch.setenv("SYMPHONY_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(main, "_binding_claude_persist_for", lambda name: True)
+    _insert_running_run(issue_id, agent=agent, run_state="succeeded")
 
     response = client.post(f"/api/issues/{issue_id}/steer", json={"body": "go left"})
 
