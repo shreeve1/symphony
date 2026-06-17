@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-17] session-update | Pi personal harness removed
+
+- Actor: agent (Pi)
+- Inputs: operator request to remove the project-local Pi `personal-harness` extension; `.pi/extensions/personal-harness.ts`; Pi extension docs; `wiki/analyses/personal-harness-pi-profile.md`; `wiki/CLAIMS.md` C-0121/C-0122.
+- Outputs: deleted `.pi/extensions/personal-harness.ts`; new raw capture `wiki/raw/sessions/2026-06-17-personal-harness-pi-removal.md`; updated `wiki/analyses/personal-harness-pi-profile.md`; updated `wiki/CLAIMS.md` (C-0121/C-0122 superseded, C-0237 added); updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/log.md`.
+- Notes: Removed only the project-local Pi extension file; no matching global personal-harness extension was found. Future Pi reloads/sessions should no longer auto-discover it; current running Pi sessions may retain it until `/reload` or restart, and already-injected guidance remains in this conversation history. Historical profile/source docs retained for restoration/reference. No secrets, `.env` contents, or `/home/james/symphony-host.env` contents read.
+
 ## [2026-06-17] session-update | Issue #075 agent callback env dual emit
 
 - Actor: agent (Ralph)

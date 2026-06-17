@@ -3,19 +3,20 @@ title: Pi personal harness profile
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-17
 sources:
   - wiki/raw/sessions/2026-06-12-personal-harness-pi.md
   - wiki/raw/personal-harness-pi-profile.md
   - .rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md
   - .pi/extensions/personal-harness.ts
+  - wiki/raw/sessions/2026-06-17-personal-harness-pi-removal.md
 confidence: high
-tags: [pi, harness, validation, safety, tooling]
+tags: [pi, harness, validation, safety, tooling, removed]
 ---
 
 # Pi personal harness profile
 
-Symphony now has a project-local Pi personal harness generated at `.pi/extensions/personal-harness.ts`, sourced from tracked `wiki/raw/personal-harness-pi-profile.md` (with the ignored `.rpiv` artifact kept as local skill output) [source: wiki/raw/sessions/2026-06-12-personal-harness-pi.md#durable-facts]. The harness is repo-local; it does not edit global Pi settings or target package manifests [source: .rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md#profile-metadata].
+Historical status: Symphony had a project-local Pi personal harness generated at `.pi/extensions/personal-harness.ts`, sourced from tracked `wiki/raw/personal-harness-pi-profile.md` (with the ignored `.rpiv` artifact kept as local skill output) [source: wiki/raw/sessions/2026-06-12-personal-harness-pi.md#durable-facts]. James removed the project-local extension file on 2026-06-17; future Pi reloads/sessions should no longer auto-discover this harness from the project [source: wiki/raw/sessions/2026-06-17-personal-harness-pi-removal.md#durable-facts]. The historical harness was repo-local; it did not edit global Pi settings or target package manifests [source: .rpiv/artifacts/research/2026-06-12_13-25-38_personalize-harness-pi.md#profile-metadata].
 
 ## Selected posture
 
@@ -39,8 +40,8 @@ Verification passed for generated marker/default export checks, offline Pi load 
 
 ## Follow-up
 
-Run `/reload` inside Pi from `/home/james/symphony` to activate the extension. If the harness is too aggressive, edit the Harness Profile artifact first and regenerate, or delete `.pi/extensions/personal-harness.ts` [source: wiki/raw/sessions/2026-06-12-personal-harness-pi.md#open-questions-and-follow-ups].
+The project-local extension has been deleted. Current already-running Pi sessions may still have it loaded until `/reload` or process restart; already-injected guidance messages do not disappear retroactively [source: wiki/raw/sessions/2026-06-17-personal-harness-pi-removal.md#durable-facts]. To restore the harness, regenerate `.pi/extensions/personal-harness.ts` from the retained profile source [source: wiki/raw/sessions/2026-06-17-personal-harness-pi-removal.md#scope].
 
 ## Claims
 
-C-0121 and C-0122 in [CLAIMS.md](../CLAIMS.md).
+C-0121 and C-0122 in [CLAIMS.md](../CLAIMS.md) are superseded by C-0237.
