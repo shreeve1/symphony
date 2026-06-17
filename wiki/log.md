@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-17] session-update | Issue #075 agent callback env dual emit
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/075-agent-env-dual-emit-neutral-text.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `agent_runner.py`; `prompt_renderer.py`; `schedule.py`; `tests/test_agent_runner.py`; `tests/test_remote_agent.py`; `tests/test_prompt_renderer_podium.py`; `.kanban/progress.md`
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0236 added)
+- Notes: Captured Issue #075 landing L2-02/L4-03: Plane-tracker agents now receive tracker-neutral `SYMPHONY_TRACKER_*` callback aliases alongside legacy `SYMPHONY_PLANE_*` names for one release; Podium bindings still receive no callback env/helper; agent-visible prompt/schedule wording now uses tracker-neutral issue/comment phrasing. Verification: `uv run pytest` passed (891 passed, 2 skipped); focused agent-runner/remote/prompt/schedule tests passed; ruff and touched-file LSP diagnostics clean; fresh Ralph review returned `RALPH_REVIEW: PASS`. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Issue #074 tracker enum neutral names
 
 - Actor: agent (Ralph)
