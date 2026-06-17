@@ -153,3 +153,4 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Plane-prefixed names remain import-compatible aliases for one release while new shared tracker code uses canonical `Tracker*` names.
 **Conventions established:** New tracker contract annotations should use `TrackerState`, `TrackerLabel`, and `TrackerUserMapping`; existing Plane importers may continue using aliases until the planned compatibility cleanup.
 **Verification:** `uv run pytest` (891 passed, 2 skipped); `uv run ruff check tracker_contract.py tracker_adapter.py tracker_podium.py config.py tests/test_tracker_contract.py`; focused contract/Podium/config tests passed; touched-file LSP diagnostics clean; fresh review `RALPH_REVIEW: PASS`.
+**Actionable review:** Re-read `git diff c21666a1eea8cbbf1abcd08aaf23512dec90fb73 HEAD`, inspected every changed file, verified acceptance criteria, reran `uv run pytest` (891 passed, 2 skipped), and checked touched-file LSP diagnostics clean.
