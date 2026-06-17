@@ -24,19 +24,27 @@ from tracker_contract import (
 LOGGER = logging.getLogger(__name__)
 
 
+_TRACKER_ENV_ALIASES = {
+    "api_url": ("SYMPHONY_TRACKER_API_URL", "PLANE_API_URL"),
+    "api_key": ("SYMPHONY_TRACKER_API_KEY", "PLANE_API_KEY"),
+    "workspace_slug": ("SYMPHONY_TRACKER_WORKSPACE_SLUG", "PLANE_WORKSPACE_SLUG"),
+    "project_id": ("SYMPHONY_TRACKER_PROJECT_ID", "PLANE_PROJECT_ID"),
+    "frontend_url": ("SYMPHONY_TRACKER_FRONTEND_URL", "PLANE_FRONTEND_URL"),
+    "dashboard_url": ("SYMPHONY_TRACKER_DASHBOARD_URL", "PLANE_DASHBOARD_URL"),
+}
 _REQUIRED_ENV = (
-    "PLANE_API_URL",
-    "PLANE_API_KEY",
-    "PLANE_WORKSPACE_SLUG",
-    "PLANE_PROJECT_ID",
-    "HOMELAB_REPO_PATH",
-    "PI_BIN",
+    _TRACKER_ENV_ALIASES["api_url"],
+    _TRACKER_ENV_ALIASES["api_key"],
+    _TRACKER_ENV_ALIASES["workspace_slug"],
+    _TRACKER_ENV_ALIASES["project_id"],
+    ("HOMELAB_REPO_PATH",),
+    ("PI_BIN",),
 )
 _BINDINGS_ENV = (
-    "PLANE_API_URL",
-    "PLANE_API_KEY",
-    "PLANE_WORKSPACE_SLUG",
-    "PI_BIN",
+    _TRACKER_ENV_ALIASES["api_url"],
+    _TRACKER_ENV_ALIASES["api_key"],
+    _TRACKER_ENV_ALIASES["workspace_slug"],
+    ("PI_BIN",),
 )
 _SECRET_YAML_KEYS = {
     "plane_api_key",
@@ -98,6 +106,12 @@ class ProjectBinding:
     @property
     def is_remote(self) -> bool:
         return self.remote is not None
+
+    @property
+    def tracker_project_id(self) -> str:
+        """Tracker-neutral accessor for the binding's project identifier."""
+
+        return self.plane_project_id
 
     def resolve_agent(self, labels: Iterable[str] = ()) -> str:
         """Resolve default agent with optional `agent:pi` / `agent:claude` override."""
@@ -171,6 +185,42 @@ class SymphonyConfig:
     base_branch: str = "HEAD"
     bindings: tuple[ProjectBinding, ...] = field(default_factory=tuple)
 
+    @property
+    def tracker_api_url(self) -> str:
+        """Tracker-neutral accessor for the configured tracker API URL."""
+
+        return self.plane_api_url
+
+    @property
+    def tracker_api_key(self) -> str:
+        """Tracker-neutral accessor for the configured tracker API key."""
+
+        return self.plane_api_key
+
+    @property
+    def tracker_workspace_slug(self) -> str:
+        """Tracker-neutral accessor for the configured tracker workspace slug."""
+
+        return self.plane_workspace_slug
+
+    @property
+    def tracker_project_id(self) -> str:
+        """Tracker-neutral accessor for the scoped project identifier."""
+
+        return self.plane_project_id
+
+    @property
+    def tracker_frontend_url(self) -> str:
+        """Tracker-neutral accessor for the configured tracker frontend URL."""
+
+        return self.plane_frontend_url
+
+    @property
+    def tracker_dashboard_url(self) -> str:
+        """Tracker-neutral accessor for the configured tracker dashboard URL."""
+
+        return self.plane_dashboard_url
+
     def __post_init__(self) -> None:
         repo_path = Path(self.homelab_repo_path)
         object.__setattr__(self, "homelab_repo_path", repo_path)
@@ -203,25 +253,34 @@ class SymphonyConfig:
         bindings_path = Path(source.get("SYMPHONY_BINDINGS_PATH", "bindings.yml"))
         use_bindings = bindings_path.is_file()
         required = _BINDINGS_ENV if use_bindings else _REQUIRED_ENV
-        missing = [name for name in required if not source.get(name)]
+        missing = [
+            _format_env_aliases(names)
+            for names in required
+            if _first_env(source, names) is None
+        ]
         if missing:
             raise OSError(
                 "Missing required environment variables: " + ", ".join(missing)
             )
 
+        tracker_workspace_slug = _tracker_env(source, "workspace_slug")
+        assert tracker_workspace_slug is not None
         bindings = (
-            _load_bindings_yml(
-                bindings_path, workspace_slug=source["PLANE_WORKSPACE_SLUG"]
-            )
+            _load_bindings_yml(bindings_path, workspace_slug=tracker_workspace_slug)
             if use_bindings
             else (_binding_from_env(source),)
         )
         first = bindings[0]
 
+        tracker_api_url = _tracker_env(source, "api_url")
+        tracker_api_key = _tracker_env(source, "api_key")
+        assert tracker_api_url is not None
+        assert tracker_api_key is not None
+
         return cls(
-            plane_api_url=source["PLANE_API_URL"].rstrip("/"),
-            plane_api_key=source["PLANE_API_KEY"],
-            plane_workspace_slug=source["PLANE_WORKSPACE_SLUG"],
+            plane_api_url=tracker_api_url.rstrip("/"),
+            plane_api_key=tracker_api_key,
+            plane_workspace_slug=tracker_workspace_slug,
             plane_project_id=first.plane_project_id,
             homelab_repo_path=first.repo_path,
             pi_bin=source["PI_BIN"],
@@ -236,8 +295,8 @@ class SymphonyConfig:
             telegram_bot_token=source.get("TELEGRAM_BOT_TOKEN"),
             telegram_chat_id=source.get("TELEGRAM_CHAT_ID")
             or source.get("TELEGRAM_HOME_CHANNEL"),
-            plane_frontend_url=source.get("PLANE_FRONTEND_URL", "").rstrip("/"),
-            plane_dashboard_url=source.get("PLANE_DASHBOARD_URL", ""),
+            plane_frontend_url=(_tracker_env(source, "frontend_url") or "").rstrip("/"),
+            plane_dashboard_url=_tracker_env(source, "dashboard_url") or "",
             worktrees_root=(
                 Path(source["SYMPHONY_WORKTREES_ROOT"])
                 if source.get("SYMPHONY_WORKTREES_ROOT")
@@ -319,10 +378,40 @@ class SymphonyConfig:
     __str__ = __repr__
 
 
+def _first_env(
+    source: os._Environ[str] | dict[str, str], names: tuple[str, ...]
+) -> str | None:
+    for name in names:
+        value = source.get(name)
+        if value:
+            return value
+    return None
+
+
+def _format_env_aliases(names: tuple[str, ...]) -> str:
+    if len(names) == 1:
+        return names[0]
+    return f"{names[0]} (or {names[1]})"
+
+
+def _tracker_env(source: os._Environ[str] | dict[str, str], key: str) -> str | None:
+    """Read tracker env with neutral names first and legacy Plane fallback.
+
+    Precedence is intentional: ``SYMPHONY_TRACKER_*`` wins when both are set,
+    while legacy ``PLANE_*`` remains valid so the live service unit/env file can
+    keep running unchanged during the vocabulary migration.
+    """
+
+    return _first_env(source, _TRACKER_ENV_ALIASES[key])
+
+
 def _binding_from_env(source: os._Environ[str] | dict[str, str]) -> ProjectBinding:
     default_agent = source.get("SYMPHONY_DEFAULT_AGENT", "pi")
     _validate_agent(default_agent, "SYMPHONY_DEFAULT_AGENT")
-    project_id = source["PLANE_PROJECT_ID"]
+    project_id = _tracker_env(source, "project_id")
+    workspace_slug = _tracker_env(source, "workspace_slug")
+    assert project_id is not None
+    assert workspace_slug is not None
     return ProjectBinding(
         name=source.get("SYMPHONY_BINDING_NAME", "default"),
         plane_project_id=project_id,
@@ -331,7 +420,7 @@ def _binding_from_env(source: os._Environ[str] | dict[str, str]) -> ProjectBindi
         default_agent=default_agent,
         tracker_contract=replace(
             DEFAULT_CONTRACT,
-            workspace_slug=source["PLANE_WORKSPACE_SLUG"],
+            workspace_slug=workspace_slug,
             project_id=project_id,
         ),
         approval_policy=ApprovalPolicy(

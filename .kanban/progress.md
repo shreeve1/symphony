@@ -137,3 +137,11 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** No downstream issue is blocked by #072; later Claude/RPC lifecycle work can build on the extracted loop seams.
 **Verification:** `uv run pytest` and `uv run pytest -q` (887 passed, 2 skipped), `uv run ruff check agent_runner.py claude_runner.py`, `uv run python -m py_compile agent_runner.py claude_runner.py`, `git diff --check`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`, and live `symphony-host.service` restart verification on `code_sha=5cc9b4a` with `rpc_orphan_reap_done`, `pi_rpc_probe_ok`, `reconcile_startup_*`, `run_reconcile_*`, and `dispatch_completed`.
 **Actionable review:** Re-read `git diff 0cb80da2703c2f1c195d85c32ff1c6b1797f622b HEAD`, inspected every changed file, verified extracted loop behavior and no unrelated changes, reran `uv run pytest -q` (887 passed, 2 skipped), `uv run ruff check agent_runner.py claude_runner.py`, checked `git diff --check`, and confirmed touched-file LSP diagnostics clean.
+
+## #073 Config tracker-neutral env dual-read — 2026-06-17
+
+**What changed:** Added tracker-neutral `SYMPHONY_TRACKER_*` env aliases in `config.py`, with neutral-over-legacy precedence and legacy `PLANE_*` fallback kept for the live service unit. Added tracker-neutral accessor properties on `SymphonyConfig` and `ProjectBinding` while preserving Plane-named fields.
+**Files:** `config.py`, `tests/test_config.py`, `.kanban/issues/073-config-tracker-neutral-dual-read.md`.
+**Decisions:** New `SYMPHONY_TRACKER_*` env values win when both neutral and legacy names are set; existing `PLANE_*` names remain valid so `/home/james/symphony-host.env` and `symphony-host.service` do not need edits in this slice.
+**Verification:** `uv run pytest` (889 passed, 2 skipped); `uv run ruff check config.py tests/test_config.py`; touched-file LSP diagnostics clean.
+**Actionable review:** Initial implementation diff from `6ab45266bce534f3ea3023d44e316ade5982ad91` to `HEAD` was empty, so the review loop implemented the missing slice, read every changed file, verified all acceptance criteria, and added `action_reviewed: 2026-06-17`.

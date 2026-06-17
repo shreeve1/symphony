@@ -24,6 +24,20 @@ def _env(**overrides):
     return env
 
 
+def _tracker_env(**overrides):
+    env = {
+        "SYMPHONY_TRACKER_API_URL": "http://tracker.example.test",
+        "SYMPHONY_TRACKER_API_KEY": "fake-tracker-key-for-tests",
+        "SYMPHONY_TRACKER_WORKSPACE_SLUG": "tracker-workspace",
+        "SYMPHONY_TRACKER_PROJECT_ID": "fake-tracker-project-uuid",
+        "HOMELAB_REPO_PATH": "/home/james/tracker-repo",
+        "PI_BIN": "/usr/local/bin/pi",
+        "SYMPHONY_BINDINGS_PATH": _NO_BINDINGS_YML,
+    }
+    env.update(overrides)
+    return env
+
+
 def test_from_env_lists_all_missing_required_vars():
     with pytest.raises(EnvironmentError) as exc:
         SymphonyConfig.from_env({"SYMPHONY_BINDINGS_PATH": _NO_BINDINGS_YML})
@@ -38,13 +52,18 @@ def test_from_env_lists_all_missing_required_vars():
     assert "OPEN" + "CODE_BIN" not in message
 
 
-def test_from_env_loads_required_values_with_optional_defaults():
+def test_from_env_loads_legacy_plane_env_values_with_optional_defaults():
     config = SymphonyConfig.from_env(_env())
 
     assert config.plane_api_url == "http://plane.example.test"
     assert config.plane_api_key == "fake-plane-key-for-tests"
     assert config.plane_workspace_slug == "homelab"
     assert config.plane_project_id == "fake-project-uuid"
+    assert config.tracker_api_url == "http://plane.example.test"
+    assert config.tracker_api_key == "fake-plane-key-for-tests"
+    assert config.tracker_workspace_slug == "homelab"
+    assert config.tracker_project_id == "fake-project-uuid"
+    assert config.bindings[0].tracker_project_id == "fake-project-uuid"
     assert config.homelab_repo_path == Path("/home/james/homelab")
     assert config.pi_bin == "/usr/local/bin/pi"
     assert config.pi_provider == "zai"
@@ -53,6 +72,44 @@ def test_from_env_loads_required_values_with_optional_defaults():
     assert config.run_timeout_ms == 3_600_000
     assert config.blocked_reconciler_interval_ms == 1_800_000
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
+
+
+def test_from_env_loads_tracker_neutral_env_values():
+    config = SymphonyConfig.from_env(
+        _tracker_env(
+            SYMPHONY_TRACKER_FRONTEND_URL="http://tracker.example.test/ui/",
+            SYMPHONY_TRACKER_DASHBOARD_URL="http://tracker.example.test/dash/",
+        )
+    )
+
+    assert config.plane_api_url == "http://tracker.example.test"
+    assert config.plane_api_key == "fake-tracker-key-for-tests"
+    assert config.plane_workspace_slug == "tracker-workspace"
+    assert config.plane_project_id == "fake-tracker-project-uuid"
+    assert config.tracker_frontend_url == "http://tracker.example.test/ui"
+    assert config.tracker_dashboard_url == "http://tracker.example.test/dash/"
+    assert config.homelab_repo_path == Path("/home/james/tracker-repo")
+    assert config.bindings[0].tracker_project_id == "fake-tracker-project-uuid"
+
+
+def test_from_env_prefers_tracker_neutral_env_over_legacy_plane_env():
+    config = SymphonyConfig.from_env(
+        _env(
+            SYMPHONY_TRACKER_API_URL="http://tracker.example.test",
+            SYMPHONY_TRACKER_API_KEY="fake-tracker-key-for-tests",
+            SYMPHONY_TRACKER_WORKSPACE_SLUG="tracker-workspace",
+            SYMPHONY_TRACKER_PROJECT_ID="fake-tracker-project-uuid",
+            SYMPHONY_TRACKER_FRONTEND_URL="http://tracker.example.test/ui/",
+            SYMPHONY_TRACKER_DASHBOARD_URL="http://tracker.example.test/dash/",
+        )
+    )
+
+    assert config.plane_api_url == "http://tracker.example.test"
+    assert config.plane_api_key == "fake-tracker-key-for-tests"
+    assert config.plane_workspace_slug == "tracker-workspace"
+    assert config.plane_project_id == "fake-tracker-project-uuid"
+    assert config.plane_frontend_url == "http://tracker.example.test/ui"
+    assert config.plane_dashboard_url == "http://tracker.example.test/dash/"
 
 
 def test_from_env_loads_optional_values():

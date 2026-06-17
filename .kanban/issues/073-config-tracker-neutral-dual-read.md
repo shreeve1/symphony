@@ -1,11 +1,14 @@
 ---
 id: 073
 title: Config tracker-neutral env dual-read (code side)
-status: pending
+status: done
 blocked_by: [63]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -18,11 +21,11 @@ Introduce tracker-neutral `SYMPHONY_TRACKER_*` env names and tracker-neutral fie
 
 ## Acceptance criteria
 
-- [ ] Config reads the new `SYMPHONY_TRACKER_*` env names **and** the legacy `PLANE_*` names (dual-read); precedence is documented in code.
-- [ ] A test loads config from legacy `PLANE_*` env only and succeeds unchanged (back-compat).
-- [ ] A test loads config from the new `SYMPHONY_TRACKER_*` env only and succeeds.
-- [ ] No change to `/home/james/symphony-host.env` or `symphony-host.service` in this issue.
-- [ ] `uv run pytest` passes.
+- [x] Config reads the new `SYMPHONY_TRACKER_*` env names **and** the legacy `PLANE_*` names (dual-read); precedence is documented in code.
+- [x] A test loads config from legacy `PLANE_*` env only and succeeds unchanged (back-compat).
+- [x] A test loads config from the new `SYMPHONY_TRACKER_*` env only and succeeds.
+- [x] No change to `/home/james/symphony-host.env` or `symphony-host.service` in this issue.
+- [x] `uv run pytest` passes.
 
 ## Verification
 
@@ -31,3 +34,7 @@ Introduce tracker-neutral `SYMPHONY_TRACKER_*` env names and tracker-neutral fie
 ## Blocked by
 
 - Blocked by #063 (serializes `config.py` edits after the `KNOWN_AGENTS` change).
+
+## Implementation Notes
+
+Added tracker-neutral `SYMPHONY_TRACKER_*` env aliases for API URL/key, workspace slug, project id, frontend URL, and dashboard URL, with explicit neutral-over-legacy precedence and legacy `PLANE_*` fallback. Added tracker-neutral accessor properties while preserving existing Plane-named fields for back-compat, plus config tests for legacy-only, neutral-only, and mixed precedence loading.
