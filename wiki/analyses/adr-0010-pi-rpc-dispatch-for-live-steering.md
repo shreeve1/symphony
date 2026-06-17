@@ -1,9 +1,9 @@
 ---
-title: ADR-0010 — Dispatch pi via RPC for live mid-run Steering; Claude stays park-and-reply
+title: ADR-0010 — Dispatch pi via RPC for live mid-run Steering; persistent Claude later joins
 type: analysis
 status: promoted
 created: 2026-06-13
-updated: 2026-06-14
+updated: 2026-06-17
 sources:
   - wiki/raw/adr-0010-pi-rpc-dispatch-for-live-steering.md
   - docs/adr/0010-pi-rpc-dispatch-for-live-steering.md
@@ -12,12 +12,15 @@ sources:
   - .kanban/issues/056-live-steer-channel.md
   - .kanban/issues/057-steer-ui-flyout.md
   - .kanban/issues/058-rpc-lifecycle-ops.md
+  - .kanban/issues/083-api-allow-claude-steer.md
   - tests/test_agent_runner.py
   - tests/test_scheduler.py
   - agent_runner.py
   - scheduler.py
   - web/api/main.py
   - web/api/steer_queue.py
+  - web/api/tests/test_steer.py
+  - web/api/tests/test_endpoints.py
   - web/frontend/components/IssueFlyout.tsx
   - web/frontend/components/QueryProvider.tsx
   - web/frontend/tests/steer-flyout.spec.ts
@@ -29,6 +32,8 @@ tags: [adr, pi, rpc, steering, dispatch, agent-adapter, capability-interface, ac
 
 ADR-0010 (`accepted`, 2026-06-13) decides to dispatch **pi via its native RPC protocol** (`pi --mode rpc` — JSON commands on stdin, JSONL events on stdout) so the operator can **steer a Run live, mid-task**, not only between Runs. The trigger was the operator goal of CLI-fidelity inside an Issue (explore, ask, be asked, redirect); the [session-resume backlog](../concepts/session-resume-continuity.md) (047–055) delivers the *async turn-taking* form of that (park → reply → resume + tail) but **deferred live mid-run steering** as a race-prone tmux-send-keys problem (`C-0176`) [source: wiki/concepts/session-resume-continuity.md].
 
+**2026-06-17 update:** the original pi-only steering boundary is refined. Persistent Claude sessions gained a tmux steer/abort delivery path in #079, and #083 updated the API gate so `POST /api/issues/{id}/steer` accepts live Claude runs only when their binding has `claude_persist: true`; non-persist Claude runs still use park-and-reply and receive `409: enable claude_persist for live Claude steering`. `/api/bindings` now exposes `claude_persist` alongside `pi_mode` so callers can see that gate. [source: claude_runner.py] [source: web/api/main.py#L685-L689] [source: web/api/main.py#L1315-L1330] [source: web/api/tests/test_steer.py#L101-L139] [source: web/api/tests/test_endpoints.py#L33-L36] [source: .kanban/issues/083-api-allow-claude-steer.md]
+
 ## The decision and why one mechanism is unreachable
 
 The handoff's leading hypothesis was "switch pi to tmux to standardize on Claude's dispatch shape." Rejected. Two verified facts invert it [source: wiki/raw/adr-0010-pi-rpc-dispatch-for-live-steering.md]:
@@ -36,7 +41,7 @@ The handoff's leading hypothesis was "switch pi to tmux to standardize on Claude
 - **pi has a clean headless protocol.** `pi --mode rpc`'s `steer` command is race-free by construction — delivered *after the current tool calls finish, before the next LLM call* — the exact mid-run interjection point tmux send-keys cannot hit safely. It also gives deterministic completion (`agent_end`), `abort`, a full event stream (= live tail), and native sessions.
 - **Claude has none for this account.** `claude --output-format stream-json` is gated behind `--print`, and `claude -p` headless was removed for this subscription (`C-0016`, ADR-0001/0002). The interactive TUI driven by tmux send-keys is the only authenticated surface.
 
-So a single dispatch mechanism is impossible: "both on tmux" drags the proven pi path onto the fragile mechanism (`C-0174` race class) and re-thickens the thin engine; "both on streaming" is blocked by the account. The decision instead **standardizes the Agent Adapter *capability* interface, not the transport** — the engine asks an adapter for completion, tail, and steer, and each agent satisfies them in its own transport. **pi pivots to RPC; Claude stays tmux park-and-reply; live Steering is pi-only.**
+So a single dispatch mechanism is impossible: "both on tmux" drags the proven pi path onto the fragile mechanism (`C-0174` race class) and re-thickens the thin engine; "both on streaming" is blocked by the account. The decision instead **standardizes the Agent Adapter *capability* interface, not the transport** — the engine asks an adapter for completion, tail, and steer, and each agent satisfies them in its own transport. **pi pivots to RPC. Claude remains tmux-based; after #079/#083 it supports live steering only for local persistent sessions (`claude_persist: true`), while non-persist Claude stays park-and-reply.**
 
 ## New architecture: the inward steer channel
 
@@ -54,7 +59,7 @@ Slice A (#050) closed dispatch parity; the full-path soak in C-0190 moved ADR-00
 
 ## Live Steering channel and UI landed (#056/#057)
 
-#056 landed the core inward control channel. `POST /api/issues/{id}/steer` accepts `steer` and `abort` requests only for a live running pi RPC Run, rejects Claude with a park-and-reply message, writes a transient per-run queue record under `SYMPHONY_RUNTIME_DIR/steer/<run_id>.jsonl`, appends durable `### Operator Steer` / `### Operator Abort` blocks to `comments_md` without flipping state, and publishes the updated Issue. `run_pi_rpc_agent` polls the queue inside the RPC event pump and forwards queued records as RPC `steer` / `abort` commands. [source: web/api/main.py] [source: web/api/steer_queue.py] [source: agent_runner.py] [source: .kanban/issues/056-live-steer-channel.md]
+#056 landed the core inward control channel. `POST /api/issues/{id}/steer` accepts `steer` and `abort` requests for a live running pi RPC Run, writes a transient per-run queue record under `SYMPHONY_RUNTIME_DIR/steer/<run_id>.jsonl`, appends durable `### Operator Steer` / `### Operator Abort` blocks to `comments_md` without flipping state, and publishes the updated Issue. `run_pi_rpc_agent` polls the queue inside the RPC event pump and forwards queued records as RPC `steer` / `abort` commands. #083 later reused the same queue and comments path for Claude, gated by binding `claude_persist: true`, and preserved the 409 rejection for non-persist Claude runs. [source: web/api/main.py] [source: web/api/steer_queue.py] [source: agent_runner.py] [source: web/api/tests/test_steer.py#L101-L139] [source: .kanban/issues/056-live-steer-channel.md] [source: .kanban/issues/083-api-allow-claude-steer.md]
 
 #057 landed the operator surface in the Podium flyout Session tab. The UI exposes a steer textarea and abort button only when the open Issue has an active running pi RPC Run, shows disabled affordances for Claude / idle / non-RPC cases, calls the #056 endpoint via typed `postSteer` / `postAbort` clients, adds local queued/delivered tail echoes through the existing `QueryProvider` tail buffer, and relies on the API's `comments_md` append for the durable thread. `/api/bindings` now exposes each binding's `pi_mode` so the frontend can gate the affordance without parsing `bindings.yml`. [source: web/frontend/components/IssueFlyout.tsx] [source: web/frontend/components/QueryProvider.tsx] [source: web/frontend/lib/api.ts] [source: web/api/main.py] [source: .kanban/issues/057-steer-ui-flyout.md]
 
@@ -68,4 +73,4 @@ Slice A (#050) closed dispatch parity; the full-path soak in C-0190 moved ADR-00
 
 ## Claims
 
-C-0178 (decision + parity spike + re-sequencing), C-0181..C-0183 for the landed #050 Slice A implementation, C-0190 for acceptance/full-path soak, C-0193 for landed #056/#057 live steering channel + UI, and C-0194 for #058 lifecycle hardening. Supersedes the "deferred live tmux send-keys steering (Claude-only)" clause of C-0176. See [CLAIMS.md](../CLAIMS.md).
+C-0178 (decision + parity spike + re-sequencing), C-0181..C-0183 for the landed #050 Slice A implementation, C-0190 for acceptance/full-path soak, C-0193 for landed #056/#057 live steering channel + UI, C-0194 for #058 lifecycle hardening, and C-0239 for the #083 Claude-persist API expansion. Supersedes the "deferred live tmux send-keys steering (Claude-only)" clause of C-0176; C-0239 refines the original pi-only boundary. See [CLAIMS.md](../CLAIMS.md).

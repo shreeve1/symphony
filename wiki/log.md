@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-17] session-update | Issue #083 Claude persist steering API
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/083-api-allow-claude-steer.md`; `web/api/main.py`; `web/api/tests/test_steer.py`; `web/api/tests/test_endpoints.py`; `.kanban/progress.md`; fresh review diff `git diff 3037ef8727e97c760197cef3b226af89719cc63b HEAD`.
+- Outputs: updated `wiki/concepts/session-resume-continuity.md`; updated `wiki/analyses/adr-0010-pi-rpc-dispatch-for-live-steering.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0239 added; C-0176/C-0178/C-0193 notes refined); updated `wiki/log.md`.
+- Notes: Captured Issue #083 landing: `/api/bindings` now surfaces `claude_persist`, and `/api/issues/{id}/steer` accepts live Claude steer/abort only for bindings with `claude_persist: true` while keeping pi RPC gating and returning 409 for non-persist Claude. Verification: exact issue command passed (`uv run pytest tests/test_agent_runner.py tests/test_scheduler.py` = 183 passed, 1 skipped; `uv run python -m py_compile web/api/main.py`), focused API tests passed, ruff/format clean, touched-file LSP diagnostics clean, fresh Ralph review `RALPH_REVIEW: PASS`. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Issue #081 persistent Claude reaper scheduler wiring
 
 - Actor: agent (Ralph)
