@@ -1,7 +1,7 @@
 ---
 id: 075
 title: Agent callback env dual-emit + tracker-neutral agent text
-status: done
+status: blocked
 blocked_by: [67, 64]
 parent: null
 priority: 0
@@ -41,3 +41,7 @@ Added a shared `_tracker_callback_env` helper that emits `SYMPHONY_TRACKER_*` al
 ## Actionable Review Notes
 
 Fresh reviewer diffed `89090adb00851b3e87822236f2c2b3976ab50877..HEAD`, read every changed file, verified no Podium callback-env leak or secret leak, ran `uv run pytest` (891 passed, 2 skipped), ran touched-file ruff, and returned `RALPH_REVIEW: PASS`.
+
+## Blocker
+
+Auto-parked retroactively: the review-each session for this issue timed out (3600s) and never confirmed completion, but an earlier loop bug left it marked done. Re-review or inspect the diff before marking done.
