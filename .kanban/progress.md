@@ -6,6 +6,7 @@ This file tracks implementation notes across Ralph iterations.
 
 - Keep Phase 1 architecture-review cleanups behavior-preserving: direct imports, stale-text removal, and docstring corrections only.
 - For Podium prompt rendering, apply the skill directive once after branch-specific prompt assembly so resume and non-resume paths stay aligned.
+- `main.build_binding_runtime(config, binding)` is the public single-binding runtime constructor; keep startup verification side effects in `_probe_binding` before construction.
 
 # Iteration Log
 
@@ -68,3 +69,13 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #066 can promote the runtime factory API without carrying startup side effects.
 
 **Actionable review:** Re-read the full implementation diff from `55fcd52dde913b3b5b41d6a3aabadf993c6475d6` through `HEAD`, verified `_probe_binding` owns startup verification side effects and `_build_binding_runtime` stays pure runtime wiring. Verification: `uv run pytest` (884 passed, 2 skipped); touched-file LSP diagnostics clean; `git diff --check` clean.
+
+## #066 Promote `build_binding_runtime` + clean web/api reflection cluster — 2026-06-17
+
+**What changed:** Renamed `_build_binding_runtime` to public `build_binding_runtime`, documented it as the side-effect-free single-binding constructor, and replaced Podium context-compaction `vars()` reflection with direct imports/calls.
+**Files:** `main.py`, `web/api/main.py`, `tests/test_main.py`, `tests/test_trading_podium_dispatch.py`, `.kanban/issues/066-public-build-binding-runtime-web-api-reflection.md`.
+**Decisions:** Kept the factory in `main.py` for now; full extraction to a neutral runtime factory remains deferred.
+**Conventions established:** Web/API compaction may import the public runtime constructor directly; private engine reflection via `vars(engine_main)`/`vars(compaction)` should stay absent from `web/api/main.py`.
+**Notes for next iteration:** Issue #067 remains independently eligible; issue #068 can proceed from #064 without depending on this factory rename.
+
+**Actionable review:** Fresh reviewer diffed `858ba03a9993c668bb27a7511aef43f35d1deff9..HEAD`, read every changed file, reran `uv run pytest -q`, `git diff --check`, `uv run ruff check` on touched Python files, checked critical LSP diagnostics, and returned `RALPH_REVIEW: PASS`.

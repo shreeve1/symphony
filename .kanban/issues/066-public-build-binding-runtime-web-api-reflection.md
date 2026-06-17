@@ -1,11 +1,13 @@
 ---
 id: 066
 title: Promote build_binding_runtime + clean web/api reflection cluster
-status: review
+status: done
 blocked_by: [65, 59]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -19,15 +21,19 @@ Update the ~10 `main.*` monkeypatch references in tests to the public name.
 
 ## Acceptance criteria
 
-- [ ] `build_binding_runtime` is public (no leading underscore); `web/api/main.py` imports it normally.
-- [ ] `_compact_issue_context` in `web/api/main.py` contains no `vars(engine_main)[...]` or `vars(compaction)[...]`; all four sites use normal imports / the public factory.
-- [ ] `grep -n "vars(engine_main)\|vars(compaction)" web/api/main.py` returns nothing.
-- [ ] Tests referencing the private factory name are updated to the public name.
-- [ ] `uv run pytest` passes.
+- [x] `build_binding_runtime` is public (no leading underscore); `web/api/main.py` imports it normally.
+- [x] `_compact_issue_context` in `web/api/main.py` contains no `vars(engine_main)[...]` or `vars(compaction)[...]`; all four sites use normal imports / the public factory.
+- [x] `grep -n "vars(engine_main)\|vars(compaction)" web/api/main.py` returns nothing.
+- [x] Tests referencing the private factory name are updated to the public name.
+- [x] `uv run pytest` passes.
 
 ## Verification
 
 `uv run pytest`
+
+## Implementation Notes
+
+Promoted `main.build_binding_runtime` to the public single-binding runtime constructor and documented that it has no startup probe side effects. Replaced the Podium context-compaction reflection cluster with direct imports of `SymphonyConfig`, `build_binding_runtime`, `maybe_compact`, and `estimate_tokens`. Updated runtime-factory tests to use the public symbol.
 
 ## Blocked by
 
