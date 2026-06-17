@@ -1,12 +1,13 @@
 ---
 id: 079
 title: Live steer/abort in the Claude poll loop (generation token)
-status: review
+status: done
 blocked_by: [77]
 parent: null
 priority: 0
 created: 2026-06-17
 updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -28,16 +29,20 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 5.1–5.6, 5.4a
 
 ## Acceptance criteria
 
-- [ ] A queued `steer` increments the generation, pastes message + reminder naming the new-gen paths, resets idle counters, loop continues.
-- [ ] The ORIGINAL turn writing `done.0` after a steer does NOT complete the Run; only the latest-generation `active_done` completes it.
-- [ ] A queued `abort` sends Esc then rotates the generation.
-- [ ] An idle nudge after a steer→gen1 names gen1 paths only (never gen0).
-- [ ] A steer racing turn-end (current `active_done` present + pending steer in final drain) advances the generation rather than completing.
-- [ ] `clear_steer_queue` is called on every exit path; `persist=False`/no-`run_id` path does no steer polling.
+- [x] A queued `steer` increments the generation, pastes message + reminder naming the new-gen paths, resets idle counters, loop continues.
+- [x] The ORIGINAL turn writing `done.0` after a steer does NOT complete the Run; only the latest-generation `active_done` completes it.
+- [x] A queued `abort` sends Esc then rotates the generation.
+- [x] An idle nudge after a steer→gen1 names gen1 paths only (never gen0).
+- [x] A steer racing turn-end (current `active_done` present + pending steer in final drain) advances the generation rather than completing.
+- [x] `clear_steer_queue` is called on every exit path; `persist=False`/no-`run_id` path does no steer polling.
 
 ## Verification
 
 `uv run pytest tests/test_claude_persist.py` and `uv run python -m py_compile claude_runner.py`
+
+## Implementation Notes
+
+Implemented Claude live steer polling for `active_run_id` runs with generation-specific `result.<gen>.txt` / `done.<gen>` completion paths. Queued steers and aborts rotate the active generation, paste a fresh completion-protocol reminder naming only the current generation, reset idle supervision, and clear the transient queue on exit. Tests cover steer rotation, stale `done.0` ignore, abort Escape ordering, current-generation idle nudges, final-drain race handling, and queue cleanup.
 
 ## Blocked by
 

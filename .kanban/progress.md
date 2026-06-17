@@ -194,3 +194,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #079 can build steer/abort delivery on top of warm reattach; issue #080 can rely on pidfile/metadata being refreshed during reattach.
 **Verification:** `uv run pytest tests/test_claude_persist.py tests/test_claude_runner.py -q` (46 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py tests/test_claude_runner.py`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
 **Actionable review:** Hardened `_paste_and_submit` so failed tmux load/paste/send/capture calls return `False`; a failed warm reattach now cleans stale artifacts and falls back to cold `new-session`. Verification: `uv run pytest tests/test_claude_persist.py tests/test_claude_runner.py -q` (47 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py tests/test_claude_runner.py`, touched-file LSP diagnostics clean.
+
+## #079 Live steer/abort in the Claude poll loop — 2026-06-17
+
+**What changed:** Added Claude poll-loop steering for runs with `active_run_id`: live `steer`/`abort` records rotate generation-specific completion files, paste a new completion-protocol turn into tmux, reset idle supervision, and clear the transient steer queue on exit.
+**Files:** `claude_runner.py`, `tests/test_claude_persist.py`, `.kanban/issues/079-claude-live-steer-abort-poll-loop.md`.
+**Decisions:** Claude steering uses per-generation `result.<gen>.txt` / `done.<gen>` paths so stale earlier-turn completions cannot finish a later steered run.
+**Conventions established:** Claude live steering degrades to no-steer if the queue import/read fails; queue cleanup is best-effort in the adapter `finally` block and only runs when `active_run_id` is present.
+**Notes for next iteration:** Issue #083 can expose Claude steer from the API once #079 is done; issue #084 owns run-end steer-close guards and should not duplicate generation rotation.
+**Verification:** `uv run pytest tests/test_claude_persist.py` (12 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py`, `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py -q` (50 passed), `uv run pytest -q` (908 passed, 2 skipped), touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
