@@ -1,7 +1,7 @@
 ---
 id: 065
 title: Extract _probe_binding from the runtime factory
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
@@ -18,10 +18,10 @@ Extract the probe block into a named `_probe_binding(config, binding)` helper ca
 
 ## Acceptance criteria
 
-- [ ] `_probe_binding(config, binding)` exists and owns the pi-probe + SSH-reachability + logging side effects.
-- [ ] `_build_binding_runtime` contains no startup-verification side effects — pure adapter/router assembly only.
-- [ ] `_probe_binding` is invoked before runtime construction in the call path.
-- [ ] Behavior unchanged; `uv run pytest` passes.
+- [x] `_probe_binding(config, binding)` exists and owns the pi-probe + SSH-reachability + logging side effects.
+- [x] `_build_binding_runtime` contains no startup-verification side effects — pure adapter/router assembly only.
+- [x] `_probe_binding` is invoked before runtime construction in the call path.
+- [x] Behavior unchanged; `uv run pytest` passes.
 
 ## Verification
 
@@ -30,3 +30,9 @@ Extract the probe block into a named `_probe_binding(config, binding)` helper ca
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Extracted startup probe side effects from `_build_binding_runtime` into `_probe_binding(config, binding)`. `run_bindings_loop` now probes each binding before constructing its runtime, while `_build_binding_runtime` only assembles tracker, agent, transport, and routing adapters. Updated `tests/test_main.py` to cover the new call order and probe helper behavior.
+
+Verification: `uv run pytest` passed (884 passed, 2 skipped). Fresh review diffed `55fcd52dde913b3b5b41d6a3aabadf993c6475d6 HEAD` and returned `RALPH_REVIEW: PASS`.

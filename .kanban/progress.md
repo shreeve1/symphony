@@ -58,3 +58,11 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #068 can use `tracker_types.CandidateIssue` and the unified `_parse_iso`/label helpers without importing Plane or Podium concrete adapters.
 
 **Actionable review:** Preserved Plane-path schema/default behaviour after the type move: `IssuePayload` still defaults to Todo via a neutral literal, and Plane candidate polling raises `PlanePollingSchemaError` for missing required issue fields. Verification: `uv run pytest` (883 passed, 2 skipped); touched-file LSP diagnostics clean.
+
+## #065 Extract `_probe_binding` from runtime factory — 2026-06-17
+
+**What changed:** Moved binding startup probes from `_build_binding_runtime` into `_probe_binding(config, binding)` and made `run_bindings_loop` call the probe before runtime construction.
+**Files:** `main.py`, `tests/test_main.py`, `.kanban/issues/065-extract-probe-binding.md`.
+**Decisions:** Kept probe behavior unchanged: local pi probe still runs only for non-remote pi bindings, Podium pi probe still resolves from `models.yml`, and remote reachability remains warning-only.
+**Conventions established:** `_build_binding_runtime` is now pure runtime wiring; startup verification belongs in `_probe_binding` before adapter/router assembly.
+**Notes for next iteration:** Issue #066 can promote the runtime factory API without carrying startup side effects.
