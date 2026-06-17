@@ -1076,6 +1076,15 @@ class TickResult:
 
 
 @dataclass(frozen=True)
+class _ResumeFallbackResult:
+    candidate: CandidateIssue
+    result: AgentResult
+    run_id: str | None
+    run_log_path: Path | None
+    claim_dt: datetime
+
+
+@dataclass(frozen=True)
 class _ScheduledSelection:
     candidate: CandidateIssue
     reason: str
@@ -1164,6 +1173,123 @@ def _validated_fallback_plan_path(
         return _validate_issue_plan_path(repo_path, issue, str(expected))
     except ValueError:
         return None
+
+
+async def _dispatch_with_resume_fallback(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    render_prompt: Callable[..., str],
+    agent_runner: Callable[..., AgentResult],
+    *,
+    now: Callable[[], datetime],
+    binding: ProjectBinding | None,
+    comments_text: str,
+    compaction_agent_runner: Callable[..., AgentResult] | None,
+    run_id: str | None,
+    run_log_path: Path | None,
+    failed_result: AgentResult,
+    secrets: Sequence[str],
+    resume_summary: str,
+    mode: str,
+    notifier: TelegramNotifier | None,
+    resume_error: Exception | None = None,
+) -> _ResumeFallbackResult | TickResult:
+    """Record a failed resumed dispatch, then retry once as a fresh dispatch."""
+
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=failed_result,
+        secrets=secrets,
+        state="failed",
+        verdict="blocked",
+        summary=resume_summary,
+        ended_at=now().isoformat(),
+    )
+    if resume_error is not None:
+        LOGGER.warning(
+            "resume_failed issue_id=%s error=%s fell_back=true",
+            candidate.id,
+            resume_error,
+        )
+    else:
+        LOGGER.warning(
+            "resume_failed issue_id=%s exit_code=%s fell_back=true",
+            candidate.id,
+            failed_result.exit_code,
+        )
+
+    fallback_cwd = _dispatch_cwd(config, candidate, binding=binding)
+    candidate = replace(
+        candidate,
+        resumed=False,
+        agent_session_sha=(
+            repo_host_for(binding, cwd=fallback_cwd).code_sha()
+            if binding is not None
+            else resolve_code_sha(fallback_cwd)
+        ),
+    )
+    fallback_run_id = run_id
+    fallback_run_log_path = run_log_path
+    try:
+        candidate, prompt = await _render_for_dispatch(
+            config,
+            adapter,
+            candidate,
+            render_prompt,
+            compaction_agent_runner or agent_runner,
+            now=now,
+            binding=binding,
+            comments_text=comments_text,
+        )
+        fallback_run_id, fallback_run_log_path = await _start_run_record(
+            adapter, config, candidate, binding=binding
+        )
+        candidate = replace(candidate, active_run_id=fallback_run_id or "")
+        claim_time = now().isoformat()
+        await _mark_run_record_running(
+            adapter,
+            fallback_run_id,
+            fallback_run_log_path,
+            started_at=claim_time,
+        )
+        claim_dt = datetime.fromisoformat(claim_time)
+        result = await asyncio.to_thread(agent_runner, candidate, prompt)
+    except Exception as exc:
+        result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
+        await _finish_run_record(
+            adapter,
+            fallback_run_id,
+            fallback_run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=f"Agent crashed: {exc}",
+            ended_at=now().isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            f"Agent crashed: {exc}",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "agent-crashed", candidate.id, mode=mode)
+
+    return _ResumeFallbackResult(
+        candidate=candidate,
+        result=result,
+        run_id=fallback_run_id,
+        run_log_path=fallback_run_log_path,
+        claim_dt=claim_dt,
+    )
 
 
 async def run_tick(
@@ -1524,66 +1650,33 @@ async def run_tick(
                 result = await asyncio.to_thread(agent_runner, candidate, prompt)
             except Exception as exc:
                 if getattr(candidate, "resumed", False):
-                    resume_summary = f"resume_failed: {exc}; fell_back=true"
-                    await _finish_run_record(
+                    fallback = await _dispatch_with_resume_fallback(
+                        config,
                         adapter,
-                        run_id,
-                        run_log_path,
-                        result=AgentResult(1, 0, False, stdout="", stderr=str(exc)),
-                        secrets=secrets,
-                        state="failed",
-                        verdict="blocked",
-                        summary=resume_summary,
-                        ended_at=now().isoformat(),
-                    )
-                    LOGGER.warning(
-                        "resume_failed issue_id=%s error=%s fell_back=true",
-                        candidate.id,
-                        exc,
-                    )
-                    _fallback_cwd = _dispatch_cwd(
-                        config, candidate, binding=tick_binding
-                    )
-                    candidate = replace(
                         candidate,
-                        resumed=False,
-                        agent_session_sha=(
-                            repo_host_for(tick_binding, cwd=_fallback_cwd).code_sha()
-                            if tick_binding is not None
-                            else resolve_code_sha(_fallback_cwd)
-                        ),
+                        render_prompt,
+                        agent_runner,
+                        now=now,
+                        binding=tick_binding,
+                        comments_text=comments_text,
+                        compaction_agent_runner=compaction_agent_runner,
+                        run_id=run_id,
+                        run_log_path=run_log_path,
+                        failed_result=AgentResult(1, 0, False, stdout="", stderr=str(exc)),
+                        secrets=secrets,
+                        resume_summary=f"resume_failed: {exc}; fell_back=true",
+                        mode=mode,
+                        notifier=notifier,
+                        resume_error=exc,
                     )
-                    try:
-                        candidate, prompt = await _render_for_dispatch(
-                            config,
-                            adapter,
-                            candidate,
-                            render_prompt,
-                            compaction_agent_runner or agent_runner,
-                            now=now,
-                            binding=tick_binding,
-                            comments_text=comments_text,
-                        )
-                        run_id, run_log_path = await _start_run_record(
-                            adapter, config, candidate, binding=tick_binding
-                        )
-                        candidate = replace(candidate, active_run_id=run_id or "")
-                        claim_time = now().isoformat()
-                        await _mark_run_record_running(
-                            adapter,
-                            run_id,
-                            run_log_path,
-                            started_at=claim_time,
-                        )
-                        claim_dt = datetime.fromisoformat(claim_time)
-                        result = await asyncio.to_thread(
-                            agent_runner, candidate, prompt
-                        )
-                    except Exception as fallback_exc:
-                        exc = fallback_exc
-                    else:
-                        exc = None
-                if exc is not None:
+                    if isinstance(fallback, TickResult):
+                        return fallback
+                    candidate = fallback.candidate
+                    result = fallback.result
+                    run_id = fallback.run_id
+                    run_log_path = fallback.run_log_path
+                    claim_dt = fallback.claim_dt
+                else:
                     result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
                     await _finish_run_record(
                         adapter,
@@ -1622,84 +1715,33 @@ async def run_tick(
                 and result.exit_code != 0
                 and not result.timed_out
             ):
-                resume_summary = (
-                    f"resume_failed: exit code {result.exit_code}; fell_back=true"
-                )
-                await _finish_run_record(
+                fallback = await _dispatch_with_resume_fallback(
+                    config,
                     adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=resume_summary,
-                    ended_at=now().isoformat(),
-                )
-                LOGGER.warning(
-                    "resume_failed issue_id=%s exit_code=%s fell_back=true",
-                    candidate.id,
-                    result.exit_code,
-                )
-                _fallback_cwd = _dispatch_cwd(config, candidate, binding=tick_binding)
-                candidate = replace(
                     candidate,
-                    resumed=False,
-                    agent_session_sha=(
-                        repo_host_for(tick_binding, cwd=_fallback_cwd).code_sha()
-                        if tick_binding is not None
-                        else resolve_code_sha(_fallback_cwd)
+                    render_prompt,
+                    agent_runner,
+                    now=now,
+                    binding=tick_binding,
+                    comments_text=comments_text,
+                    compaction_agent_runner=compaction_agent_runner,
+                    run_id=run_id,
+                    run_log_path=run_log_path,
+                    failed_result=result,
+                    secrets=secrets,
+                    resume_summary=(
+                        f"resume_failed: exit code {result.exit_code}; fell_back=true"
                     ),
+                    mode=mode,
+                    notifier=notifier,
                 )
-                try:
-                    candidate, prompt = await _render_for_dispatch(
-                        config,
-                        adapter,
-                        candidate,
-                        render_prompt,
-                        compaction_agent_runner or agent_runner,
-                        now=now,
-                        binding=tick_binding,
-                        comments_text=comments_text,
-                    )
-                    run_id, run_log_path = await _start_run_record(
-                        adapter, config, candidate, binding=tick_binding
-                    )
-                    candidate = replace(candidate, active_run_id=run_id or "")
-                    claim_time = now().isoformat()
-                    await _mark_run_record_running(
-                        adapter,
-                        run_id,
-                        run_log_path,
-                        started_at=claim_time,
-                    )
-                    claim_dt = datetime.fromisoformat(claim_time)
-                    result = await asyncio.to_thread(agent_runner, candidate, prompt)
-                except Exception as exc:
-                    result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
-                    await _finish_run_record(
-                        adapter,
-                        run_id,
-                        run_log_path,
-                        result=result,
-                        secrets=secrets,
-                        state="failed",
-                        verdict="blocked",
-                        summary=f"Agent crashed: {exc}",
-                        ended_at=now().isoformat(),
-                    )
-                    _iu, _du = _build_urls(config, candidate.id)
-                    await _block_issue(
-                        adapter,
-                        candidate.id,
-                        f"Agent crashed: {exc}",
-                        issue_name=candidate.name,
-                        issue_identifier=candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(True, "agent-crashed", candidate.id, mode=mode)
+                if isinstance(fallback, TickResult):
+                    return fallback
+                candidate = fallback.candidate
+                result = fallback.result
+                run_id = fallback.run_id
+                run_log_path = fallback.run_log_path
+                claim_dt = fallback.claim_dt
             if result.timed_out:
                 msg = f"Agent timed out after {result.duration_ms} ms"
                 stdout, stderr = _format_report(result, secrets)

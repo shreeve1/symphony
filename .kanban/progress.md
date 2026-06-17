@@ -89,3 +89,13 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #068 can assume podium-binding agents no longer receive Plane callback secrets from `agent_runner.py`.
 
 **Actionable review:** `git diff 444f5b0f2509e12a746d0c4250f72bb9e0636eaa HEAD` was empty at session start, so the review loop implemented the missing slice, read every changed file, and verified the full suite. Verification: `uv run pytest` (887 passed, 2 skipped); focused agent-runner/remote tests passed; touched-file LSP diagnostics clean.
+
+## #068 Dedup resume-fallback retry block — 2026-06-17
+
+**What changed:** Extracted `_dispatch_with_resume_fallback` so resumed dispatch exception and resumed nonzero-exit paths share the same fail-record/log/reset/re-render/retry/crash-block sequence.
+**Files:** `scheduler.py`, `tests/test_dispatch_compaction.py`, `.kanban/issues/068-dedup-resume-fallback.md`.
+**Decisions:** Kept fallback behavior local to `scheduler.py` for this slice; the helper returns a fresh fallback dispatch result bundle or a terminal `TickResult` when the fallback crashes.
+**Conventions established:** Resume-fallback behavior has one implementation point; future `run_tick` decomposition should move the helper with the dispatch-execution slice rather than clone it.
+**Notes for next iteration:** Issue #070 can decompose `run_tick` without carrying duplicate resume fallback branches.
+
+**Actionable review:** `git diff 7ef70d10a61f5b90663c73f8a47ad671e99384de HEAD` was empty at review start, so the review loop implemented the missing slice. Verification: `uv run ruff check scheduler.py tests/test_dispatch_compaction.py`; `uv run pytest tests/test_dispatch_compaction.py -q` (7 passed); touched-file LSP diagnostics clean; `uv run pytest` (888 passed, 2 skipped); live `symphony-restart` verification completed.

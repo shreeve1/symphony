@@ -570,3 +570,106 @@ Please continue Claude from the parked question.
         "resume_failed: corrupt Claude session; fell_back=true",
         1,
     )
+
+
+@pytest.mark.asyncio
+async def test_resume_nonzero_falls_back_to_fresh_full_refeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    comments = """
+### Older note
+old context should be re-fed on fallback
+
+### Operator Reply (2026-06-13T00:00:00+00:00)
+Please continue from the parked question.
+""".strip()
+    session_id = derive_session_id(str(issue_id))
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    (session_dir / f"2026-06-13_{session_id}.jsonl").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(session_dir))
+    with sqlite3.connect(db_path) as connection:
+        previous = connection.execute(
+            """
+            INSERT INTO run(
+              issue_id, agent, provider, model, state, verdict,
+              started_at, ended_at, agent_session_sha, resumed
+            ) VALUES (?, 'pi', 'openai-codex', 'gpt-5.5:high', 'succeeded',
+                      'review', '2026-06-13T00:00:00+00:00',
+                      '2026-06-13T00:01:00+00:00', 'unknown', 0)
+            """,
+            (issue_id,),
+        ).lastrowid
+        connection.execute(
+            """
+            UPDATE issue
+            SET comments_md = ?, latest_run_id = ?, context_md = ?
+            WHERE id = ?
+            """,
+            (comments, previous, "short context", issue_id),
+        )
+        connection.execute(
+            """
+            UPDATE binding_settings
+            SET context_compact_threshold_tokens = 1000
+            WHERE binding_name = 'trading'
+            """
+        )
+        connection.commit()
+    config = _config(tmp_path)
+    binding = replace(config.bindings[0], pi_mode="rpc")
+    config = config.for_binding(binding)
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="trading",
+        contract=binding.tracker_contract,
+    )
+    prompts: list[str] = []
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        prompts.append(rendered_prompt)
+        if len(prompts) == 1:
+            assert issue.resumed is True
+            assert "old context should be re-fed" not in rendered_prompt
+            return AgentResult(3, 10, False, stdout="", stderr="stale session")
+        assert issue.resumed is False
+        assert "old context should be re-fed on fallback" in rendered_prompt
+        assert "short context" in rendered_prompt
+        return AgentResult(
+            0,
+            10,
+            False,
+            stdout="SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY: pi fallback ok",
+            stderr="",
+        )
+
+    result = await scheduler.run_tick(
+        config,
+        cast(Any, adapter),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue, *, resume=False: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+            resume=resume,
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 13, tzinfo=UTC),
+        binding=binding,
+    )
+    with sqlite3.connect(db_path) as connection:
+        runs = connection.execute(
+            "SELECT state, summary, resumed FROM run ORDER BY id DESC LIMIT 2"
+        ).fetchall()
+
+    assert result.reason == "agent-marker-review"
+    assert len(prompts) == 2
+    assert runs[0] == ("succeeded", "pi fallback ok", 0)
+    assert runs[1] == ("failed", "resume_failed: exit code 3; fell_back=true", 1)

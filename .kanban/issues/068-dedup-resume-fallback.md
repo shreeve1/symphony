@@ -1,11 +1,14 @@
 ---
 id: 068
 title: Dedup resume-fallback retry block
-status: pending
+status: done
 blocked_by: [64]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+action_reviewed: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -16,9 +19,9 @@ Extract `_dispatch_with_resume_fallback` taking the candidate + reason, returnin
 
 ## Acceptance criteria
 
-- [ ] `_dispatch_with_resume_fallback` exists and is invoked from both the dispatch-exception and nonzero-exit paths.
-- [ ] No duplicated ~85-LOC resume-fallback block remains in `scheduler.py`.
-- [ ] Behavior unchanged; `uv run pytest` passes.
+- [x] `_dispatch_with_resume_fallback` exists and is invoked from both the dispatch-exception and nonzero-exit paths.
+- [x] No duplicated ~85-LOC resume-fallback block remains in `scheduler.py`.
+- [x] Behavior unchanged; `uv run pytest` passes.
 
 ## Verification
 
@@ -29,3 +32,7 @@ Live-dispatch-path change: before this issue is marked done, James runs the `sym
 ## Blocked by
 
 - Blocked by #064 (serializes the `scheduler.py` edit ordering; tracker_types repoint lands first).
+
+## Implementation Notes
+
+Actionable review found no implementation diff from `7ef70d10a61f5b90663c73f8a47ad671e99384de..HEAD`, so the missing slice was implemented in review-loop mode. Added `_dispatch_with_resume_fallback`, repointed both resumed dispatch exception and resumed nonzero-exit paths through it, and added regression coverage for the nonzero fallback path. Verification: `uv run ruff check scheduler.py tests/test_dispatch_compaction.py`, `uv run pytest tests/test_dispatch_compaction.py -q`, touched-file LSP diagnostics, `uv run pytest`, and live `symphony-restart` verification.
