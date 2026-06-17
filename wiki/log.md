@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-17] session-update | Issue #45 architecture-review polish batch
+
+- Actor: agent
+- Inputs: Podium Issue #45; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `scheduler.py`; `main.py`; `model_catalog.py`; `config.py`; `agent_runner.py`; `schedule.py`
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0224 superseded, C-0226 added)
+- Notes: Captured that implementation has started: L0-01 `_invoke_renderer` rename, L5-03 shared `KNOWN_AGENTS` usage, and L4-01 `_decode_entity_at` extraction. Verification: `tests/test_schedule.py` passed; full `uv run pytest` passed (878 passed, 2 skipped). `uv` was not on the default PATH for the first focused run, so verification used `/home/james/.local/bin/uv` and then `PATH=/home/james/.local/bin:$PATH uv run pytest`. No secrets or env files read.
+
 ## [2026-06-16] session-update | Issue #38 Dashboard totals omit terminal states
 
 - Actor: agent
@@ -820,3 +827,11 @@ Append entries with this format:
 - Outputs: code commit `b3e0f58` (synthesize fixture-only `trading` binding in `global-setup.mjs`); updated claim **C-0221** to `resolved`; updated `wiki/analyses/podium-run-log-cap-and-flyout-dedup.md` (e2e-drift section + follow-up); same-session addendum on `wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md`; ROUTING keywords; this log entry.
 - Notes: Decision **decouple over migrate** — operator picked the fixture-binding option after I surfaced that the breakage was 16 specs (not 3) and that migrating mutating specs (dnd/archive/dashboard) to a shared homelab board would break `fullyParallel` isolation. Fix clones a local binding, forces `type=coding` (flyout 7-chip coding layout; infra adds 3 chips), drops `remote:`. No spec edits. Full suite 47 passed; lone miss = unrelated `new-issue` combobox keyboard flake (green in isolation).
 - Unresolved: `new-issue.spec.ts:124` combobox keyboard-nav flake under full-suite parallelism (not investigated; passes alone). Flyout render change (C-0220) + this fix still uncommitted-to-remote / not deployed to live UI (needs `web/frontend/deploy.sh`).
+
+## [2026-06-17] session-update | Root scheduler architecture review + Pi meta-review
+
+- Actor: agent
+- Inputs: `/architecture-review` over the root scheduler module (24 top-level `*.py`, ~11.6k LOC), per-finding operator triage; then `/dev-review-pi` (reviewer `openai-codex/gpt-5.5`, read-only verified) over the resulting artifact; operator "all five" (apply Pi corrections) + "update wiki". Evidence: `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`, `scheduler.py`, `main.py`, `agent_runner.py`, `plane_adapter.py`, `tracker_podium.py`, `tracker_adapter.py`, `web/api/main.py`, `bindings.yml`.
+- Outputs: raw capture `wiki/raw/sessions/2026-06-17-root-scheduler-architecture-review.md`; promoted analysis `wiki/analyses/root-scheduler-architecture-review.md`; claims **C-0223** (all live bindings podium → Plane dormant), **C-0224** (review artifact/plan exists, not implemented), **C-0225** (Plane secret/helper shipped to Podium agents — near-term security cleanup); `index.md` Analyses row; new `ROUTING.md` section "Architecture review & refactor plan"; this log entry. Artifact itself revised per Pi review (L0-01 corrected → rename, L0-06 added, L6-02 split into Phase 5 + Phase 7, L3-01 reworded; tallies 40→41 / 28→29 accepted).
+- Notes: **No source code modified** — the product is a proposal/plan artifact (`.rpiv/`, git-ignored). Two methodology principles recorded (M1 keep tested zero-consumer primitives that pair with an existing flow; M2 verify an unusual coupling's reason before fixing). Wise-decision keeps: engine→`web.api.db` (Podium is the web DB), `SymphonyConfig.__repr__` deny-by-omission, tuple returns, single-file `schedule.py`, standalone `plane_cli` Telegram. Pi meta-review caught one wrong finding (L0-01), one missed reflection cluster (`web/api` 4× `vars()`), and one security re-prioritization (Plane secret shipped to all-Podium agents) — all verified against source before applying.
+- Unresolved: implementation not started (next: `/blueprint` per phase, Phase 1 first). Near-term security cleanup L6-02(a)/Phase 5: stop shipping `SYMPHONY_PLANE_API_KEY` + `plane` helper to Podium agents. Operator-gated: Phase 6 vocabulary migration touches the live `symphony-host.service` env contract; Phase 7 Plane-path removal needs a confirmed Plane sunset.

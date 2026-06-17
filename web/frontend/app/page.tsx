@@ -8,6 +8,11 @@ import { cn } from "@/lib/utils";
 
 type StateKey = (typeof STATES)[number]["key"];
 
+const TERMINAL_DASHBOARD_STATES = new Set<StateKey>(["done", "archived"]);
+const DASHBOARD_STATES = STATES.filter(
+	(s) => !TERMINAL_DASHBOARD_STATES.has(s.key),
+);
+
 interface BindingSummary {
 	name: string;
 	displayName: string;
@@ -51,6 +56,13 @@ function lastActivity(issues: Issue[]): string | null {
 	return timestamps.sort().reverse()[0] ?? null;
 }
 
+function dashboardTotal(counts: Record<StateKey, number>): number {
+	return DASHBOARD_STATES.reduce(
+		(total, state) => total + counts[state.key],
+		0,
+	);
+}
+
 function StateBadge({
 	label,
 	count,
@@ -84,16 +96,14 @@ function BindingCard({ summary }: { summary: BindingSummary }) {
 				/>
 				<h3 className="font-semibold">
 					{summary.displayName}
-					{summary.isRemote && summary.repoName
-						? ` — ${summary.repoName}`
-						: ""}
+					{summary.isRemote && summary.repoName ? ` — ${summary.repoName}` : ""}
 				</h3>
 				<span className="ml-auto text-[11px] text-muted-foreground">
 					{formatAge(summary.lastEventAt)}
 				</span>
 			</div>
 			<div className="flex flex-wrap gap-1.5">
-				{STATES.map((s) => (
+				{DASHBOARD_STATES.map((s) => (
 					<StateBadge
 						key={s.key}
 						label={s.label}
@@ -128,14 +138,15 @@ export default function DashboardPage() {
 
 	const summaries: BindingSummary[] = activeBindings.map((b, i) => {
 		const issues = issuesQueries[i]?.data ?? [];
+		const counts = countByState(issues);
 		return {
 			name: b.name,
 			displayName: b.display_name,
 			repoName: b.repo_name,
 			isRemote: b.is_remote,
 			color: b.color,
-			counts: countByState(issues),
-			total: issues.length,
+			counts,
+			total: dashboardTotal(counts),
 			lastEventAt: lastActivity(issues),
 		};
 	});
@@ -145,7 +156,7 @@ export default function DashboardPage() {
 		const c = {} as Record<StateKey, number>;
 		for (const s of STATES) c[s.key] = 0;
 		for (const s of summaries) {
-			for (const key of STATES.map((x) => x.key)) c[key] += s.counts[key];
+			for (const state of DASHBOARD_STATES) c[state.key] += s.counts[state.key];
 		}
 		return c;
 	})();
@@ -173,7 +184,7 @@ export default function DashboardPage() {
 								{globalTotal} issues
 							</div>
 							<div className="flex flex-wrap gap-1.5">
-								{STATES.map((s) => (
+								{DASHBOARD_STATES.map((s) => (
 									<StateBadge
 										key={s.key}
 										label={s.label}

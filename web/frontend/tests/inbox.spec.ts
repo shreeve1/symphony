@@ -173,7 +173,10 @@ test.describe
 			await page.getByTestId("reply-send").click();
 			await replied;
 
-			// Card should disappear from inbox (reply flips state to todo).
+			// Successful reply flips state to todo, closes the flyout, and removes
+			// the deep link from the URL.
+			await expect(page.getByTestId("issue-flyout")).toBeHidden();
+			await expect(page).toHaveURL("/homelab");
 			await expect(
 				page.getByTestId("inbox-card").filter({ hasText: title }),
 			).not.toBeVisible({ timeout: 15_000 });

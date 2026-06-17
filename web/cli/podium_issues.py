@@ -96,10 +96,17 @@ def parse_kanban_issue(path: Path) -> KanbanIssue:
     body = match.group(2).strip("\n")
     if "id" not in front:
         raise PodiumIssuesError(f"{path}: frontmatter missing 'id'")
+    # Parse the id from the raw frontmatter token, not the YAML-coerced value:
+    # YAML 1.1 reads a zero-padded all-octal-digit id like ``060`` as octal
+    # (-> 48). The raw decimal token matches the filename and Ralph's
+    # ``grep "^id: NNN$"`` lookup, which both keep the zero-padding.
+    id_match = re.search(r"(?m)^id:[ \t]*[\"']?0*([0-9]+)", match.group(1))
+    if not id_match:
+        raise PodiumIssuesError(f"{path}: frontmatter 'id' is not numeric")
     raw_marker = front.get("podium_issue_id")
     return KanbanIssue(
         path=path,
-        kid=int(front["id"]),
+        kid=int(id_match.group(1), 10),
         title=str(front.get("title") or path.stem),
         body=body,
         podium_issue_id=int(raw_marker) if raw_marker is not None else None,

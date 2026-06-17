@@ -20,7 +20,7 @@ PodiumIssuesError = podium_issues.PodiumIssuesError
 
 
 ISSUE_TEMPLATE = """---
-id: {kid}
+id: {kid_padded}
 title: {title}
 status: pending
 blocked_by: {blocked_by}
@@ -48,6 +48,7 @@ def _make_repo(tmp_path: Path, *issues: tuple[int, str]) -> Path:
         (kanban / f"{kid:03d}-{slug}.md").write_text(
             ISSUE_TEMPLATE.format(
                 kid=kid,
+                kid_padded=f"{kid:03d}",
                 title=title,
                 blocked_by="[]",
                 blocked_note="None - can start immediately",
@@ -129,6 +130,14 @@ def test_parse_extracts_frontmatter_and_body(tmp_path: Path) -> None:
     assert issue.title == "lucky slice"
     assert "Slice 7." in issue.body
     assert issue.podium_issue_id is None
+
+
+def test_parse_zero_padded_id_is_decimal_not_octal(tmp_path: Path) -> None:
+    # ``id: 060`` is octal under YAML 1.1 (-> 48); the parser must read it as
+    # decimal 60 to match the filename and Ralph's ``grep "^id: NNN$"`` lookup.
+    repo = _make_repo(tmp_path, (60, "octal trap"))
+    issue = parse_kanban_issue(repo / ".kanban/issues/060-octal-trap.md")
+    assert issue.kid == 60
 
 
 def test_import_inserts_in_ascending_id_order(tmp_path: Path, monkeypatch) -> None:

@@ -367,7 +367,13 @@ function MetadataChips({
 // and flips the issue back to todo so the agent re-runs (server-side, atomic).
 // Sits at the top of the comments tab, above the thread, so it never gets
 // buried as Runs accumulate.
-function ReplyComposer({ issue }: { issue: IssueDetail }) {
+function ReplyComposer({
+	issue,
+	onSent,
+}: {
+	issue: IssueDetail;
+	onSent?: () => void;
+}) {
 	const queryClient = useQueryClient();
 	const [draft, setDraft] = useState("");
 	const taRef = useRef<HTMLTextAreaElement>(null);
@@ -390,6 +396,7 @@ function ReplyComposer({ issue }: { issue: IssueDetail }) {
 			queryClient.invalidateQueries({
 				queryKey: ["issues", issue.binding_name],
 			});
+			onSent?.();
 		},
 	});
 
@@ -665,7 +672,17 @@ export function IssueFlyout({
 	});
 	const patch = usePatchIssue();
 	const onPatch: OnPatch = (issuePatch) => {
-		if (detail.data) patch.mutate({ issue: detail.data, patch: issuePatch });
+		if (!detail.data) return;
+		patch.mutate(
+			{ issue: detail.data, patch: issuePatch },
+			{
+				onSuccess: () => {
+					if (issuePatch.state === "done" || issuePatch.state === "archived") {
+						onClose();
+					}
+				},
+			},
+		);
 	};
 	// Skill catalog feeds the preferred_skill picker; free text would 422
 	// against the FK and silently roll back.
@@ -830,7 +847,7 @@ export function IssueFlyout({
 										// accumulate; thread below renders oldest-first,
 										// scrolled to the newest entry on open.
 										<div className="space-y-3">
-											<ReplyComposer issue={issue} />
+											<ReplyComposer issue={issue} onSent={onClose} />
 											<CommentsThread
 												issueId={issue.id}
 												source={issue.comments_md}
