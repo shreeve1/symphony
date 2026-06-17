@@ -173,3 +173,13 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #077 can consume `binding.claude_persist` from the Claude adapter without changing config parsing; docs/wiki update is intentionally deferred to issue #086.
 **Verification:** `uv run pytest tests/test_config.py` (52 passed), `uv run python -m py_compile config.py main.py agent_runner.py`, `uv run pytest tests/test_main.py -q` (13 passed), `uv run pytest -q` (896 passed, 2 skipped), `uv run ruff check config.py main.py claude_runner.py tests/test_config.py tests/test_main.py`, `git diff --check`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
 **Actionable review:** Re-read `git diff b8f470a325c2286ffd3694197789f09ea3ed07e9 HEAD`, inspected every changed file, verified all acceptance criteria, reran the issue verification plus `uv run pytest -q` (896 passed, 2 skipped), checked `ruff`, `git diff --check`, and touched-file LSP diagnostics clean, and added `action_reviewed: 2026-06-17`.
+
+
+## #077 Split Claude session lifecycle, deterministic socket naming, metadata sidecar — 2026-06-17
+
+**What changed:** Split Claude cleanup into run-scoped and session-scoped teardown, added deterministic persistent tmux socket names, wrote per-session metadata sidecars, and gated session reuse on clean persist-mode success only.
+**Files:** `claude_runner.py`, `tests/test_claude_persist.py`, `.kanban/issues/077-claude-session-lifecycle-split-naming-sidecar.md`.
+**Decisions:** `persist=False` preserves nonce socket behavior and combined cleanup; `persist=True` keeps per-Run temp dirs while only the tmux session/socket/sidecar survive clean `done` completions.
+**Conventions established:** Persistent Claude session state is keyed by `symphony-claude-persist-<binding>-<issue>.sock`, with `<runtime>/claude/<socket-stem>.meta.json` as the reaper transcript mapping.
+**Notes for next iteration:** Issue #078 can use the metadata sidecar and deterministic socket as the warm reattach substrate. Issue #079 can build live steer/abort on the extracted Claude poll loop without changing cleanup semantics.
+**Verification:** `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py` (43 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_runner.py tests/test_claude_persist.py`, `git diff --check`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`, and `uv run pytest -q` before final commit.
