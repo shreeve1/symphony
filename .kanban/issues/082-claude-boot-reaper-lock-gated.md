@@ -1,7 +1,7 @@
 ---
 id: 082
 title: Lock-gated boot reaping of persistent Claude sockets
-status: in-progress
+status: review
 blocked_by: [77]
 parent: null
 priority: 0
