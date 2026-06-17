@@ -1,7 +1,7 @@
 ---
 id: 081
 title: Wire the Claude reaper sweep into the scheduler loop
-status: done
+status: blocked
 blocked_by: [80]
 parent: null
 priority: 0
@@ -44,3 +44,7 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 6.4–6.5.
 ## Blocked by
 
 - Blocked by #80 (needs the sweep function).
+
+## Blocker
+
+Auto-parked by review-each: the independent review worker returned no DONE sentinel (timeout, BLOCKED, or FAIL), so completion is unconfirmed. Re-run review or inspect `git diff f5f99c0468bc58e9b23b8b8680bf3c791c4e3842 HEAD` before marking done.
