@@ -131,6 +131,29 @@ class DeadSocketFallbackTmux(PersistSuccessTmux):
         return super().__call__(command, **kwargs)
 
 
+class ReattachPasteFailureTmux(ReattachSuccessTmux):
+    def __init__(self):
+        super().__init__()
+        self.failed_reattach = False
+        self.launched = False
+
+    def __call__(self, command, **kwargs):
+        if command[:1] == ["tmux"] and "paste-buffer" in command and not self.launched:
+            self.calls.append(command)
+            self.failed_reattach = True
+            return Completed(stderr="no server running", returncode=1)
+        if command[:1] == ["tmux"] and "new-session" in command:
+            self.launched = True
+            return PersistSuccessTmux.__call__(self, command, **kwargs)
+        if (
+            command[:1] == ["tmux"]
+            and self.launched
+            and "display-message" not in command
+        ):
+            return PersistSuccessTmux.__call__(self, command, **kwargs)
+        return super().__call__(command, **kwargs)
+
+
 def test_persistent_socket_path_is_deterministic_sanitized_and_round_trips() -> None:
     first = persistent_socket_path("home lab", "42")
     second = persistent_socket_path("home lab", "42")
@@ -213,6 +236,43 @@ def test_dead_persistent_socket_falls_back_to_cold_resume(tmp_path: Path) -> Non
         launch = next(command for command in fake.calls if "new-session" in command)
         assert "--resume" in launch
         assert any("kill-session" in command for command in fake.calls)
+    finally:
+        expected_socket.unlink(missing_ok=True)
+
+
+def test_reattach_paste_failure_cleans_up_and_falls_back_to_cold_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fake = ReattachPasteFailureTmux()
+    pid_dir = tmp_path / "runtime" / "claude"
+    session_file = tmp_path / "session.jsonl"
+    expected_socket = persistent_socket_path("homelab", "42")
+    expected_socket.write_text("", encoding="utf-8")
+    monkeypatch.setattr(claude_runner, "pid_start_time", lambda pid: "12345")
+    try:
+        result = run_claude_agent(
+            _config(tmp_path),
+            _issue(),
+            "prompt",
+            run_func=fake,
+            mkdtemp=lambda **_: str(tmp_path / "run"),
+            nonce_factory=lambda: "nonce",
+            clock=lambda: 0.0,
+            sleep=lambda _: None,
+            pidfile_dir=pid_dir,
+            session_file=session_file,
+            persist=True,
+        )
+
+        assert result.exit_code == 0
+        assert fake.failed_reattach is True
+        assert any("kill-session" in command for command in fake.calls)
+        assert any("new-session" in command for command in fake.calls)
+        assert expected_socket.exists()
+        assert (pid_dir / f"{expected_socket.stem}.pid").read_text(
+            encoding="utf-8"
+        ) == f"{os.getpid()} 12345"
+        assert (pid_dir / f"{expected_socket.stem}.meta.json").exists()
     finally:
         expected_socket.unlink(missing_ok=True)
 

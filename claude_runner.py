@@ -932,15 +932,29 @@ def _paste_and_submit(
     ``SUBMIT_RETRY_ATTEMPTS``). Once the placeholder clears, the prompt was
     submitted; a stray Enter on the already-submitted prompt is harmless.
     """
-    _tmux(run_func, socket_path, "load-buffer", str(prompt_file))
-    _tmux(run_func, socket_path, "paste-buffer", "-t", session_name)
-    sleep(PASTE_SETTLE_SECONDS)
-    for _ in range(SUBMIT_RETRY_ATTEMPTS):
-        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Enter")
-        sleep(SUBMIT_RETRY_INTERVAL_SECONDS)
-        pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
-        if not _paste_pending(pane):
-            return True
+    try:
+        load = _tmux(run_func, socket_path, "load-buffer", str(prompt_file))
+        if int(load.returncode) != 0:
+            return False
+        paste = _tmux(run_func, socket_path, "paste-buffer", "-t", session_name)
+        if int(paste.returncode) != 0:
+            return False
+        sleep(PASTE_SETTLE_SECONDS)
+        for _ in range(SUBMIT_RETRY_ATTEMPTS):
+            submit = _tmux(
+                run_func, socket_path, "send-keys", "-t", session_name, "Enter"
+            )
+            if int(submit.returncode) != 0:
+                return False
+            sleep(SUBMIT_RETRY_INTERVAL_SECONDS)
+            capture = _tmux(run_func, socket_path, "capture-pane", "-pt", session_name)
+            if int(capture.returncode) != 0:
+                return False
+            pane = strip_ansi(capture.stdout or capture.stderr or "")
+            if not _paste_pending(pane):
+                return True
+    except OSError:
+        return False
     return False
 
 
