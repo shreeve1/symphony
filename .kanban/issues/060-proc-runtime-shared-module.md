@@ -1,8 +1,10 @@
 ---
 id: 060
 title: proc_runtime.py shared process-runtime module
-status: pending
+status: in-progress
 blocked_by: []
+updated: 2026-06-17
+actor: ralph
 parent: null
 priority: 0
 created: 2026-06-17

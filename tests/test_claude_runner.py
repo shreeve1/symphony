@@ -320,7 +320,7 @@ def test_register_claude_run_writes_server_pid_and_start_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pid_dir = tmp_path / "claude"
-    monkeypatch.setattr(claude_runner, "_pid_start_time", lambda pid: "778899")
+    monkeypatch.setattr(claude_runner, "pid_start_time", lambda pid: "778899")
 
     def fake_run(command, **kwargs):
         assert "display-message" in command

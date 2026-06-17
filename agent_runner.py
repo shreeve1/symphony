@@ -24,6 +24,12 @@ from typing import Protocol, cast
 import ssh_support
 from config import ProjectBinding, SymphonyConfig
 from plane_poller import CandidateIssue
+from proc_runtime import (
+    DEFAULT_RUNTIME_DIR,
+    RPC_RUNTIME_DIR_ENV,
+    pid_alive,
+    pid_start_time,
+)
 from session_continuity import derive_session_id
 
 
@@ -37,14 +43,11 @@ RPC_STEER_POLL_INTERVAL_SECONDS = 0.5
 # <runtime_dir>/rpc/<pid>.pid on launch and removes it on exit; a boot sweep
 # (reap_orphan_rpc_processes) kills any that a crashed scheduler left behind,
 # the RPC analogue of reap_orphan_claude_sockets (#058 orphan reaping).
-RPC_RUNTIME_DIR_ENV = "SYMPHONY_RUNTIME_DIR"
-_DEFAULT_RUNTIME_DIR = Path("/tmp/symphony")
-_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 def _rpc_pidfile_dir(environ: Mapping[str, str] | None = None) -> Path:
     source = os.environ if environ is None else environ
-    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(_DEFAULT_RUNTIME_DIR)))
+    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(DEFAULT_RUNTIME_DIR)))
     return runtime_dir / "rpc"
 
 
@@ -649,7 +652,7 @@ def run_pi_rpc_agent(
             pidfile = pid_dir / f"{process.pid}.pid"
             # Record the process start-time so the boot reaper can tell our
             # orphan from a later process that reused the pid.
-            pidfile.write_text(_pid_start_time(process.pid), encoding="utf-8")
+            pidfile.write_text(pid_start_time(process.pid), encoding="utf-8")
         process.stdin.write(
             json.dumps({"type": "prompt", "message": rendered_prompt}) + "\n"
         )
@@ -822,10 +825,8 @@ def reap_orphan_rpc_processes(
     The pidfile is removed either way. The run reconciler independently fails
     the stale Run rows, so this only cleans up leaked OS processes.
     """
-    if is_alive is None:
-        is_alive = _pid_alive
-    if read_start_time is None:
-        read_start_time = _pid_start_time
+    alive_checker = is_alive or pid_alive
+    start_time_reader = read_start_time or pid_start_time
     if unlink_func is None:
         unlink_func = _unlink_missing_ok
     if glob_func is None:
@@ -855,7 +856,7 @@ def reap_orphan_rpc_processes(
             recorded = pidfile.read_text(encoding="utf-8").strip()
         except OSError:
             recorded = ""
-        if recorded and is_alive(pid) and read_start_time(pid) == recorded:
+        if recorded and alive_checker(pid) and start_time_reader(pid) == recorded:
             # SIGKILL, not SIGTERM: `pi --mode rpc` traps/ignores SIGTERM (it
             # reserves it for graceful RPC abort via stdin), so a leaderless
             # orphan never dies on TERM. The run reconciler has already failed
@@ -868,31 +869,6 @@ def reap_orphan_rpc_processes(
             unlink_func(pidfile)
     LOGGER.info("rpc_orphan_reap_done count=%d steer_queues=%d", count, queue_count)
     return count
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
-def _pid_start_time(pid: int) -> str:
-    """Return the process start-time (jiffies since boot) from /proc/<pid>/stat,
-    or "" if unavailable. Used as a pid-reuse guard. Parses after the last ')'
-    because the comm field can contain spaces and parens."""
-    try:
-        with open(f"/proc/{pid}/stat", "rb") as handle:
-            data = handle.read().decode("utf-8", "replace")
-        fields = data[data.rindex(")") + 2 :].split()
-        return fields[19]  # starttime: field 22 overall, index 19 after comm
-    except (OSError, ValueError, IndexError):
-        return ""
 
 
 def _unlink_missing_ok(path: Path) -> None:
@@ -1146,10 +1122,6 @@ def _read_remaining(stream: TextIOBase) -> str:
         return stream.read()
     except Exception:
         return ""
-
-
-def _strip_ansi(text: str) -> str:
-    return _ANSI_ESCAPE_RE.sub("", text)
 
 
 def _terminate_process_group(

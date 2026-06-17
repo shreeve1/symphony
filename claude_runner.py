@@ -14,17 +14,15 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent_runner import (
-    _DEFAULT_RUNTIME_DIR,
-    RPC_RUNTIME_DIR_ENV,
-    AgentResult,
-    AgentRunnerError,
-    CompletedLike,
-    _pid_alive,
-    _pid_start_time,
-    _strip_ansi,
-)
+from agent_runner import AgentResult, AgentRunnerError, CompletedLike
 from config import SymphonyConfig
+from proc_runtime import (
+    DEFAULT_RUNTIME_DIR,
+    RPC_RUNTIME_DIR_ENV,
+    pid_alive,
+    pid_start_time,
+    strip_ansi,
+)
 from plane_poller import CandidateIssue
 from session_continuity import derive_session_id, session_file_path
 
@@ -156,10 +154,8 @@ def reap_orphan_claude_sockets(
         glob_func = _default_claude_socket_glob
     if unlink_func is None:
         unlink_func = _default_unlink
-    if is_alive is None:
-        is_alive = _pid_alive
-    if read_start_time is None:
-        read_start_time = _pid_start_time
+    alive_checker = is_alive or pid_alive
+    start_time_reader = read_start_time or pid_start_time
     if pidfile_dir is None:
         pidfile_dir = _claude_pidfile_dir(environ)
     count = 0
@@ -167,7 +163,7 @@ def reap_orphan_claude_sockets(
         socket_path = Path(raw_path)
         pidfile = pidfile_dir / f"{socket_path.stem}.pid"
         if _claude_run_owned_live(
-            pidfile, is_alive=is_alive, read_start_time=read_start_time
+            pidfile, is_alive=alive_checker, read_start_time=start_time_reader
         ):
             LOGGER.info("claude_socket_skipped_live path=%s", socket_path)
             continue
@@ -185,8 +181,8 @@ def reap_orphan_claude_sockets(
     _sweep_orphan_claude_pidfiles(
         pidfile_dir,
         unlink_func=unlink_func,
-        is_alive=is_alive,
-        read_start_time=read_start_time,
+        is_alive=alive_checker,
+        read_start_time=start_time_reader,
     )
     LOGGER.info("claude_socket_reap_done count=%d", count)
     return count
@@ -218,7 +214,7 @@ def _sweep_orphan_claude_pidfiles(
 
 def _claude_pidfile_dir(environ: Mapping[str, str] | None = None) -> Path:
     source = os.environ if environ is None else environ
-    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(_DEFAULT_RUNTIME_DIR)))
+    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(DEFAULT_RUNTIME_DIR)))
     return runtime_dir / "claude"
 
 
@@ -290,7 +286,7 @@ def _register_claude_run(
     server_pid = _claude_server_pid(socket_path, session_name, run_func=run_func)
     if server_pid is None:
         return None
-    start_time = _pid_start_time(server_pid)
+    start_time = pid_start_time(server_pid)
     if not start_time:
         return None
     pidfile = pidfile_dir / f"{socket_path.stem}.pid"
@@ -450,7 +446,7 @@ def run_claude_agent(
         )
         if int(launch.returncode) != 0:
             duration_ms = int((clock() - started) * 1000)
-            stderr = _strip_ansi(f"{launch.stdout}\n{launch.stderr}".strip())
+            stderr = strip_ansi(f"{launch.stdout}\n{launch.stderr}".strip())
             return _logged_result(issue, 1, duration_ms, False, "", stderr)
 
         cleanup.pidfile_path = _register_claude_run(
@@ -672,7 +668,7 @@ def _capture_pane_full(
         result = _tmux(run_func, socket_path, "capture-pane", "-pt", session_name)
     except OSError:
         return ""
-    return _strip_ansi(result.stdout or result.stderr or "")
+    return strip_ansi(result.stdout or result.stderr or "")
 
 
 def _capture_pane_tail(
@@ -687,7 +683,7 @@ def _capture_pane_tail(
         )
     except OSError:
         return ""
-    return _strip_ansi(result.stdout or result.stderr or "")
+    return strip_ansi(result.stdout or result.stderr or "")
 
 
 def _paste_and_submit(
