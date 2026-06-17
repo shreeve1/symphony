@@ -1,11 +1,13 @@
 ---
 id: 080
 title: Issue-liveness reaper core for persistent Claude sessions
-status: pending
+status: in-progress
 blocked_by: [77]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build

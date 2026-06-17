@@ -16,6 +16,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
+from typing import Any
 
 from agent_runner import AgentResult, AgentRunnerError, CompletedLike
 from config import SymphonyConfig
@@ -416,6 +417,176 @@ def _write_claude_session_metadata(
         LOGGER.warning("claude_metadata_write_failed path=%s error=%s", path, exc)
         return None
     return path
+
+
+def sweep_persistent_claude_sessions(
+    binding: str,
+    *,
+    get_issue: Callable[[str], Any],
+    now: float,
+    idle_ttl_s: float,
+    max_live: int,
+) -> int:
+    """Reap parked persistent Claude sessions for one binding.
+
+    The metadata sidecar is the authoritative issue/cwd/transcript source.
+    Socket-name issue extraction is only a fallback because sanitized names are
+    lossy and can collide.
+    """
+
+    pidfile_dir = _claude_pidfile_dir()
+    safe_binding = _sanitize_socket_component(binding)
+    parked: list[tuple[float, str, Path, str, Path, Path]] = []
+    reaped = 0
+    for raw_path in _default_claude_socket_glob(
+        f"/tmp/{_PERSISTENT_SOCKET_PREFIX}{safe_binding}-*.sock"
+    ):
+        socket_path = Path(raw_path)
+        metadata_path = pidfile_dir / f"{socket_path.stem}.meta.json"
+        pidfile_path = pidfile_dir / f"{socket_path.stem}.pid"
+        metadata = _read_claude_session_metadata(metadata_path)
+        fallback_issue_id = issue_id_from_persistent_socket(socket_path)
+        issue_id = _metadata_string(metadata, "issue_id") or fallback_issue_id
+        metadata_binding = _metadata_string(metadata, "binding")
+        if metadata_binding and metadata_binding != binding:
+            LOGGER.warning(
+                "claude_persist_metadata_binding_mismatch socket=%s metadata_binding=%s binding=%s",
+                socket_path,
+                metadata_binding,
+                binding,
+            )
+        if metadata and fallback_issue_id and issue_id != fallback_issue_id:
+            LOGGER.warning(
+                "claude_persist_socket_issue_mismatch socket=%s metadata_issue_id=%s socket_issue_id=%s",
+                socket_path,
+                issue_id,
+                fallback_issue_id,
+            )
+        session_name = _metadata_string(metadata, "session_name") or socket_path.stem
+        live = _session_alive(socket_path, session_name, run_func=subprocess.run)
+        if metadata is None and not live:
+            _cleanup_claude_session_artifacts(
+                socket_path,
+                session_name,
+                run_func=subprocess.run,
+                pidfile_path=pidfile_path,
+                metadata_path=metadata_path,
+            )
+            LOGGER.info("claude_persist_orphan_reaped socket=%s", socket_path)
+            reaped += 1
+            continue
+        if not issue_id:
+            LOGGER.warning("claude_persist_missing_issue_id socket=%s", socket_path)
+            continue
+
+        issue = get_issue(issue_id)
+        state = _issue_attr(issue, "state")
+        latest_run_state = _issue_attr(issue, "latest_run_state")
+        if state == "running" and latest_run_state == "running":
+            LOGGER.info("claude_persist_reap_skip_running issue_id=%s", issue_id)
+            continue
+        if issue is None or state in {"done", "archived"}:
+            _cleanup_claude_session_artifacts(
+                socket_path,
+                session_name,
+                run_func=subprocess.run,
+                pidfile_path=pidfile_path,
+                metadata_path=metadata_path,
+            )
+            LOGGER.info(
+                "claude_persist_terminal_reaped issue_id=%s state=%s", issue_id, state
+            )
+            reaped += 1
+            continue
+
+        transcript_path = _metadata_path(metadata, "session_file")
+        mtime = _path_mtime(transcript_path) if transcript_path else None
+        if mtime is not None and now - mtime > idle_ttl_s:
+            _cleanup_claude_session_artifacts(
+                socket_path,
+                session_name,
+                run_func=subprocess.run,
+                pidfile_path=pidfile_path,
+                metadata_path=metadata_path,
+            )
+            LOGGER.info(
+                "claude_persist_idle_reaped issue_id=%s idle_s=%s",
+                issue_id,
+                int(now - mtime),
+            )
+            reaped += 1
+            continue
+        parked.append(
+            (
+                mtime if mtime is not None else float("inf"),
+                issue_id,
+                socket_path,
+                session_name,
+                pidfile_path,
+                metadata_path,
+            )
+        )
+
+    live_cap = max(0, int(max_live))
+    if len(parked) > live_cap:
+        to_reap = sorted(parked, key=lambda item: item[0])[: len(parked) - live_cap]
+        for (
+            _mtime,
+            issue_id,
+            socket_path,
+            session_name,
+            pidfile_path,
+            metadata_path,
+        ) in to_reap:
+            _cleanup_claude_session_artifacts(
+                socket_path,
+                session_name,
+                run_func=subprocess.run,
+                pidfile_path=pidfile_path,
+                metadata_path=metadata_path,
+            )
+            reaped += 1
+        LOGGER.info(
+            "claude_persist_max_live_reaped count=%s issue_ids=%s",
+            len(to_reap),
+            ",".join(issue_id for _, issue_id, *_ in to_reap),
+        )
+    return reaped
+
+
+def _read_claude_session_metadata(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _metadata_string(metadata: Mapping[str, Any] | None, key: str) -> str | None:
+    if metadata is None:
+        return None
+    value = metadata.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _metadata_path(metadata: Mapping[str, Any] | None, key: str) -> Path | None:
+    value = _metadata_string(metadata, key)
+    return Path(value) if value else None
+
+
+def _issue_attr(issue: Any, key: str) -> Any:
+    if issue is None:
+        return None
+    if isinstance(issue, Mapping):
+        return issue.get(key)
+    return getattr(issue, key, None)
+
+
+def _path_mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
 
 
 @dataclass

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from itertools import chain, repeat
 from pathlib import Path
 
@@ -578,3 +579,192 @@ def test_claude_idle_nudge_after_steer_names_current_generation(
     assert "done.1" in nudge_prompt
     assert "result.0.txt" not in nudge_prompt
     assert "done.0" not in nudge_prompt
+
+
+def _write_meta(pid_dir: Path, socket: Path, *, issue_id: str, session_file: Path) -> None:
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    (pid_dir / f"{socket.stem}.meta.json").write_text(
+        json.dumps(
+            {
+                "binding": "homelab",
+                "cwd": "/unused/cwd",
+                "issue_id": issue_id,
+                "session_file": str(session_file),
+                "session_name": socket.stem,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _patch_sweep_io(monkeypatch, tmp_path: Path, sockets: list[Path], reaped: list[str]) -> Path:
+    pid_dir = tmp_path / "runtime" / "claude"
+    monkeypatch.setattr(claude_runner, "_claude_pidfile_dir", lambda environ=None: pid_dir)
+    monkeypatch.setattr(claude_runner, "_default_claude_socket_glob", lambda pattern: sockets)
+    monkeypatch.setattr(claude_runner, "_session_alive", lambda *args, **kwargs: True)
+
+    def cleanup(socket_path, session_name, **kwargs):
+        reaped.append(socket_path.stem)
+        socket_path.unlink(missing_ok=True)
+        pidfile = kwargs.get("pidfile_path")
+        metadata = kwargs.get("metadata_path")
+        if pidfile is not None:
+            pidfile.unlink(missing_ok=True)
+        if metadata is not None:
+            metadata.unlink(missing_ok=True)
+
+    monkeypatch.setattr(claude_runner, "_cleanup_claude_session_artifacts", cleanup)
+    return pid_dir
+
+
+def test_sweep_skips_running_issue_even_with_frozen_transcript(tmp_path: Path, monkeypatch) -> None:
+    socket = tmp_path / "symphony-claude-persist-homelab-42.sock"
+    socket.write_text("", encoding="utf-8")
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    os.utime(transcript, (10.0, 10.0))
+    reaped: list[str] = []
+    pid_dir = _patch_sweep_io(monkeypatch, tmp_path, [socket], reaped)
+    _write_meta(pid_dir, socket, issue_id="42", session_file=transcript)
+
+    count = claude_runner.sweep_persistent_claude_sessions(
+        "homelab",
+        get_issue=lambda issue_id: {"state": "running", "latest_run_state": "running"},
+        now=10_000.0,
+        idle_ttl_s=30.0,
+        max_live=0,
+    )
+
+    assert count == 0
+    assert reaped == []
+    assert socket.exists()
+
+
+def test_sweep_reaps_terminal_missing_and_idle_but_keeps_fresh_parked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sockets = [tmp_path / f"symphony-claude-persist-homelab-{issue}.sock" for issue in ("done", "missing", "idle", "fresh")]
+    for socket in sockets:
+        socket.write_text("", encoding="utf-8")
+    reaped: list[str] = []
+    pid_dir = _patch_sweep_io(monkeypatch, tmp_path, sockets, reaped)
+    for socket in sockets:
+        transcript = tmp_path / f"{socket.stem}.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        mtime = 10.0 if socket.stem.endswith("idle") else 95.0
+        os.utime(transcript, (mtime, mtime))
+        _write_meta(pid_dir, socket, issue_id=socket.stem.rsplit("-", 1)[1], session_file=transcript)
+
+    def get_issue(issue_id: str):
+        if issue_id == "missing":
+            return None
+        if issue_id == "done":
+            return {"state": "done", "latest_run_state": "succeeded"}
+        return {"state": "in_review", "latest_run_state": "succeeded"}
+
+    count = claude_runner.sweep_persistent_claude_sessions(
+        "homelab",
+        get_issue=get_issue,
+        now=100.0,
+        idle_ttl_s=30.0,
+        max_live=8,
+    )
+
+    assert count == 3
+    assert reaped == [
+        "symphony-claude-persist-homelab-done",
+        "symphony-claude-persist-homelab-missing",
+        "symphony-claude-persist-homelab-idle",
+    ]
+    assert sockets[-1].exists()
+
+
+def test_sweep_max_live_reaps_oldest_parked_only_and_logs(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    ids = ["running", "old", "new"]
+    sockets = [tmp_path / f"symphony-claude-persist-homelab-{issue}.sock" for issue in ids]
+    for socket in sockets:
+        socket.write_text("", encoding="utf-8")
+    reaped: list[str] = []
+    pid_dir = _patch_sweep_io(monkeypatch, tmp_path, sockets, reaped)
+    mtimes = {"running": 1.0, "old": 2.0, "new": 3.0}
+    for socket, issue_id in zip(sockets, ids, strict=True):
+        transcript = tmp_path / f"{issue_id}.jsonl"
+        transcript.write_text("", encoding="utf-8")
+        os.utime(transcript, (mtimes[issue_id], mtimes[issue_id]))
+        _write_meta(pid_dir, socket, issue_id=issue_id, session_file=transcript)
+
+    def get_issue(issue_id: str):
+        if issue_id == "running":
+            return {"state": "running", "latest_run_state": "running"}
+        return {"state": "in_review", "latest_run_state": "succeeded"}
+
+    caplog.set_level(logging.INFO)
+    count = claude_runner.sweep_persistent_claude_sessions(
+        "homelab",
+        get_issue=get_issue,
+        now=10.0,
+        idle_ttl_s=30.0,
+        max_live=1,
+    )
+
+    assert count == 1
+    assert reaped == ["symphony-claude-persist-homelab-old"]
+    assert sockets[0].exists()
+    assert "claude_persist_max_live_reaped" in caplog.text
+    assert "old" in caplog.text
+
+
+def test_sweep_uses_sidecar_issue_and_session_file_as_authority(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    socket = tmp_path / "symphony-claude-persist-homelab-lossy-999.sock"
+    socket.write_text("", encoding="utf-8")
+    authoritative_transcript = tmp_path / "worktree" / "session.jsonl"
+    authoritative_transcript.parent.mkdir()
+    authoritative_transcript.write_text("", encoding="utf-8")
+    os.utime(authoritative_transcript, (1.0, 1.0))
+    reaped: list[str] = []
+    pid_dir = _patch_sweep_io(monkeypatch, tmp_path, [socket], reaped)
+    _write_meta(pid_dir, socket, issue_id="42", session_file=authoritative_transcript)
+    seen_issue_ids: list[str] = []
+
+    def get_issue(issue_id: str):
+        seen_issue_ids.append(issue_id)
+        return {"state": "in_review", "latest_run_state": "succeeded"}
+
+    caplog.set_level(logging.WARNING)
+    count = claude_runner.sweep_persistent_claude_sessions(
+        "homelab",
+        get_issue=get_issue,
+        now=100.0,
+        idle_ttl_s=30.0,
+        max_live=8,
+    )
+
+    assert count == 1
+    assert seen_issue_ids == ["42"]
+    assert reaped == ["symphony-claude-persist-homelab-lossy-999"]
+    assert "claude_persist_socket_issue_mismatch" in caplog.text
+
+
+def test_sweep_reaps_dead_socket_with_no_readable_sidecar(tmp_path: Path, monkeypatch) -> None:
+    socket = tmp_path / "symphony-claude-persist-homelab-42.sock"
+    socket.write_text("", encoding="utf-8")
+    reaped: list[str] = []
+    pid_dir = _patch_sweep_io(monkeypatch, tmp_path, [socket], reaped)
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    (pid_dir / f"{socket.stem}.meta.json").write_text("not json", encoding="utf-8")
+    monkeypatch.setattr(claude_runner, "_session_alive", lambda *args, **kwargs: False)
+
+    count = claude_runner.sweep_persistent_claude_sessions(
+        "homelab",
+        get_issue=lambda issue_id: {"state": "in_review", "latest_run_state": "succeeded"},
+        now=100.0,
+        idle_ttl_s=30.0,
+        max_live=8,
+    )
+
+    assert count == 1
+    assert reaped == ["symphony-claude-persist-homelab-42"]
