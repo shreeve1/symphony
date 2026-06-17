@@ -495,9 +495,7 @@ def run_claude_agent(
         )
         if poll_result is not None:
             return poll_result
-        raise RuntimeError(
-            "_poll_claude_until_done returned None unexpectedly"
-        )
+        raise RuntimeError("_poll_claude_until_done returned None unexpectedly")
     finally:
         cleanup.cleanup()
 
@@ -531,24 +529,18 @@ def _poll_claude_until_done(
             stdout = _read_result_with_grace(result_file, sleep=sleep)
             if not stdout.strip():
                 duration_ms = int((clock() - started) * 1000)
-                pane = _capture_pane_tail(
-                    socket_path, session_name, run_func=run_func
-                )
+                pane = _capture_pane_tail(socket_path, session_name, run_func=run_func)
                 stderr = (
                     "claude done file exists but result file is missing or "
                     f"empty after {RESULT_GRACE_SECONDS:g}s grace\n{pane}"
                 )
                 return _logged_result(issue, 137, duration_ms, False, "", stderr)
-            stderr = _capture_pane_full(
-                socket_path, session_name, run_func=run_func
-            )
+            stderr = _capture_pane_full(socket_path, session_name, run_func=run_func)
             duration_ms = int((clock() - started) * 1000)
             return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
         if not _session_alive(socket_path, session_name, run_func=run_func):
             duration_ms = int((clock() - started) * 1000)
-            stderr = _capture_pane_tail(
-                socket_path, session_name, run_func=run_func
-            )
+            stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
             return _logged_result(issue, 1, duration_ms, False, "", stderr)
         # Idle requires BOTH the pane and the agent's session transcript to
         # stop changing. The two signals are complementary: a long tool call
@@ -568,9 +560,7 @@ def _poll_claude_until_done(
         if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
             if nudges_used >= IDLE_NUDGE_ATTEMPTS:
                 duration_ms = int((clock() - started) * 1000)
-                tail = _capture_pane_tail(
-                    socket_path, session_name, run_func=run_func
-                )
+                tail = _capture_pane_tail(socket_path, session_name, run_func=run_func)
                 stderr = (
                     "claude idle at prompt with no done file after "
                     f"{IDLE_NUDGE_ATTEMPTS} completion nudges; agent ended its "
@@ -578,8 +568,7 @@ def _poll_claude_until_done(
                     f"protocol\n{tail}"
                 )
                 LOGGER.info(
-                    "claude_idle_no_completion issue_id=%s nudges=%s "
-                    "duration_ms=%s",
+                    "claude_idle_no_completion issue_id=%s nudges=%s duration_ms=%s",
                     issue.id,
                     nudges_used,
                     duration_ms,
@@ -598,9 +587,7 @@ def _poll_claude_until_done(
             unchanged_polls = 0
             last_pane = None
             last_mtime = None
-            LOGGER.info(
-                "claude_idle_nudge issue_id=%s nudge=%s", issue.id, nudges_used
-            )
+            LOGGER.info("claude_idle_nudge issue_id=%s nudge=%s", issue.id, nudges_used)
         sleep(1.0)
 
     duration_ms = int((clock() - started) * 1000)

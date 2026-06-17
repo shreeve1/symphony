@@ -1012,7 +1012,8 @@ def _drain_rpc_events(
     deadline: float,
     run_id: str,
     *,
-    read_queued_steers: Callable[[str, int], tuple[list[Mapping[str, object]], int]] | None,
+    read_queued_steers: Callable[[str, int], tuple[list[Mapping[str, object]], int]]
+    | None,
     steer_offset: int,
     read_line: Callable[[float], tuple[str | None, bool]],
     close_reader: Callable[[], None],
@@ -1058,9 +1059,7 @@ def _drain_rpc_events(
                 )
                 _forward_steer_records(process, steer_records)
 
-            line, eof = read_line(
-                min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS)
-            )
+            line, eof = read_line(min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS))
             if eof:
                 # stdout closed: process exited on its own (crash / fake).
                 if process.poll() is not None:
