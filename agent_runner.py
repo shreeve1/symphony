@@ -216,6 +216,16 @@ def verify_pi_support(
         )
 
 
+def _uses_plane_tracker(
+    config: SymphonyConfig, binding: ProjectBinding | None = None
+) -> bool:
+    if binding is not None:
+        return binding.tracker == "plane"
+    if config.bindings:
+        return config.bindings[0].tracker == "plane"
+    return True
+
+
 def _agent_env(
     config: SymphonyConfig,
     issue: CandidateIssue,
@@ -250,15 +260,20 @@ def _agent_env(
             "TERM": "dumb",
             "NO_COLOR": "1",
             "SYMPHONY_ISSUE_ID": issue.id,
-            "SYMPHONY_PLANE_API_URL": config.plane_api_url,
-            "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
-            "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
-            "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
-            "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
-            "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
             "PYTHONPATH": str(Path(__file__).parent),
         }
     )
+    if _uses_plane_tracker(config):
+        env.update(
+            {
+                "SYMPHONY_PLANE_API_URL": config.plane_api_url,
+                "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
+                "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
+                "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
+                "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
+                "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
+            }
+        )
     return env
 
 
@@ -276,7 +291,7 @@ def run_agent(
     clock: Callable[[], float] = time.monotonic,
     environ: dict[str, str] | None = None,
 ) -> AgentResult:
-    """Run pi for a Plane issue with a temporary Plane helper in PATH."""
+    """Run pi for an issue, shipping the Plane helper only for Plane bindings."""
 
     helper_source = plane_cli_source or Path(__file__).with_name("plane_cli.py")
     if popen_factory is None:
@@ -318,9 +333,10 @@ def run_agent(
 
     try:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
-        helper_target = Path(temp_dir) / "plane"
-        copy_file(helper_source, helper_target)
-        helper_target.chmod(0o700)
+        if _uses_plane_tracker(config):
+            helper_target = Path(temp_dir) / "plane"
+            copy_file(helper_source, helper_target)
+            helper_target.chmod(0o700)
 
         source_env = os.environ if environ is None else environ
         env = _agent_env(config, issue, temp_dir, source_env)
@@ -411,25 +427,33 @@ def _remote_callback_port(api_url: str) -> int:
     return int(match.group(1)) if match else 8000
 
 
-def _remote_exports(config: SymphonyConfig, issue: CandidateIssue) -> dict[str, str]:
+def _remote_exports(
+    config: SymphonyConfig, issue: CandidateIssue, *, binding: ProjectBinding
+) -> dict[str, str]:
     """Tracker-callback env forwarded to the remote agent.
 
     Mirrors the SYMPHONY_* keys from ``_agent_env`` but omits local-only values
-    (PATH/HOME/PYTHONPATH/TMPDIR) — the remote host supplies its own. The
-    loopback API URL is preserved verbatim so it resolves through the tunnel.
+    (PATH/HOME/PYTHONPATH/TMPDIR) — the remote host supplies its own. Plane
+    callback keys are included only for Plane bindings.
     """
 
-    return {
+    exports = {
         "SYMPHONY_ISSUE_ID": issue.id,
-        "SYMPHONY_PLANE_API_URL": config.plane_api_url,
-        "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
-        "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
-        "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
-        "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
-        "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
         "TERM": "dumb",
         "NO_COLOR": "1",
     }
+    if _uses_plane_tracker(config, binding):
+        exports.update(
+            {
+                "SYMPHONY_PLANE_API_URL": config.plane_api_url,
+                "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
+                "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
+                "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
+                "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
+                "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
+            }
+        )
+    return exports
 
 
 def _build_remote_command(
@@ -443,18 +467,17 @@ def _build_remote_command(
 
     ``cd <repo> && export K=V... && PATH=<helper_dir>:$PATH <pi ...>`` — every
     value shell-quoted so prompts, paths, and secrets survive the remote shell.
-    The helper dir (carrying the shipped ``plane`` callback CLI) is prepended to
-    PATH so the agent can report back through the reverse tunnel.
+    For Plane bindings, the helper dir carrying the shipped ``plane`` callback
+    CLI is prepended to PATH so the agent can report back through the reverse
+    tunnel. For Podium bindings, no helper dir is prepended.
     """
 
     export_str = " ".join(
         f"export {key}={shlex.quote(value)};" for key, value in exports.items()
     )
     pi_str = " ".join(shlex.quote(part) for part in pi_command)
-    return (
-        f"cd {shlex.quote(repo_path)} && {export_str} "
-        f"PATH={shlex.quote(helper_dir)}:$PATH {pi_str}"
-    )
+    path_prefix = f"PATH={shlex.quote(helper_dir)}:$PATH " if helper_dir else ""
+    return f"cd {shlex.quote(repo_path)} && {export_str} {path_prefix}{pi_str}"
 
 
 def _ssh_base_args(remote, *, reverse_port: int | None = None) -> list[str]:
@@ -475,7 +498,7 @@ def run_remote_agent(
 ) -> AgentResult:
     """Run pi one-shot on a remote host over SSH (ADR-0012, v1).
 
-    Ships the ``plane`` callback helper to a remote temp dir, then executes
+    Ships the ``plane`` callback helper only for Plane bindings, then executes
     ``ssh -R <port>:127.0.0.1:<port> user@host 'cd <repo> && ... pi --print ...'``
     so the loopback-only tracker API stays reachable through the reverse tunnel
     without any LAN exposure. Verdict-only: Session Tail, steering, and remote
@@ -490,8 +513,9 @@ def run_remote_agent(
         popen_factory = cast(Callable[..., ProcessLike], subprocess.Popen)
 
     helper_source = plane_cli_source or Path(__file__).with_name("plane_cli.py")
-    helper_text = helper_source.read_text()
-    remote_tmp = f"/tmp/symphony-remote-{issue.id}"
+    ship_plane_helper = _uses_plane_tracker(config, binding)
+    helper_text = helper_source.read_text() if ship_plane_helper else ""
+    remote_tmp = f"/tmp/symphony-remote-{issue.id}" if ship_plane_helper else ""
     started = clock()
 
     provider = getattr(issue, "resolved_provider", "") or config.pi_provider
@@ -522,29 +546,30 @@ def run_remote_agent(
     port = _remote_callback_port(config.plane_api_url)
     remote_command = _build_remote_command(
         repo_path=str(binding.repo_path),
-        exports=_remote_exports(config, issue),
+        exports=_remote_exports(config, issue, binding=binding),
         pi_command=pi_command,
         helper_dir=remote_tmp,
     )
 
-    # 1. Ship the plane callback helper to the remote temp dir.
-    ship = run_func(
-        _ssh_base_args(remote)
-        + [
-            f"mkdir -p {shlex.quote(remote_tmp)} && cat > {shlex.quote(remote_tmp)}/plane "
-            f"&& chmod 700 {shlex.quote(remote_tmp)}/plane"
-        ],
-        input=helper_text,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=PI_HELP_TIMEOUT_SECONDS,
-    )
-    if ship.returncode != 0:
-        raise AgentRunnerError(
-            f"Failed to ship plane helper to {remote.user}@{remote.host}: "
-            f"{ship.stderr.strip()}"
+    if ship_plane_helper:
+        # 1. Ship the plane callback helper to the remote temp dir.
+        ship = run_func(
+            _ssh_base_args(remote)
+            + [
+                f"mkdir -p {shlex.quote(remote_tmp)} && cat > {shlex.quote(remote_tmp)}/plane "
+                f"&& chmod 700 {shlex.quote(remote_tmp)}/plane"
+            ],
+            input=helper_text,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PI_HELP_TIMEOUT_SECONDS,
         )
+        if ship.returncode != 0:
+            raise AgentRunnerError(
+                f"Failed to ship plane helper to {remote.user}@{remote.host}: "
+                f"{ship.stderr.strip()}"
+            )
 
     process: ProcessLike | None = None
     try:
@@ -601,14 +626,15 @@ def run_remote_agent(
             return AgentResult(-1, duration_ms, True, stdout, stderr)
     finally:
         # Best-effort remote cleanup; the SSH channel close already SIGHUPs pi.
-        with suppress(Exception):
-            run_func(
-                _ssh_base_args(remote) + [f"rm -rf {shlex.quote(remote_tmp)}"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=PI_HELP_TIMEOUT_SECONDS,
-            )
+        if ship_plane_helper:
+            with suppress(Exception):
+                run_func(
+                    _ssh_base_args(remote) + [f"rm -rf {shlex.quote(remote_tmp)}"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=PI_HELP_TIMEOUT_SECONDS,
+                )
 
 
 def run_pi_rpc_agent(
@@ -638,9 +664,10 @@ def run_pi_rpc_agent(
 
     try:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
-        helper_target = Path(temp_dir) / "plane"
-        copy_file(helper_source, helper_target)
-        helper_target.chmod(0o700)
+        if _uses_plane_tracker(config):
+            helper_target = Path(temp_dir) / "plane"
+            copy_file(helper_source, helper_target)
+            helper_target.chmod(0o700)
 
         source_env = os.environ if environ is None else environ
         env = _agent_env(config, issue, temp_dir, source_env)

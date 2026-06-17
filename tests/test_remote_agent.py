@@ -53,14 +53,16 @@ def _config(tmp_path: Path) -> SymphonyConfig:
     )
 
 
-def _remote_binding(repo: str = "/home/itadmin/symphony") -> ProjectBinding:
+def _remote_binding(
+    repo: str = "/home/itadmin/symphony", *, tracker: str = "podium"
+) -> ProjectBinding:
     return ProjectBinding(
         name="n8n",
         plane_project_id="n8n",
         repo_path=Path(repo),
         base_branch="main",
         tracker_contract=DEFAULT_CONTRACT,
-        tracker="podium",
+        tracker="plane" if tracker == "plane" else "podium",
         remote=RemotePolicy(host="100.95.224.218", user="itadmin"),
     )
 
@@ -96,7 +98,7 @@ def test_build_remote_command_quotes_and_orders() -> None:
     assert "'a prompt; rm -rf /'" in cmd
 
 
-def test_run_remote_agent_ships_helper_and_builds_ssh(tmp_path: Path) -> None:
+def test_run_remote_agent_omits_plane_env_and_helper_for_podium(tmp_path: Path) -> None:
     run_calls: list[tuple[list[str], dict]] = []
     popen_calls: list[tuple[list[str], dict]] = []
 
@@ -119,13 +121,7 @@ def test_run_remote_agent_ships_helper_and_builds_ssh(tmp_path: Path) -> None:
 
     assert result == AgentResult(0, result.duration_ms, False, "done", "")
 
-    # First run_func call ships the helper to the remote temp dir over SSH.
-    ship_cmd, ship_kwargs = run_calls[0]
-    assert ship_cmd[0] == "ssh"
-    assert "itadmin@100.95.224.218" in ship_cmd
-    assert "BatchMode=yes" in ship_cmd
-    assert "cat > /tmp/symphony-remote-issue-27/plane" in ship_cmd[-1]
-    assert ship_kwargs["input"]  # helper text piped on stdin
+    assert run_calls == []
 
     # The exec call carries the reverse tunnel and the remote command.
     exec_cmd, _ = popen_calls[0]
@@ -135,13 +131,54 @@ def test_run_remote_agent_ships_helper_and_builds_ssh(tmp_path: Path) -> None:
     assert exec_cmd[-2] == "itadmin@100.95.224.218"
     remote_command = exec_cmd[-1]
     assert remote_command.startswith("cd /home/itadmin/symphony &&")
-    assert "export SYMPHONY_PLANE_API_URL=http://127.0.0.1:8000;" in remote_command
     assert "export SYMPHONY_ISSUE_ID=issue-27;" in remote_command
+    assert "SYMPHONY_PLANE_API_KEY" not in remote_command
+    assert "SYMPHONY_PLANE_API_URL" not in remote_command
+    assert "SYMPHONY_PLANE_FRONTEND_URL" not in remote_command
+    assert "SYMPHONY_PLANE_PROJECT_ID" not in remote_command
+    assert "SYMPHONY_PLANE_WORKSPACE_SLUG" not in remote_command
+    assert "PLANE_DASHBOARD_URL" not in remote_command
+    assert "PATH=/tmp/symphony-remote-issue-27:$PATH" not in remote_command
     # pi dispatched by basename so the remote PATH resolves it.
     assert " pi --print --no-session" in remote_command
     assert "'do the work'" in remote_command
 
-    # Last run_func call is best-effort remote cleanup.
+
+def test_run_remote_agent_ships_helper_and_plane_env_for_plane_binding(
+    tmp_path: Path,
+) -> None:
+    run_calls: list[tuple[list[str], dict]] = []
+    popen_calls: list[tuple[list[str], dict]] = []
+
+    def fake_run(command, **kwargs):
+        run_calls.append((command, kwargs))
+        return Completed(returncode=0)
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append((command, kwargs))
+        return FakeProcess(responses=[("done", "")])
+
+    run_remote_agent(
+        _config(tmp_path),
+        _issue(),
+        "do the work",
+        binding=_remote_binding(tracker="plane"),
+        run_func=fake_run,
+        popen_factory=fake_popen,
+    )
+
+    ship_cmd, ship_kwargs = run_calls[0]
+    assert ship_cmd[0] == "ssh"
+    assert "itadmin@100.95.224.218" in ship_cmd
+    assert "BatchMode=yes" in ship_cmd
+    assert "cat > /tmp/symphony-remote-issue-27/plane" in ship_cmd[-1]
+    assert ship_kwargs["input"]
+
+    remote_command = popen_calls[0][0][-1]
+    assert "export SYMPHONY_PLANE_API_URL=http://127.0.0.1:8000;" in remote_command
+    assert "export SYMPHONY_PLANE_API_KEY=fake-plane-key-for-tests;" in remote_command
+    assert "PATH=/tmp/symphony-remote-issue-27:$PATH" in remote_command
+
     cleanup_cmd, _ = run_calls[-1]
     assert "rm -rf /tmp/symphony-remote-issue-27" in cleanup_cmd[-1]
 
@@ -238,7 +275,7 @@ def test_run_remote_agent_ship_failure_raises(tmp_path: Path) -> None:
             _config(tmp_path),
             _issue(),
             "go",
-            binding=_remote_binding(),
+            binding=_remote_binding(tracker="plane"),
             run_func=lambda *a, **k: Completed(
                 stderr="permission denied", returncode=255
             ),

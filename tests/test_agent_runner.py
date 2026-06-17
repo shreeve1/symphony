@@ -100,6 +100,31 @@ def _config_with_model(tmp_path: Path) -> SymphonyConfig:
     )
 
 
+def _podium_config(tmp_path: Path) -> SymphonyConfig:
+    base = _config(tmp_path)
+    return SymphonyConfig(
+        plane_api_url=base.plane_api_url,
+        plane_api_key=base.plane_api_key,
+        plane_workspace_slug=base.plane_workspace_slug,
+        plane_project_id=base.plane_project_id,
+        homelab_repo_path=tmp_path,
+        pi_bin=base.pi_bin,
+        pi_provider=base.pi_provider,
+        pi_model=base.pi_model,
+        run_timeout_ms=base.run_timeout_ms,
+        bindings=(
+            ProjectBinding(
+                name="podium-test",
+                plane_project_id=base.plane_project_id,
+                repo_path=tmp_path,
+                base_branch="main",
+                tracker_contract=base.bindings[0].tracker_contract,
+                tracker="podium",
+            ),
+        ),
+    )
+
+
 def _issue() -> CandidateIssue:
     return CandidateIssue(
         id="issue-123",
@@ -435,6 +460,43 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     # TERM must be overridden, NO_COLOR forced.
     assert env.get("TERM") == "dumb"
     assert env.get("NO_COLOR") == "1"
+
+
+def test_run_agent_omits_plane_env_and_helper_for_podium_binding(
+    tmp_path: Path,
+) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+    copied: list[tuple[Path, Path]] = []
+
+    def fake_popen(command, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    result = run_agent(
+        _podium_config(tmp_path),
+        _issue(),
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        mkdtemp=lambda **k: str(temp_dir),
+        copy_file=lambda src, dst: copied.append((src, dst)),
+        environ={"PATH": "/usr/bin", "HOME": "/home/james"},
+    )
+
+    assert result.exit_code == 0
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["SYMPHONY_ISSUE_ID"] == "issue-123"
+    assert "SYMPHONY_PLANE_API_KEY" not in env
+    assert "SYMPHONY_PLANE_API_URL" not in env
+    assert "SYMPHONY_PLANE_FRONTEND_URL" not in env
+    assert "SYMPHONY_PLANE_PROJECT_ID" not in env
+    assert "SYMPHONY_PLANE_WORKSPACE_SLUG" not in env
+    assert "PLANE_DASHBOARD_URL" not in env
+    assert copied == []
 
 
 def test_run_agent_uses_worktree_cwd_when_issue_opted_in(tmp_path: Path) -> None:

@@ -1,11 +1,14 @@
 ---
 id: 067
 title: Stop shipping Plane secret/env to podium-binding agents
-status: pending
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -19,10 +22,10 @@ Finding L6-02(a) (`.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root
 
 ## Acceptance criteria
 
-- [ ] On a podium binding, the constructed agent env does **not** contain `SYMPHONY_PLANE_API_KEY` — covered by a test asserting its absence.
-- [ ] On a plane binding (constructed in test), the Plane callback env is still injected — back-compat test.
-- [ ] The `plane` helper is shipped only for plane-tracker bindings, or its podium no-op is documented in code.
-- [ ] `uv run pytest` passes, including the new podium-no-secret test.
+- [x] On a podium binding, the constructed agent env does **not** contain `SYMPHONY_PLANE_API_KEY` — covered by a test asserting its absence.
+- [x] On a plane binding (constructed in test), the Plane callback env is still injected — back-compat test.
+- [x] The `plane` helper is shipped only for plane-tracker bindings, or its podium no-op is documented in code.
+- [x] `uv run pytest` passes, including the new podium-no-secret test.
 
 ## Verification
 
@@ -31,3 +34,9 @@ Finding L6-02(a) (`.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+- Added tracker-kind gating in `agent_runner.py` so Podium bindings keep `SYMPHONY_ISSUE_ID`/runtime env but do not receive `SYMPHONY_PLANE_*`, `PLANE_DASHBOARD_URL`, or the `plane` helper.
+- Preserved Plane binding behavior for local, RPC, and remote dispatch paths.
+- Added focused tests for Podium local env/helper omission and Plane remote env/helper back-compat.

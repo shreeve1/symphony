@@ -79,3 +79,13 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #067 remains independently eligible; issue #068 can proceed from #064 without depending on this factory rename.
 
 **Actionable review:** Diffed `858ba03a9993c668bb27a7511aef43f35d1deff9..HEAD`, read every changed file, verified all acceptance criteria, and fixed one legacy app-dir import regression in `web/api/main.py` with coverage in `web/api/tests/test_context_compaction.py`. Verification: `uv run pytest` (885 passed, 2 skipped), `grep -n "vars(engine_main)\|vars(compaction)" web/api/main.py` no matches, `uv run ruff check web/api/main.py web/api/tests/test_context_compaction.py` clean, `git diff --check` clean, touched-file LSP diagnostics clean.
+
+## #067 Stop shipping Plane secret/env to podium-binding agents — 2026-06-17
+
+**What changed:** Gated Plane callback env and `plane` helper shipping in `agent_runner.py` so Podium bindings no longer receive `SYMPHONY_PLANE_*`, `PLANE_DASHBOARD_URL`, or the helper, while Plane bindings keep the legacy callback surface.
+**Files:** `agent_runner.py`, `tests/test_agent_runner.py`, `tests/test_remote_agent.py`, `.kanban/issues/067-plane-secret-deshipping-podium.md`.
+**Decisions:** Tracker kind comes from the scoped `SymphonyConfig.bindings[0].tracker` for local/RPC dispatch and the explicit `ProjectBinding.tracker` for remote dispatch.
+**Conventions established:** Podium agent status flows through output markers, not the `plane` helper; callback secrets and helpers stay Plane-only.
+**Notes for next iteration:** Issue #068 can assume podium-binding agents no longer receive Plane callback secrets from `agent_runner.py`.
+
+**Actionable review:** `git diff 444f5b0f2509e12a746d0c4250f72bb9e0636eaa HEAD` was empty at session start, so the review loop implemented the missing slice, read every changed file, and verified the full suite. Verification: `uv run pytest` (887 passed, 2 skipped); focused agent-runner/remote tests passed; touched-file LSP diagnostics clean.
