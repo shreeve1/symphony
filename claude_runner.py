@@ -527,17 +527,18 @@ def run_claude_agent(
         socket_path = Path("/tmp") / f"{namespace}.sock"
     session_name = namespace
     prompt_file = temp_dir / "prompt.txt"
-    result_file = temp_dir / "result.txt"
-    done_file = temp_dir / "done"
+    result_file = temp_dir / "result.0.txt"
+    done_file = temp_dir / "done.0"
     cleanup = ClaudeRunCleanup(
         socket_path, session_name, temp_dir, run_func, remove_tree
     )
     session_reusable = False
+    run_id = str(getattr(issue, "active_run_id", "") or "")
+    source_env = dict(os.environ) if environ is None else environ
 
     try:
         temp_dir.mkdir(parents=True, exist_ok=True)
         cwd = _resolve_cwd(config, issue, create_worktree_func=create_worktree_func)
-        source_env = dict(os.environ) if environ is None else environ
         env = _claude_env(issue, source_env)
         session_id = getattr(issue, "agent_session_id", "") or derive_session_id(
             issue.id
@@ -690,6 +691,8 @@ def run_claude_agent(
             session_name,
             transcript_file,
             prompt_file,
+            run_id=run_id,
+            source_env=source_env,
             clock=clock,
             sleep=sleep,
             run_func=run_func,
@@ -700,6 +703,11 @@ def run_claude_agent(
             return poll_result
         raise RuntimeError("_poll_claude_until_done returned None unexpectedly")
     finally:
+        if run_id:
+            with suppress(Exception):
+                import_module("web.api.steer_queue").clear_steer_queue(
+                    run_id, environ=source_env
+                )
         cleanup.cleanup_run()
         if not (persist and session_reusable):
             cleanup.cleanup_session()
@@ -716,6 +724,8 @@ def _poll_claude_until_done(
     transcript_file: Path,
     prompt_file: Path,
     *,
+    run_id: str,
+    source_env: Mapping[str, str],
     clock: Callable[[], float],
     sleep: Callable[[float], object],
     run_func: Callable[..., CompletedLike],
@@ -729,9 +739,38 @@ def _poll_claude_until_done(
     last_mtime: float | None = None
     unchanged_polls = 0
     nudges_used = 0
+    generation = 0
+    steer_offset = 0
+    read_queued_steers = _load_steer_reader(run_id)
+    active_result = result_file
+    active_done = done_file
+
     while clock() <= deadline:
-        if done_file.exists():
-            stdout = _read_result_with_grace(result_file, sleep=sleep)
+        if active_done.exists():
+            records, steer_offset = _read_steer_records(
+                run_id,
+                steer_offset,
+                read_queued_steers=read_queued_steers,
+                source_env=source_env,
+            )
+            generation, active_result, active_done, delivered = _deliver_steer_records(
+                issue,
+                records,
+                generation,
+                prompt_file,
+                socket_path,
+                session_name,
+                run_func=run_func,
+                sleep=sleep,
+            )
+            if delivered:
+                unchanged_polls = 0
+                nudges_used = 0
+                last_pane = None
+                last_mtime = None
+                continue
+
+            stdout = _read_result_with_grace(active_result, sleep=sleep)
             if not stdout.strip():
                 duration_ms = int((clock() - started) * 1000)
                 pane = _capture_pane_tail(socket_path, session_name, run_func=run_func)
@@ -743,6 +782,30 @@ def _poll_claude_until_done(
             stderr = _capture_pane_full(socket_path, session_name, run_func=run_func)
             duration_ms = int((clock() - started) * 1000)
             return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
+
+        records, steer_offset = _read_steer_records(
+            run_id,
+            steer_offset,
+            read_queued_steers=read_queued_steers,
+            source_env=source_env,
+        )
+        generation, active_result, active_done, delivered = _deliver_steer_records(
+            issue,
+            records,
+            generation,
+            prompt_file,
+            socket_path,
+            session_name,
+            run_func=run_func,
+            sleep=sleep,
+        )
+        if delivered:
+            unchanged_polls = 0
+            nudges_used = 0
+            last_pane = None
+            last_mtime = None
+            continue
+
         if not _session_alive(socket_path, session_name, run_func=run_func):
             duration_ms = int((clock() - started) * 1000)
             stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
@@ -784,8 +847,8 @@ def _poll_claude_until_done(
                 socket_path,
                 session_name,
                 prompt_file,
-                result_file,
-                done_file,
+                active_result,
+                active_done,
                 sleep=sleep,
             )
             nudges_used += 1
@@ -798,6 +861,103 @@ def _poll_claude_until_done(
     duration_ms = int((clock() - started) * 1000)
     stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
     return _logged_result(issue, -1, duration_ms, True, "", stderr)
+
+
+def _load_steer_reader(
+    run_id: str,
+) -> Callable[..., tuple[list[Mapping[str, object]], int]] | None:
+    """Load the transient steer queue reader only for runs that can steer."""
+
+    if not run_id:
+        return None
+    try:
+        return import_module("web.api.steer_queue").read_steer_records
+    except Exception as exc:
+        LOGGER.warning("claude_steer_queue_unavailable run_id=%s error=%s", run_id, exc)
+        return None
+
+
+def _read_steer_records(
+    run_id: str,
+    offset: int,
+    *,
+    read_queued_steers: Callable[..., tuple[list[Mapping[str, object]], int]] | None,
+    source_env: Mapping[str, str],
+) -> tuple[list[Mapping[str, object]], int]:
+    if read_queued_steers is None:
+        return [], offset
+    try:
+        return read_queued_steers(run_id, offset, environ=source_env)
+    except Exception as exc:
+        LOGGER.warning("claude_steer_read_failed run_id=%s error=%s", run_id, exc)
+        return [], offset
+
+
+def _deliver_steer_records(
+    issue: CandidateIssue,
+    records: Iterable[Mapping[str, object]],
+    generation: int,
+    prompt_file: Path,
+    socket_path: Path,
+    session_name: str,
+    *,
+    run_func: Callable[..., CompletedLike],
+    sleep: Callable[[float], object],
+) -> tuple[int, Path, Path, bool]:
+    """Deliver queued Claude steer/abort records and return current gen paths."""
+
+    active_result = _generation_result_path(prompt_file.parent, generation)
+    active_done = _generation_done_path(prompt_file.parent, generation)
+    delivered = False
+    for record in records:
+        kind = str(record.get("kind") or "")
+        message = str(record.get("message") or "").strip()
+        if kind == "abort":
+            with suppress(OSError):
+                _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Escape")
+        elif kind == "steer":
+            if not message:
+                continue
+        else:
+            continue
+
+        generation += 1
+        active_result = _generation_result_path(prompt_file.parent, generation)
+        active_done = _generation_done_path(prompt_file.parent, generation)
+        prompt_file.write_text(
+            _steer_turn_text(kind, message, active_result, active_done),
+            encoding="utf-8",
+        )
+        _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
+        delivered = True
+        LOGGER.info(
+            "claude_steer_delivered issue_id=%s kind=%s generation=%s",
+            issue.id,
+            kind,
+            generation,
+        )
+    return generation, active_result, active_done, delivered
+
+
+def _generation_result_path(temp_dir: Path, generation: int) -> Path:
+    return temp_dir / f"result.{generation}.txt"
+
+
+def _generation_done_path(temp_dir: Path, generation: int) -> Path:
+    return temp_dir / f"done.{generation}"
+
+
+def _steer_turn_text(
+    kind: str, message: str, result_file: Path, done_file: Path
+) -> str:
+    if kind == "abort":
+        intro = (
+            "Operator requested abort for the current Claude turn. Stop the "
+            "current turn safely, then continue from this operator instruction."
+        )
+    else:
+        intro = f"Operator steer for the current Claude run:\n\n{message}"
+    return f"{intro}\n\n{_completion_protocol_text(result_file, done_file)}"
 
 
 def _resolve_cwd(
@@ -963,11 +1123,11 @@ def _paste_pending(pane: str) -> bool:
     return "pasted text" in pane.lower()
 
 
-def _nudge_text(result_file: Path, done_file: Path) -> str:
-    """Reminder pasted into an idle session to finish the completion protocol."""
+def _completion_protocol_text(result_file: Path, done_file: Path) -> str:
+    """Completion-protocol reminder for a specific generation's files."""
+
     return (
-        "You appear to have stopped without completing the Symphony completion "
-        "protocol. Nobody can respond live. Finish now, in order:\n"
+        "Finish now, in order:\n"
         "1. Use your Write tool to write your full final output (the "
         "SYMPHONY_RESULT line plus the SYMPHONY_SUMMARY_BEGIN/SYMPHONY_SUMMARY_END "
         "block, or a SYMPHONY_QUESTION_BEGIN/SYMPHONY_QUESTION_END block) to this "
@@ -976,6 +1136,15 @@ def _nudge_text(result_file: Path, done_file: Path) -> str:
         f"3. ONLY after that confirmation, create this literal done file path: "
         f"{done_file}\n"
         "Do NOT create the done file if the result file is missing or empty."
+    )
+
+
+def _nudge_text(result_file: Path, done_file: Path) -> str:
+    """Reminder pasted into an idle session to finish the completion protocol."""
+    return (
+        "You appear to have stopped without completing the Symphony completion "
+        "protocol. Nobody can respond live. "
+        f"{_completion_protocol_text(result_file, done_file)}"
     )
 
 

@@ -15,6 +15,7 @@ from claude_runner import (
     persistent_socket_path,
     run_claude_agent,
 )
+from web.api.steer_queue import steer_queue_path, write_steer_record
 
 
 class Completed:
@@ -427,3 +428,153 @@ def test_persist_timeout_removes_session_sidecar_and_socket(tmp_path: Path) -> N
     assert not expected_socket.exists()
     assert not (pid_dir / f"{expected_socket.stem}.meta.json").exists()
     assert any("kill-session" in command for command in fake.calls)
+
+
+class SteerTmux:
+    def __init__(self, *, complete_on: str = "steer", stale_done0: bool = False):
+        self.calls: list[list[str]] = []
+        self.complete_on = complete_on
+        self.stale_done0 = stale_done0
+        self.loaded_prompts: list[str] = []
+        self.current_result: Path | None = None
+        self.current_done: Path | None = None
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if command[:1] != ["tmux"]:
+            return Completed()
+        if "new-session" in command:
+            Path(command[2]).write_text("", encoding="utf-8")
+            return Completed()
+        if "display-message" in command:
+            return Completed(stdout="")
+        if "capture-pane" in command:
+            return Completed(stdout="bypass permissions on")
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.loaded_prompts.append(prompt)
+            self.current_result = _path_after(prompt, "literal result file path:")
+            self.current_done = _path_after(prompt, "literal done file path:")
+            return Completed()
+        if "send-keys" in command:
+            if command[-1] == "Escape":
+                return Completed()
+            assert self.current_result is not None
+            assert self.current_done is not None
+            prompt = self.loaded_prompts[-1]
+            if self.stale_done0 and self.current_done.name == "done.0":
+                self.current_result.write_text("stale gen0", encoding="utf-8")
+                self.current_done.write_text("", encoding="utf-8")
+            elif self.complete_on == "steer" and "Operator steer" in prompt:
+                self.current_result.write_text("SYMPHONY_RESULT: done gen1", encoding="utf-8")
+                self.current_done.write_text("", encoding="utf-8")
+            elif self.complete_on == "abort" and "Operator requested abort" in prompt:
+                self.current_result.write_text("SYMPHONY_RESULT: blocked", encoding="utf-8")
+                self.current_done.write_text("", encoding="utf-8")
+            elif self.complete_on == "nudge" and "appear to have stopped" in prompt:
+                self.current_result.write_text("SYMPHONY_RESULT: done nudge", encoding="utf-8")
+                self.current_done.write_text("", encoding="utf-8")
+            return Completed()
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_steer_rotates_generation_ignores_done0_and_clears_queue(
+    tmp_path: Path,
+) -> None:
+    environ = {"SYMPHONY_RUNTIME_DIR": str(tmp_path / "runtime")}
+    write_steer_record(
+        "run-1",
+        "42",
+        kind="steer",
+        message="please adjust course",
+        environ=environ,
+    )
+    fake = SteerTmux(stale_done0=True)
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(active_run_id="run-1"),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        nonce_factory=lambda: "nonce",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        environ=environ,
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "SYMPHONY_RESULT: done gen1"
+    steer_prompt = next(prompt for prompt in fake.loaded_prompts if "Operator steer" in prompt)
+    assert "please adjust course" in steer_prompt
+    assert "result.1.txt" in steer_prompt
+    assert "done.1" in steer_prompt
+    assert "result.0.txt" not in steer_prompt
+    assert "done.0" not in steer_prompt
+    assert not steer_queue_path("run-1", environ).exists()
+
+
+def test_claude_abort_sends_escape_then_rotates_generation(tmp_path: Path) -> None:
+    environ = {"SYMPHONY_RUNTIME_DIR": str(tmp_path / "runtime")}
+    write_steer_record("run-2", "42", kind="abort", environ=environ)
+    fake = SteerTmux(complete_on="abort")
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(active_run_id="run-2"),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        nonce_factory=lambda: "nonce",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        environ=environ,
+    )
+
+    assert result.exit_code == 0
+    escape_index = next(i for i, command in enumerate(fake.calls) if command[-1] == "Escape")
+    abort_prompt_index = [
+        i for i, command in enumerate(fake.calls) if "load-buffer" in command
+    ][1]
+    assert escape_index < abort_prompt_index
+    abort_prompt = next(prompt for prompt in fake.loaded_prompts if "Operator requested abort" in prompt)
+    assert "result.1.txt" in abort_prompt
+    assert "done.1" in abort_prompt
+
+
+def test_claude_idle_nudge_after_steer_names_current_generation(
+    tmp_path: Path,
+) -> None:
+    environ = {"SYMPHONY_RUNTIME_DIR": str(tmp_path / "runtime")}
+    write_steer_record(
+        "run-3",
+        "42",
+        kind="steer",
+        message="wait for operator context",
+        environ=environ,
+    )
+    fake = SteerTmux(complete_on="nudge")
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(active_run_id="run-3"),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        nonce_factory=lambda: "nonce",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        environ=environ,
+        session_file=transcript,
+    )
+
+    assert result.exit_code == 0
+    nudge_prompt = next(prompt for prompt in fake.loaded_prompts if "appear to have stopped" in prompt)
+    assert "result.1.txt" in nudge_prompt
+    assert "done.1" in nudge_prompt
+    assert "result.0.txt" not in nudge_prompt
+    assert "done.0" not in nudge_prompt
