@@ -718,99 +718,32 @@ def run_pi_rpc_agent(
         )
         process.stdin.flush()
 
-        assistant_parts: list[str] = []
-        stderr_parts: list[str] = []
-        error_seen = False
-        event_exit_code: int | None = None
         deadline = started + (config.run_timeout_ms / 1000)
-        steer_offset = 0
         steer_queue = import_module("web.api.steer_queue") if run_id else None
         read_queued_steers = steer_queue.read_steer_records if steer_queue else None
 
-        # pi RPC is a persistent session server: it streams its event burst then
-        # stays alive idle, so stdout never reaches EOF on a normal completion.
-        # The reader must therefore drain every buffered line on each poll and
-        # detect completion from the `agent_end` event, never from EOF. (The old
-        # selectors-on-fd + buffered-readline reader missed buffered lines once
-        # the fd went quiet and spun to the timeout — see #050 / C-0188.)
         read_line, close_reader = _rpc_line_reader(process)
-        try:
-            while True:
-                remaining = deadline - clock()
-                if remaining <= 0:
-                    _send_rpc_abort(process)
-                    _, stderr = _terminate_process_group(
-                        process,
-                        kill_process_group=kill_process_group,
-                    )
-                    if stderr:
-                        stderr_parts.append(stderr)
-                    duration_ms = int((clock() - started) * 1000)
-                    return AgentResult(
-                        -1,
-                        duration_ms,
-                        True,
-                        "".join(assistant_parts),
-                        "".join(stderr_parts),
-                    )
-
-                if read_queued_steers is not None:
-                    steer_records, steer_offset = read_queued_steers(
-                        run_id, steer_offset, environ=source_env
-                    )
-                    _forward_steer_records(process, steer_records)
-
-                line, eof = read_line(min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS))
-                if eof:
-                    # stdout closed: process exited on its own (crash / fake).
-                    if process.poll() is not None:
-                        event_exit_code = process.returncode
-                    break
-                if line is None:
-                    continue  # no complete line within the poll window
-
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # banner / non-JSON noise on stdout
-
-                event_type = str(event.get("type") or "")
-                delta = _assistant_delta(event)
-                if delta:
-                    assistant_parts.append(delta)
-
-                if event_type == "extension_error":
-                    err = event.get("error")
-                    if err:
-                        stderr_parts.append(str(err))
-                elif event_type == "response" and event.get("success") is False:
-                    # A rejected prompt yields no agent_end; fail fast.
-                    error_seen = True
-                    err = event.get("error")
-                    if err:
-                        stderr_parts.append(str(err))
-                    if event.get("command") == "prompt":
-                        break
-                elif event_type == "message_update":
-                    ame = event.get("assistantMessageEvent")
-                    if (
-                        isinstance(ame, dict)
-                        and ame.get("type") == "error"
-                        and ame.get("reason") != "aborted"
-                    ):
-                        error_seen = True
-                        reason = ame.get("reason") or ame.get("error")
-                        if reason:
-                            stderr_parts.append(str(reason))
-                elif event_type == "agent_end":
-                    raw_code = event.get("exit_code", 0)
-                    try:
-                        event_exit_code = int(raw_code)
-                    except (TypeError, ValueError):
-                        event_exit_code = 0
-                    break
-        finally:
-            close_reader()
+        drain = _drain_rpc_events(
+            process,
+            deadline,
+            run_id,
+            read_queued_steers=read_queued_steers,
+            steer_offset=0,
+            read_line=read_line,
+            close_reader=close_reader,
+            kill_process_group=kill_process_group,
+            clock=clock,
+            source_env=source_env,
+        )
+        if drain.timed_out:
+            duration_ms = int((clock() - started) * 1000)
+            return AgentResult(
+                -1,
+                duration_ms,
+                True,
+                "".join(drain.assistant_parts),
+                "".join(drain.stderr_parts),
+            )
 
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
@@ -820,25 +753,25 @@ def run_pi_rpc_agent(
                 kill_process_group=kill_process_group,
             )
             if stderr:
-                stderr_parts.append(stderr)
+                drain.stderr_parts.append(stderr)
         else:
             leftover_stderr = _read_remaining(process.stderr)
             if leftover_stderr:
-                stderr_parts.append(leftover_stderr)
+                drain.stderr_parts.append(leftover_stderr)
         duration_ms = int((clock() - started) * 1000)
         exit_code = int(
-            event_exit_code
-            if event_exit_code is not None
+            drain.event_exit_code
+            if drain.event_exit_code is not None
             else (process.returncode or 0)
         )
-        if error_seen and exit_code == 0:
+        if drain.error_seen and exit_code == 0:
             exit_code = 1
         return AgentResult(
             exit_code,
             duration_ms,
             False,
-            "".join(assistant_parts),
-            "".join(stderr_parts),
+            "".join(drain.assistant_parts),
+            "".join(drain.stderr_parts),
         )
     finally:
         if run_id:
@@ -1072,6 +1005,133 @@ class RoutingAgentAdapter:
         if agent == claude_agent:
             return self.claude_adapter(issue, rendered_prompt)
         raise AgentRunnerError(f"No agent adapter configured for `{agent}`")
+
+
+def _drain_rpc_events(
+    process: RpcProcessLike,
+    deadline: float,
+    run_id: str,
+    *,
+    read_queued_steers: Callable[[str, int], tuple[list[Mapping[str, object]], int]] | None,
+    steer_offset: int,
+    read_line: Callable[[float], tuple[str | None, bool]],
+    close_reader: Callable[[], None],
+    kill_process_group: Callable[[int, int], object],
+    clock: Callable[[], float],
+    source_env: Mapping[str, str],
+) -> _DrainResult:
+    """Drain pi RPC JSONL events until timeout, agent_end, or error.
+
+    Reads the event stream via the line reader, forwards steer records,
+    and detects completion from ``agent_end`` events. The caller owns
+    process termination for the non-timeout path.
+    """
+    assistant_parts: list[str] = []
+    stderr_parts: list[str] = []
+    error_seen = False
+    event_exit_code: int | None = None
+    current_steer_offset = steer_offset
+
+    try:
+        while True:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                _send_rpc_abort(process)
+                _, stderr = _terminate_process_group(
+                    process,
+                    kill_process_group=kill_process_group,
+                )
+                if stderr:
+                    stderr_parts.append(stderr)
+                return _DrainResult(
+                    assistant_parts=assistant_parts,
+                    stderr_parts=stderr_parts,
+                    error_seen=error_seen,
+                    event_exit_code=event_exit_code,
+                    timed_out=True,
+                    steer_offset=current_steer_offset,
+                )
+
+            if read_queued_steers is not None:
+                steer_records, current_steer_offset = read_queued_steers(
+                    run_id, current_steer_offset, environ=source_env
+                )
+                _forward_steer_records(process, steer_records)
+
+            line, eof = read_line(
+                min(remaining, RPC_STEER_POLL_INTERVAL_SECONDS)
+            )
+            if eof:
+                # stdout closed: process exited on its own (crash / fake).
+                if process.poll() is not None:
+                    event_exit_code = process.returncode
+                break
+            if line is None:
+                continue  # no complete line within the poll window
+
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # banner / non-JSON noise on stdout
+
+            event_type = str(event.get("type") or "")
+            delta = _assistant_delta(event)
+            if delta:
+                assistant_parts.append(delta)
+
+            if event_type == "extension_error":
+                err = event.get("error")
+                if err:
+                    stderr_parts.append(str(err))
+            elif event_type == "response" and event.get("success") is False:
+                # A rejected prompt yields no agent_end; fail fast.
+                error_seen = True
+                err = event.get("error")
+                if err:
+                    stderr_parts.append(str(err))
+                if event.get("command") == "prompt":
+                    break
+            elif event_type == "message_update":
+                ame = event.get("assistantMessageEvent")
+                if (
+                    isinstance(ame, dict)
+                    and ame.get("type") == "error"
+                    and ame.get("reason") != "aborted"
+                ):
+                    error_seen = True
+                    reason = ame.get("reason") or ame.get("error")
+                    if reason:
+                        stderr_parts.append(str(reason))
+            elif event_type == "agent_end":
+                raw_code = event.get("exit_code", 0)
+                try:
+                    event_exit_code = int(raw_code)
+                except (TypeError, ValueError):
+                    event_exit_code = 0
+                break
+    finally:
+        close_reader()
+
+    return _DrainResult(
+        assistant_parts=assistant_parts,
+        stderr_parts=stderr_parts,
+        error_seen=error_seen,
+        event_exit_code=event_exit_code,
+        timed_out=False,
+        steer_offset=current_steer_offset,
+    )
+
+
+@dataclass(frozen=True)
+class _DrainResult:
+    """Result of draining RPC events from a pi agent process."""
+
+    assistant_parts: list[str]
+    stderr_parts: list[str]
+    error_seen: bool
+    event_exit_code: int | None
+    timed_out: bool
+    steer_offset: int
 
 
 def _send_rpc_abort(process: RpcProcessLike) -> None:

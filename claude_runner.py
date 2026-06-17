@@ -479,92 +479,133 @@ def run_claude_agent(
         _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
 
         deadline = started + (config.run_timeout_ms / 1000)
-        last_pane: str | None = None
-        last_mtime: float | None = None
-        unchanged_polls = 0
-        nudges_used = 0
-        while clock() <= deadline:
-            if done_file.exists():
-                stdout = _read_result_with_grace(result_file, sleep=sleep)
-                if not stdout.strip():
-                    duration_ms = int((clock() - started) * 1000)
-                    pane = _capture_pane_tail(
-                        socket_path, session_name, run_func=run_func
-                    )
-                    stderr = (
-                        "claude done file exists but result file is missing or "
-                        f"empty after {RESULT_GRACE_SECONDS:g}s grace\n{pane}"
-                    )
-                    return _logged_result(issue, 137, duration_ms, False, "", stderr)
-                stderr = _capture_pane_full(
-                    socket_path, session_name, run_func=run_func
-                )
-                duration_ms = int((clock() - started) * 1000)
-                return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
-            if not _session_alive(socket_path, session_name, run_func=run_func):
-                duration_ms = int((clock() - started) * 1000)
-                stderr = _capture_pane_tail(
-                    socket_path, session_name, run_func=run_func
-                )
-                return _logged_result(issue, 1, duration_ms, False, "", stderr)
-            # Idle requires BOTH the pane and the agent's session transcript to
-            # stop changing. The two signals are complementary: a long tool call
-            # leaves the transcript static but the pane's spinner/timer still
-            # redrawing, while an alt-screen pane that captures empty leaves the
-            # transcript still being appended. Treating activity on either channel
-            # as "not idle" stops a working agent from being nudged or killed. A
-            # missing transcript (mtime is None) counts as activity, never idle.
-            pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
-            mtime = _session_file_mtime(transcript_file)
-            if mtime is not None and pane == last_pane and mtime == last_mtime:
-                unchanged_polls += 1
-            else:
-                unchanged_polls = 0
-                last_pane = pane
-                last_mtime = mtime
-            if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
-                if nudges_used >= IDLE_NUDGE_ATTEMPTS:
-                    duration_ms = int((clock() - started) * 1000)
-                    tail = _capture_pane_tail(
-                        socket_path, session_name, run_func=run_func
-                    )
-                    stderr = (
-                        "claude idle at prompt with no done file after "
-                        f"{IDLE_NUDGE_ATTEMPTS} completion nudges; agent ended its "
-                        "turn without completing the Symphony completion "
-                        f"protocol\n{tail}"
-                    )
-                    LOGGER.info(
-                        "claude_idle_no_completion issue_id=%s nudges=%s "
-                        "duration_ms=%s",
-                        issue.id,
-                        nudges_used,
-                        duration_ms,
-                    )
-                    return _logged_result(issue, -1, duration_ms, True, "", stderr)
-                _send_nudge(
-                    run_func,
-                    socket_path,
-                    session_name,
-                    prompt_file,
-                    result_file,
-                    done_file,
-                    sleep=sleep,
-                )
-                nudges_used += 1
-                unchanged_polls = 0
-                last_pane = None
-                last_mtime = None
-                LOGGER.info(
-                    "claude_idle_nudge issue_id=%s nudge=%s", issue.id, nudges_used
-                )
-            sleep(1.0)
-
-        duration_ms = int((clock() - started) * 1000)
-        stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
-        return _logged_result(issue, -1, duration_ms, True, "", stderr)
+        poll_result = _poll_claude_until_done(
+            issue,
+            started,
+            deadline,
+            done_file,
+            result_file,
+            socket_path,
+            session_name,
+            transcript_file,
+            prompt_file,
+            clock=clock,
+            sleep=sleep,
+            run_func=run_func,
+        )
+        if poll_result is not None:
+            return poll_result
+        raise RuntimeError(
+            "_poll_claude_until_done returned None unexpectedly"
+        )
     finally:
         cleanup.cleanup()
+
+
+def _poll_claude_until_done(
+    issue: CandidateIssue,
+    started: float,
+    deadline: float,
+    done_file: Path,
+    result_file: Path,
+    socket_path: Path,
+    session_name: str,
+    transcript_file: Path,
+    prompt_file: Path,
+    *,
+    clock: Callable[[], float],
+    sleep: Callable[[float], object],
+    run_func: Callable[..., CompletedLike],
+) -> AgentResult | None:
+    """Poll tmux Claude session until done file, session death, idle, or timeout.
+
+    Returns an ``AgentResult`` when the poll terminates. The return type
+    includes ``None`` for future expansion; currently all paths return a result.
+    """
+    last_pane: str | None = None
+    last_mtime: float | None = None
+    unchanged_polls = 0
+    nudges_used = 0
+    while clock() <= deadline:
+        if done_file.exists():
+            stdout = _read_result_with_grace(result_file, sleep=sleep)
+            if not stdout.strip():
+                duration_ms = int((clock() - started) * 1000)
+                pane = _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func
+                )
+                stderr = (
+                    "claude done file exists but result file is missing or "
+                    f"empty after {RESULT_GRACE_SECONDS:g}s grace\n{pane}"
+                )
+                return _logged_result(issue, 137, duration_ms, False, "", stderr)
+            stderr = _capture_pane_full(
+                socket_path, session_name, run_func=run_func
+            )
+            duration_ms = int((clock() - started) * 1000)
+            return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
+        if not _session_alive(socket_path, session_name, run_func=run_func):
+            duration_ms = int((clock() - started) * 1000)
+            stderr = _capture_pane_tail(
+                socket_path, session_name, run_func=run_func
+            )
+            return _logged_result(issue, 1, duration_ms, False, "", stderr)
+        # Idle requires BOTH the pane and the agent's session transcript to
+        # stop changing. The two signals are complementary: a long tool call
+        # leaves the transcript static but the pane's spinner/timer still
+        # redrawing, while an alt-screen pane that captures empty leaves the
+        # transcript still being appended. Treating activity on either channel
+        # as "not idle" stops a working agent from being nudged or killed. A
+        # missing transcript (mtime is None) counts as activity, never idle.
+        pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
+        mtime = _session_file_mtime(transcript_file)
+        if mtime is not None and pane == last_pane and mtime == last_mtime:
+            unchanged_polls += 1
+        else:
+            unchanged_polls = 0
+            last_pane = pane
+            last_mtime = mtime
+        if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
+            if nudges_used >= IDLE_NUDGE_ATTEMPTS:
+                duration_ms = int((clock() - started) * 1000)
+                tail = _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func
+                )
+                stderr = (
+                    "claude idle at prompt with no done file after "
+                    f"{IDLE_NUDGE_ATTEMPTS} completion nudges; agent ended its "
+                    "turn without completing the Symphony completion "
+                    f"protocol\n{tail}"
+                )
+                LOGGER.info(
+                    "claude_idle_no_completion issue_id=%s nudges=%s "
+                    "duration_ms=%s",
+                    issue.id,
+                    nudges_used,
+                    duration_ms,
+                )
+                return _logged_result(issue, -1, duration_ms, True, "", stderr)
+            _send_nudge(
+                run_func,
+                socket_path,
+                session_name,
+                prompt_file,
+                result_file,
+                done_file,
+                sleep=sleep,
+            )
+            nudges_used += 1
+            unchanged_polls = 0
+            last_pane = None
+            last_mtime = None
+            LOGGER.info(
+                "claude_idle_nudge issue_id=%s nudge=%s", issue.id, nudges_used
+            )
+        sleep(1.0)
+
+    duration_ms = int((clock() - started) * 1000)
+    stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
+    return _logged_result(issue, -1, duration_ms, True, "", stderr)
 
 
 def _resolve_cwd(
