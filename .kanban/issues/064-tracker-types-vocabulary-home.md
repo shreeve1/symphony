@@ -1,7 +1,7 @@
 ---
 id: 064
 title: tracker_types.py — single home for tracker vocabulary
-status: in-progress
+status: review
 blocked_by: [63]
 parent: null
 priority: 0
