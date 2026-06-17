@@ -107,3 +107,11 @@ This file tracks implementation notes across Ralph iterations.
 **Verification:** `uv run ruff check scheduler.py tests/test_scheduler.py`, `uv run pytest tests/test_scheduler.py -q`, `uv run pytest`, and touched-file LSP diagnostics passed. Fresh review returned `RALPH_REVIEW: PASS_WITH_NOTES`.
 **Live verification:** This Ralph worker restarted `symphony-host.service` and confirmed `symphony_started code_sha=877438f`, `rpc_orphan_reap_done`, `pi_rpc_probe_ok`, `reconcile_startup_*`, `run_reconcile_*`, and `dispatch_completed` for the live scheduler. Verification: `uv run pytest` (887 passed, 2 skipped); touched-file LSP diagnostics clean; fresh review returned `RALPH_REVIEW: PASS`.
 **Actionable review:** Re-read `git diff 877438f7f13c0fdc8ab4857b2d9c15033257aa27 HEAD`, inspected acceptance-scope code/tests, verified no cooldown/test-only globals remain, reran `uv run pytest` (887 passed, 2 skipped), and checked critical LSP diagnostics for `scheduler.py` and `tests/test_scheduler.py` clean.
+
+## #070 Decompose the run_tick god-function — 2026-06-17
+
+**What changed:** Split `scheduler.run_tick` into named stages for selection/reconcile, gates, dispatch preparation, agent execution, and terminal classification. `_classify_terminal` now owns terminal run-record finalization, blocked/review transitions, Question Park, archived-terminal, and clean-review handling; agent-crash handling stays in `_dispatch_run_tick_agent` because the exception occurs during dispatch.
+**Files:** `scheduler.py`, `.kanban/issues/070-decompose-run-tick.md`.
+**Verification:** `uv run pytest` (887 passed, 2 skipped), `uv run ruff check scheduler.py`, `uv run python -m py_compile scheduler.py`, touched-file LSP diagnostics clean for `scheduler.py`, fresh review `RALPH_REVIEW: PASS`, and live `symphony-host.service` restart verification on `code_sha=48fc0bb` with `reconcile_startup_*`, `run_reconcile_*`, `dispatch_completed`, `rpc_orphan_reap_done`, and `pi_rpc_probe_ok`.
+**Conventions established:** Future scheduler decomposition should keep `run_tick` as orchestration over named stage helpers and keep terminal tracker/run side effects centralized in `_classify_terminal`.
+**Notes for next iteration:** Issue #071 can split scheduler packaging on top of the staged `run_tick`; issue #072 remains independently eligible for executor inner-loop extraction.

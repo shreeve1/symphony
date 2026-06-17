@@ -1,11 +1,13 @@
 ---
 id: 070
 title: Decompose the run_tick god-function
-status: review
+status: done
 blocked_by: [69]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -16,16 +18,20 @@ Decompose into a staged pipeline (select → gate → prepare → dispatch → c
 
 ## Acceptance criteria
 
-- [ ] The 7 terminal-state handlers are extracted behind a `_classify_terminal` (or equivalent) result-handler.
-- [ ] Front-half stages (select / gate / prepare / dispatch) are named functions `run_tick` delegates to.
-- [ ] `run_tick` body is substantially reduced from ~882 LOC; no behavior change.
-- [ ] `uv run pytest` passes (full suite green).
+- [x] The 7 terminal-state handlers are extracted behind a `_classify_terminal` (or equivalent) result-handler.
+- [x] Front-half stages (select / gate / prepare / dispatch) are named functions `run_tick` delegates to.
+- [x] `run_tick` body is substantially reduced from ~882 LOC; no behavior change.
+- [x] `uv run pytest` passes (full suite green).
 
 ## Verification
 
 `uv run pytest`
 
 Highest-risk refactor on the live dispatch path. Before this issue is marked done, James runs the `symphony-restart` skill and confirms `symphony_started`, `reconcile_startup_*`, and `dispatch_completed` in the journal.
+
+## Implementation Notes
+
+Extracted `run_tick` into a staged dispatch pipeline: `_select_run_tick_candidate`, `_gate_run_tick_candidate`, `_prepare_run_tick_dispatch`, `_dispatch_run_tick_agent`, and `_classify_terminal`. Terminal run-record, block/review notification, archived-terminal, question-park, and clean-review paths now route through `_classify_terminal`; agent-crash handling stays in the dispatch stage where the exception is raised. Verification passed: `uv run pytest` (887 passed, 2 skipped), `uv run ruff check scheduler.py`, `uv run python -m py_compile scheduler.py`, touched-file LSP diagnostics for `scheduler.py`, fresh review (`RALPH_REVIEW: PASS`), and live `symphony-host.service` restart verification with `symphony_started code_sha=48fc0bb`, `reconcile_startup_*`, `run_reconcile_*`, `dispatch_completed`, `rpc_orphan_reap_done`, and `pi_rpc_probe_ok`.
 
 ## Blocked by
 
