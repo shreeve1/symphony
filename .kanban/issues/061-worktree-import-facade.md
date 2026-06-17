@@ -1,7 +1,7 @@
 ---
 id: 061
 title: Single worktree import facade
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
@@ -18,10 +18,10 @@ Add one facade module (e.g. `_worktree.py`) that performs the `web.api.worktree`
 
 ## Acceptance criteria
 
-- [ ] A facade module performs the dual-import try/except exactly once and exposes the worktree functions.
-- [ ] All four call sites import worktree functions from the facade.
-- [ ] `grep -rn "from web.api.worktree import" *.py` shows only the facade module.
-- [ ] Behavior unchanged; `uv run pytest` passes.
+- [x] A facade module performs the dual-import try/except exactly once and exposes the worktree functions.
+- [x] All four call sites import worktree functions from the facade.
+- [x] `grep -rn "from web.api.worktree import" *.py` shows only the facade module.
+- [x] Behavior unchanged; `uv run pytest` passes.
 
 ## Verification
 
@@ -30,3 +30,7 @@ Add one facade module (e.g. `_worktree.py`) that performs the `web.api.worktree`
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Added `worktree_facade.py` as the single compatibility shim for Podium worktree helpers. Repointed the four root call sites to load helpers through the facade while preserving lazy import behavior and remote-binding guards.

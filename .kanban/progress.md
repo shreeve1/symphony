@@ -24,3 +24,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept `AgentResult`, `AgentRunnerError`, and `CompletedLike` exported from `agent_runner.py`; only genuinely shared process/runtime primitives moved.
 **Conventions established:** Shared runner primitives use public names in neutral modules before cross-runner reuse.
 **Notes for next iteration:** Touched-file LSP can report stale `proc_runtime` missing-import diagnostics for newly-created root modules even while `uv run python` imports and full pytest pass; treat as LSP cache/environment noise unless runtime import fails.
+
+## #061 Single worktree import facade — 2026-06-17
+
+**What changed:** Added `worktree_facade.py` as the single compatibility shim for Podium worktree helpers and repointed the four root worktree call sites through it.
+**Files:** `worktree_facade.py`, `agent_runner.py`, `claude_runner.py`, `scheduler.py`, `.kanban/issues/061-worktree-import-facade.md`.
+**Decisions:** Used `import_module("worktree_facade")` at call sites to preserve lazy import behavior and keep Pyright diagnostics clean for the root-level facade.
+**Conventions established:** Compatibility import shims shared across root modules should live in one facade, with call sites importing from that facade rather than repeating `web.api.*` fallback logic.
+**Notes for next iteration:** `grep -rn "from web.api.worktree import" *.py` now intentionally matches only `worktree_facade.py`.
