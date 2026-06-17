@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-17] session-update | Issue #081 persistent Claude reaper scheduler wiring
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/081-claude-reaper-scheduler-wiring.md`; `.kanban/progress.md`; `scheduler/__init__.py`; `config.py`; `tests/test_scheduler.py`; `tests/test_config.py`; fresh review diff `git diff f5f99c0468bc58e9b23b8b8680bf3c791c4e3842 HEAD`.
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0238 added); updated `wiki/log.md`.
+- Notes: Captured Issue #081 landing: `run_loop` now sweeps persistent Claude sessions once per poll iteration only for `claude_persist` bindings, offloads the sweep through `asyncio.to_thread`, uses adapter-backed `get_issue` for real `state`/`latest_run_state`, and exposes config defaults/overrides for idle TTL and max live sessions. Verification: issue command passed (`uv run pytest tests/test_scheduler.py tests/test_claude_persist.py tests/test_config.py` = 215 passed; `uv run python -m py_compile scheduler/__init__.py config.py`), ruff clean, touched-file LSP diagnostics clean, fresh Ralph review `RALPH_REVIEW: PASS`. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Pi personal harness removed
 
 - Actor: agent (Pi)
