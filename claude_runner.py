@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -306,9 +308,69 @@ def _default_unlink(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
+_PERSISTENT_SOCKET_PREFIX = "symphony-claude-persist-"
+
+
+def _sanitize_socket_component(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-.")
+    return sanitized or "unknown"
+
+
+def persistent_socket_path(binding: str, issue_id: str) -> Path:
+    """Return the deterministic tmux socket for a reusable Claude session."""
+
+    safe_binding = _sanitize_socket_component(binding)
+    safe_issue = _sanitize_socket_component(issue_id)
+    return Path("/tmp") / f"{_PERSISTENT_SOCKET_PREFIX}{safe_binding}-{safe_issue}.sock"
+
+
+def issue_id_from_persistent_socket(path: str | Path) -> str | None:
+    """Best-effort issue id extraction from a persistent Claude socket path."""
+
+    stem = Path(path).stem
+    if not stem.startswith(_PERSISTENT_SOCKET_PREFIX):
+        return None
+    suffix = stem.removeprefix(_PERSISTENT_SOCKET_PREFIX)
+    if "-" not in suffix:
+        return None
+    issue_id = suffix.rsplit("-", 1)[1]
+    return issue_id or None
+
+
+def _issue_binding_name(config: SymphonyConfig, issue: CandidateIssue) -> str:
+    return getattr(issue, "binding_name", "") or (
+        config.bindings[0].name if config.bindings else "default"
+    )
+
+
+def _write_claude_session_metadata(
+    path: Path,
+    *,
+    issue_id: str,
+    binding: str,
+    cwd: Path,
+    session_file: Path,
+    session_name: str,
+) -> Path | None:
+    payload = {
+        "issue_id": issue_id,
+        "binding": binding,
+        "cwd": str(cwd),
+        "session_file": str(session_file),
+        "session_name": session_name,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        LOGGER.warning("claude_metadata_write_failed path=%s error=%s", path, exc)
+        return None
+    return path
+
+
 @dataclass
 class ClaudeRunCleanup:
-    """Idempotent cleanup for per-run tmux and filesystem artifacts."""
+    """Idempotent cleanup for per-run and per-session Claude artifacts."""
 
     socket_path: Path
     session_name: str
@@ -316,12 +378,25 @@ class ClaudeRunCleanup:
     run_func: Callable[..., CompletedLike] = subprocess.run
     remove_tree: Callable[[str], object] = shutil.rmtree
     pidfile_path: Path | None = None
-    cleaned: bool = field(default=False, init=False)
+    metadata_path: Path | None = None
+    run_cleaned: bool = field(default=False, init=False)
+    session_cleaned: bool = field(default=False, init=False)
 
-    def cleanup(self) -> None:
-        if self.cleaned:
+    def cleanup_run(self) -> None:
+        """Remove only per-run temporary files."""
+
+        if self.run_cleaned:
             return
-        self.cleaned = True
+        self.run_cleaned = True
+        with suppress(FileNotFoundError):
+            self.remove_tree(str(self.temp_dir))
+
+    def cleanup_session(self) -> None:
+        """Tear down the tmux session and session-scoped sidecars."""
+
+        if self.session_cleaned:
+            return
+        self.session_cleaned = True
         with suppress(OSError):
             self.run_func(
                 [
@@ -341,8 +416,15 @@ class ClaudeRunCleanup:
         if self.pidfile_path is not None:
             with suppress(OSError):
                 self.pidfile_path.unlink(missing_ok=True)
-        with suppress(FileNotFoundError):
-            self.remove_tree(str(self.temp_dir))
+        if self.metadata_path is not None:
+            with suppress(OSError):
+                self.metadata_path.unlink(missing_ok=True)
+
+    def cleanup(self) -> None:
+        """Preserve the historical combined cleanup behavior."""
+
+        self.cleanup_session()
+        self.cleanup_run()
 
 
 @dataclass(frozen=True)
@@ -353,7 +435,9 @@ class ClaudeAgentAdapter:
     persist: bool = False
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
-        return run_claude_agent(self.config, issue, rendered_prompt)
+        return run_claude_agent(
+            self.config, issue, rendered_prompt, persist=self.persist
+        )
 
 
 def run_claude_agent(
@@ -372,6 +456,7 @@ def run_claude_agent(
     ready_timeout_s: float = READY_TIMEOUT_SECONDS,
     pidfile_dir: Path | None = None,
     session_file: Path | None = None,
+    persist: bool = False,
 ) -> AgentResult:
     """Run Claude for an issue using tmux send-keys and file completion."""
 
@@ -381,9 +466,15 @@ def run_claude_agent(
 
     started = clock()
     nonce = (nonce_factory or (lambda: uuid.uuid4().hex[:12]))()
-    namespace = f"symphony-claude-{issue.id}-{nonce}"
-    temp_dir = Path(mkdtemp(prefix=f"{namespace}-"))
-    socket_path = Path("/tmp") / f"{namespace}.sock"
+    binding_name = _issue_binding_name(config, issue)
+    if persist:
+        socket_path = persistent_socket_path(binding_name, issue.id)
+        namespace = socket_path.stem
+        temp_dir = Path(mkdtemp(prefix=f"{namespace}-{nonce}-"))
+    else:
+        namespace = f"symphony-claude-{issue.id}-{nonce}"
+        temp_dir = Path(mkdtemp(prefix=f"{namespace}-"))
+        socket_path = Path("/tmp") / f"{namespace}.sock"
     session_name = namespace
     prompt_file = temp_dir / "prompt.txt"
     result_file = temp_dir / "result.txt"
@@ -391,6 +482,7 @@ def run_claude_agent(
     cleanup = ClaudeRunCleanup(
         socket_path, session_name, temp_dir, run_func, remove_tree
     )
+    session_reusable = False
 
     try:
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -402,6 +494,15 @@ def run_claude_agent(
         )
         resume_requested = bool(getattr(issue, "resumed", False))
         transcript_file = session_file or session_file_path("claude", cwd, session_id)
+        metadata_dir = pidfile_dir or _claude_pidfile_dir(source_env)
+        cleanup.metadata_path = _write_claude_session_metadata(
+            metadata_dir / f"{socket_path.stem}.meta.json",
+            issue_id=issue.id,
+            binding=binding_name,
+            cwd=cwd,
+            session_file=transcript_file,
+            session_name=session_name,
+        )
         # `claude --session-id <id>` creates a fresh session and aborts when a
         # transcript for that id already exists; `--resume <id>` attaches to it.
         # The per-issue session id is deterministic, so a refeed (resumed=false,
@@ -455,7 +556,7 @@ def run_claude_agent(
             socket_path,
             session_name,
             run_func=run_func,
-            pidfile_dir=pidfile_dir or _claude_pidfile_dir(source_env),
+            pidfile_dir=metadata_dir,
         )
 
         ready = _wait_until_ready(
@@ -495,10 +596,14 @@ def run_claude_agent(
             run_func=run_func,
         )
         if poll_result is not None:
+            if persist and poll_result.exit_code == 0 and not poll_result.timed_out:
+                session_reusable = True
             return poll_result
         raise RuntimeError("_poll_claude_until_done returned None unexpectedly")
     finally:
-        cleanup.cleanup()
+        cleanup.cleanup_run()
+        if not (persist and session_reusable):
+            cleanup.cleanup_session()
 
 
 def _poll_claude_until_done(
