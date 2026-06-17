@@ -746,6 +746,18 @@ async function onToolResult(event: { toolCallId?: string; toolName: string; inpu
 // Safety blockers (deterministic; no model/web/UI calls).
 // ---------------------------------------------------------------------------
 
+// Trusted-loop opt-in for in-worker live verification. Honored ONLY when the
+// process was spawned by the Ralph loop (RALPH_LOOP_TRUSTED=1) AND the command
+// is a bare, anchored `systemctl restart symphony-host(.service)` — restart
+// only, that single unit only, no command chaining or extra arguments. Any
+// stop/start/reload, any other unit, or any `&&`/`;`/`|` chaining fails the
+// anchor and stays blocked. Interactive operator sessions (env unset) always
+// hit the gate.
+function allowTrustedSymphonyRestart(command: string): boolean {
+  if (process.env.RALPH_LOOP_TRUSTED !== "1") return false;
+  return /^\s*(sudo\s+)?systemctl\s+restart\s+symphony-host(\.service)?\s*$/.test(command.trim());
+}
+
 function checkSafetyRules(toolName: string, input: Record<string, unknown>, cwd: string, root: string = harnessRoot(cwd)): { reason: string; posture: "blocking" | "advisory" } | undefined {
   for (const rule of PROFILE.safetyRules) {
     if (!rule.tools.includes(toolName)) continue;
@@ -753,6 +765,12 @@ function checkSafetyRules(toolName: string, input: Record<string, unknown>, cwd:
     if (toolName === "bash") {
       const command = readBashCommand(input);
       if (command && rule.match && safeRegex(rule.match)?.test(command)) {
+        // Narrow trusted-loop exception: a Ralph loop worker may restart ONLY
+        // symphony-host.service (for in-worker live verification). stop/start/
+        // reload, other units, chaining, and interactive sessions stay blocked.
+        if (rule.id === "live-systemctl" && allowTrustedSymphonyRestart(command)) {
+          continue;
+        }
         return { reason: formatSafetyReason(rule, command), posture: rule.posture };
       }
       continue;
