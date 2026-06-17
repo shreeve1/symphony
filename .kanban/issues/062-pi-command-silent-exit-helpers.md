@@ -1,7 +1,7 @@
 ---
 id: 062
 title: Extract pi-command + silent-exit helpers
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
