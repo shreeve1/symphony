@@ -1,9 +1,7 @@
-"""Resolve the running Symphony git sha for diagnostics.
+"""Resolve the running Symphony git sha for startup logging + Run-record provenance.
 
-Used at startup and in Plane claim comments so that a failing dispatch can be
-traced back to a specific Symphony revision. Returns ``"unknown"`` rather than
-raising if ``git rev-parse`` fails, so a missing/non-git deploy environment
-cannot crash Symphony startup.
+Returns ``"unknown"`` rather than raising if ``git rev-parse`` fails, so a
+missing/non-git deploy environment cannot crash Symphony startup.
 """
 
 from __future__ import annotations

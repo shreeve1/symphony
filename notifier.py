@@ -46,12 +46,16 @@ class TelegramNotifier:
             LOGGER.warning("telegram_notification_failed error=%s", exc)
 
     def send_sync(self, message: str) -> bool:
+        """Send from sync context; no current production caller uses this."""
+
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        payload = json.dumps({
-            "chat_id": self.chat_id,
-            "text": message,
-            "parse_mode": "HTML",
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(
             url,
             data=payload,
@@ -153,4 +157,6 @@ def _append_urls(parts: list[str], *, issue_url: str, dashboard_url: str) -> Non
     if issue_url:
         parts.append(f'\U0001f517 <a href="{_html_escape(issue_url)}">Open issue</a>')
     if dashboard_url:
-        parts.append(f'\U0001f4ca <a href="{_html_escape(dashboard_url)}">Dashboard</a>')
+        parts.append(
+            f'\U0001f4ca <a href="{_html_escape(dashboard_url)}">Dashboard</a>'
+        )

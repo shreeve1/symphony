@@ -32,7 +32,6 @@ from session_continuity import derive_session_id, session_file_path
 LOGGER = logging.getLogger(__name__)
 READY_TIMEOUT_SECONDS = 30.0
 CLAUDE_PROBE_TIMEOUT_SECONDS = 30.0
-READY_PATTERN = "bypass permissions on|shift+tab to cycle"
 # A large pasted prompt is not instantly settled in Claude's input box, so an
 # Enter sent immediately after paste-buffer is sometimes absorbed into the paste
 # and the prompt is never submitted (the pane keeps a `[Pasted text …]`

@@ -20,8 +20,9 @@ from blocked_reconciler import reconcile_blocked
 from claude_runner import claude_probe_failure_reason
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
-from repo_host import repo_host_for
+from context_compaction import ContextCompactionError, estimate_tokens, maybe_compact
 from model_catalog import load_models, resolve_model
+from repo_host import repo_host_for
 from notifier import (
     TelegramNotifier,
     format_blocked_message,
@@ -765,11 +766,8 @@ async def _maybe_compact_context(
                 )
             )
         )
-    compaction = import_module("context_compaction")
     context = str(getattr(candidate, "context_md", "") or "")
-    if vars(compaction)["estimate_tokens"](context) <= int(
-        settings["threshold_tokens"]
-    ):
+    if estimate_tokens(context) <= int(settings["threshold_tokens"]):
         return candidate
     try:
         pi_entry = resolve_model(None, load_models(), agent="pi")
@@ -784,7 +782,7 @@ async def _maybe_compact_context(
     )
     try:
         compacted = await asyncio.to_thread(
-            vars(compaction)["maybe_compact"],
+            maybe_compact,
             compaction_candidate,
             resolved_binding,
             agent_runner,
@@ -793,7 +791,7 @@ async def _maybe_compact_context(
             now=now,
         )
     except Exception as exc:
-        if isinstance(exc, vars(compaction)["ContextCompactionError"]):
+        if isinstance(exc, ContextCompactionError):
             raise SchedulerContextCompactionError(str(exc)) from exc
         raise
     if compacted == str(getattr(candidate, "context_md", "") or ""):
@@ -2180,7 +2178,6 @@ async def reconcile_stale_running(
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     notifier: TelegramNotifier | None = None,
-    config: SymphonyConfig | None = None,
     dispatch_state: _DispatchState | None = None,
 ) -> None:
     """Reconcile Running issues whose durable claim comment is stale or interrupted."""

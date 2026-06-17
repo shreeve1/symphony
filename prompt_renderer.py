@@ -312,19 +312,12 @@ def render_prompt(
         if delta_block:
             parts.append(delta_block)
         prompt = "\n\n".join(parts)
-
-        if tracker_kind == "podium":
-            directive = _skill_directive(issue.preferred_skill)
-            if directive:
-                prompt = f"{directive}\n\n{prompt}"
-
-        return prompt
-
-    prompt_head = rendered.strip()
-    if prompt_head:
-        prompt = f"{prompt_head}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
     else:
-        prompt = f"{issue_block}\n\n{OUTPUT_CONTRACT}"
+        prompt_head = rendered.strip()
+        if prompt_head:
+            prompt = f"{prompt_head}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
+        else:
+            prompt = f"{issue_block}\n\n{OUTPUT_CONTRACT}"
 
     # The operator's skill choice is a directive, not metadata: the scheduler
     # loads the skill into pi via --skill, and this line makes the agent

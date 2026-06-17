@@ -1,4 +1,4 @@
-"""Container entrypoint for the Symphony scheduler."""
+"""Host-native, tracker-agnostic Symphony scheduler entrypoint."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from claude_runner import (
 )
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
+from model_catalog import load_models, resolve_model
 from notifier import TelegramNotifier
 from plane_adapter import (
     ClosablePlaneTransport,
@@ -104,8 +105,6 @@ def _build_binding_runtime(
         if binding.tracker == "podium":
             # Podium dispatch resolves provider/model from models.yml, so the
             # startup probe must exercise the catalog default, not legacy env.
-            from model_catalog import load_models, resolve_model
-
             entry = resolve_model(None, load_models(), agent="pi")
             probe_provider = str(entry["provider"])
             probe_model = str(entry["id"])
@@ -145,6 +144,7 @@ def _build_binding_runtime(
                 )
     if binding.tracker == "podium":
         transport = None
+        # Defer the web.api.db edge for plane-only bindings.
         adapter_cls = import_module("tracker_podium").PodiumTrackerAdapter
         adapter = adapter_cls(
             binding_name=binding.name, contract=binding.tracker_contract

@@ -1,1 +1,1 @@
-"""Symphony Plane polling service skeleton."""
+"""Host-native, tracker-agnostic Symphony scheduler."""
