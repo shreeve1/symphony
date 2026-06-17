@@ -1,11 +1,13 @@
 ---
 id: 062
 title: Extract pi-command + silent-exit helpers
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -16,10 +18,10 @@ Extract `_build_pi_command` and `_silent_exit_result` in `agent_runner.py`. Pass
 
 ## Acceptance criteria
 
-- [ ] `_build_pi_command` exists; the three command-assembly sites use it.
-- [ ] `_silent_exit_result` exists; the two silent-exit guards use it.
-- [ ] Basename-vs-abspath and remote-skill-skip divergence preserved (passed as args, not hard-coded in the helper).
-- [ ] Behavior unchanged; `uv run pytest` passes.
+- [x] `_build_pi_command` exists; the three command-assembly sites use it.
+- [x] `_silent_exit_result` exists; the two silent-exit guards use it.
+- [x] Basename-vs-abspath and remote-skill-skip divergence preserved (passed as args, not hard-coded in the helper).
+- [x] Behavior unchanged; `uv run pytest` passes.
 
 ## Verification
 
@@ -28,3 +30,7 @@ Extract `_build_pi_command` and `_silent_exit_result` in `agent_runner.py`. Pass
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Extracted `_build_pi_command` and `_silent_exit_result` in `agent_runner.py`, repointed local one-shot, remote one-shot, RPC, and probe command construction through the helper, and added focused tests for command construction plus silent-exit handling. Verified with `uv run pytest` and fresh Ralph review.

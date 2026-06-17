@@ -32,3 +32,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Used `import_module("worktree_facade")` at call sites to preserve lazy import behavior and keep Pyright diagnostics clean for the root-level facade.
 **Conventions established:** Compatibility import shims shared across root modules should live in one facade, with call sites importing from that facade rather than repeating `web.api.*` fallback logic.
 **Notes for next iteration:** `grep -rn "from web.api.worktree import" *.py` now intentionally matches only `worktree_facade.py`.
+
+## #062 Extract pi-command + silent-exit helpers — 2026-06-17
+
+**What changed:** Added `_build_pi_command` and `_silent_exit_result` in `agent_runner.py`, repointed local one-shot, remote one-shot, RPC, and probe command construction through the helper, and added focused tests.
+**Files:** `agent_runner.py`, `tests/test_agent_runner.py`, `.kanban/issues/062-pi-command-silent-exit-helpers.md`.
+**Decisions:** Kept local absolute `pi_bin`, remote basename `pi_name`, and remote skill skipping at call sites by passing `pi_bin` and `skill_source` explicitly into `_build_pi_command`.
+**Conventions established:** Runner command-building helpers should accept path/skill decisions as inputs instead of embedding local-vs-remote policy.
+**Notes for next iteration:** Issue #063 remains independently eligible; issue #064 stays blocked until #063 is done.
