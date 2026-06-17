@@ -1,7 +1,7 @@
 ---
 id: 063
 title: Small polish batch — renderer-shim rename, KNOWN_AGENTS, entity-decode
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
