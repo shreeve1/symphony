@@ -8,6 +8,7 @@ priority: 0
 created: 2026-06-17
 updated: 2026-06-17
 actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -34,6 +35,10 @@ Update the ~10 `main.*` monkeypatch references in tests to the public name.
 ## Implementation Notes
 
 Promoted `main.build_binding_runtime` to the public single-binding runtime constructor and documented that it has no startup probe side effects. Replaced the Podium context-compaction reflection cluster with direct imports of `SymphonyConfig`, `build_binding_runtime`, `maybe_compact`, and `estimate_tokens`. Updated runtime-factory tests to use the public symbol.
+
+## Actionable Review Notes
+
+Review found and fixed one legacy app-dir regression: `uvicorn main:app` from `web/api` bound `web/api/main.py` as `sys.modules["main"]`, so the direct `from main import build_binding_runtime` resolved to the partially initialized API module. The fallback now loads repo-root `main.py` under an alias only for that legacy invocation, and `web/api/tests/test_context_compaction.py` covers the import path.
 
 ## Blocked by
 

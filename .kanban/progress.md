@@ -73,9 +73,9 @@ This file tracks implementation notes across Ralph iterations.
 ## #066 Promote `build_binding_runtime` + clean web/api reflection cluster — 2026-06-17
 
 **What changed:** Renamed `_build_binding_runtime` to public `build_binding_runtime`, documented it as the side-effect-free single-binding constructor, and replaced Podium context-compaction `vars()` reflection with direct imports/calls.
-**Files:** `main.py`, `web/api/main.py`, `tests/test_main.py`, `tests/test_trading_podium_dispatch.py`, `.kanban/issues/066-public-build-binding-runtime-web-api-reflection.md`.
-**Decisions:** Kept the factory in `main.py` for now; full extraction to a neutral runtime factory remains deferred.
+**Files:** `main.py`, `web/api/main.py`, `tests/test_main.py`, `tests/test_trading_podium_dispatch.py`, `web/api/tests/test_context_compaction.py`, `.kanban/issues/066-public-build-binding-runtime-web-api-reflection.md`.
+**Decisions:** Kept the factory in `main.py` for now; full extraction to a neutral runtime factory remains deferred. The legacy `uvicorn main:app` from `web/api` path needs an alias loader because `web/api/main.py` is already bound to `sys.modules["main"]` during that import mode.
 **Conventions established:** Web/API compaction may import the public runtime constructor directly; private engine reflection via `vars(engine_main)`/`vars(compaction)` should stay absent from `web/api/main.py`.
 **Notes for next iteration:** Issue #067 remains independently eligible; issue #068 can proceed from #064 without depending on this factory rename.
 
-**Actionable review:** Fresh reviewer diffed `858ba03a9993c668bb27a7511aef43f35d1deff9..HEAD`, read every changed file, reran `uv run pytest -q`, `git diff --check`, `uv run ruff check` on touched Python files, checked critical LSP diagnostics, and returned `RALPH_REVIEW: PASS`.
+**Actionable review:** Diffed `858ba03a9993c668bb27a7511aef43f35d1deff9..HEAD`, read every changed file, verified all acceptance criteria, and fixed one legacy app-dir import regression in `web/api/main.py` with coverage in `web/api/tests/test_context_compaction.py`. Verification: `uv run pytest` (885 passed, 2 skipped), `grep -n "vars(engine_main)\|vars(compaction)" web/api/main.py` no matches, `uv run ruff check web/api/main.py web/api/tests/test_context_compaction.py` clean, `git diff --check` clean, touched-file LSP diagnostics clean.

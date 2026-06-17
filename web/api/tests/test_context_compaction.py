@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from collections.abc import Iterator
 from importlib import import_module
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -19,6 +23,24 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         login(test_client)
         yield test_client
+
+
+def test_legacy_uvicorn_app_dir_import_loads_api_main() -> None:
+    env = {**os.environ, "PYTHONPATH": ""}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import main; assert hasattr(main, 'app')",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_compact_issue_endpoint_returns_new_token_count(

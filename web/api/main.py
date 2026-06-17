@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import inspect
 import logging
 import os
@@ -82,10 +83,38 @@ seed_if_empty = _seed.seed_if_empty
 touch_wake_sentinel = _wake_signal.touch_wake_sentinel
 write_steer_record = _steer_queue.write_steer_record
 
+
+def _load_engine_main_for_legacy_app_dir() -> Any:
+    """Load repo-root main.py when this file is imported as `main`.
+
+    `uvicorn main:app` from `web/api` binds this module to sys.modules["main"],
+    so a normal `from main import build_binding_runtime` would import this
+    partially-initialized API module instead of the scheduler entrypoint.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "_symphony_engine_main", repo_root / "main.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load scheduler entrypoint")
+    module = importlib.util.module_from_spec(spec)
+    import sys
+
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 try:
     from config import SymphonyConfig
     from context_compaction import estimate_tokens, maybe_compact
-    from main import build_binding_runtime
+
+    if __name__ == "main":  # uvicorn main:app from web/api
+        build_binding_runtime = (
+            _load_engine_main_for_legacy_app_dir().build_binding_runtime
+        )
+    else:
+        from main import build_binding_runtime
 
     _model_catalog = import_module("model_catalog")
 except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
@@ -94,7 +123,13 @@ except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from config import SymphonyConfig  # type: ignore[no-redef]
     from context_compaction import estimate_tokens, maybe_compact  # type: ignore[no-redef]
-    from main import build_binding_runtime  # type: ignore[no-redef]
+
+    if __name__ == "main":
+        build_binding_runtime = (
+            _load_engine_main_for_legacy_app_dir().build_binding_runtime
+        )
+    else:
+        from main import build_binding_runtime  # type: ignore[no-redef]
 
     _model_catalog = import_module("model_catalog")
 
