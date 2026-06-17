@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -21,7 +21,6 @@ from scheduler import (
     run_tick,
     _resolve_mode,
     _extract_labels,
-    init_run_semaphore,
     _dispatch_one,
     _reserve_candidate,
     _release_candidate,
@@ -35,6 +34,7 @@ from schedule import format_cancellation_comment, format_schedule_comment
 from notifier import TelegramNotifier
 
 from plane_adapter import PlaneAdapter, PlaneRateLimitError
+from tracker_adapter import TrackerAdapter
 from tracker_contract import (
     DEFAULT_CONTRACT,
     PlaneLabel,
@@ -3207,30 +3207,23 @@ def _run_id_from_identifier_for_tests(identifier: str) -> str:
     return digest[:8]
 
 
-# --- init_run_semaphore tests ---
+# --- _DispatchState tests ---
 
 
-def test_init_run_semaphore_sets_semaphore_to_config_cap(tmp_path: Path) -> None:
-    import scheduler as sched_mod
-
-    init_run_semaphore(_config(tmp_path, run_cap=3))
-    # The cap is stored in the Semaphore; verify it's replaceable to 3.
-    # We confirm via the init, which we can test by resetting.
-    assert sched_mod._RUN_SEMAPHORE is not None
+def _dispatch_state(config: SymphonyConfig) -> _DispatchState:
+    return scheduler._new_dispatch_state(config)
 
 
-def test_init_run_semaphore_resets_semaphore_on_reinit(tmp_path: Path) -> None:
-    import scheduler as sched_mod
+def test_new_dispatch_state_sets_semaphore_to_config_cap(tmp_path: Path) -> None:
+    state = _dispatch_state(_config(tmp_path, run_cap=3))
 
-    init_run_semaphore(_config(tmp_path, run_cap=2))
-    first = sched_mod._RUN_SEMAPHORE
-    init_run_semaphore(_config(tmp_path, run_cap=3))
-    # Different object after re-init.
-    assert sched_mod._RUN_SEMAPHORE is not first
-    # Verify cap=3 by checking Semaphore internal _value
-    sem = sched_mod._RUN_SEMAPHORE
-    assert sem is not None
-    assert sem._value == 3
+    assert state.semaphore._value == 3
+
+
+def test_new_dispatch_state_uses_config_poll_interval(tmp_path: Path) -> None:
+    state = _dispatch_state(_config(tmp_path, poll_interval_ms=5000, run_cap=2))
+
+    assert state.poll_interval == 5.0
 
 
 # --- _dispatch_one tests ---
@@ -3242,7 +3235,6 @@ async def test_dispatch_one_runs_and_returns_tick_result(tmp_path: Path) -> None
     import scheduler as sched_mod
 
     config = _config(tmp_path, run_cap=1)
-    init_run_semaphore(config)
     transport = FakeTransport()
     transport.issues["d1"] = _issue("d1")
 
@@ -3267,7 +3259,7 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(
     import scheduler as sched_mod
 
     config = _config(tmp_path, run_cap=2)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
     entered = 0
     max_entered = 0
     both_entered = asyncio.Event()
@@ -3293,6 +3285,7 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(
                 lambda issue: "prompt",
                 None,
                 False,
+                dispatch_state=state,
             )
         )
         for _ in range(3)
@@ -3306,9 +3299,7 @@ async def test_dispatch_one_enforces_cap_plus_one_waits(
     release.set()
     await asyncio.gather(*tasks)
     assert max_entered == 2
-    sem = sched_mod._RUN_SEMAPHORE
-    assert sem is not None
-    assert sem._value == 2
+    assert state.semaphore._value == 2
 
 
 @pytest.mark.asyncio
@@ -3319,7 +3310,7 @@ async def test_rpc_dispatch_holds_global_cap_until_agent_returns(
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo, run_cap=1)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
     transport = FakeTransport()
     transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
     transport.issues["issue-2"] = {**_issue("issue-2"), "identifier": "issue-2"}
@@ -3337,7 +3328,13 @@ async def test_rpc_dispatch_holds_global_cap_until_agent_returns(
     tasks = [
         asyncio.create_task(
             _dispatch_one(
-                config, adapter, rpc_agent, lambda issue: "prompt", None, False
+                config,
+                adapter,
+                rpc_agent,
+                lambda issue: "prompt",
+                None,
+                False,
+                dispatch_state=state,
             )
         )
         for _ in range(2)
@@ -3364,7 +3361,7 @@ async def test_dispatch_one_does_not_duplicate_in_flight_issue(tmp_path: Path) -
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo, run_cap=2)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
     transport = FakeTransport()
     transport.issues["issue-1"] = {**_issue("issue-1"), "identifier": "issue-1"}
     adapter = _adapter(transport)
@@ -3380,7 +3377,15 @@ async def test_dispatch_one_does_not_duplicate_in_flight_issue(tmp_path: Path) -
 
     tasks = [
         asyncio.create_task(
-            _dispatch_one(config, adapter, agent, lambda issue: "prompt", None, False)
+            _dispatch_one(
+                config,
+                adapter,
+                agent,
+                lambda issue: "prompt",
+                None,
+                False,
+                dispatch_state=state,
+            )
         )
         for _ in range(2)
     ]
@@ -3407,7 +3412,7 @@ async def test_scheduled_release_reserved_before_side_effects(
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo, run_cap=2)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
     scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
     transport = FakeTransport()
     transport.issues["issue-1"] = {
@@ -3440,6 +3445,7 @@ async def test_scheduled_release_reserved_before_side_effects(
                 lambda issue: "prompt",
                 None,
                 False,
+                dispatch_state=state,
             )
         )
         for _ in range(2)
@@ -3467,7 +3473,7 @@ async def test_scheduled_release_failure_holds_reservation_until_blocked(
     repo = tmp_path / "homelab"
     _init_tmp_repo(repo)
     config = _config(repo, run_cap=2)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
     scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
     transport = FakeTransport()
     transport.issues["issue-1"] = {
@@ -3503,6 +3509,7 @@ async def test_scheduled_release_failure_holds_reservation_until_blocked(
                 lambda issue: "prompt",
                 None,
                 False,
+                dispatch_state=state,
             )
         )
         for _ in range(2)
@@ -3526,13 +3533,11 @@ async def test_scheduled_release_failure_holds_reservation_until_blocked(
 @pytest.mark.asyncio
 async def test_semaphore_at_cap_reports_locked(tmp_path: Path) -> None:
     """When all cap slots are acquired, semaphore reports locked."""
-    import scheduler as sched_mod
 
     config = _config(tmp_path, run_cap=2)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
 
-    sem = sched_mod._RUN_SEMAPHORE
-    assert sem is not None
+    sem = state.semaphore
     assert await sem.acquire() is True
     assert await sem.acquire() is True
 
@@ -3548,30 +3553,17 @@ async def test_semaphore_at_cap_reports_locked(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_semaphore_slot_released_on_exit(tmp_path: Path) -> None:
     """Releasing a slot frees it for the next Run."""
-    import scheduler as sched_mod
 
     config = _config(tmp_path, run_cap=1)
-    init_run_semaphore(config)
+    state = _dispatch_state(config)
 
-    sem = sched_mod._RUN_SEMAPHORE
-    assert sem is not None
+    sem = state.semaphore
     assert await sem.acquire() is True
     assert sem.locked() is True
     # Release directly on the semaphore (asyncio Semaphore.acquire
     # returns True, not a releasable context manager)
     sem.release()
     assert sem.locked() is False
-
-
-# --- poll interval constant tests ---
-
-
-def test_poll_interval_derived_from_config(tmp_path: Path) -> None:
-    """_POLL_INTERVAL_S is set from config.poll_interval_ms."""
-    init_run_semaphore(_config(tmp_path, poll_interval_ms=5000, run_cap=2))
-    import scheduler as sched_mod
-
-    assert sched_mod._POLL_INTERVAL_S == 5.0
 
 
 # --- Worktree cleanup on all exit paths ---
@@ -3883,8 +3875,7 @@ async def test_plane_rate_limit_records_per_binding_cooldown(
     assert state.cooldown_attempts == 1
 
 
-def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> None:
-    scheduler._PLANE_COOLDOWN_UNTIL = None
+def test_plane_rate_limit_cooldown_is_scoped_to_one_state(tmp_path: Path) -> None:
     first = _DispatchState(
         semaphore=asyncio.Semaphore(1),
         in_flight_ids=set(),
@@ -3906,7 +3897,8 @@ def test_plane_rate_limit_cooldown_is_shared_across_states(tmp_path: Path) -> No
         jitter=lambda: 0.0,
     )
 
-    assert _cooldown_remaining_s(second, now=lambda: now) == 10
+    assert _cooldown_remaining_s(first, now=lambda: now) == 10
+    assert _cooldown_remaining_s(second, now=lambda: now) == 0
 
 
 @pytest.mark.asyncio
@@ -4171,7 +4163,7 @@ async def test_prepare_resume_candidate_remote_uses_seam_no_fs(
 
     candidate = _candidate("issue-1")
     result, decision = await scheduler._prepare_resume_candidate(
-        _NoStoreAdapter(), config, candidate, {}, binding=binding
+        cast(TrackerAdapter, _NoStoreAdapter()), config, candidate, {}, binding=binding  # pyright: ignore[reportArgumentType]
     )
 
     assert host.calls == 1
@@ -4207,7 +4199,7 @@ async def test_maybe_compact_context_early_returns_for_remote(
     candidate = replace(_candidate("issue-1"), context_md="x" * 200_000)
     result = await scheduler._maybe_compact_context(
         config,
-        _CompactAdapter(),
+        cast(TrackerAdapter, _CompactAdapter()),
         candidate,
         lambda issue, prompt: AgentResult(0, 1, False),
         now=lambda: datetime.now(UTC),
@@ -4233,7 +4225,7 @@ async def test_prepare_resume_candidate_local_unchanged(
     monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
     candidate = _candidate("issue-1")
     result, decision = await scheduler._prepare_resume_candidate(
-        _NoStoreAdapter(), config, candidate, {}, binding=binding
+        cast(TrackerAdapter, _NoStoreAdapter()), config, candidate, {}, binding=binding  # pyright: ignore[reportArgumentType]
     )
     # Local binding, no worktree → cwd is the repo path (homelab_repo_path).
     assert seen["cwd"] == config.homelab_repo_path
@@ -4259,7 +4251,7 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
         _candidate("issue-1"), worktree_active=True, binding_name=binding.name
     )
     result, _ = await scheduler._prepare_resume_candidate(
-        _NoStoreAdapter(), config, candidate, {}, binding=binding
+        cast(TrackerAdapter, _NoStoreAdapter()), config, candidate, {}, binding=binding  # pyright: ignore[reportArgumentType]
     )
     expected_cwd = scheduler._dispatch_cwd(config, candidate, binding=binding)
     # Worktree-active local binding records the worktree-HEAD sha (cwd-bound),
@@ -4311,7 +4303,7 @@ async def test_handle_archived_terminal_skips_worktree_for_remote(
 
     candidate = replace(_candidate("issue-1"), binding_name=binding.name)
     handled = await scheduler._handle_archived_terminal(
-        adapter, config, candidate, "run-1", binding=binding
+        cast(TrackerAdapter, adapter), config, candidate, "run-1", binding=binding
     )
     assert handled is True
     # worktree_active still cleared despite skipping local FS ops.

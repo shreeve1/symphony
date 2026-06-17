@@ -61,15 +61,6 @@ consume_wake_sentinel = _wake_signal.consume_wake_sentinel
 
 
 LOGGER = logging.getLogger(__name__)
-# Global semaphore capping live Runs. Retained for backward compat with
-# tests that call run_tick / _dispatch_one directly via
-# _fallback_dispatch_state(). Production path: each run_loop creates a
-# per-binding _DispatchState with its own semaphore.
-_RUN_SEMAPHORE: asyncio.Semaphore | None = None
-_POLL_INTERVAL_S = 0.0  # retained for _fallback_dispatch_state
-_IN_FLIGHT_ISSUE_IDS: set[str] = set()
-_IN_FLIGHT_LOCK: asyncio.Lock | None = None
-_PLANE_COOLDOWN_UNTIL: datetime | None = None
 # Legacy claim-time fallback: kept so ``_claimed_at`` can still parse claim
 # timestamps from comments on adapters without a Run store (Plane) and from
 # historical issues. New claim time comes from the Run record's ``started_at``.
@@ -109,8 +100,9 @@ class _DispatchState:
 
     Created by ``run_loop`` for each binding so that semaphore cap, in-flight
     tracking, and poll interval are scoped to one project rather than shared
-    across all bindings.  Module-level globals still exist for backward compat
-    with tests that call ``run_tick`` / ``_dispatch_one`` directly.
+    across all bindings. Direct ``run_tick`` / ``_dispatch_one`` calls create
+    or receive an explicit ``_DispatchState`` so tests and production exercise
+    the same state path.
 
     **Concurrency multiplication:** each binding gets its own semaphore of size
     ``run_cap``, so total host-wide concurrent runs is ``run_cap × num_bindings``.
@@ -128,27 +120,27 @@ class _DispatchState:
     pending_completion_bodies: dict[str, str] = field(default_factory=dict)
 
 
+def _new_dispatch_state(config: SymphonyConfig) -> _DispatchState:
+    return _DispatchState(
+        semaphore=asyncio.Semaphore(config.run_cap),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=config.poll_interval_ms / 1000,
+    )
+
+
 def _cooldown_remaining_s(
     state: _DispatchState,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> float:
-    global _PLANE_COOLDOWN_UNTIL
-    now_dt = now()
-    remaining_values: list[float] = []
-    if state.cooldown_until is not None:
-        state_remaining = (state.cooldown_until - now_dt).total_seconds()
-        if state_remaining <= 0:
-            state.cooldown_until = None
-        else:
-            remaining_values.append(state_remaining)
-    if _PLANE_COOLDOWN_UNTIL is not None:
-        global_remaining = (_PLANE_COOLDOWN_UNTIL - now_dt).total_seconds()
-        if global_remaining <= 0:
-            _PLANE_COOLDOWN_UNTIL = None
-        else:
-            remaining_values.append(global_remaining)
-    return max(remaining_values, default=0.0)
+    if state.cooldown_until is None:
+        return 0.0
+    remaining = (state.cooldown_until - now()).total_seconds()
+    if remaining <= 0:
+        state.cooldown_until = None
+        return 0.0
+    return remaining
 
 
 def _record_rate_limit(
@@ -158,7 +150,6 @@ def _record_rate_limit(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     jitter: Callable[[], float] = random.random,
 ) -> None:
-    global _PLANE_COOLDOWN_UNTIL
     state.cooldown_attempts += 1
     if exc.retry_after_s is not None:
         delay_s = exc.retry_after_s
@@ -169,10 +160,7 @@ def _record_rate_limit(
             RATE_LIMIT_BASE_COOLDOWN_S * (2 ** max(0, state.cooldown_attempts - 1)),
         )
         delay_s += delay_s * RATE_LIMIT_JITTER_FRACTION * jitter()
-    cooldown_until = now() + timedelta(seconds=delay_s)
-    state.cooldown_until = cooldown_until
-    if _PLANE_COOLDOWN_UNTIL is None or cooldown_until > _PLANE_COOLDOWN_UNTIL:
-        _PLANE_COOLDOWN_UNTIL = cooldown_until
+    state.cooldown_until = now() + timedelta(seconds=delay_s)
     LOGGER.warning(
         "plane_rate_limited cooldown_s=%.3f attempts=%s",
         delay_s,
@@ -181,10 +169,8 @@ def _record_rate_limit(
 
 
 def _clear_rate_limit(state: _DispatchState) -> None:
-    global _PLANE_COOLDOWN_UNTIL
     state.cooldown_until = None
     state.cooldown_attempts = 0
-    _PLANE_COOLDOWN_UNTIL = None
 
 
 def _fixed_now(value: datetime) -> Callable[[], datetime]:
@@ -1315,10 +1301,8 @@ async def run_tick(
     tick_binding = binding or _binding_from_config(config)
     is_coding = tick_binding is not None and tick_binding.binding_type == "coding"
 
-    if dispatch_state is not None:
-        await reconcile_pending_review(
-            config, adapter, dispatch_state, notifier=notifier
-        )
+    dispatch_state = dispatch_state or _new_dispatch_state(config)
+    await reconcile_pending_review(config, adapter, dispatch_state, notifier=notifier)
 
     try:
         await reconcile_stale_running(
@@ -1434,8 +1418,7 @@ async def run_tick(
     except Exception as exc:
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
-    if dispatch_state is not None:
-        _clear_rate_limit(dispatch_state)
+    _clear_rate_limit(dispatch_state)
 
     approval_policy_enabled = _binding_approval_enabled(tick_binding) and not is_coding
     if candidate is None:
@@ -2122,7 +2105,7 @@ async def _dispatch_one(
     and releases the slot on every exit path. The semaphore slot is held for
     the entire Run duration so the cap correctly blocks new dispatches when full.
     """
-    state = dispatch_state or _fallback_dispatch_state(config)
+    state = dispatch_state or _new_dispatch_state(config)
     async with state.semaphore:
         try:
             result = await run_tick(
@@ -2354,46 +2337,6 @@ async def reconcile_startup(
     return cleaned
 
 
-def init_run_semaphore(config: SymphonyConfig) -> None:
-    """Create or replace the global live-run semaphore with the configured cap.
-
-    Called once at startup and when the cap changes. Must be called before
-    run_loop uses the semaphore.
-    """
-    global \
-        _RUN_SEMAPHORE, \
-        _POLL_INTERVAL_S, \
-        _IN_FLIGHT_ISSUE_IDS, \
-        _IN_FLIGHT_LOCK, \
-        _PLANE_COOLDOWN_UNTIL
-    _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
-    _POLL_INTERVAL_S = config.poll_interval_ms / 1000
-    _IN_FLIGHT_ISSUE_IDS = set()
-    _IN_FLIGHT_LOCK = asyncio.Lock()
-    _PLANE_COOLDOWN_UNTIL = None
-
-
-def _fallback_dispatch_state(config: SymphonyConfig) -> _DispatchState:
-    """Build a _DispatchState from module globals for backward compat.
-
-    Used by tests and legacy callers that invoke _dispatch_one / run_tick
-    without going through run_loop.
-    """
-    global _RUN_SEMAPHORE, _POLL_INTERVAL_S, _IN_FLIGHT_ISSUE_IDS, _IN_FLIGHT_LOCK
-    if _RUN_SEMAPHORE is None:
-        _RUN_SEMAPHORE = asyncio.Semaphore(config.run_cap)
-    if _IN_FLIGHT_LOCK is None:
-        _IN_FLIGHT_LOCK = asyncio.Lock()
-    if _POLL_INTERVAL_S == 0.0:
-        _POLL_INTERVAL_S = config.poll_interval_ms / 1000
-    return _DispatchState(
-        semaphore=_RUN_SEMAPHORE,
-        in_flight_ids=_IN_FLIGHT_ISSUE_IDS,
-        in_flight_lock=_IN_FLIGHT_LOCK,
-        poll_interval=_POLL_INTERVAL_S,
-    )
-
-
 async def _sleep_or_wake(
     timeout: float,
     *,
@@ -2568,13 +2511,6 @@ async def run_loop(
                 LOGGER.info("wake_sentinel_consumed")
 
 
-def _in_flight_lock() -> asyncio.Lock:
-    global _IN_FLIGHT_LOCK
-    if _IN_FLIGHT_LOCK is None:
-        _IN_FLIGHT_LOCK = asyncio.Lock()
-    return _IN_FLIGHT_LOCK
-
-
 async def _reserve_candidate(
     candidates: Sequence[CandidateIssue],
     contract: TrackerContract,
@@ -2582,17 +2518,21 @@ async def _reserve_candidate(
     approval_policy_enabled: bool,
     dispatch_state: _DispatchState | None = None,
 ) -> CandidateIssue | None:
-    lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
-    ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
-    async with lock:
-        available = [candidate for candidate in candidates if candidate.id not in ids]
+    if dispatch_state is None:
+        raise SchedulerError("dispatch_state is required")
+    async with dispatch_state.in_flight_lock:
+        available = [
+            candidate
+            for candidate in candidates
+            if candidate.id not in dispatch_state.in_flight_ids
+        ]
         selected = _oldest_candidate(
             available,
             contract,
             approval_policy_enabled=approval_policy_enabled,
         )
         if selected is not None:
-            ids.add(selected.id)
+            dispatch_state.in_flight_ids.add(selected.id)
         return selected
 
 
@@ -2601,12 +2541,12 @@ async def _reserve_specific_candidate(
     *,
     dispatch_state: _DispatchState | None = None,
 ) -> bool:
-    lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
-    ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
-    async with lock:
-        if candidate.id in ids:
+    if dispatch_state is None:
+        raise SchedulerError("dispatch_state is required")
+    async with dispatch_state.in_flight_lock:
+        if candidate.id in dispatch_state.in_flight_ids:
             return False
-        ids.add(candidate.id)
+        dispatch_state.in_flight_ids.add(candidate.id)
         return True
 
 
@@ -2615,10 +2555,10 @@ async def _release_candidate(
     *,
     dispatch_state: _DispatchState | None = None,
 ) -> None:
-    lock = dispatch_state.in_flight_lock if dispatch_state else _in_flight_lock()
-    ids = dispatch_state.in_flight_ids if dispatch_state else _IN_FLIGHT_ISSUE_IDS
-    async with lock:
-        ids.discard(issue_id)
+    if dispatch_state is None:
+        raise SchedulerError("dispatch_state is required")
+    async with dispatch_state.in_flight_lock:
+        dispatch_state.in_flight_ids.discard(issue_id)
 
 
 def _oldest_candidate(
