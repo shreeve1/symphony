@@ -213,3 +213,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Persistent Claude reaper decisions must use the metadata sidecar first; socket-name parsing is fallback/cross-check only because sanitized names are lossy.
 **Notes for next iteration:** Issue #081 can call this sweep per poll iteration with a tracker-backed `get_issue` and config-provided TTL/max-live values.
 **Verification:** `uv run pytest tests/test_claude_persist.py`, `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py`, `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py -q`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
+
+## #081 Wire Claude reaper sweep into scheduler loop — 2026-06-17
+
+**What changed:** Wired `scheduler.run_loop` to call `sweep_persistent_claude_sessions` once per poll iteration for the scoped `claude_persist` binding only, through `asyncio.to_thread`, with tracker-backed single-issue lookup.
+**Files:** `scheduler/__init__.py`, `config.py`, `tests/test_scheduler.py`, `tests/test_config.py`, `.kanban/issues/081-claude-reaper-scheduler-wiring.md`.
+**Decisions:** The reaper `get_issue` closure uses the adapter's `get_issue` and returns `None` only for `KeyError`; absence from an active poll is never treated as terminal. Config defaults are `SYMPHONY_CLAUDE_PERSIST_IDLE_TTL_S=2700` and `SYMPHONY_CLAUDE_PERSIST_MAX_LIVE=8`.
+**Conventions established:** Persistent Claude session cleanup belongs in the scheduler poll loop only for local `claude_persist` bindings, and tmux-facing sweeps must stay off the event loop.
+**Notes for next iteration:** Issue #082 can add boot-lock semantics on top of the per-poll sweep without reimplementing issue liveness or config parsing.
+**Verification:** `uv run pytest tests/test_scheduler.py tests/test_claude_persist.py tests/test_config.py` (215 passed), `uv run python -m py_compile scheduler/__init__.py config.py`, `uv run ruff check scheduler/__init__.py config.py tests/test_scheduler.py tests/test_config.py`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
