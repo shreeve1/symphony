@@ -204,3 +204,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #083 can expose Claude steer from the API once #079 is done; issue #084 owns run-end steer-close guards and should not duplicate generation rotation.
 **Verification:** `uv run pytest tests/test_claude_persist.py` (12 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py`, `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py -q` (50 passed), `uv run pytest -q` (908 passed, 2 skipped), touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
 **Actionable review:** Re-read `git diff 3dd10371ba883c89be49be5e6338ea749419bb27 HEAD`, inspected every changed file, verified all #079 acceptance criteria, reran `uv run pytest tests/test_claude_persist.py`, `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py`, checked `git diff --check`, confirmed touched-file LSP diagnostics clean, and added `action_reviewed: 2026-06-17`.
+
+## #080 Issue-liveness reaper core for persistent Claude sessions — 2026-06-17
+
+**What changed:** Added `sweep_persistent_claude_sessions` for persistent Claude sockets. The sweep reads session metadata sidecars as the issue/cwd/transcript authority, skips actively running issues, reaps terminal/missing/idle parked sessions, and trims parked sessions beyond `max_live` with log evidence.
+**Files:** `claude_runner.py`, `tests/test_claude_persist.py`, `.kanban/issues/080-claude-reaper-core.md`.
+**Decisions:** Scheduler wiring and boot-lock semantics stay in #081/#082; this slice only provides the core sweep and focused tests.
+**Conventions established:** Persistent Claude reaper decisions must use the metadata sidecar first; socket-name parsing is fallback/cross-check only because sanitized names are lossy.
+**Notes for next iteration:** Issue #081 can call this sweep per poll iteration with a tracker-backed `get_issue` and config-provided TTL/max-live values.
+**Verification:** `uv run pytest tests/test_claude_persist.py`, `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py`, `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py -q`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
