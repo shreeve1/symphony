@@ -26,11 +26,11 @@ from tracker_types import (
     CandidateIssue,
     CommentPayload,
     IssuePayload,
+    _candidate_from_issue,
     _extract_labels,
     _is_state,
-    _candidate_from_issue,
-    _page_items as _page_items_impl,
     _next_cursor,
+    _page_items as _page_items_impl,
 )
 
 
@@ -335,14 +335,17 @@ class PlaneTrackerAdapter:
                     if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
                         mixed_state_seen = True
                         continue
-                    candidates.append(
-                        _candidate_from_issue(
+                    try:
+                        candidate = _candidate_from_issue(
                             issue,
                             labels=_extract_labels(
                                 issue, label_ids=self.contract.label_ids
                             ),
+                            required_fields=("id", "name"),
                         )
-                    )
+                    except ValueError as exc:
+                        raise PlanePollingSchemaError(str(exc)) from exc
+                    candidates.append(candidate)
                 cursor = _next_cursor(response)
                 if not cursor:
                     return candidates

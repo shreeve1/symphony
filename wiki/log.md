@@ -16,7 +16,7 @@ Append entries with this format:
 - Actor: agent (Ralph)
 - Inputs: `.kanban/issues/064-tracker-types-vocabulary-home.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `tracker_types.py`; `tracker_adapter.py`; `plane_adapter.py`; `tracker_podium.py`; `scheduler.py`; `blocked_reconciler.py`; `web/api/main.py`; `tests/test_plane_poller.py`
 - Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0227 added)
-- Notes: Captured Issue #64 landing T7 tracker vocabulary home: stdlib-only `tracker_types.py`, sole `tracker_adapter.TrackerAdapter` Protocol home, and concrete adapters importing shared vocabulary. Verification: `uv run pytest` and `uv run pytest -q` passed (881 passed, 2 skipped); touched-file LSP diagnostics clean; `git diff --check` clean; fresh Ralph review returned `RALPH_REVIEW: PASS_WITH_NOTES` for harmless adjacent formatting churn only. No secrets or env files read.
+- Notes: Captured Issue #64 landing T7 tracker vocabulary home: stdlib-only `tracker_types.py`, sole `tracker_adapter.TrackerAdapter` Protocol home, and concrete adapters importing shared vocabulary. Actionable review then preserved two Plane-path behaviours after the move: `IssuePayload` still defaults to Todo, and malformed Plane issue rows still raise `PlanePollingSchemaError`. Verification: focused `tests/test_plane_poller.py` passed (25 passed), full `uv run pytest` passed (883 passed, 2 skipped), touched-file LSP diagnostics clean, and `git diff --check` clean. No secrets or env files read.
 
 ## [2026-06-17] session-update | Issue #45 architecture-review polish batch
 

@@ -8,6 +8,7 @@ priority: 0
 created: 2026-06-17
 updated: 2026-06-17
 actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -41,4 +42,4 @@ Repoint all importers, including `web/api/main.py:927` (`from tracker_podium imp
 
 ## Implementation Notes
 
-Added `tracker_types.py` as the neutral home for tracker vocabulary dataclasses and parse helpers. Repointed Plane, Podium, scheduler, blocked reconciler, web API, and poller imports through `tracker_types` / `tracker_adapter`. Fresh Ralph review passed with notes about harmless adjacent formatting churn in `blocked_reconciler.py`.
+Added `tracker_types.py` as the neutral home for tracker vocabulary dataclasses and parse helpers. Repointed Plane, Podium, scheduler, blocked reconciler, web API, and poller imports through `tracker_types` / `tracker_adapter`. Actionable review preserved two Plane-path behaviours after the move: `IssuePayload` still defaults to Todo without importing `tracker_contract`, and malformed Plane issue rows still raise `PlanePollingSchemaError` instead of becoming empty candidates.

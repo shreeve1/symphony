@@ -4,8 +4,6 @@ import httpx
 import pytest
 
 from plane_adapter import InMemoryTransport, PlaneAdapter
-from tracker_adapter import TrackerAdapter
-from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
 from plane_poller import (
     HttpxPlaneTransport,
     MAX_MIXED_STATE_PAGES_PER_TICK,
@@ -17,6 +15,9 @@ from plane_poller import (
     build_adapter,
     fetch_todo_issues,
 )
+from tracker_adapter import TrackerAdapter
+from tracker_contract import DEFAULT_CONTRACT, PlaneLabel, PlaneState
+from tracker_types import IssuePayload
 
 
 def _issue(issue_id, state="Todo", labels=None):
@@ -384,6 +385,17 @@ class SchemaFailureTransport:
         raise AssertionError("poller must not write")
 
 
+class MissingIssueFieldTransport:
+    async def get(self, path):
+        return {"results": [{"id": "issue-1", "state": PlaneState.TODO.value}]}
+
+    async def post(self, path, body):
+        raise AssertionError("poller must not write")
+
+    async def patch(self, path, body):
+        raise AssertionError("poller must not write")
+
+
 @pytest.mark.asyncio
 async def test_schema_error_logs_error_and_raises(caplog):
     adapter = PlaneAdapter(
@@ -394,6 +406,30 @@ async def test_schema_error_logs_error_and_raises(caplog):
         await fetch_todo_issues(adapter)
 
     assert "Plane polling schema error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_missing_issue_field_logs_schema_error_and_raises(caplog):
+    adapter = PlaneAdapter(
+        contract=DEFAULT_CONTRACT, transport=MissingIssueFieldTransport()
+    )
+
+    with caplog.at_level(logging.ERROR), pytest.raises(PlanePollingSchemaError):
+        await fetch_todo_issues(adapter)
+
+    assert "Plane polling schema error" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_issue_payload_default_state_remains_todo():
+    transport = InMemoryTransport()
+    adapter = PlaneAdapter(transport=transport)
+
+    await adapter.upsert_issue(IssuePayload(external_id="ext-1", name="Test"))
+
+    assert list(transport.issues.values())[0]["state"] == DEFAULT_CONTRACT.state_ids[
+        PlaneState.TODO.value
+    ]
 
 
 @pytest.mark.asyncio

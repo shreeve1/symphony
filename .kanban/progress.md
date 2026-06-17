@@ -56,3 +56,5 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** The tracker layering is now `tracker_contract → tracker_types → tracker_adapter → {plane_adapter, tracker_podium}`; `tracker_types.py` stays stdlib-only and must not import in-scope or `web.*` modules.
 **Conventions established:** Tracker vocabulary dataclasses and parser helpers belong in `tracker_types.py`; adapter Protocol changes belong in `tracker_adapter.py`, not concrete adapter modules.
 **Notes for next iteration:** Issue #068 can use `tracker_types.CandidateIssue` and the unified `_parse_iso`/label helpers without importing Plane or Podium concrete adapters.
+
+**Actionable review:** Preserved Plane-path schema/default behaviour after the type move: `IssuePayload` still defaults to Todo via a neutral literal, and Plane candidate polling raises `PlanePollingSchemaError` for missing required issue fields. Verification: `uv run pytest` (883 passed, 2 skipped); touched-file LSP diagnostics clean.

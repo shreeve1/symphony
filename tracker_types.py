@@ -75,7 +75,8 @@ class IssuePayload:
     external_id: str
     name: str
     description: str = ""
-    state: Any = None  # PlaneState | TrackerRole, deferred to avoid import
+    # PlaneState.TODO value, kept literal to avoid importing tracker_contract here.
+    state: Any = "Todo"  # PlaneState | TrackerRole, deferred to avoid import
     labels: list[Any] = field(default_factory=list)  # list[PlaneLabel | TrackerRole]
     priority: str | None = None
 
@@ -176,6 +177,7 @@ def _candidate_from_issue(
     issue: dict[str, Any],
     *,
     labels: tuple[str, ...] | None = None,
+    required_fields: tuple[str, ...] = (),
 ) -> CandidateIssue:
     """Build a :class:`CandidateIssue` from a raw tracker issue dict.
 
@@ -186,7 +188,14 @@ def _candidate_from_issue(
     labels:
         Pre-extracted label tuple.  When *None*, labels are extracted from the
         issue dict via :func:`_extract_labels` (without a label_ids mapping).
+    required_fields:
+        Field names that must be present and truthy.  Neutral scheduler callers
+        can keep the forgiving default; stricter adapters can request validation
+        and translate :class:`ValueError` to their tracker-specific schema error.
     """
+    missing = [field for field in required_fields if not issue.get(field)]
+    if missing:
+        raise ValueError(f"tracker issue missing field: {missing[0]}")
     issue_id = str(issue.get("id", ""))
     return CandidateIssue(
         id=issue_id,
