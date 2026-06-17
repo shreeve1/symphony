@@ -467,13 +467,19 @@ class SteerTmux:
                 self.current_result.write_text("stale gen0", encoding="utf-8")
                 self.current_done.write_text("", encoding="utf-8")
             elif self.complete_on == "steer" and "Operator steer" in prompt:
-                self.current_result.write_text("SYMPHONY_RESULT: done gen1", encoding="utf-8")
+                self.current_result.write_text(
+                    "SYMPHONY_RESULT: done gen1", encoding="utf-8"
+                )
                 self.current_done.write_text("", encoding="utf-8")
             elif self.complete_on == "abort" and "Operator requested abort" in prompt:
-                self.current_result.write_text("SYMPHONY_RESULT: blocked", encoding="utf-8")
+                self.current_result.write_text(
+                    "SYMPHONY_RESULT: blocked", encoding="utf-8"
+                )
                 self.current_done.write_text("", encoding="utf-8")
             elif self.complete_on == "nudge" and "appear to have stopped" in prompt:
-                self.current_result.write_text("SYMPHONY_RESULT: done nudge", encoding="utf-8")
+                self.current_result.write_text(
+                    "SYMPHONY_RESULT: done nudge", encoding="utf-8"
+                )
                 self.current_done.write_text("", encoding="utf-8")
             return Completed()
         if "has-session" in command:
@@ -508,7 +514,9 @@ def test_claude_steer_rotates_generation_ignores_done0_and_clears_queue(
 
     assert result.exit_code == 0
     assert result.stdout == "SYMPHONY_RESULT: done gen1"
-    steer_prompt = next(prompt for prompt in fake.loaded_prompts if "Operator steer" in prompt)
+    steer_prompt = next(
+        prompt for prompt in fake.loaded_prompts if "Operator steer" in prompt
+    )
     assert "please adjust course" in steer_prompt
     assert "result.1.txt" in steer_prompt
     assert "done.1" in steer_prompt
@@ -535,12 +543,16 @@ def test_claude_abort_sends_escape_then_rotates_generation(tmp_path: Path) -> No
     )
 
     assert result.exit_code == 0
-    escape_index = next(i for i, command in enumerate(fake.calls) if command[-1] == "Escape")
+    escape_index = next(
+        i for i, command in enumerate(fake.calls) if command[-1] == "Escape"
+    )
     abort_prompt_index = [
         i for i, command in enumerate(fake.calls) if "load-buffer" in command
     ][1]
     assert escape_index < abort_prompt_index
-    abort_prompt = next(prompt for prompt in fake.loaded_prompts if "Operator requested abort" in prompt)
+    abort_prompt = next(
+        prompt for prompt in fake.loaded_prompts if "Operator requested abort" in prompt
+    )
     assert "result.1.txt" in abort_prompt
     assert "done.1" in abort_prompt
 
@@ -574,14 +586,18 @@ def test_claude_idle_nudge_after_steer_names_current_generation(
     )
 
     assert result.exit_code == 0
-    nudge_prompt = next(prompt for prompt in fake.loaded_prompts if "appear to have stopped" in prompt)
+    nudge_prompt = next(
+        prompt for prompt in fake.loaded_prompts if "appear to have stopped" in prompt
+    )
     assert "result.1.txt" in nudge_prompt
     assert "done.1" in nudge_prompt
     assert "result.0.txt" not in nudge_prompt
     assert "done.0" not in nudge_prompt
 
 
-def _write_meta(pid_dir: Path, socket: Path, *, issue_id: str, session_file: Path) -> None:
+def _write_meta(
+    pid_dir: Path, socket: Path, *, issue_id: str, session_file: Path
+) -> None:
     pid_dir.mkdir(parents=True, exist_ok=True)
     (pid_dir / f"{socket.stem}.meta.json").write_text(
         json.dumps(
@@ -597,10 +613,16 @@ def _write_meta(pid_dir: Path, socket: Path, *, issue_id: str, session_file: Pat
     )
 
 
-def _patch_sweep_io(monkeypatch, tmp_path: Path, sockets: list[Path], reaped: list[str]) -> Path:
+def _patch_sweep_io(
+    monkeypatch, tmp_path: Path, sockets: list[Path], reaped: list[str]
+) -> Path:
     pid_dir = tmp_path / "runtime" / "claude"
-    monkeypatch.setattr(claude_runner, "_claude_pidfile_dir", lambda environ=None: pid_dir)
-    monkeypatch.setattr(claude_runner, "_default_claude_socket_glob", lambda pattern: sockets)
+    monkeypatch.setattr(
+        claude_runner, "_claude_pidfile_dir", lambda environ=None: pid_dir
+    )
+    monkeypatch.setattr(
+        claude_runner, "_default_claude_socket_glob", lambda pattern: sockets
+    )
     monkeypatch.setattr(claude_runner, "_session_alive", lambda *args, **kwargs: True)
 
     def cleanup(socket_path, session_name, **kwargs):
@@ -617,7 +639,9 @@ def _patch_sweep_io(monkeypatch, tmp_path: Path, sockets: list[Path], reaped: li
     return pid_dir
 
 
-def test_sweep_skips_running_issue_even_with_frozen_transcript(tmp_path: Path, monkeypatch) -> None:
+def test_sweep_skips_running_issue_even_with_frozen_transcript(
+    tmp_path: Path, monkeypatch
+) -> None:
     socket = tmp_path / "symphony-claude-persist-homelab-42.sock"
     socket.write_text("", encoding="utf-8")
     transcript = tmp_path / "session.jsonl"
@@ -643,7 +667,10 @@ def test_sweep_skips_running_issue_even_with_frozen_transcript(tmp_path: Path, m
 def test_sweep_reaps_terminal_missing_and_idle_but_keeps_fresh_parked(
     tmp_path: Path, monkeypatch
 ) -> None:
-    sockets = [tmp_path / f"symphony-claude-persist-homelab-{issue}.sock" for issue in ("done", "missing", "idle", "fresh")]
+    sockets = [
+        tmp_path / f"symphony-claude-persist-homelab-{issue}.sock"
+        for issue in ("done", "missing", "idle", "fresh")
+    ]
     for socket in sockets:
         socket.write_text("", encoding="utf-8")
     reaped: list[str] = []
@@ -653,7 +680,12 @@ def test_sweep_reaps_terminal_missing_and_idle_but_keeps_fresh_parked(
         transcript.write_text("", encoding="utf-8")
         mtime = 10.0 if socket.stem.endswith("idle") else 95.0
         os.utime(transcript, (mtime, mtime))
-        _write_meta(pid_dir, socket, issue_id=socket.stem.rsplit("-", 1)[1], session_file=transcript)
+        _write_meta(
+            pid_dir,
+            socket,
+            issue_id=socket.stem.rsplit("-", 1)[1],
+            session_file=transcript,
+        )
 
     def get_issue(issue_id: str):
         if issue_id == "missing":
@@ -683,7 +715,9 @@ def test_sweep_max_live_reaps_oldest_parked_only_and_logs(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:
     ids = ["running", "old", "new"]
-    sockets = [tmp_path / f"symphony-claude-persist-homelab-{issue}.sock" for issue in ids]
+    sockets = [
+        tmp_path / f"symphony-claude-persist-homelab-{issue}.sock" for issue in ids
+    ]
     for socket in sockets:
         socket.write_text("", encoding="utf-8")
     reaped: list[str] = []
@@ -749,7 +783,9 @@ def test_sweep_uses_sidecar_issue_and_session_file_as_authority(
     assert "claude_persist_socket_issue_mismatch" in caplog.text
 
 
-def test_sweep_reaps_dead_socket_with_no_readable_sidecar(tmp_path: Path, monkeypatch) -> None:
+def test_sweep_reaps_dead_socket_with_no_readable_sidecar(
+    tmp_path: Path, monkeypatch
+) -> None:
     socket = tmp_path / "symphony-claude-persist-homelab-42.sock"
     socket.write_text("", encoding="utf-8")
     reaped: list[str] = []
@@ -760,7 +796,10 @@ def test_sweep_reaps_dead_socket_with_no_readable_sidecar(tmp_path: Path, monkey
 
     count = claude_runner.sweep_persistent_claude_sessions(
         "homelab",
-        get_issue=lambda issue_id: {"state": "in_review", "latest_run_state": "succeeded"},
+        get_issue=lambda issue_id: {
+            "state": "in_review",
+            "latest_run_state": "succeeded",
+        },
         now=100.0,
         idle_ttl_s=30.0,
         max_live=8,
