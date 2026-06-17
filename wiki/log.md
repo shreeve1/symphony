@@ -11,6 +11,14 @@ Append entries with this format:
 
 ---
 
+
+## [2026-06-17] session-update | Issue #70 run_tick decomposition
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/070-decompose-run-tick.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `scheduler.py`; `.kanban/progress.md`; `symphony-host.service` restart logs
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0233 added)
+- Notes: Captured Issue #70 landing the main T4 `run_tick` decomposition increment: named selection/gate/prepare/dispatch stage helpers plus `_classify_terminal` for terminal run-record and tracker side effects. Verification: `uv run pytest -q` passed (887 passed, 2 skipped); `uv run ruff check scheduler.py` passed; `uv run python -m py_compile scheduler.py` passed; touched-file LSP diagnostics clean; fresh Ralph review returned `RALPH_REVIEW: PASS`; `symphony-host.service` restarted cleanly on code SHA `48fc0bb` with startup reconcile, run reconcile, RPC probe, and dispatch-loop evidence. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Issue #68 resume fallback dedup
 
 - Actor: agent (Ralph)
