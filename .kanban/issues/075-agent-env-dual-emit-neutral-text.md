@@ -1,7 +1,7 @@
 ---
 id: 075
 title: Agent callback env dual-emit + tracker-neutral agent text
-status: blocked
+status: review
 blocked_by: [67, 64]
 parent: null
 priority: 0
