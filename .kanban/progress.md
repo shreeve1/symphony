@@ -117,3 +117,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #071 can split scheduler packaging on top of the staged `run_tick`; issue #072 remains independently eligible for executor inner-loop extraction.
 
 **Actionable review:** Re-read `git diff 2fa4d62ae41abc60e597181c209068a3eeaf710c HEAD`, inspected every changed file, verified the staged helpers preserve the `run_tick` dispatch path, reran `uv run pytest` (887 passed, 2 skipped), `uv run ruff check scheduler.py`, `uv run python -m py_compile scheduler.py`, checked `scheduler.py` LSP diagnostics clean, and confirmed live journal evidence for `symphony_started code_sha=48fc0bb`, `reconcile_startup_*`, `run_reconcile_*`, and ongoing `dispatch_completed` lines.
+
+## #071 Split scheduler.py into a scheduler/ package — 2026-06-17
+
+**What changed:** Replaced root `scheduler.py` with a `scheduler/` package that preserves the package-level import surface, extracted pure marker parsing to `scheduler/markers.py`, extracted sanitization / summary extraction to `scheduler/sanitize.py`, and created concern-split placeholder modules for the remaining scheduler slices.
+**Files:** `scheduler/__init__.py`, `scheduler/markers.py`, `scheduler/sanitize.py`, `scheduler/run_records.py`, `scheduler/selection.py`, `scheduler/schedule.py`, `scheduler/reconcile.py`, `scheduler/loop.py`, `scheduler/tick.py`, `.kanban/issues/071-split-scheduler-package.md`.
+**Decisions:** Kept impure dispatch/reconcile/run-loop helpers in `scheduler/__init__.py` for this slice while the pure leaves move first, preserving `from scheduler import ...` compatibility for `main.py` and tests.
+**Conventions established:** Future scheduler decomposition should move behavior behind submodule seams incrementally while `scheduler/__init__.py` re-exports the stable test and runtime import surface.
+**Notes for next iteration:** Issue #072 remains independently eligible; future scheduler package slices can populate the placeholder modules without breaking import compatibility.
+**Verification:** `uv run pytest` and `uv run pytest -q` (887 passed, 2 skipped), `uv run ruff check scheduler`, `uv run python -m py_compile scheduler/...`, `git diff --check`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`, and live `symphony-host.service` restart verification on `code_sha=32b186f` with `rpc_orphan_reap_done`, `pi_rpc_probe_ok`, `reconcile_startup_*`, `run_reconcile_*`, and `dispatch_completed`.

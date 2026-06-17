@@ -1,7 +1,7 @@
 ---
 id: 071
 title: Split scheduler.py into a scheduler/ package
-status: review
+status: done
 blocked_by: [70]
 parent: null
 priority: 0
@@ -16,11 +16,11 @@ Split into a `scheduler/` package — `markers.py`, `sanitize.py`, `run_records.
 
 ## Acceptance criteria
 
-- [ ] `scheduler/` package exists with the concern-split modules above and an `__init__.py` re-export.
-- [ ] `from scheduler import run_loop, reconcile_startup, _resolve_mode` resolves unchanged.
-- [ ] Every existing `scheduler.*` import across the repo and tests resolves via the `__init__` re-export.
-- [ ] Import graph stays acyclic (no cycle between the new submodules).
-- [ ] `uv run pytest` passes.
+- [x] `scheduler/` package exists with the concern-split modules above and an `__init__.py` re-export.
+- [x] `from scheduler import run_loop, reconcile_startup, _resolve_mode` resolves unchanged.
+- [x] Every existing `scheduler.*` import across the repo and tests resolves via the `__init__` re-export.
+- [x] Import graph stays acyclic (no cycle between the new submodules).
+- [x] `uv run pytest` passes.
 
 ## Verification
 
@@ -31,3 +31,10 @@ Largest structural change on the live dispatch path. Before this issue is marked
 ## Blocked by
 
 - Blocked by #070 (decompose `run_tick` before relocating it to `tick.py`).
+
+## Implementation Notes
+
+- Replaced root `scheduler.py` with a `scheduler/` package while preserving the package-level import surface.
+- Extracted pure output marker parsing into `scheduler/markers.py` and report sanitization / summary extraction into `scheduler/sanitize.py`.
+- Added concern-split placeholder modules for the remaining scheduler slices: `run_records.py`, `selection.py`, `schedule.py`, `reconcile.py`, `loop.py`, and `tick.py`.
+- Verified `uv run pytest`, `uv run pytest -q`, `uv run ruff check scheduler`, `git diff --check`, touched-file LSP diagnostics, and live `symphony-host.service` restart lifecycle evidence on `code_sha=32b186f`.
