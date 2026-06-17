@@ -123,6 +123,19 @@ systemctl show symphony-host.service --property=ActiveState,SubState,MainPID,Act
 journalctl -u symphony-host.service --since=5m --no-pager -n 100
 ```
 
+## Pre-commit testing (agent obligation)
+
+There is no git pre-commit hook — the agent runs tests before committing. This is a standing obligation, not optional.
+
+Before any `git commit` of code changes:
+
+1. Run a **fast subset**: the test modules covering the code you changed, e.g. `uv run pytest tests/test_scheduler.py tests/test_config.py -q`. Map changed source files to their `tests/test_<area>.py` counterpart.
+2. If the change is cross-cutting, touches `config.py`/`main.py`/dispatch/reconcile, or you cannot confidently scope the affected tests, run the **full suite**: `uv run pytest -q`.
+3. Commit only when the selected tests pass. If a test fails, fix it or surface the failure — do not commit over a red suite.
+4. `test_podium_sqlite_concurrent` is known-flaky under parallel load (`database is locked`); re-run it in isolation before treating a failure as a regression.
+
+Always use `uv run pytest`, never bare `python3 -m pytest` (system interpreter lacks `alembic` and other deps).
+
 ## Skill suite
 
 - `symphony-project-scaffold` — create a Plane project + binding entry.
