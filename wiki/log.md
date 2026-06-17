@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-17] session-update | Issue #074 tracker enum neutral names
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/074-tracker-enum-neutral-names.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `tracker_contract.py`; `tracker_adapter.py`; `tracker_podium.py`; `config.py`; `tests/test_tracker_contract.py`; `.kanban/progress.md`
+- Outputs: updated `wiki/concepts/tracker-contract.md`; updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0235 added)
+- Notes: Captured Issue #074 landing L3-04/L5-02 tracker-vocabulary cleanup: canonical `TrackerState`, `TrackerLabel`, and `TrackerUserMapping` names, Plane-prefixed compatibility aliases retained, and adapter/Podium/config annotations repointed to canonical names. Verification: `uv run pytest` passed (891 passed, 2 skipped); focused ruff/tests passed; touched-file LSP diagnostics clean; fresh Ralph review returned `RALPH_REVIEW: PASS`. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Issue #70 run_tick decomposition
 
 - Actor: agent (Ralph)
