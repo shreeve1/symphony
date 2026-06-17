@@ -66,3 +66,5 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept probe behavior unchanged: local pi probe still runs only for non-remote pi bindings, Podium pi probe still resolves from `models.yml`, and remote reachability remains warning-only.
 **Conventions established:** `_build_binding_runtime` is now pure runtime wiring; startup verification belongs in `_probe_binding` before adapter/router assembly.
 **Notes for next iteration:** Issue #066 can promote the runtime factory API without carrying startup side effects.
+
+**Actionable review:** Re-read the full implementation diff from `55fcd52dde913b3b5b41d6a3aabadf993c6475d6` through `HEAD`, verified `_probe_binding` owns startup verification side effects and `_build_binding_runtime` stays pure runtime wiring. Verification: `uv run pytest` (884 passed, 2 skipped); touched-file LSP diagnostics clean; `git diff --check` clean.
