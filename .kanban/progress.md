@@ -232,3 +232,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #083 can expose Claude steer without needing to solve restart reattach; restart behavior is cold resume by design.
 **Verification:** `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py` (58 passed), `uv run python -m py_compile claude_runner.py main.py`, `uv run pytest tests/test_main.py -q` (15 passed), `uv run ruff check claude_runner.py main.py tests/test_claude_runner.py tests/test_main.py`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`.
 **Actionable review:** Re-read `git diff 918f74172335c3a0de3b33905891da47fbfc343c HEAD`, inspected every changed file, verified all acceptance criteria, reran the exact issue verification command (`uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py` and `uv run python -m py_compile claude_runner.py main.py`), checked touched-file LSP diagnostics clean, and added `action_reviewed: 2026-06-17`.
+
+## #083 API — allow Claude steer for claude_persist bindings + expose flag — 2026-06-17
+
+**What changed:** Extended `/api/issues/{id}/steer` so live Claude runs are steerable when their binding has `claude_persist: true`, and surfaced `claude_persist` in `/api/bindings` alongside `pi_mode`.
+**Files:** `web/api/main.py`, `web/api/tests/test_steer.py`, `web/api/tests/test_endpoints.py`, `.kanban/issues/083-api-allow-claude-steer.md`.
+**Decisions:** Claude live steering is gated by binding-level `claude_persist`; non-persist Claude runs return `409` with `enable claude_persist for live Claude steering`, while pi still requires `pi_mode: rpc`.
+**Conventions established:** The steer comments and queue write path remain agent-agnostic; API gating decides whether the active run may enqueue steer/abort records.
+**Notes for next iteration:** Issue #084 owns run-end steer-close guards; issue #085 can rely on `/api/bindings` exposing `claude_persist`.
+**Verification:** `uv run pytest tests/test_agent_runner.py tests/test_scheduler.py` (183 passed, 1 skipped), `uv run python -m py_compile web/api/main.py`, focused API tests and ruff checks passed, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.

@@ -1,11 +1,14 @@
 ---
 id: 083
 title: API — allow Claude steer for claude_persist bindings + expose flag
-status: review
+status: done
 blocked_by: [76, 79]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -23,10 +26,10 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 7.1–7.4.
 
 ## Acceptance criteria
 
-- [ ] A `steer`/`abort` on a live Claude Run whose binding has `claude_persist: true` is accepted (record written, comments appended).
-- [ ] A Claude Run on a binding WITHOUT `claude_persist` is rejected 409 with the enable-flag message.
-- [ ] pi RPC steer behaviour is unchanged.
-- [ ] `/api/bindings` includes `claude_persist` for every binding.
+- [x] A `steer`/`abort` on a live Claude Run whose binding has `claude_persist: true` is accepted (record written, comments appended).
+- [x] A Claude Run on a binding WITHOUT `claude_persist` is rejected 409 with the enable-flag message.
+- [x] pi RPC steer behaviour is unchanged.
+- [x] `/api/bindings` includes `claude_persist` for every binding.
 
 ## Verification
 
@@ -35,3 +38,9 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 7.1–7.4.
 ## Blocked by
 
 - Blocked by #76 (the flag) and #79 (Claude-side steer delivery exists).
+
+## Implementation Notes
+
+- Added `_binding_claude_persist_for` and surfaced `claude_persist` from `/api/bindings` beside `pi_mode`.
+- Allowed live steer/abort for Claude runs only when their binding has `claude_persist: true`; non-persist Claude runs return 409 with the required enable-flag message.
+- Kept the existing comments append and steer queue write path shared for pi RPC and Claude steering.
