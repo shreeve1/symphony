@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 from pathlib import Path
 from typing import Any, cast
 
@@ -178,7 +179,9 @@ async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings
         raise StopLoop
 
     monkeypatch.setattr(
-        main, "reap_orphan_claude_sockets", lambda: calls.append("reap")
+        main,
+        "reap_orphan_claude_sockets",
+        lambda **kwargs: calls.append(("reap", kwargs["lock_confirmed"])),
     )
     monkeypatch.setattr(main, "verify_claude_support", lambda: calls.append("probe"))
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
@@ -189,9 +192,125 @@ async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings
     with pytest.raises(StopLoop):
         await main.run_bindings_loop(cast(Any, FakeConfig()))
 
-    assert calls.count("reap") == 1
+    assert calls.count(("reap", False)) == 1
     assert calls.count("probe") == 1
-    assert calls[:2] == ["reap", "probe"]
+    assert calls[:2] == [("reap", False), "probe"]
+
+
+@pytest.mark.asyncio
+async def test_run_bindings_loop_passes_confirmed_lock_to_claude_reaper(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    class FakeConfig:
+        bindings = ("one",)
+        lock_path = tmp_path / "scheduler.lock"
+
+    class FakeRuntimeConfig:
+        homelab_repo_path = tmp_path
+
+        @property
+        def bindings(self):
+            return (type("Binding", (), {"binding_type": "infra"})(),)
+
+    class FakeAdapter:
+        contract = None
+
+    def fake_build_runtime(config, binding):
+        return main.BindingRuntime(
+            name=binding,
+            config=cast(Any, FakeRuntimeConfig()),
+            transport=None,
+            adapter=cast(Any, FakeAdapter()),
+            agent_adapter=cast(Any, "agent"),
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
+        return 0
+
+    async def fake_run_loop(
+        config, adapter, *, agent_runner, render_prompt, notifier=None, binding=None
+    ):
+        raise StopLoop
+
+    monkeypatch.setattr(
+        main,
+        "reap_orphan_claude_sockets",
+        lambda **kwargs: calls.append(kwargs["lock_confirmed"]),
+    )
+    monkeypatch.setattr(main, "verify_claude_support", lambda: None)
+    monkeypatch.setattr(main, "reap_orphan_rpc_processes", lambda: None)
+    monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    with pytest.raises(StopLoop):
+        await main.run_bindings_loop(cast(Any, FakeConfig()))
+
+    assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_bindings_loop_passes_unconfirmed_lock_when_lock_is_held(
+    monkeypatch, tmp_path
+):
+    calls = []
+    lock_path = tmp_path / "scheduler.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as locked:
+        fcntl.flock(locked.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        FakeConfig = type(
+            "FakeConfig", (), {"bindings": ("one",), "lock_path": lock_path}
+        )
+
+        class FakeRuntimeConfig:
+            homelab_repo_path = tmp_path
+
+            @property
+            def bindings(self):
+                return (type("Binding", (), {"binding_type": "infra"})(),)
+
+        class FakeAdapter:
+            contract = None
+
+        def fake_build_runtime(config, binding):
+            return main.BindingRuntime(
+                name=binding,
+                config=cast(Any, FakeRuntimeConfig()),
+                transport=None,
+                adapter=cast(Any, FakeAdapter()),
+                agent_adapter=cast(Any, "agent"),
+            )
+
+        async def fake_reconcile_startup(
+            config, adapter, *, notifier=None, binding=None
+        ):
+            return 0
+
+        async def fake_run_loop(
+            config, adapter, *, agent_runner, render_prompt, notifier=None, binding=None
+        ):
+            raise StopLoop
+
+        monkeypatch.setattr(
+            main,
+            "reap_orphan_claude_sockets",
+            lambda **kwargs: calls.append(kwargs["lock_confirmed"]),
+        )
+        monkeypatch.setattr(main, "verify_claude_support", lambda: None)
+        monkeypatch.setattr(main, "reap_orphan_rpc_processes", lambda: None)
+        monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
+        monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
+        monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+        monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+        with pytest.raises(StopLoop):
+            await main.run_bindings_loop(cast(Any, FakeConfig()))
+
+    assert calls == [False]
 
 
 @pytest.mark.asyncio

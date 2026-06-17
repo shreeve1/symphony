@@ -121,6 +121,7 @@ def _record_claude_probe_failure(reason: str) -> None:
 
 def reap_orphan_claude_sockets(
     *,
+    lock_confirmed: bool = False,
     glob_func: Callable[[str], Iterable[str | Path]] | None = None,
     run_func: Callable[..., CompletedLike] = subprocess.run,
     unlink_func: Callable[[Path], object] | None = None,
@@ -138,15 +139,22 @@ def reap_orphan_claude_sockets(
     dead, or the start-time no longer matches (pid reuse). A socket whose tmux
     server is still alive with a matching start-time is a LIVE run and is skipped.
 
+    Persistent Claude sockets are scheduler-lifetime warm sessions only. On boot,
+    when the caller has confirmed the single-instance scheduler lock is held,
+    persistent sockets bypass the pidfile guard and are killed so a restart starts
+    cold and resumes from Claude's transcript instead of reattaching to a detached
+    pre-restart tmux server. If lock ownership is not confirmed, persistent sockets
+    use the same pid/start-time guard as nonce sockets; leaking a stale warm socket
+    is safer than killing a live peer scheduler's session.
+
     The guard is **best-effort and registration-dependent**: protection of a given
     run begins only once ``_register_claude_run`` has written its sidecar (the tmux
     server pid is only knowable after ``new-session`` returns), and a live socket
     whose registration failed or has not yet landed is indistinguishable from an
     orphan and would be reaped. The strong "never kills a live run" property in
     production rests on the call-site invariant — the reaper fires once at startup
-    (``main.run_dispatcher``) before any dispatch, under the single-instance lock,
-    so no live run exists at that moment — not on this guard alone. This guard is
-    defence-in-depth atop that invariant, not a replacement for it.
+    before any dispatch, under the single-instance lock — not on this guard alone.
+    This guard is defence-in-depth atop that invariant, not a replacement for it.
 
     Stale-server sockets from a crashed prior run are still cleaned, preserving the
     boot-sweep purpose. A final pass also sweeps sidecar pidfiles whose run is gone
@@ -162,11 +170,13 @@ def reap_orphan_claude_sockets(
     start_time_reader = read_start_time or pid_start_time
     if pidfile_dir is None:
         pidfile_dir = _claude_pidfile_dir(environ)
+    force_unlinked_pidfiles: set[Path] = set()
     count = 0
     for raw_path in glob_func("/tmp/symphony-claude-*.sock"):
         socket_path = Path(raw_path)
         pidfile = pidfile_dir / f"{socket_path.stem}.pid"
-        if _claude_run_owned_live(
+        bypass_guard = lock_confirmed and _is_persistent_claude_socket(socket_path)
+        if not bypass_guard and _claude_run_owned_live(
             pidfile, is_alive=alive_checker, read_start_time=start_time_reader
         ):
             LOGGER.info("claude_socket_skipped_live path=%s", socket_path)
@@ -180,6 +190,10 @@ def reap_orphan_claude_sockets(
             )
         with suppress(OSError, FileNotFoundError):
             unlink_func(socket_path)
+        if bypass_guard:
+            with suppress(OSError, FileNotFoundError):
+                unlink_func(pidfile)
+            force_unlinked_pidfiles.add(pidfile)
         LOGGER.info("claude_socket_reaped path=%s", socket_path)
         count += 1
     _sweep_orphan_claude_pidfiles(
@@ -187,6 +201,7 @@ def reap_orphan_claude_sockets(
         unlink_func=unlink_func,
         is_alive=alive_checker,
         read_start_time=start_time_reader,
+        skip_pidfiles=force_unlinked_pidfiles,
     )
     LOGGER.info("claude_socket_reap_done count=%d", count)
     return count
@@ -198,6 +213,7 @@ def _sweep_orphan_claude_pidfiles(
     unlink_func: Callable[[Path], object],
     is_alive: Callable[[int], bool],
     read_start_time: Callable[[int], str],
+    skip_pidfiles: set[Path] | None = None,
 ) -> None:
     """Unlink sidecar pidfiles whose recorded run is gone.
 
@@ -207,7 +223,10 @@ def _sweep_orphan_claude_pidfiles(
     """
     if not pidfile_dir.exists():
         return
+    skipped = skip_pidfiles or set()
     for pidfile in sorted(pidfile_dir.glob("*.pid")):
+        if pidfile in skipped:
+            continue
         if _claude_run_owned_live(
             pidfile, is_alive=is_alive, read_start_time=read_start_time
         ):
@@ -360,6 +379,10 @@ def _default_unlink(path: Path) -> None:
 
 
 _PERSISTENT_SOCKET_PREFIX = "symphony-claude-persist-"
+
+
+def _is_persistent_claude_socket(path: Path) -> bool:
+    return path.stem.startswith(_PERSISTENT_SOCKET_PREFIX)
 
 
 def _sanitize_socket_component(value: str) -> str:

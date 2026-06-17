@@ -211,10 +211,11 @@ def test_reap_orphan_claude_sockets_no_sockets_skips_tmux(tmp_path: Path) -> Non
     assert calls == []
 
 
-def test_reap_orphan_claude_sockets_skips_live_owned(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("lock_confirmed", [False, True])
+def test_reap_orphan_claude_sockets_skips_live_owned_non_persistent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, lock_confirmed: bool
 ) -> None:
-    """A socket whose sidecar pidfile names a still-live, matching tmux server is
+    """A nonce socket whose sidecar pidfile names a still-live, matching tmux server is
     a live run and must never be killed, even outside the boot sweep."""
     caplog.set_level(logging.INFO)
     pid_dir = tmp_path / "claude"
@@ -225,6 +226,7 @@ def test_reap_orphan_claude_sockets_skips_live_owned(
     removed: list[Path] = []
 
     count = reap_orphan_claude_sockets(
+        lock_confirmed=lock_confirmed,
         glob_func=lambda pattern: [socket],
         run_func=lambda command, **kwargs: calls.append(command) or Completed(),
         unlink_func=lambda path: removed.append(path),
@@ -237,6 +239,64 @@ def test_reap_orphan_claude_sockets_skips_live_owned(
     assert calls == []
     assert removed == []
     assert f"claude_socket_skipped_live path={socket}" in caplog.text
+
+
+def test_reap_orphan_claude_sockets_keeps_live_persistent_without_lock(
+    tmp_path: Path,
+) -> None:
+    pid_dir = tmp_path / "claude"
+    pid_dir.mkdir()
+    socket = tmp_path / "symphony-claude-persist-homelab-42.sock"
+    socket.write_text("", encoding="utf-8")
+    pidfile = pid_dir / "symphony-claude-persist-homelab-42.pid"
+    pidfile.write_text("999 12345", encoding="utf-8")
+    calls: list[list[str]] = []
+    removed: list[Path] = []
+
+    count = reap_orphan_claude_sockets(
+        lock_confirmed=False,
+        glob_func=lambda pattern: [socket],
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        unlink_func=lambda path: removed.append(path),
+        pidfile_dir=pid_dir,
+        is_alive=lambda pid: pid == 999,
+        read_start_time=lambda pid: "12345",
+    )
+
+    assert count == 0
+    assert calls == []
+    assert removed == []
+
+
+def test_reap_orphan_claude_sockets_reaps_live_persistent_with_lock(
+    tmp_path: Path,
+) -> None:
+    pid_dir = tmp_path / "claude"
+    pid_dir.mkdir()
+    socket = tmp_path / "symphony-claude-persist-homelab-42.sock"
+    socket.write_text("", encoding="utf-8")
+    pidfile = pid_dir / "symphony-claude-persist-homelab-42.pid"
+    pidfile.write_text("999 12345", encoding="utf-8")
+    calls: list[list[str]] = []
+    removed: list[Path] = []
+
+    def unlink(path: Path) -> None:
+        removed.append(path)
+        path.unlink(missing_ok=True)
+
+    count = reap_orphan_claude_sockets(
+        lock_confirmed=True,
+        glob_func=lambda pattern: [socket],
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        unlink_func=unlink,
+        pidfile_dir=pid_dir,
+        is_alive=lambda pid: pid == 999,
+        read_start_time=lambda pid: "12345",
+    )
+
+    assert count == 1
+    assert calls == [["tmux", "-S", str(socket), "kill-server"]]
+    assert removed == [socket, pidfile]
 
 
 def test_reap_orphan_claude_sockets_reaps_dead_owner(tmp_path: Path) -> None:

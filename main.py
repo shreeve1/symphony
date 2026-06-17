@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
+import os
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
 from agent_runner import (
     AgentAdapter,
@@ -45,6 +48,31 @@ class BindingRuntime:
     agent_adapter: AgentAdapter
     pi_adapter: AgentAdapter | None = None
     binding: ProjectBinding | None = None
+
+
+def _try_acquire_single_instance_lock(lock_path: Path | None) -> TextIO | None:
+    """Acquire and hold the scheduler lock, returning the open handle on success."""
+
+    if lock_path is None:
+        return None
+    handle: TextIO | None = None
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("a+", encoding="utf-8")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()}\n")
+        handle.flush()
+        return handle
+    except OSError as exc:
+        if handle is not None:
+            with suppress(OSError):
+                handle.close()
+        logging.getLogger(__name__).warning(
+            "single_instance_lock_unconfirmed path=%s error=%s", lock_path, exc
+        )
+        return None
 
 
 def _render_candidate_prompt(
@@ -191,7 +219,8 @@ async def run_bindings_loop(
     (semaphore, in-flight set, poll interval). Startup reconcile runs for all
     bindings before the dispatcher loop starts.
     """
-    reap_orphan_claude_sockets()
+    lock_handle = _try_acquire_single_instance_lock(getattr(config, "lock_path", None))
+    reap_orphan_claude_sockets(lock_confirmed=lock_handle is not None)
     verify_claude_support()
     reap_orphan_rpc_processes()
     rpc_binding = next(
@@ -263,6 +292,9 @@ async def run_bindings_loop(
         for runtime in runtimes:
             if runtime.transport is not None:
                 await runtime.transport.aclose()
+        if lock_handle is not None:
+            with suppress(OSError):
+                lock_handle.close()
 
 
 async def async_main() -> None:
