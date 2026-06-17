@@ -184,3 +184,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #078 can use the metadata sidecar and deterministic socket as the warm reattach substrate. Issue #079 can build live steer/abort on the extracted Claude poll loop without changing cleanup semantics.
 **Verification:** `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py` (43 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_runner.py tests/test_claude_persist.py`, `git diff --check`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`, and `uv run pytest -q` before final commit.
 **Actionable review:** Re-read `git diff 055c44461ec55574c2fba7a16626e9473f340f9e HEAD`, inspected every changed file, verified lifecycle split / persist cleanup / deterministic socket / metadata sidecar acceptance criteria, reran the issue verification plus `uv run pytest -q` (901 passed, 2 skipped), checked ruff, py_compile, `git diff --check`, and touched-file LSP diagnostics clean, and added `action_reviewed: 2026-06-17`.
+
+## #078 Warm reattach to a live Claude session on a second Run — 2026-06-17
+
+**What changed:** Added a live persistent-session reattach path for `claude_persist` Claude runs: live socket/session/server pid reuses the existing tmux session and pastes a fresh per-Run wrapped prompt; stale/dead sockets and failed reattach paste attempts fall back to cold `new-session` without failing the Run.
+**Files:** `claude_runner.py`, `tests/test_claude_persist.py`, `.kanban/issues/078-claude-warm-reattach.md`.
+**Decisions:** Reattach stays best-effort: pidfile and metadata are rewritten when possible, but any failed precondition or paste race cleans stale session artifacts and uses the existing cold resume/session-id launch path.
+**Conventions established:** Warm Claude reattach requires all three liveness checks: deterministic socket exists, `tmux has-session` succeeds, and the tmux server pid is alive.
+**Notes for next iteration:** Issue #079 can build steer/abort delivery on top of warm reattach; issue #080 can rely on pidfile/metadata being refreshed during reattach.
+**Verification:** `uv run pytest tests/test_claude_persist.py tests/test_claude_runner.py -q` (46 passed), `uv run python -m py_compile claude_runner.py`, `uv run ruff check claude_runner.py tests/test_claude_persist.py tests/test_claude_runner.py`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.

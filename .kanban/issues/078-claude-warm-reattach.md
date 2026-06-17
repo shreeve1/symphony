@@ -1,12 +1,14 @@
 ---
 id: 078
 title: Warm reattach to a live Claude session on a second Run
-status: review
+status: done
 blocked_by: [77]
 parent: null
 priority: 0
 created: 2026-06-17
 updated: 2026-06-17
+actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -24,10 +26,10 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 4.1–4.4.
 
 ## Acceptance criteria
 
-- [ ] Live persistent socket present → no `new-session` and no `_wait_until_ready` are invoked; the prompt is pasted into the existing session (assert via recorded fake `run_func` calls).
-- [ ] Missing/dead socket under persist → cold `new-session` + `--resume` fallback runs and the Run proceeds (no raised error).
-- [ ] On reattach, the pidfile + sidecar are present/matching afterward.
-- [ ] `persist=False` path is unchanged (always cold start).
+- [x] Live persistent socket present → no `new-session` and no `_wait_until_ready` are invoked; the prompt is pasted into the existing session (assert via recorded fake `run_func` calls).
+- [x] Missing/dead socket under persist → cold `new-session` + `--resume` fallback runs and the Run proceeds (no raised error).
+- [x] On reattach, the pidfile + sidecar are present/matching afterward.
+- [x] `persist=False` path is unchanged (always cold start).
 
 ## Verification
 
@@ -36,3 +38,7 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 4.1–4.4.
 ## Blocked by
 
 - Blocked by #77 (needs deterministic socket naming, sidecar, and the lifecycle split).
+
+## Implementation Notes
+
+Added live persistent-session reattach for `claude_persist` runs. The runner now verifies the deterministic socket, tmux session, and tmux server pid before pasting a fresh per-Run wrapped prompt into the existing Claude session. Dead sockets and failed reattach paste attempts are cleaned and fall back to the cold `new-session` path. Reattach rewrites pidfile and metadata sidecar so the reaper can still identify the session. Added regression coverage for reattach, dead-socket fallback, sidecar/pidfile rewrite, and the unchanged `persist=False` cold path. Fresh review returned `RALPH_REVIEW: PASS`.
