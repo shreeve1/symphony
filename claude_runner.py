@@ -576,9 +576,7 @@ def _resolve_cwd(
     if getattr(issue, "worktree_active", False):
         worktree_factory = create_worktree_func
         if worktree_factory is None:
-            worktree_factory = import_module(
-                "worktree_facade"
-            ).create_worktree
+            worktree_factory = import_module("worktree_facade").create_worktree
         binding_name = getattr(issue, "binding_name", "") or (
             config.bindings[0].name if config.bindings else ""
         )
