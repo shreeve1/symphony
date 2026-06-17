@@ -281,6 +281,70 @@ bindings:
     assert config.bindings[1].tracker_contract.project_slug == "tools"
 
 
+def test_bindings_yml_parses_claude_persist_flag(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: claude-local
+    plane_project_id: project-a
+    repo_path: /srv/claude
+    base_branch: main
+    default_agent: claude
+    tracker: podium
+    claude_persist: true
+  - name: default-local
+    plane_project_id: project-b
+    repo_path: /srv/default
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+    assert config.bindings[0].claude_persist is True
+    assert config.bindings[1].claude_persist is False
+
+
+def test_bindings_yml_rejects_non_bool_claude_persist(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: bad
+    plane_project_id: project-a
+    repo_path: /srv/bad
+    base_branch: main
+    default_agent: claude
+    tracker: podium
+    claude_persist: yes-please
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"bindings\[0\]\.claude_persist"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
+
+
 def test_bindings_yml_accepts_podium_tracker(tmp_path: Path):
     bindings_path = tmp_path / "bindings.yml"
     bindings_path.write_text(
@@ -438,7 +502,11 @@ def _write_remote_binding(
     binding_type: str = "coding",
     pi_mode: str = "one-shot",
     default_agent: str = "pi",
+    claude_persist: str = "",
 ) -> None:
+    claude_persist_line = (
+        f"    claude_persist: {claude_persist}\n" if claude_persist else ""
+    )
     bindings_path.write_text(
         f"""
 bindings:
@@ -450,7 +518,7 @@ bindings:
     type: {binding_type}
     pi_mode: {pi_mode}
     tracker: podium
-    remote:
+{claude_persist_line}    remote:
       host: 100.95.224.218
       user: itadmin
 """.lstrip(),
@@ -499,6 +567,21 @@ def test_remote_binding_coding_oneshot_pi_parses(tmp_path: Path):
     assert binding.binding_type == "coding"
     assert binding.pi_mode == "one-shot"
     assert binding.default_agent == "pi"
+    assert binding.claude_persist is False
+
+
+def test_remote_binding_rejects_claude_persist(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(bindings_path, claude_persist="true")
+    with pytest.raises(ConfigError, match=r"claude_persist"):
+        _load_remote_binding(bindings_path)
+
+
+def test_remote_binding_accepts_explicit_false_claude_persist(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(bindings_path, claude_persist="false")
+    binding = _load_remote_binding(bindings_path).bindings[0]
+    assert binding.claude_persist is False
 
 
 def test_binding_resolves_agent_label_override():

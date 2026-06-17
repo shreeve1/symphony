@@ -1,7 +1,7 @@
 ---
 id: 076
 title: Add claude_persist per-binding config flag
-status: pending
+status: in-progress
 blocked_by: []
 parent: null
 priority: 0

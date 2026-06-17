@@ -172,7 +172,9 @@ def build_binding_runtime(
         agent_adapter=RoutingAgentAdapter(
             binding=binding,
             pi_adapter=pi_dispatch_adapter,
-            claude_adapter=ClaudeAgentAdapter(binding_config),
+            claude_adapter=ClaudeAgentAdapter(
+                binding_config, persist=binding.claude_persist
+            ),
             remote_adapter=remote_adapter,
         ),
         pi_adapter=pi_adapter,

@@ -99,6 +99,7 @@ class ProjectBinding:
     binding_type: str = "infra"
     tracker: Literal["plane", "podium"] = "plane"
     pi_mode: Literal["one-shot", "rpc"] = "one-shot"
+    claude_persist: bool = False
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
     remote: RemotePolicy | None = None
@@ -508,8 +509,16 @@ def _binding_from_mapping(
             f"{prefix}.pi_mode: must be 'one-shot' or 'rpc', got '{pi_mode_raw}'"
         )
     pi_mode: Literal["one-shot", "rpc"] = "rpc" if pi_mode_raw == "rpc" else "one-shot"
+    claude_persist = _optional_bool(
+        raw.get("claude_persist", False), prefix=f"{prefix}.claude_persist"
+    )
     remote = _remote_from_mapping(raw.get("remote"), prefix=f"{prefix}.remote")
     if remote is not None:
+        if claude_persist:
+            raise ConfigError(
+                f"{prefix}.claude_persist: remote bindings cannot enable "
+                "claude_persist in v1 (ADR-0012)"
+            )
         if binding_type != "coding":
             raise ConfigError(
                 f"{prefix}.type: remote bindings require 'coding' in v1 "
@@ -534,11 +543,18 @@ def _binding_from_mapping(
         binding_type=binding_type,
         tracker=tracker,
         pi_mode=pi_mode,
+        claude_persist=claude_persist,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),
         remote=remote,
     )
+
+
+def _optional_bool(raw: Any, *, prefix: str) -> bool:
+    if not isinstance(raw, bool):
+        raise ConfigError(f"{prefix}: expected boolean")
+    return raw
 
 
 def _remote_from_mapping(raw: Any, *, prefix: str) -> RemotePolicy | None:

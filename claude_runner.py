@@ -10,9 +10,9 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
-from importlib import import_module
 from contextlib import suppress
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 
 from agent_runner import AgentResult, AgentRunnerError, CompletedLike
@@ -350,6 +350,7 @@ class ClaudeAgentAdapter:
     """Claude interactive tmux adapter."""
 
     config: SymphonyConfig
+    persist: bool = False
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
         return run_claude_agent(self.config, issue, rendered_prompt)
