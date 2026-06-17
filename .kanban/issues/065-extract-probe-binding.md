@@ -1,7 +1,7 @@
 ---
 id: 065
 title: Extract _probe_binding from the runtime factory
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
