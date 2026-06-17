@@ -443,6 +443,12 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     assert isinstance(env, dict)
     assert env["PATH"].startswith(f"{temp_dir}:")
     assert env["SYMPHONY_ISSUE_ID"] == "issue-123"
+    assert env["SYMPHONY_TRACKER_API_URL"] == "https://plane.example.test"
+    assert env["SYMPHONY_TRACKER_FRONTEND_URL"] == ""
+    assert env["SYMPHONY_TRACKER_DASHBOARD_URL"] == ""
+    assert env["SYMPHONY_TRACKER_API_KEY"] == "fake-plane-key-for-tests"
+    assert env["SYMPHONY_TRACKER_PROJECT_ID"] == "fake-project-id"
+    assert env["SYMPHONY_TRACKER_WORKSPACE_SLUG"] == "homelab"
     assert env["SYMPHONY_PLANE_FRONTEND_URL"] == ""
     assert env["PLANE_DASHBOARD_URL"] == ""
     assert env["SYMPHONY_PLANE_API_KEY"] == "fake-plane-key-for-tests"
@@ -490,6 +496,12 @@ def test_run_agent_omits_plane_env_and_helper_for_podium_binding(
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["SYMPHONY_ISSUE_ID"] == "issue-123"
+    assert "SYMPHONY_TRACKER_API_KEY" not in env
+    assert "SYMPHONY_TRACKER_API_URL" not in env
+    assert "SYMPHONY_TRACKER_FRONTEND_URL" not in env
+    assert "SYMPHONY_TRACKER_DASHBOARD_URL" not in env
+    assert "SYMPHONY_TRACKER_PROJECT_ID" not in env
+    assert "SYMPHONY_TRACKER_WORKSPACE_SLUG" not in env
     assert "SYMPHONY_PLANE_API_KEY" not in env
     assert "SYMPHONY_PLANE_API_URL" not in env
     assert "SYMPHONY_PLANE_FRONTEND_URL" not in env

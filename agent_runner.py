@@ -232,6 +232,25 @@ def _uses_plane_tracker(
     return True
 
 
+def _tracker_callback_env(config: SymphonyConfig) -> dict[str, str]:
+    """Callback env exposed only to Plane-tracker agents for compatibility."""
+
+    return {
+        "SYMPHONY_TRACKER_API_URL": config.tracker_api_url,
+        "SYMPHONY_TRACKER_FRONTEND_URL": config.tracker_frontend_url,
+        "SYMPHONY_TRACKER_DASHBOARD_URL": config.tracker_dashboard_url,
+        "SYMPHONY_TRACKER_API_KEY": config.tracker_api_key,
+        "SYMPHONY_TRACKER_PROJECT_ID": config.tracker_project_id,
+        "SYMPHONY_TRACKER_WORKSPACE_SLUG": config.tracker_workspace_slug,
+        "SYMPHONY_PLANE_API_URL": config.plane_api_url,
+        "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
+        "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
+        "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
+        "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
+        "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
+    }
+
+
 def _agent_env(
     config: SymphonyConfig,
     issue: CandidateIssue,
@@ -270,16 +289,7 @@ def _agent_env(
         }
     )
     if _uses_plane_tracker(config):
-        env.update(
-            {
-                "SYMPHONY_PLANE_API_URL": config.plane_api_url,
-                "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
-                "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
-                "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
-                "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
-                "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
-            }
-        )
+        env.update(_tracker_callback_env(config))
     return env
 
 
@@ -449,16 +459,7 @@ def _remote_exports(
         "NO_COLOR": "1",
     }
     if _uses_plane_tracker(config, binding):
-        exports.update(
-            {
-                "SYMPHONY_PLANE_API_URL": config.plane_api_url,
-                "SYMPHONY_PLANE_FRONTEND_URL": config.plane_frontend_url,
-                "PLANE_DASHBOARD_URL": config.plane_dashboard_url,
-                "SYMPHONY_PLANE_API_KEY": config.plane_api_key,
-                "SYMPHONY_PLANE_PROJECT_ID": config.plane_project_id,
-                "SYMPHONY_PLANE_WORKSPACE_SLUG": config.plane_workspace_slug,
-            }
-        )
+        exports.update(_tracker_callback_env(config))
     return exports
 
 

@@ -132,6 +132,12 @@ def test_run_remote_agent_omits_plane_env_and_helper_for_podium(tmp_path: Path) 
     remote_command = exec_cmd[-1]
     assert remote_command.startswith("cd /home/itadmin/symphony &&")
     assert "export SYMPHONY_ISSUE_ID=issue-27;" in remote_command
+    assert "SYMPHONY_TRACKER_API_KEY" not in remote_command
+    assert "SYMPHONY_TRACKER_API_URL" not in remote_command
+    assert "SYMPHONY_TRACKER_FRONTEND_URL" not in remote_command
+    assert "SYMPHONY_TRACKER_DASHBOARD_URL" not in remote_command
+    assert "SYMPHONY_TRACKER_PROJECT_ID" not in remote_command
+    assert "SYMPHONY_TRACKER_WORKSPACE_SLUG" not in remote_command
     assert "SYMPHONY_PLANE_API_KEY" not in remote_command
     assert "SYMPHONY_PLANE_API_URL" not in remote_command
     assert "SYMPHONY_PLANE_FRONTEND_URL" not in remote_command
@@ -175,6 +181,10 @@ def test_run_remote_agent_ships_helper_and_plane_env_for_plane_binding(
     assert ship_kwargs["input"]
 
     remote_command = popen_calls[0][0][-1]
+    assert "export SYMPHONY_TRACKER_API_URL=http://127.0.0.1:8000;" in remote_command
+    assert "export SYMPHONY_TRACKER_API_KEY=fake-plane-key-for-tests;" in remote_command
+    assert "export SYMPHONY_TRACKER_PROJECT_ID=fake-project-id;" in remote_command
+    assert "export SYMPHONY_TRACKER_WORKSPACE_SLUG=homelab;" in remote_command
     assert "export SYMPHONY_PLANE_API_URL=http://127.0.0.1:8000;" in remote_command
     assert "export SYMPHONY_PLANE_API_KEY=fake-plane-key-for-tests;" in remote_command
     assert "PATH=/tmp/symphony-remote-issue-27:$PATH" in remote_command

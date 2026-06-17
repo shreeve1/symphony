@@ -1,7 +1,7 @@
 """Symphony ticket schedule parsing.
 
-This module owns the *one-shot* schedule contract layered on top of Plane via
-two append-only comment shapes plus the ``scheduled`` label::
+This module owns the *one-shot* schedule contract layered on top of tracker
+comments via two append-only comment shapes plus the ``scheduled`` label::
 
     Symphony-Schedule: not_before=<iso8601> [not_after=<iso8601>] reason="..."
     Symphony-Schedule-Cancelled: reason="..."
@@ -15,13 +15,13 @@ Hard invariants (see ``plans/symphony-ticket-scheduling.md``):
 * ``not_after`` is advisory only.  When present it must parse and must not be
   earlier than ``not_before``.
 * The latest valid schedule or cancellation event wins.  Comments are sorted by
-  ``created_at`` with a deterministic tiebreaker on Plane comment ID / API
+  ``created_at`` with a deterministic tiebreaker on tracker comment ID / API
   order so reschedules and races are stable.
 * No fallback to older schedules when the latest event is malformed; that case
   is the caller's responsibility to handle (block + parse-error audit).
 
 This module is pure: parsing only, no I/O.  Callers fetch comments via the
-Plane adapter and pass them in.
+tracker adapter and pass them in.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from typing import Iterable, Optional, Sequence
 
 
 class ScheduleEventType(str, Enum):
-    """Kind of schedule control-plane event found on a Plane ticket."""
+    """Kind of schedule control-plane event found on a tracker issue."""
 
     SCHEDULE = "schedule"
     CANCELLATION = "cancellation"
@@ -66,7 +66,7 @@ class ScheduleEvent:
         not_after:     Optional advisory upper bound for SCHEDULE; always None
                        for CANCELLATION.  Always timezone-aware UTC when set.
         reason:        Required, non-empty, stripped operator-supplied reason.
-        comment_id:    Plane comment UUID/string used as deterministic
+        comment_id:    Tracker comment UUID/string used as deterministic
                        secondary sort key.  May be None when caller has no
                        stable id.
         comment_created_at: Comment creation time used as primary sort key.
@@ -359,12 +359,12 @@ def _normalize_outside_quotes(s: str) -> str:
 
 
 def normalize_comment_body(body: object) -> str:
-    """Strip simple HTML wrappers and decode entities from a Plane comment.
+    """Strip simple HTML wrappers and decode entities from a tracker comment.
 
-    Plane returns ``comment_html`` (with ``<p>``/``<br>`` and entity-encoded
-    quotes) for stdout-style comments while ``comment_stripped`` is plain.
-    Callers may pass either; we normalise to plain-text by handling only the
-    block wrappers Plane actually produces (``<p>``, ``<br>``), decoding
+    Some trackers return rich-text HTML (with ``<p>``/``<br>`` and
+    entity-encoded quotes) for stdout-style comments while stripped text is
+    plain. Callers may pass either; we normalise to plain-text by handling only
+    the block wrappers the tracker produces (``<p>``, ``<br>``), decoding
     HTML entities, collapsing horizontal whitespace, and stripping the result.
 
     All three normalisations (wrapper stripping, entity decoding, whitespace
@@ -698,7 +698,7 @@ def format_cancellation_comment(*, reason: str) -> str:
 
 @dataclass(frozen=True)
 class CandidateComment:
-    """Minimal projection of a Plane comment used by ``latest_event``.
+    """Minimal projection of a tracker comment used by ``latest_event``.
 
     Callers typically build this from the ``comments/`` listing without
     coupling the parser to a particular HTTP client.
@@ -719,7 +719,7 @@ def _make_sort_key(use_api_order: bool):
        timestamp wins over an unstamped comment.
     2. ``api_order`` only when **all** candidates supplied one.  When any
        candidate lacks ``api_order`` we skip this level entirely so a
-       partial Plane payload cannot override the documented comment_id
+       partial tracker payload cannot override the documented comment_id
        tie-break in step 3.
     3. ``comment_id`` lexicographic.  This is the documented deterministic
        tie-breaker required by the plan and runs before falling back to

@@ -1,11 +1,13 @@
 ---
 id: 075
 title: Agent callback env dual-emit + tracker-neutral agent text
-status: pending
+status: in-progress
 blocked_by: [67, 64]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
