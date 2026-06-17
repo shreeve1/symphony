@@ -56,6 +56,26 @@ from schedule import (
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from web.api.db import resolve_run_log_root
 
+from .markers import (
+    _bound_summary_block as _bound_summary_block,
+    _hit_approval_gate as _hit_approval_gate,
+    _hit_permission_gate as _hit_permission_gate,
+    _parse_question_block as _parse_question_block,
+    _parse_result_marker as _parse_result_marker,
+    _parse_run_metrics as _parse_run_metrics,
+    _parse_summary_block as _parse_summary_block,
+    _parse_summary_marker as _parse_summary_marker,
+)
+from .sanitize import (
+    _collect_secrets as _collect_secrets,
+    _extract_question as _extract_question,
+    _extract_summary as _extract_summary,
+    _format_previous_comment_body as _format_previous_comment_body,
+    _format_report as _format_report,
+    _format_stderr_summary as _format_stderr_summary,
+    _sanitize_report as _sanitize_report,
+)
+
 _wake_signal = import_module("web.api.wake_signal")
 consume_wake_sentinel = _wake_signal.consume_wake_sentinel
 
@@ -92,6 +112,7 @@ SCHEDULED_LABEL_WINDOW_END_HOUR = 6
 SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
+
 
 
 @dataclass
@@ -247,141 +268,20 @@ _APPROVAL_GATE_RE = re.compile(
 )
 
 
-def _parse_result_marker(stdout: str) -> str | None:
-    """Return the last SYMPHONY_RESULT verdict in stdout, or None."""
-
-    if not stdout:
-        return None
-    matches = _RESULT_MARKER_RE.findall(stdout)
-    if not matches:
-        return None
-    return matches[-1].lower()
 
 
-def _parse_summary_marker(*streams: str) -> str | None:
-    """Return the last SYMPHONY_SUMMARY line across the given streams, or None.
-
-    Streams are searched in order; later streams override earlier ones, and
-    within a stream the last occurrence wins. The captured text is collapsed
-    to a single line, ANSI-stripped, and truncated to SUMMARY_MAX_CHARS so a
-    runaway agent cannot smuggle a long block into a completion comment.
-    """
-
-    summary: str | None = None
-    for stream in streams:
-        if not stream:
-            continue
-        matches = _SUMMARY_MARKER_RE.findall(stream)
-        if matches:
-            summary = matches[-1]
-    if summary is None:
-        return None
-    cleaned = _ANSI_ESCAPE_RE.sub("", summary).strip()
-    # Defensive: collapse whitespace/newlines a multiline regex shouldn't have
-    # matched anyway, in case future regex tweaks loosen this.
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    if not cleaned:
-        return None
-    if len(cleaned) > SUMMARY_MAX_CHARS:
-        cleaned = cleaned[: SUMMARY_MAX_CHARS - 1].rstrip() + "…"
-    return cleaned
 
 
-def _bound_summary_block(text: str) -> str:
-    """Bound a multi-line summary block, keeping head and tail on overflow."""
-
-    if len(text) <= SUMMARY_BLOCK_MAX_CHARS:
-        return text
-    head = text[:SUMMARY_BLOCK_HEAD_CHARS].rstrip()
-    tail = text[-SUMMARY_BLOCK_TAIL_CHARS:].lstrip()
-    return (
-        f"{head}\n\n"
-        f"[Summary truncated from {len(text)} characters for comment readability.]\n\n"
-        f"{tail}"
-    )
 
 
-def _parse_summary_block(*streams: str) -> str | None:
-    """Return the last SYMPHONY_SUMMARY_BEGIN/END block across streams, or None.
-
-    Markdown and newlines are preserved (unlike the single-line marker). ANSI is
-    stripped, machine marker lines are removed, and the result is bounded by
-    ``_bound_summary_block`` so a runaway agent cannot smuggle its whole
-    transcript into a completion comment.
-    """
-
-    block: str | None = None
-    for stream in streams:
-        if not stream:
-            continue
-        matches = _SUMMARY_BLOCK_RE.findall(stream)
-        if matches:
-            block = matches[-1]
-    if block is None:
-        return None
-    cleaned = _ANSI_ESCAPE_RE.sub("", block)
-    cleaned = _MARKER_LINE_RE.sub("", cleaned)
-    cleaned = cleaned.strip("\n").strip()
-    if not cleaned:
-        return None
-    # Return unbounded: bounding happens in _extract_summary *after* secret
-    # redaction so a secret straddling the truncation boundary cannot leak a
-    # surviving fragment.
-    return cleaned
 
 
-def _parse_question_block(*streams: str) -> str | None:
-    """Return the last SYMPHONY_QUESTION_BEGIN/END block across streams."""
-
-    block: str | None = None
-    for stream in streams:
-        if not stream:
-            continue
-        matches = _QUESTION_BLOCK_RE.findall(stream)
-        if matches:
-            block = matches[-1]
-    if block is None:
-        return None
-    cleaned = _ANSI_ESCAPE_RE.sub("", block)
-    cleaned = _MARKER_LINE_RE.sub("", cleaned)
-    cleaned = _QUESTION_MARKER_LINE_RE.sub("", cleaned)
-    cleaned = cleaned.strip("\n").strip()
-    if not cleaned:
-        return None
-    return cleaned
 
 
-def _parse_run_metrics(stdout: str) -> dict[str, Any]:
-    """Extract optional cost/token markers emitted by pi stdout."""
-
-    metrics: dict[str, Any] = {}
-    marker_map = {
-        "COST_USD": "cost_usd",
-        "INPUT_TOKENS": "input_tokens",
-        "OUTPUT_TOKENS": "output_tokens",
-    }
-    for marker, raw_value in _METRIC_MARKER_RE.findall(stdout or ""):
-        key = marker_map[marker.upper()]
-        try:
-            if key == "cost_usd":
-                metrics[key] = float(raw_value.strip())
-            else:
-                metrics[key] = int(raw_value.strip())
-        except ValueError:
-            continue
-    return metrics
 
 
-def _hit_permission_gate(stdout: str, stderr: str) -> bool:
-    """Return true when the executor clean-exited after denied tool access."""
-
-    return bool(_PERMISSION_GATE_RE.search(f"{stdout}\n{stderr}"))
 
 
-def _hit_approval_gate(stdout: str, stderr: str) -> bool:
-    """Return true when a clean exit still needs operator approval."""
-
-    return bool(_APPROVAL_GATE_RE.search(f"{stdout}\n{stderr}"))
 
 
 class SchedulerError(RuntimeError):
@@ -392,20 +292,6 @@ class SchedulerContextCompactionError(RuntimeError):
     """Raised when pre-dispatch context compaction fails safely."""
 
 
-def _sanitize_report(
-    text: str, secrets: Sequence[str], *, max_bytes: int = REPORT_MAX_BYTES
-) -> str:
-    report = _ANSI_ESCAPE_RE.sub("", text).strip()
-    for secret in secrets:
-        if secret:
-            report = report.replace(secret, _REDACTED)
-    encoded = report.encode("utf-8", errors="replace")
-    if len(encoded) > max_bytes:
-        # Keep the tail: failure context (final error, traceback footer) is
-        # almost always more useful than the head of a long pi trace.
-        tail = encoded[-max_bytes:].decode("utf-8", errors="replace")
-        report = "... [output truncated]\n\n" + tail
-    return report
 
 
 _SECRET_ENV_KEYS = (
@@ -417,106 +303,16 @@ _SECRET_ENV_KEYS = (
 )
 
 
-def _collect_secrets(config: SymphonyConfig) -> list[str]:
-    import os as _os
-
-    secrets: list[str] = []
-    if config.plane_api_key:
-        secrets.append(config.plane_api_key)
-    if config.telegram_bot_token:
-        secrets.append(config.telegram_bot_token)
-    for key in _SECRET_ENV_KEYS:
-        val = _os.environ.get(key, "")
-        if val and val not in secrets:
-            secrets.append(val)
-    return secrets
 
 
-def _format_report(result: AgentResult, secrets: Sequence[str]) -> tuple[str, str]:
-    stdout = _sanitize_report(result.stdout, secrets)
-    stderr = _sanitize_report(result.stderr, secrets)
-    return stdout, stderr
 
 
-def _format_stderr_summary(stderr: str) -> str:
-    """Return a bounded, human-readable stderr summary for Plane comments."""
-
-    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-    if not lines:
-        return ""
-    selected = lines[-STDERR_SUMMARY_MAX_LINES:]
-    body = "\n".join(f"- {line}" for line in selected)
-    if len(body) > STDERR_SUMMARY_MAX_CHARS:
-        body = body[: STDERR_SUMMARY_MAX_CHARS - 1].rstrip() + "…"
-    omitted = len(lines) - len(selected)
-    prefix = "**Stderr summary:**"
-    if omitted > 0:
-        prefix += f" last {len(selected)} non-empty lines shown; {omitted} earlier lines omitted."
-    return f"{prefix}\n{body}"
 
 
-def _format_previous_comment_body(body: str) -> str:
-    """Bound prior Plane comments before injecting them into the next prompt."""
-
-    stripped = body.strip()
-    if len(stripped) <= PREVIOUS_COMMENT_MAX_CHARS:
-        return stripped
-    first_line = next(
-        (line.strip() for line in stripped.splitlines() if line.strip()),
-        "Previous comment",
-    )
-    if len(first_line) > 180:
-        first_line = first_line[:179].rstrip() + "…"
-    tail = stripped[-PREVIOUS_COMMENT_TAIL_CHARS:].strip()
-    return (
-        f"{first_line}\n\n"
-        f"[Previous comment truncated from {len(stripped)} characters for Symphony prompt readability.]\n\n"
-        f"{tail}"
-    )
 
 
-def _extract_summary(
-    result: AgentResult, secrets: Sequence[str], *, include_stderr: bool = True
-) -> str | None:
-    """Pull SYMPHONY_SUMMARY from raw streams and apply secret redaction.
-
-    Summary extraction runs against the *unsanitized* stdout/stderr because
-    `_sanitize_report` keeps only the last 2 KB of stderr (for failure-comment
-    bounding); a summary line earlier in the stream would otherwise be lost.
-    Claude pane stderr echoes the prompt, so callers can restrict parsing to
-    stdout only for Claude runs.
-    """
-
-    streams = (result.stdout, result.stderr) if include_stderr else (result.stdout,)
-    summary = _parse_summary_block(*streams)
-    is_block = summary is not None
-    if summary is None:
-        summary = _parse_summary_marker(*streams)
-    if summary is None:
-        return None
-    for secret in secrets:
-        if secret:
-            summary = summary.replace(secret, _REDACTED)
-    # Bound the (already-redacted) multi-line block. The single-line marker is
-    # already capped at SUMMARY_MAX_CHARS, so it is left as-is.
-    if is_block:
-        summary = _bound_summary_block(summary)
-    return summary
 
 
-def _extract_question(
-    result: AgentResult, secrets: Sequence[str], *, include_stderr: bool = True
-) -> str | None:
-    """Pull SYMPHONY_QUESTION from raw streams and apply secret redaction."""
-
-    streams = (result.stdout, result.stderr) if include_stderr else (result.stdout,)
-    question = _parse_question_block(*streams)
-    if question is None:
-        return None
-    for secret in secrets:
-        if secret:
-            question = question.replace(secret, _REDACTED)
-    return _bound_summary_block(question)
 
 
 def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
