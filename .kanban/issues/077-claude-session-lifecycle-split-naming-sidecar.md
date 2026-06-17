@@ -1,7 +1,7 @@
 ---
 id: 077
 title: Split Claude session lifecycle, deterministic socket naming, metadata sidecar
-status: in-progress
+status: review
 blocked_by: [76]
 parent: null
 priority: 0
