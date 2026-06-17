@@ -251,3 +251,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #085 can rely on rejected post-return steers for both pi and Claude; no frontend-specific guard duplication needed.
 **Verification:** `uv run pytest tests/test_scheduler.py tests/test_agent_runner.py web/api/tests/test_steer.py` (195 passed, 1 skipped), `uv run python -m py_compile scheduler/__init__.py web/api/main.py`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`.
 **Actionable review:** Re-read `git diff fbb4e091d2eff561e547f5abe1da34999ba99026 HEAD`, inspected every changed file, verified the run-row leaves `running` before terminal side effects and `/api/issues/{id}/steer` rejects non-running Run rows for pi and Claude, reran the exact issue verification commands, checked touched-file LSP diagnostics clean, and added `action_reviewed: 2026-06-17`.
+
+## #085 Frontend Claude steer UI — 2026-06-17
+
+**What changed:** Added `claude_persist` to the frontend binding type, gated flyout steer/abort controls on the active Run agent plus binding capability, and added Claude-specific steering copy.
+**Files:** `web/frontend/lib/api.ts`, `web/frontend/components/IssueFlyout.tsx`, `web/frontend/tests/steer-flyout.spec.ts`, `.kanban/issues/085-frontend-claude-steer-ui.md`.
+**Decisions:** The UI gate now follows the active Run agent: pi still requires `pi_mode: rpc`, while Claude requires `claude_persist: true`; binding capability alone never enables controls for a pi one-shot Run.
+**Conventions established:** Claude steering copy should state that steer is queued for Claude's next turn, while abort interrupts the current turn now via Esc.
+**Verification:** `cd web/frontend && pnpm test:e2e tests/steer-flyout.spec.ts` (5 passed); touched-file LSP diagnostics had only the pre-existing Next client-props serialization warning on `IssueFlyout.onClose`.
+**Actionable review:** Initial review diff from `4c92b533e165f3eb69b43be870893bbdd475bca2` to `HEAD` was empty, so the review loop implemented the missing slice, read every changed file, verified all acceptance criteria, and added `action_reviewed: 2026-06-17`.

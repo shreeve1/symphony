@@ -26,6 +26,23 @@ const waitForSteer = (page: Page) =>
 			res.ok(),
 	);
 
+async function mockBindingCapabilities(
+	page: Page,
+	bindingName: string,
+	capabilities: { pi_mode?: "one-shot" | "rpc"; claude_persist?: boolean },
+) {
+	await page.route("**/api/bindings", async (route) => {
+		const response = await route.fetch();
+		const bindings = (await response.json()) as Record<string, unknown>[];
+		await route.fulfill({
+			response,
+			json: bindings.map((binding) =>
+				binding.name === bindingName ? { ...binding, ...capabilities } : binding,
+			),
+		});
+	});
+}
+
 test("session tab streams tail, sends steer, and records comments", async ({
 	page,
 	problems,
@@ -69,7 +86,53 @@ test("session tab streams tail, sends steer, and records comments", async ({
 	expectCleanConsole(problems);
 });
 
-test("steer controls disable for Claude and idle issues", async ({
+test("steer controls enable for Claude on claude_persist binding", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e steer claude persist ${Date.now()}`;
+	seedRunningRunIssue("homelab", title, "claude");
+	await mockBindingCapabilities(page, "homelab", {
+		pi_mode: "one-shot",
+		claude_persist: true,
+	});
+
+	await openSessionTab(page, "homelab", title);
+	await expect(page.getByTestId("steer-input")).toBeEnabled();
+	await expect(page.getByTestId("steer-abort")).toBeEnabled();
+	await expect(page.getByTestId("steer-agent-copy")).toContainText(
+		"Claude picks it up at its next turn",
+	);
+	await expect(page.getByTestId("steer-agent-copy")).toContainText(
+		"interrupt the current turn now (Esc)",
+	);
+
+	expectCleanConsole(problems);
+});
+
+test("steer controls disable for pi one-shot on claude_persist binding", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e steer pi oneshot persist ${Date.now()}`;
+	seedRunningRunIssue("homelab", title, "pi");
+	await mockBindingCapabilities(page, "homelab", {
+		pi_mode: "one-shot",
+		claude_persist: true,
+	});
+
+	await openSessionTab(page, "homelab", title);
+	await expect(page.getByTestId("steer-input")).toBeDisabled();
+	await expect(page.getByTestId("steer-abort")).toBeDisabled();
+	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
+		"not using pi RPC",
+	);
+	await expect(page.getByTestId("steer-agent-copy")).toBeHidden();
+
+	expectCleanConsole(problems);
+});
+
+test("steer controls disable for Claude without claude_persist and idle issues", async ({
 	page,
 	problems,
 }) => {
@@ -79,7 +142,7 @@ test("steer controls disable for Claude and idle issues", async ({
 	await expect(page.getByTestId("steer-input")).toBeDisabled();
 	await expect(page.getByTestId("steer-abort")).toBeDisabled();
 	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
-		"park-and-reply",
+		"claude_persist",
 	);
 
 	const idleTitle = `e2e steer idle ${Date.now()}`;

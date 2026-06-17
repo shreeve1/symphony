@@ -454,10 +454,12 @@ function SteerComposer({
 	issue,
 	latestRun,
 	bindingPiMode,
+	bindingClaudePersist,
 }: {
 	issue: IssueDetail;
 	latestRun: Run | null;
 	bindingPiMode: "one-shot" | "rpc" | null;
+	bindingClaudePersist: boolean | null;
 }) {
 	const queryClient = useQueryClient();
 	const appendTail = useAppendTailEvent();
@@ -477,14 +479,17 @@ function SteerComposer({
 		issue.state === "running" &&
 		issue.latest_run_state === "running" &&
 		issue.latest_run_id != null;
+	const isClaudeRun = liveRun && latestRunAgent === "claude";
 	const canSteer =
-		liveRun && latestRunAgent === "pi" && bindingPiMode === "rpc";
+		liveRun &&
+		((latestRunAgent === "pi" && bindingPiMode === "rpc") ||
+			(latestRunAgent === "claude" && bindingClaudePersist === true));
 	const disabledReason = !liveRun
 		? "Live steering is available only while a pi RPC run is active."
 		: latestRun == null
 			? "Loading latest run details…"
 			: latestRunAgent === "claude"
-				? "Claude runs use park-and-reply only."
+				? "Claude live steering requires claude_persist; otherwise use park-and-reply."
 				: bindingPiMode !== "rpc"
 					? "This binding is not using pi RPC live steering."
 					: "Live steering is available only for pi RPC runs.";
@@ -558,6 +563,15 @@ function SteerComposer({
 							{lastStatus}
 						</p>
 					)}
+					{isClaudeRun && (
+						<p
+							data-testid="steer-agent-copy"
+							className="text-xs text-muted-foreground"
+						>
+							Steer is queued; Claude picks it up at its next turn. Abort:
+							interrupt the current turn now (Esc).
+						</p>
+					)}
 				</div>
 				<button
 					type="button"
@@ -574,7 +588,11 @@ function SteerComposer({
 				data-testid="steer-input"
 				value={draft}
 				rows={1}
-				placeholder="Redirect the running pi agent…"
+				placeholder={
+					isClaudeRun
+						? "Queue guidance for Claude’s next turn…"
+						: "Redirect the running pi agent…"
+				}
 				disabled={!canSteer || isPending}
 				onChange={(e) => setDraft(e.target.value)}
 				className="max-h-40 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
@@ -721,11 +739,12 @@ export function IssueFlyout({
 		issue && runs.data
 			? (runs.data.find((run) => run.id === issue.latest_run_id) ?? null)
 			: null;
-	const bindingPiMode =
+	const binding =
 		issue && bindings.data
-			? (bindings.data.find((binding) => binding.name === issue.binding_name)
-					?.pi_mode ?? null)
+			? (bindings.data.find((item) => item.name === issue.binding_name) ?? null)
 			: null;
+	const bindingPiMode = binding?.pi_mode ?? null;
+	const bindingClaudePersist = binding?.claude_persist ?? null;
 
 	return (
 		<>
@@ -859,6 +878,7 @@ export function IssueFlyout({
 												issue={issue}
 												latestRun={latestRun}
 												bindingPiMode={bindingPiMode}
+												bindingClaudePersist={bindingClaudePersist}
 											/>
 											<SessionTailPanel issueId={issue.id} />
 										</div>

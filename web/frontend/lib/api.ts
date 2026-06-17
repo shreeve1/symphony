@@ -8,6 +8,7 @@ export interface Binding {
 	sort_order: number;
 	archived: boolean;
 	pi_mode: "one-shot" | "rpc";
+	claude_persist?: boolean;
 	is_remote: boolean;
 	repo_name: string | null;
 }

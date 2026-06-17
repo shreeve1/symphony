@@ -1,11 +1,14 @@
 ---
 id: 085
 title: Frontend — gate steer/abort on active-run agent, Claude append-vs-interrupt copy
-status: pending
+status: done
 blocked_by: [83]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -22,10 +25,10 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 8.1–8.4.
 
 ## Acceptance criteria
 
-- [ ] Steer/abort controls appear for a live Claude run on a `claude_persist` binding; hidden/disabled for a pi one-shot run on the same binding.
-- [ ] pi RPC gating + copy unchanged.
-- [ ] Claude copy distinguishes append-next-turn steer from interrupt abort.
-- [ ] `claude_persist` is read from the binding payload (`/api/bindings`).
+- [x] Steer/abort controls appear for a live Claude run on a `claude_persist` binding; hidden/disabled for a pi one-shot run on the same binding.
+- [x] pi RPC gating + copy unchanged.
+- [x] Claude copy distinguishes append-next-turn steer from interrupt abort.
+- [x] `claude_persist` is read from the binding payload (`/api/bindings`).
 
 ## Verification
 
@@ -34,3 +37,9 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 8.1–8.4.
 ## Blocked by
 
 - Blocked by #83 (`/api/bindings` exposes `claude_persist`).
+
+## Implementation Notes
+
+- Added `claude_persist` to the frontend binding type and used `/api/bindings` payload data in the flyout steering gate.
+- Enabled steering controls for live Claude runs only when the active run agent is `claude` and the binding has `claude_persist: true`.
+- Kept pi RPC behaviour intact and added Claude-specific copy distinguishing queued next-turn steer from immediate abort interrupt.
