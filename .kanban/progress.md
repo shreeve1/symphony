@@ -40,3 +40,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept local absolute `pi_bin`, remote basename `pi_name`, and remote skill skipping at call sites by passing `pi_bin` and `skill_source` explicitly into `_build_pi_command`.
 **Conventions established:** Runner command-building helpers should accept path/skill decisions as inputs instead of embedding local-vs-remote policy.
 **Notes for next iteration:** Issue #063 remains independently eligible; issue #064 stays blocked until #063 is done.
+
+## #063 Small polish batch — renderer-shim rename, KNOWN_AGENTS, entity-decode — 2026-06-17
+
+**What changed:** Renamed the scheduler prompt-renderer shim to `_invoke_renderer`, repointed config and routing agent checks at `model_catalog.KNOWN_AGENTS`, and extracted `_decode_entity_at` for schedule HTML entity decoding.
+**Files:** `scheduler.py`, `config.py`, `agent_runner.py`, `schedule.py`, `.kanban/issues/063-small-polish-batch.md`.
+**Decisions:** Kept `main.py`'s `_render_candidate_prompt` mapper unchanged because it maps candidates to renderer data and is not the scheduler shim.
+**Conventions established:** Valid agent vocabulary now comes from `model_catalog.KNOWN_AGENTS`; schedule entity decoding should use `_decode_entity_at` while each caller owns quote-handling semantics.
+**Notes for next iteration:** Issue #064 is now unblocked and can use `KNOWN_AGENTS` as the single agent vocabulary source.

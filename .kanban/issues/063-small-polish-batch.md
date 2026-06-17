@@ -1,11 +1,13 @@
 ---
 id: 063
 title: Small polish batch — renderer-shim rename, KNOWN_AGENTS, entity-decode
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -18,10 +20,10 @@ Three independent Phase-2 polish edits from `.rpiv/artifacts/architecture-review
 
 ## Acceptance criteria
 
-- [ ] `scheduler.py` has no `_render_candidate_prompt`; the shim is named `_invoke_renderer` and its call site is updated. `main.py`'s mapper is unchanged.
-- [ ] The `{"pi","claude"}` agent set is defined once; `config._validate_agent` and `agent_runner` `RoutingAgentAdapter` reference the shared constant.
-- [ ] `schedule.py` defines `_decode_entity_at`; the three entity-decode branches call it; the normalizer's control flow is unchanged.
-- [ ] `uv run pytest` passes (round-4-audit schedule tests included).
+- [x] `scheduler.py` has no `_render_candidate_prompt`; the shim is named `_invoke_renderer` and its call site is updated. `main.py`'s mapper is unchanged.
+- [x] The `{"pi","claude"}` agent set is defined once; `config._validate_agent` and `agent_runner` `RoutingAgentAdapter` reference the shared constant.
+- [x] `schedule.py` defines `_decode_entity_at`; the three entity-decode branches call it; the normalizer's control flow is unchanged.
+- [x] `uv run pytest` passes (round-4-audit schedule tests included).
 
 ## Verification
 
@@ -30,3 +32,7 @@ Three independent Phase-2 polish edits from `.rpiv/artifacts/architecture-review
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Renamed the scheduler renderer shim to `_invoke_renderer`, wired agent validation and routing through `model_catalog.KNOWN_AGENTS`, and extracted `_decode_entity_at` for the three schedule entity-decode branches while preserving each branch's decoded-character handling.
