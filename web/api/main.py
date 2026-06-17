@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
@@ -83,11 +83,19 @@ touch_wake_sentinel = _wake_signal.touch_wake_sentinel
 write_steer_record = _steer_queue.write_steer_record
 
 try:
+    from config import SymphonyConfig
+    from context_compaction import estimate_tokens, maybe_compact
+    from main import build_binding_runtime
+
     _model_catalog = import_module("model_catalog")
 except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from config import SymphonyConfig  # type: ignore[no-redef]
+    from context_compaction import estimate_tokens, maybe_compact  # type: ignore[no-redef]
+    from main import build_binding_runtime  # type: ignore[no-redef]
+
     _model_catalog = import_module("model_catalog")
 
 
@@ -923,11 +931,9 @@ async def compact_issue_context(
 
 
 async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
-    compaction = import_module("context_compaction")
     from tracker_types import CandidateIssue
 
-    engine_main = import_module("main")
-    config = vars(engine_main)["SymphonyConfig"].from_env()
+    config = SymphonyConfig.from_env()
     with connect() as connection:
         row = connection.execute(
             "SELECT * FROM issue WHERE id = ?", (issue_id,)
@@ -954,7 +960,7 @@ async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
                 f"{binding_name!r} (ADR-0012)"
             ),
         )
-    runtime = vars(engine_main)["_build_binding_runtime"](config, binding)
+    runtime = build_binding_runtime(config, binding)
     adapter = runtime.adapter
     if not getattr(adapter, "stores_context", False):
         raise HTTPException(status_code=422, detail="tracker does not store context")
@@ -984,7 +990,7 @@ async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
         binding_name=binding_name,
     )
     compacted = await asyncio.to_thread(
-        vars(compaction)["maybe_compact"],
+        maybe_compact,
         issue,
         binding,
         runtime.agent_adapter,
@@ -993,11 +999,11 @@ async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
     )
     changed = compacted != issue.context_md
     if changed:
-        await adapter.replace_context(str(issue_id), compacted)
+        await cast(Any, adapter).replace_context(str(issue_id), compacted)
     return {
         "issue_id": issue_id,
         "compacted": changed,
-        "token_count": vars(compaction)["estimate_tokens"](compacted),
+        "token_count": estimate_tokens(compacted),
     }
 
 

@@ -126,7 +126,7 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
         raise StopLoop
 
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
-    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
@@ -182,7 +182,7 @@ async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings
     )
     monkeypatch.setattr(main, "verify_claude_support", lambda: calls.append("probe"))
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
-    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
@@ -235,7 +235,7 @@ async def test_run_bindings_loop_probes_before_runtime_construction(monkeypatch)
         raise StopLoop
 
     monkeypatch.setattr(main, "_probe_binding", fake_probe_binding)
-    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
@@ -323,7 +323,7 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
         raise StopLoop
 
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
-    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
     monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
@@ -375,7 +375,7 @@ def test_homelab_podium_binding_builds_without_plane_transport(monkeypatch):
         main, "verify_pi_support", lambda *args: calls.setdefault("verify", args)
     )
 
-    runtime = main._build_binding_runtime(config, binding)
+    runtime = main.build_binding_runtime(config, binding)
 
     assert runtime.name == "homelab"
     assert runtime.transport is None
@@ -426,7 +426,7 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
         main, "verify_pi_support", lambda *args: calls.setdefault("verify", args)
     )
 
-    runtime = main._build_binding_runtime(config, binding)
+    runtime = main.build_binding_runtime(config, binding)
 
     assert runtime.name == "default"
     assert "transport" in calls
@@ -470,7 +470,7 @@ def test_probe_binding_remote_skips_local_pi_probe(monkeypatch, tmp_path):
     )
 
     main._probe_binding(config, binding)
-    runtime = main._build_binding_runtime(config, binding)
+    runtime = main.build_binding_runtime(config, binding)
 
     assert "verify" not in calls  # local probe skipped for the remote binding
     assert isinstance(runtime.agent_adapter, RoutingAgentAdapter)
@@ -518,15 +518,13 @@ def test_probe_binding_remote_reachability_never_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "repo_host_for", lambda b: StubRepoHost())
 
     main._probe_binding(config, binding)
-    runtime = main._build_binding_runtime(config, binding)
+    runtime = main.build_binding_runtime(config, binding)
 
     assert calls.get("code_sha") is True
     assert runtime.name == "n8n"
 
 
-def test_probe_binding_verifier_failure_aborts_before_transport(
-    monkeypatch, tmp_path
-):
+def test_probe_binding_verifier_failure_aborts_before_transport(monkeypatch, tmp_path):
     calls = {}
     config = main.SymphonyConfig.from_env(
         {
@@ -606,7 +604,7 @@ async def test_rate_limited_binding_does_not_block_other_binding(monkeypatch):
         await asyncio.sleep(10)
 
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
-    monkeypatch.setattr(main, "_build_binding_runtime", fake_build_runtime)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
     monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 

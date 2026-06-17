@@ -138,9 +138,10 @@ def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> None:
                 )
 
 
-def _build_binding_runtime(
+def build_binding_runtime(
     config: SymphonyConfig, binding: ProjectBinding
 ) -> BindingRuntime:
+    """Build one binding runtime from config without startup probe side effects."""
     binding_config = config.for_binding(binding)
     if binding.tracker == "podium":
         transport = None
@@ -200,7 +201,7 @@ async def run_bindings_loop(
     runtimes = []
     for binding in config.bindings:
         _probe_binding(config, binding)
-        runtimes.append(_build_binding_runtime(config, binding))
+        runtimes.append(build_binding_runtime(config, binding))
     try:
         for runtime in runtimes:
             logging.getLogger(__name__).info(

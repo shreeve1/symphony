@@ -426,7 +426,7 @@ async def test_archived_mid_run_skips_verdict_transition_and_tears_down_worktree
 async def test_trading_podium_dispatch_logs_colocate_with_resolved_db(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: construct the adapter the way ``main._build_binding_runtime``
+    """Regression: construct the adapter the way ``main.build_binding_runtime``
     does — no explicit ``db_path`` and no ``RUN_LOG_ROOT`` override. The run log
     must land beside the resolved database, not at the unwritable
     ``/var/lib/symphony/runs`` default that crashed the live cutover."""
@@ -500,7 +500,7 @@ def test_trading_binding_uses_podium_without_plane_transport(
 
     monkeypatch.setattr(main, "HttpxPlaneTransport", fail_plane_transport)
 
-    runtime = main._build_binding_runtime(config, binding)
+    runtime = main.build_binding_runtime(config, binding)
 
     assert binding.tracker == "podium"
     assert runtime.transport is None
