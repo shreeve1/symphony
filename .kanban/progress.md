@@ -163,6 +163,7 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** New agent-facing callback names should use `SYMPHONY_TRACKER_*`; legacy `SYMPHONY_PLANE_*` remains emitted only where Plane-tracker rollback/back-compat requires it.
 **Notes for next iteration:** The `plane` helper / `plane_cli.py` rename remains deferred to Phase 7; issue #076 is independently eligible.
 **Verification:** `uv run pytest` (891 passed, 2 skipped); focused agent-runner/remote/prompt/schedule tests passed; `uv run ruff check agent_runner.py prompt_renderer.py schedule.py tests/test_agent_runner.py tests/test_remote_agent.py tests/test_prompt_renderer_podium.py tests/test_schedule.py`; touched-file LSP diagnostics clean; fresh review `RALPH_REVIEW: PASS`.
+**Actionable review repair:** Reopened the retroactively auto-parked blocker, reran exact verification (`uv run pytest`, 924 passed, 2 skipped), confirmed touched-file LSP diagnostics clean, and got fresh review `RALPH_REVIEW: PASS`; issue #075 is done again.
 
 ## #076 Add claude_persist per-binding config flag — 2026-06-17
 
