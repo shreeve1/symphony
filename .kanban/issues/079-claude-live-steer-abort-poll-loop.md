@@ -1,7 +1,7 @@
 ---
 id: 079
 title: Live steer/abort in the Claude poll loop (generation token)
-status: in-progress
+status: review
 blocked_by: [77]
 parent: null
 priority: 0
