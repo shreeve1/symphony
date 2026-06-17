@@ -114,7 +114,6 @@ SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am P
 _REDACTED = "***REDACTED***"
 
 
-
 @dataclass
 class _DispatchState:
     """Per-binding dispatch state — isolates concurrency from module globals.
@@ -268,30 +267,12 @@ _APPROVAL_GATE_RE = re.compile(
 )
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class SchedulerError(RuntimeError):
     """Raised for scheduler setup failures."""
 
 
 class SchedulerContextCompactionError(RuntimeError):
     """Raised when pre-dispatch context compaction fails safely."""
-
-
 
 
 _SECRET_ENV_KEYS = (
@@ -301,18 +282,6 @@ _SECRET_ENV_KEYS = (
     "CLIP" + "ROXY_API_KEY",
     "TELEGRAM_BOT_TOKEN",
 )
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
@@ -1448,7 +1417,9 @@ async def _prepare_run_tick_dispatch(
     LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
 
     secrets = _collect_secrets(config)
-    dispatch_agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    dispatch_agent = (
+        binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    )
     return _RunTickPreparedDispatch(
         candidate=candidate,
         prompt=prompt,
@@ -1547,7 +1518,11 @@ async def _dispatch_run_tick_agent(
         result.duration_ms,
         str(result.timed_out).lower(),
     )
-    if getattr(candidate, "resumed", False) and result.exit_code != 0 and not result.timed_out:
+    if (
+        getattr(candidate, "resumed", False)
+        and result.exit_code != 0
+        and not result.timed_out
+    ):
         fallback = await _dispatch_with_resume_fallback(
             config,
             adapter,
@@ -1878,7 +1853,9 @@ async def _classify_terminal(
             reason_code,
         )
         raise
-    if await _handle_archived_terminal(adapter, config, candidate, run_id, binding=binding):
+    if await _handle_archived_terminal(
+        adapter, config, candidate, run_id, binding=binding
+    ):
         return TickResult(True, "archived-terminal", candidate.id, mode=mode)
     try:
         await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
@@ -2314,7 +2291,9 @@ async def _wait_for_tasks_or_wake(
     return set(), set(pending), False
 
 
-def _get_issue_for_claude_reaper(adapter: TrackerAdapter, issue_id: str) -> dict[str, Any] | None:
+def _get_issue_for_claude_reaper(
+    adapter: TrackerAdapter, issue_id: str
+) -> dict[str, Any] | None:
     try:
         return asyncio.run(adapter.get_issue(issue_id))
     except KeyError:
