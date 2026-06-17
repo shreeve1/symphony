@@ -32,6 +32,8 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         binding_names = {binding["name"] for binding in bindings}
         assert {"homelab", "symphony"}.issubset(binding_names)
         assert all(binding["pi_mode"] in {"one-shot", "rpc"} for binding in bindings)
+        assert all("claude_persist" in binding for binding in bindings)
+        assert all(isinstance(binding["claude_persist"], bool) for binding in bindings)
 
         symphony_issues_response = client.get("/api/bindings/symphony/issues")
         assert symphony_issues_response.status_code == 200
@@ -127,16 +129,21 @@ def test_bindings_endpoint_surfaces_remote_repo_name(
             )
             connection.commit()
         monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
+        monkeypatch.setattr(
+            main, "_binding_claude_persist_for", lambda name: name == REMOTE_BINDING_NAME
+        )
         bindings = client.get("/api/bindings").json()
 
     by_name = {binding["name"]: binding for binding in bindings}
     remote = by_name[REMOTE_BINDING_NAME]
     assert remote["is_remote"] is True
     assert remote["repo_name"] == "itastack"
+    assert remote["claude_persist"] is True
 
     local = by_name["symphony"]
     assert local["is_remote"] is False
     assert local["repo_name"] is None
+    assert local["claude_persist"] is False
 
 
 def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:

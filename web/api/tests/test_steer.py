@@ -98,19 +98,44 @@ def test_steer_without_active_run_returns_409_and_no_queue(
     assert not (tmp_path / "steer").exists()
 
 
-def test_steer_rejects_claude_with_park_and_reply_message(
+def test_steer_accepts_claude_when_binding_persists_sessions(
     client: TestClient,
     issue_id: int,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SYMPHONY_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(main, "_binding_claude_persist_for", lambda name: True)
+    run_id = _insert_running_run(issue_id, agent="claude")
+
+    response = client.post(f"/api/issues/{issue_id}/steer", json={"body": "go left"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "### Operator Steer (" in payload["comments_md"]
+    assert "go left" in payload["comments_md"]
+    records, _ = steer_queue.read_steer_records(
+        str(run_id), 0, environ={"SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    )
+    assert len(records) == 1
+    assert records[0]["kind"] == "steer"
+    assert records[0]["message"] == "go left"
+
+
+def test_steer_rejects_claude_without_persist_message(
+    client: TestClient,
+    issue_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SYMPHONY_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(main, "_binding_claude_persist_for", lambda name: False)
     _insert_running_run(issue_id, agent="claude")
 
     response = client.post(f"/api/issues/{issue_id}/steer", json={"body": "go left"})
 
     assert response.status_code == 409
-    assert "park-and-reply" in response.json()["detail"]
+    assert response.json()["detail"] == "enable claude_persist for live Claude steering"
     assert not (tmp_path / "steer").exists()
 
 

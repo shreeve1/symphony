@@ -591,10 +591,10 @@ class ReplyCreate(BaseModel):
 
 
 class SteerCreate(BaseModel):
-    """Live pi RPC steering payload.
+    """Live agent steering payload.
 
     `action=steer` requires a non-empty body. `action=abort` may omit body and
-    forwards an RPC abort command to the active pi run.
+    forwards an abort command to the active run.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -685,6 +685,7 @@ def list_bindings(
     for binding in result:
         name = str(binding["name"])
         binding["pi_mode"] = _binding_pi_mode_for(name)
+        binding["claude_persist"] = _binding_claude_persist_for(name)
         binding["is_remote"] = _is_remote_binding(name)
         repo_path = _repo_path_for_binding(name)
         binding["repo_name"] = repo_path.name if repo_path is not None else None
@@ -921,6 +922,17 @@ def _binding_pi_mode_for(name: str) -> str:
             mode = str(binding.get("pi_mode") or "one-shot")
             return mode if mode in {"one-shot", "rpc"} else "one-shot"
     return "one-shot"
+
+
+def _binding_claude_persist_for(name: str) -> bool:
+    try:
+        bindings = _load_bindings(BINDINGS_PATH)
+    except (OSError, yaml.YAMLError):
+        return False
+    for binding in bindings:
+        if binding.get("name") == name:
+            return binding.get("claude_persist") is True
+    return False
 
 
 def _base_branch_for(name: str) -> str:
@@ -1301,15 +1313,17 @@ async def steer_issue(
             detail="steer requires an active running pi RPC run",
         )
     agent = str(run["agent"] or "").strip().lower()
-    if agent == "claude":
+    binding_name = str(current.get("binding_name") or "")
+    pi_rpc_enabled = agent == "pi" and _binding_pi_mode_for(binding_name) == "rpc"
+    claude_steer_enabled = agent == "claude" and _binding_claude_persist_for(
+        binding_name
+    )
+    if agent == "claude" and not claude_steer_enabled:
         raise HTTPException(
             status_code=409,
-            detail="Claude runs do not support live steering; use park-and-reply only",
+            detail="enable claude_persist for live Claude steering",
         )
-    if (
-        agent != "pi"
-        or _binding_pi_mode_for(str(current.get("binding_name") or "")) != "rpc"
-    ):
+    if not (pi_rpc_enabled or claude_steer_enabled):
         raise HTTPException(
             status_code=409,
             detail="steer requires an active running pi RPC run",

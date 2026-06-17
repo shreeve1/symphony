@@ -1,7 +1,7 @@
 ---
 id: 083
 title: API — allow Claude steer for claude_persist bindings + expose flag
-status: pending
+status: in-progress
 blocked_by: [76, 79]
 parent: null
 priority: 0
