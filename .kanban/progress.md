@@ -241,3 +241,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** The steer comments and queue write path remain agent-agnostic; API gating decides whether the active run may enqueue steer/abort records.
 **Notes for next iteration:** Issue #084 owns run-end steer-close guards; issue #085 can rely on `/api/bindings` exposing `claude_persist`.
 **Verification:** `uv run pytest tests/test_agent_runner.py tests/test_scheduler.py` (183 passed, 1 skipped), `uv run python -m py_compile web/api/main.py`, focused API tests and ruff checks passed, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
+
+## #084 Run-end steer-close guard — 2026-06-17
+
+**What changed:** Added `_close_run_record_steering` so `scheduler.run_tick` moves a returned Run row out of `running` immediately after agent return and before terminal classification side effects. Added scheduler coverage for the adapter-return/finalization window and steer endpoint coverage for both pi and Claude non-running Run rows.
+**Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `web/api/tests/test_steer.py`, `.kanban/issues/084-run-end-steer-close-guard.md`.
+**Decisions:** Use the existing Run state projection as the guard: clean adapter returns become `succeeded`, nonzero/timeout returns become `failed`, and `_finish_run_record` still fills verdict, summary, metrics, and log path later.
+**Conventions established:** Steer acceptance requires both issue projection and backing Run row to remain `running`; run-end close logic stays agent-agnostic so pi RPC and Claude share the same safety boundary.
+**Notes for next iteration:** Issue #085 can rely on rejected post-return steers for both pi and Claude; no frontend-specific guard duplication needed.
+**Verification:** `uv run pytest tests/test_scheduler.py tests/test_agent_runner.py web/api/tests/test_steer.py` (195 passed, 1 skipped), `uv run python -m py_compile scheduler/__init__.py web/api/main.py`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`.
