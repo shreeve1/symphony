@@ -1,7 +1,7 @@
 ---
 id: 059
 title: Phase 1 — foundation cleanups
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
