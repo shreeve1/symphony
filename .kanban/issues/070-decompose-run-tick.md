@@ -1,7 +1,7 @@
 ---
 id: 070
 title: Decompose the run_tick god-function
-status: pending
+status: in-progress
 blocked_by: [69]
 parent: null
 priority: 0

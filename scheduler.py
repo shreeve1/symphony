@@ -1078,6 +1078,40 @@ class _ScheduledSelection:
     error: str = ""
 
 
+@dataclass(frozen=True)
+class _RunTickSelection:
+    candidate: CandidateIssue
+    scheduled_reserved: bool = False
+
+
+@dataclass(frozen=True)
+class _RunTickGate:
+    candidate: CandidateIssue
+    mode: str
+    fresh_issue: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _RunTickPreparedDispatch:
+    candidate: CandidateIssue
+    prompt: str
+    comments_text: str
+    run_id: str | None
+    run_log_path: Path | None
+    claim_dt: datetime
+    secrets: list[str]
+    parse_stderr: bool
+
+
+@dataclass(frozen=True)
+class _RunTickAgentResult:
+    candidate: CandidateIssue
+    result: AgentResult
+    run_id: str | None
+    run_log_path: Path | None
+    claim_dt: datetime
+
+
 def _labels_contain_role(
     labels: tuple[str, ...] | list[str],
     tracker: TrackerAdapter | TrackerContract,
@@ -1278,30 +1312,20 @@ async def _dispatch_with_resume_fallback(
     )
 
 
-async def run_tick(
+async def _select_run_tick_candidate(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
     *,
-    agent_runner: Callable[..., AgentResult],
-    render_prompt: Callable[[CandidateIssue], str],
-    compaction_agent_runner: Callable[..., AgentResult] | None = None,
-    lock_path: Path | None = None,
-    poller: Callable[[TrackerAdapter], Any] | None = None,
-    repo_dirty: Callable[[Path], bool] | None = None,
-    diff_stat: Callable[[Path], str] | None = None,
-    auto_commit: Callable[..., str] | None = None,
-    now: Callable[[], datetime] = lambda: datetime.now(UTC),
-    notifier: TelegramNotifier | None = None,
-    run_blocked_reconciler: bool = True,
-    dispatch_state: _DispatchState | None = None,
-    binding: ProjectBinding | None = None,
-) -> TickResult:
-    """Run one scheduler tick without sleeping forever."""
+    now: Callable[[], datetime],
+    notifier: TelegramNotifier | None,
+    run_blocked_reconciler: bool,
+    dispatch_state: _DispatchState,
+    binding: ProjectBinding | None,
+    poller: Callable[[TrackerAdapter], Any] | None,
+) -> _RunTickSelection | TickResult:
+    """Run tick selection/reconcile stage and reserve one candidate."""
 
-    tick_binding = binding or _binding_from_config(config)
-    is_coding = tick_binding is not None and tick_binding.binding_type == "coding"
-
-    dispatch_state = dispatch_state or _new_dispatch_state(config)
+    is_coding = binding is not None and binding.binding_type == "coding"
     await reconcile_pending_review(config, adapter, dispatch_state, notifier=notifier)
 
     try:
@@ -1327,12 +1351,14 @@ async def run_tick(
                 raise
             except Exception as exc:
                 LOGGER.warning("blocked_reconcile_failed error=%s", exc, exc_info=True)
-        scheduled_reserved = False
         scheduled = (
             None if is_coding else await _select_scheduled_candidate(adapter, now=now)
         )
     except PlaneRateLimitError:
         raise
+
+    scheduled_reserved = False
+    candidate: CandidateIssue | None = None
     if scheduled is not None:
         if scheduled.reason == "scheduled-release":
             candidate = scheduled.candidate
@@ -1364,7 +1390,6 @@ async def run_tick(
                     await _release_candidate(
                         candidate.id, dispatch_state=dispatch_state
                     )
-                    scheduled_reserved = False
                 return TickResult(False, "scheduled-release-failed", candidate.id)
             candidate = _with_schedule_context(
                 scheduled.candidate, released_event, now=now()
@@ -1400,10 +1425,6 @@ async def run_tick(
                 adapter, scheduled.candidate.id, scheduled.event
             )
             return TickResult(False, "scheduled-cancelled", scheduled.candidate.id)
-        else:
-            candidate = None
-    else:
-        candidate = None
 
     try:
         candidates = (
@@ -1420,7 +1441,7 @@ async def run_tick(
         return TickResult(False, "plane-unreachable")
     _clear_rate_limit(dispatch_state)
 
-    approval_policy_enabled = _binding_approval_enabled(tick_binding) and not is_coding
+    approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
     if candidate is None:
         candidate = await _reserve_candidate(
             candidates,
@@ -1435,101 +1456,85 @@ async def run_tick(
         return TickResult(False, "already-in-flight", candidate.id)
     if candidate is None:
         return TickResult(False, "no-candidates")
+    return _RunTickSelection(candidate, scheduled_reserved=scheduled_reserved)
 
-    try:
-        if approval_policy_enabled and adapter.labels_contain_role(
-            candidate.labels, TrackerRole.APPROVAL_REQUIRED
-        ):
-            return TickResult(False, "approval-required", candidate.id)
 
-        mode = _resolve_mode(candidate.labels, adapter.contract)
+async def _gate_run_tick_candidate(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None,
+    notifier: TelegramNotifier | None,
+) -> _RunTickGate | TickResult:
+    """Run tick gate stage before rendering or dispatch side effects."""
 
-        fresh = await _fetch_issue(adapter, candidate.id)
-        if not _is_state(
-            fresh,
-            adapter.contract.state_name_for_role(TrackerRole.STATE_TODO),
-            adapter.contract.state_value_for_role(TrackerRole.STATE_TODO),
-        ):
-            return TickResult(False, "state-changed", candidate.id)
-        label_ids = adapter.contract.label_ids if adapter.contract else None
-        fresh_labels = _extract_labels(fresh, label_ids=label_ids)
-        if approval_policy_enabled and adapter.labels_contain_role(
-            fresh_labels, TrackerRole.APPROVAL_REQUIRED
-        ):
-            return TickResult(False, "approval-required", candidate.id)
+    is_coding = binding is not None and binding.binding_type == "coding"
+    approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
+    if approval_policy_enabled and adapter.labels_contain_role(
+        candidate.labels, TrackerRole.APPROVAL_REQUIRED
+    ):
+        return TickResult(False, "approval-required", candidate.id)
 
-        if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
-            return TickResult(False, "scheduled-held", candidate.id)
+    mode = _resolve_mode(candidate.labels, adapter.contract)
 
-        if mode == "build" and not is_coding:
-            if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
-                try:
-                    await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
-                except PlaneRateLimitError:
-                    raise
-                except Exception as exc:
-                    await adapter.add_comment(
-                        candidate.id,
-                        CommentPayload(
-                            body=f"Build could not start: failed to remove stale `plan` label: {exc}"
-                        ),
-                    )
-                    return TickResult(
-                        False, "stale-plan-label-remove-failed", candidate.id, mode=mode
-                    )
+    fresh = await _fetch_issue(adapter, candidate.id)
+    if not _is_state(
+        fresh,
+        adapter.contract.state_name_for_role(TrackerRole.STATE_TODO),
+        adapter.contract.state_value_for_role(TrackerRole.STATE_TODO),
+    ):
+        return TickResult(False, "state-changed", candidate.id)
+    label_ids = adapter.contract.label_ids if adapter.contract else None
+    fresh_labels = _extract_labels(fresh, label_ids=label_ids)
+    if approval_policy_enabled and adapter.labels_contain_role(
+        fresh_labels, TrackerRole.APPROVAL_REQUIRED
+    ):
+        return TickResult(False, "approval-required", candidate.id)
 
-            plan_path = _validated_fallback_plan_path(
-                config.homelab_repo_path, candidate
-            )
-            if plan_path is None:
-                try:
-                    await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
-                    await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
-                    await adapter.add_comment(
-                        candidate.id,
-                        CommentPayload(
-                            body=(
-                                "Build could not start because no readable plan file was found. "
-                                "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
-                            )
-                        ),
-                    )
-                    await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
-                except PlaneRateLimitError:
-                    raise
-                except Exception as exc:
-                    _iu, _du = _build_urls(config, candidate.id)
-                    await _block_issue(
-                        adapter,
-                        candidate.id,
-                        f"Build plan recovery failed after no readable plan was found: {exc}",
-                        issue_name=candidate.name,
-                        issue_identifier=candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(
-                        False, "build-plan-recovery-failed", candidate.id, mode=mode
-                    )
-                return TickResult(
-                    False,
-                    "build-plan-missing-returned-to-plan",
+    if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
+        return TickResult(False, "scheduled-held", candidate.id)
+
+    if mode == "build" and not is_coding:
+        if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
+            try:
+                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
+            except PlaneRateLimitError:
+                raise
+            except Exception as exc:
+                await adapter.add_comment(
                     candidate.id,
-                    mode=mode,
+                    CommentPayload(
+                        body=f"Build could not start: failed to remove stale `plan` label: {exc}"
+                    ),
+                )
+                return TickResult(
+                    False, "stale-plan-label-remove-failed", candidate.id, mode=mode
                 )
 
-        # Dispatch gate (Podium only): resolve agent, model, and skill before
-        # any state transition or compaction spend. Anything unresolvable
-        # blocks loudly instead of silently dispatching different settings.
-        if getattr(adapter, "stores_context", False):
-            candidate, gate_error = _apply_dispatch_gate(candidate, tick_binding)
-            if gate_error is not None:
+        plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
+        if plan_path is None:
+            try:
+                await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
+                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
+                await adapter.add_comment(
+                    candidate.id,
+                    CommentPayload(
+                        body=(
+                            "Build could not start because no readable plan file was found. "
+                            "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
+                        )
+                    ),
+                )
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+            except PlaneRateLimitError:
+                raise
+            except Exception as exc:
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
                     candidate.id,
-                    gate_error,
+                    f"Build plan recovery failed after no readable plan was found: {exc}",
                     issue_name=candidate.name,
                     issue_identifier=candidate.identifier,
                     notifier=notifier,
@@ -1537,555 +1542,681 @@ async def run_tick(
                     dashboard_url=_du,
                 )
                 return TickResult(
-                    False, "dispatch-gate-blocked", candidate.id, mode=mode
+                    False, "build-plan-recovery-failed", candidate.id, mode=mode
                 )
-
-        try:
-            comments_text = await _fetch_issue_comments(adapter, candidate.id)
-            candidate, _resume_decision = await _prepare_resume_candidate(
-                adapter,
-                config,
-                candidate,
-                fresh,
-                binding=tick_binding,
+            return TickResult(
+                False,
+                "build-plan-missing-returned-to-plan",
+                candidate.id,
+                mode=mode,
             )
-            candidate, prompt = await _render_for_dispatch(
+
+    if getattr(adapter, "stores_context", False):
+        candidate, gate_error = _apply_dispatch_gate(candidate, binding)
+        if gate_error is not None:
+            _iu, _du = _build_urls(config, candidate.id)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                gate_error,
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(False, "dispatch-gate-blocked", candidate.id, mode=mode)
+
+    return _RunTickGate(candidate, mode, fresh)
+
+
+async def _prepare_run_tick_dispatch(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    fresh_issue: dict[str, Any],
+    mode: str,
+    render_prompt: Callable[..., str],
+    agent_runner: Callable[..., AgentResult],
+    *,
+    now: Callable[[], datetime],
+    binding: ProjectBinding | None,
+    notifier: TelegramNotifier | None,
+) -> _RunTickPreparedDispatch | TickResult:
+    """Prepare prompt, Run record, and claim transition for dispatch."""
+
+    try:
+        comments_text = await _fetch_issue_comments(adapter, candidate.id)
+        candidate, _resume_decision = await _prepare_resume_candidate(
+            adapter,
+            config,
+            candidate,
+            fresh_issue,
+            binding=binding,
+        )
+        candidate, prompt = await _render_for_dispatch(
+            config,
+            adapter,
+            candidate,
+            render_prompt,
+            agent_runner,
+            now=now,
+            binding=binding,
+            comments_text=comments_text,
+        )
+    except SchedulerContextCompactionError as exc:
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            f"Context compaction failed: {exc}",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(False, "context-compaction-failed", candidate.id, mode=mode)
+    except OSError as exc:
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            f"Workflow prompt could not be rendered: {exc}",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(False, "workflow-missing", candidate.id, mode=mode)
+
+    run_id, run_log_path = await _start_run_record(
+        adapter, config, candidate, binding=binding
+    )
+    candidate = replace(candidate, active_run_id=run_id or "")
+    consumed_skill = getattr(candidate, "preferred_skill", None)
+    if run_id is not None and consumed_skill:
+        consume = getattr(adapter, "consume_preferred_skill", None)
+        if callable(consume):
+            await _maybe_await(consume(candidate.id, consumed_skill))
+    await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
+    claim_time = now().isoformat()
+    await _mark_run_record_running(
+        adapter,
+        run_id,
+        run_log_path,
+        started_at=claim_time,
+    )
+    claim_dt = datetime.fromisoformat(claim_time)
+    LOGGER.info("issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time)
+
+    secrets = _collect_secrets(config)
+    dispatch_agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    return _RunTickPreparedDispatch(
+        candidate=candidate,
+        prompt=prompt,
+        comments_text=comments_text,
+        run_id=run_id,
+        run_log_path=run_log_path,
+        claim_dt=claim_dt,
+        secrets=secrets,
+        parse_stderr=dispatch_agent != "claude",
+    )
+
+
+async def _dispatch_run_tick_agent(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    prompt: str,
+    *,
+    agent_runner: Callable[..., AgentResult],
+    render_prompt: Callable[..., str],
+    comments_text: str,
+    compaction_agent_runner: Callable[..., AgentResult] | None,
+    run_id: str | None,
+    run_log_path: Path | None,
+    claim_dt: datetime,
+    secrets: Sequence[str],
+    mode: str,
+    now: Callable[[], datetime],
+    binding: ProjectBinding | None,
+    notifier: TelegramNotifier | None,
+) -> _RunTickAgentResult | TickResult:
+    """Dispatch the agent and retry once from a fresh prompt on resume failure."""
+
+    result: AgentResult | None = None
+    try:
+        result = await asyncio.to_thread(agent_runner, candidate, prompt)
+    except Exception as exc:
+        if getattr(candidate, "resumed", False):
+            fallback = await _dispatch_with_resume_fallback(
                 config,
                 adapter,
                 candidate,
                 render_prompt,
-                compaction_agent_runner or agent_runner,
+                agent_runner,
                 now=now,
-                binding=tick_binding,
+                binding=binding,
                 comments_text=comments_text,
-            )
-        except SchedulerContextCompactionError as exc:
-            _iu, _du = _build_urls(config, candidate.id)
-            await _block_issue(
-                adapter,
-                candidate.id,
-                f"Context compaction failed: {exc}",
-                issue_name=candidate.name,
-                issue_identifier=candidate.identifier,
+                compaction_agent_runner=compaction_agent_runner,
+                run_id=run_id,
+                run_log_path=run_log_path,
+                failed_result=AgentResult(1, 0, False, stdout="", stderr=str(exc)),
+                secrets=secrets,
+                resume_summary=f"resume_failed: {exc}; fell_back=true",
+                mode=mode,
                 notifier=notifier,
-                issue_url=_iu,
-                dashboard_url=_du,
+                resume_error=exc,
             )
-            return TickResult(
-                False, "context-compaction-failed", candidate.id, mode=mode
-            )
-        except OSError as exc:
-            _iu, _du = _build_urls(config, candidate.id)
-            await _block_issue(
-                adapter,
-                candidate.id,
-                f"Workflow prompt could not be rendered: {exc}",
-                issue_name=candidate.name,
-                issue_identifier=candidate.identifier,
-                notifier=notifier,
-                issue_url=_iu,
-                dashboard_url=_du,
-            )
-            return TickResult(False, "workflow-missing", candidate.id, mode=mode)
-
-        try:
-            run_id, run_log_path = await _start_run_record(
-                adapter, config, candidate, binding=tick_binding
-            )
-            candidate = replace(candidate, active_run_id=run_id or "")
-            # preferred_skill is consume-on-dispatch (ADR-0008): captured into
-            # run.skill_invoked above, cleared once the Run row is recorded.
-            # Compare-and-clear so a concurrent operator re-pick survives; only
-            # runs for stores_context adapters (run_id is not None — Plane
-            # returns None and is untouched). Mirrors the guarded-getattr at
-            # the worktree-column clear above. Does not touch preferred_model
-            # or reasoning_effort (those stay standing config).
-            consumed_skill = getattr(candidate, "preferred_skill", None)
-            if run_id is not None and consumed_skill:
-                consume = getattr(adapter, "consume_preferred_skill", None)
-                if callable(consume):
-                    await _maybe_await(consume(candidate.id, consumed_skill))
-            await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
-            claim_time = now().isoformat()
-            await _mark_run_record_running(
-                adapter,
-                run_id,
-                run_log_path,
-                started_at=claim_time,
-            )
-            # Claim time is persisted by the Run record (started_at) above; no
-            # claim comment is posted so the human comment stream stays clean.
-            claim_dt = datetime.fromisoformat(claim_time)
-            LOGGER.info(
-                "issue_claimed issue_id=%s claimed_at=%s", candidate.id, claim_time
-            )
-
-            secrets = _collect_secrets(config)
-            dispatch_agent = (
-                tick_binding.resolve_agent(candidate.labels)
-                if tick_binding is not None
-                else "pi"
-            )
-            parse_stderr = dispatch_agent != "claude"
-
-            result: AgentResult | None = None
-            try:
-                result = await asyncio.to_thread(agent_runner, candidate, prompt)
-            except Exception as exc:
-                if getattr(candidate, "resumed", False):
-                    fallback = await _dispatch_with_resume_fallback(
-                        config,
-                        adapter,
-                        candidate,
-                        render_prompt,
-                        agent_runner,
-                        now=now,
-                        binding=tick_binding,
-                        comments_text=comments_text,
-                        compaction_agent_runner=compaction_agent_runner,
-                        run_id=run_id,
-                        run_log_path=run_log_path,
-                        failed_result=AgentResult(
-                            1, 0, False, stdout="", stderr=str(exc)
-                        ),
-                        secrets=secrets,
-                        resume_summary=f"resume_failed: {exc}; fell_back=true",
-                        mode=mode,
-                        notifier=notifier,
-                        resume_error=exc,
-                    )
-                    if isinstance(fallback, TickResult):
-                        return fallback
-                    candidate = fallback.candidate
-                    result = fallback.result
-                    run_id = fallback.run_id
-                    run_log_path = fallback.run_log_path
-                    claim_dt = fallback.claim_dt
-                else:
-                    result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
-                    await _finish_run_record(
-                        adapter,
-                        run_id,
-                        run_log_path,
-                        result=result,
-                        secrets=secrets,
-                        state="failed",
-                        verdict="blocked",
-                        summary=f"Agent crashed: {exc}",
-                        ended_at=now().isoformat(),
-                    )
-                    _iu, _du = _build_urls(config, candidate.id)
-                    await _block_issue(
-                        adapter,
-                        candidate.id,
-                        f"Agent crashed: {exc}",
-                        issue_name=candidate.name,
-                        issue_identifier=candidate.identifier,
-                        notifier=notifier,
-                        issue_url=_iu,
-                        dashboard_url=_du,
-                    )
-                    return TickResult(True, "agent-crashed", candidate.id, mode=mode)
-            assert result is not None
-
-            LOGGER.info(
-                "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=%s",
-                candidate.id,
-                result.exit_code,
-                result.duration_ms,
-                str(result.timed_out).lower(),
-            )
-            if (
-                getattr(candidate, "resumed", False)
-                and result.exit_code != 0
-                and not result.timed_out
-            ):
-                fallback = await _dispatch_with_resume_fallback(
-                    config,
-                    adapter,
-                    candidate,
-                    render_prompt,
-                    agent_runner,
-                    now=now,
-                    binding=tick_binding,
-                    comments_text=comments_text,
-                    compaction_agent_runner=compaction_agent_runner,
-                    run_id=run_id,
-                    run_log_path=run_log_path,
-                    failed_result=result,
-                    secrets=secrets,
-                    resume_summary=(
-                        f"resume_failed: exit code {result.exit_code}; fell_back=true"
-                    ),
-                    mode=mode,
-                    notifier=notifier,
-                )
-                if isinstance(fallback, TickResult):
-                    return fallback
-                candidate = fallback.candidate
-                result = fallback.result
-                run_id = fallback.run_id
-                run_log_path = fallback.run_log_path
-                claim_dt = fallback.claim_dt
-            if result.timed_out:
-                msg = f"Agent timed out after {result.duration_ms} ms"
-                stdout, stderr = _format_report(result, secrets)
-                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
-                if stderr:
-                    msg += f"\n\n{_format_stderr_summary(stderr)}"
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=summary or "Agent timed out.",
-                    ended_at=now().isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    msg,
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "timeout", candidate.id, mode=mode)
-            if result.exit_code != 0:
-                msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
-                stdout, stderr = _format_report(result, secrets)
-                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
-                if stderr:
-                    msg += f"\n\n{_format_stderr_summary(stderr)}"
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=summary
-                    or f"Agent failed with exit code {result.exit_code}.",
-                    ended_at=now().isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    msg,
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "nonzero", candidate.id, mode=mode)
-
-            stdout, stderr = _format_report(result, secrets)
-            gate_stderr = stderr if parse_stderr else ""
-
-            if not is_coding:
-                scheduled_after_agent = await _detect_agent_schedule(
-                    adapter,
-                    candidate,
-                    claim_dt=claim_dt,
-                    stdout=stdout,
-                    stderr=stderr,
-                    notifier=notifier,
-                    config=config,
-                )
-                if scheduled_after_agent is not None:
-                    return TickResult(
-                        True, scheduled_after_agent, candidate.id, mode=mode
-                    )
-
-            if _hit_permission_gate(stdout, gate_stderr):
-                msg = (
-                    "Agent could not complete because required tool access was denied."
-                )
-                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
-                if stderr:
-                    msg += f"\n\n{_format_stderr_summary(stderr)}"
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=summary or msg,
-                    ended_at=now().isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    msg,
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "permission-gate", candidate.id, mode=mode)
-
-            if _hit_approval_gate(stdout, gate_stderr):
-                msg = "Agent could not complete because operator approval is required."
-                summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
-                if stderr:
-                    msg += f"\n\n{_format_stderr_summary(stderr)}"
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=summary or msg,
-                    ended_at=now().isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    msg,
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "approval-gate", candidate.id, mode=mode)
-
-            verdict = _parse_result_marker(stdout)
-            summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
-            question = _extract_question(result, secrets, include_stderr=parse_stderr)
-
-            def _completion_body() -> str:
-                if summary:
-                    # Block on its own line so a leading markdown heading in the
-                    # agent's summary renders correctly.
-                    return f"**Symphony completed:**\n\n{summary}"
-                return "**Symphony completed:** Agent finished without a summary."
-
-            if verdict == "blocked":
-                if summary:
-                    msg = summary
-                else:
-                    msg = "Agent reported a blocked result."
-                    if stderr:
-                        msg += f"\n\n{_format_stderr_summary(stderr)}"
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=summary or "Agent reported a blocked result.",
-                    ended_at=now().isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    msg,
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
-
-            if question:
-                question_body = f"**Symphony question:**\n\n{question}"
-                await _finish_run_record(
-                    adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
-                    secrets=secrets,
-                    state="succeeded",
-                    # Persist an allowed verdict while the question text and
-                    # agent-question-park reason carry the Question Park outcome.
-                    # Podium's schema constrains verdicts to done/review/blocked.
-                    verdict="review",
-                    summary=question,
-                    ended_at=now().isoformat(),
-                )
-                try:
-                    await adapter.add_comment(
-                        candidate.id,
-                        CommentPayload(body=question_body),
-                    )
-                    if getattr(adapter, "stores_context", False):
-                        context_parts = []
-                        if stdout:
-                            context_parts.append(
-                                f"## Agent stdout\n\n```\n{stdout}\n```"
-                            )
-                        if stderr:
-                            context_parts.append(
-                                f"## Agent stderr\n\n```\n{stderr}\n```"
-                            )
-                        if context_parts:
-                            await adapter.append_context(
-                                candidate.id, "\n\n".join(context_parts)
-                            )
-                except PlaneRateLimitError:
-                    if dispatch_state is not None:
-                        dispatch_state.pending_review_issue_ids.add(candidate.id)
-                        dispatch_state.pending_completion_bodies[candidate.id] = (
-                            question_body
-                        )
-                        LOGGER.info(
-                            "pending_review_queued issue_id=%s reason=agent-question-park (post-agent comment/context rate-limited)",
-                            candidate.id,
-                        )
-                    raise
-                if await _handle_archived_terminal(
-                    adapter, config, candidate, run_id, binding=tick_binding
-                ):
-                    return TickResult(
-                        True, "archived-terminal", candidate.id, mode=mode
-                    )
-                try:
-                    await adapter.transition_state(
-                        candidate.id, TrackerRole.STATE_IN_REVIEW
-                    )
-                except PlaneRateLimitError:
-                    if dispatch_state is not None:
-                        dispatch_state.pending_review_issue_ids.add(candidate.id)
-                        LOGGER.info(
-                            "pending_review_queued issue_id=%s reason=agent-question-park (post-agent transition rate-limited)",
-                            candidate.id,
-                        )
-                    raise
-                LOGGER.info(
-                    "state_transitioned issue_id=%s state=in-review reason=agent-question-park",
-                    candidate.id,
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _notify_review(
-                    notifier,
-                    candidate.name,
-                    candidate.identifier,
-                    reason="Operator question parked",
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(True, "agent-question-park", candidate.id, mode=mode)
-
-            if not is_coding:
-                after_agent = await _fetch_issue(adapter, candidate.id)
-                if _is_state(
-                    after_agent,
-                    adapter.contract.state_name_for_role(TrackerRole.STATE_IN_REVIEW),
-                    adapter.contract.state_value_for_role(TrackerRole.STATE_IN_REVIEW),
-                ):
-                    return TickResult(True, "agent-review", candidate.id, mode=mode)
-                if _is_state(
-                    after_agent,
-                    adapter.contract.state_name_for_role(TrackerRole.STATE_BLOCKED),
-                    adapter.contract.state_value_for_role(TrackerRole.STATE_BLOCKED),
-                ):
-                    return TickResult(True, "agent-blocked", candidate.id, mode=mode)
-
-            reason_code = (
-                "agent-marker-review"
-                if verdict in {"review", "done"}
-                else "agent-clean-review"
-            )
-            completion_body = _completion_body()
+            if isinstance(fallback, TickResult):
+                return fallback
+            candidate = fallback.candidate
+            result = fallback.result
+            run_id = fallback.run_id
+            run_log_path = fallback.run_log_path
+            claim_dt = fallback.claim_dt
+        else:
+            result = AgentResult(1, 0, False, stdout="", stderr=str(exc))
             await _finish_run_record(
                 adapter,
                 run_id,
                 run_log_path,
                 result=result,
                 secrets=secrets,
-                state="succeeded",
-                verdict=verdict or "review",
-                summary=summary,
+                state="failed",
+                verdict="blocked",
+                summary=f"Agent crashed: {exc}",
                 ended_at=now().isoformat(),
             )
-            try:
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(body=completion_body),
-                )
-                if getattr(adapter, "stores_context", False):
-                    context_parts = []
-                    if stdout:
-                        context_parts.append(f"## Agent stdout\n\n```\n{stdout}\n```")
-                    if stderr:
-                        context_parts.append(f"## Agent stderr\n\n```\n{stderr}\n```")
-                    if context_parts:
-                        await adapter.append_context(
-                            candidate.id, "\n\n".join(context_parts)
-                        )
-            except PlaneRateLimitError:
-                if dispatch_state is not None:
-                    dispatch_state.pending_review_issue_ids.add(candidate.id)
-                    dispatch_state.pending_completion_bodies[candidate.id] = (
-                        completion_body
-                    )
-                    LOGGER.info(
-                        "pending_review_queued issue_id=%s reason=%s (post-agent comment/context rate-limited)",
-                        candidate.id,
-                        reason_code,
-                    )
-                raise
-            if await _handle_archived_terminal(
-                adapter, config, candidate, run_id, binding=tick_binding
-            ):
-                return TickResult(True, "archived-terminal", candidate.id, mode=mode)
-            try:
-                await adapter.transition_state(
-                    candidate.id, TrackerRole.STATE_IN_REVIEW
-                )
-            except PlaneRateLimitError:
-                if dispatch_state is not None:
-                    dispatch_state.pending_review_issue_ids.add(candidate.id)
-                    LOGGER.info(
-                        "pending_review_queued issue_id=%s reason=%s (post-agent transition rate-limited)",
-                        candidate.id,
-                        reason_code,
-                    )
-                raise
-            LOGGER.info(
-                "state_transitioned issue_id=%s state=in-review reason=%s",
-                candidate.id,
-                reason_code,
-            )
             _iu, _du = _build_urls(config, candidate.id)
-            await _notify_review(
-                notifier,
-                candidate.name,
-                candidate.identifier,
-                reason=(
-                    "Conversation response ready"
-                    if mode == "conversation"
-                    else "Agent completed, awaiting review"
-                ),
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Agent crashed: {exc}",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
                 issue_url=_iu,
                 dashboard_url=_du,
             )
-            return TickResult(True, reason_code, candidate.id, mode=mode)
+            return TickResult(True, "agent-crashed", candidate.id, mode=mode)
+    assert result is not None
 
-        except Exception:
+    LOGGER.info(
+        "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=%s",
+        candidate.id,
+        result.exit_code,
+        result.duration_ms,
+        str(result.timed_out).lower(),
+    )
+    if getattr(candidate, "resumed", False) and result.exit_code != 0 and not result.timed_out:
+        fallback = await _dispatch_with_resume_fallback(
+            config,
+            adapter,
+            candidate,
+            render_prompt,
+            agent_runner,
+            now=now,
+            binding=binding,
+            comments_text=comments_text,
+            compaction_agent_runner=compaction_agent_runner,
+            run_id=run_id,
+            run_log_path=run_log_path,
+            failed_result=result,
+            secrets=secrets,
+            resume_summary=f"resume_failed: exit code {result.exit_code}; fell_back=true",
+            mode=mode,
+            notifier=notifier,
+        )
+        if isinstance(fallback, TickResult):
+            return fallback
+        candidate = fallback.candidate
+        result = fallback.result
+        run_id = fallback.run_id
+        run_log_path = fallback.run_log_path
+        claim_dt = fallback.claim_dt
+    return _RunTickAgentResult(candidate, result, run_id, run_log_path, claim_dt)
+
+
+async def _append_terminal_output_context(
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    stdout: str,
+    stderr: str,
+) -> None:
+    if not getattr(adapter, "stores_context", False):
+        return
+    context_parts = []
+    if stdout:
+        context_parts.append(f"## Agent stdout\n\n```\n{stdout}\n```")
+    if stderr:
+        context_parts.append(f"## Agent stderr\n\n```\n{stderr}\n```")
+    if context_parts:
+        await adapter.append_context(candidate.id, "\n\n".join(context_parts))
+
+
+async def _classify_terminal(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    result: AgentResult,
+    *,
+    run_id: str | None,
+    run_log_path: Path | None,
+    claim_dt: datetime,
+    secrets: Sequence[str],
+    parse_stderr: bool,
+    mode: str,
+    is_coding: bool,
+    notifier: TelegramNotifier | None,
+    dispatch_state: _DispatchState,
+    now: Callable[[], datetime],
+    binding: ProjectBinding | None,
+) -> TickResult:
+    """Classify terminal agent output and apply final tracker/run transitions."""
+
+    if result.timed_out:
+        msg = f"Agent timed out after {result.duration_ms} ms"
+        _stdout, stderr = _format_report(result, secrets)
+        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+        if stderr:
+            msg += f"\n\n{_format_stderr_summary(stderr)}"
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=summary or "Agent timed out.",
+            ended_at=now().isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "timeout", candidate.id, mode=mode)
+    if result.exit_code != 0:
+        msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
+        _stdout, stderr = _format_report(result, secrets)
+        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+        if stderr:
+            msg += f"\n\n{_format_stderr_summary(stderr)}"
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=summary or f"Agent failed with exit code {result.exit_code}.",
+            ended_at=now().isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "nonzero", candidate.id, mode=mode)
+
+    stdout, stderr = _format_report(result, secrets)
+    gate_stderr = stderr if parse_stderr else ""
+
+    if not is_coding:
+        scheduled_after_agent = await _detect_agent_schedule(
+            adapter,
+            candidate,
+            claim_dt=claim_dt,
+            stdout=stdout,
+            stderr=stderr,
+            notifier=notifier,
+            config=config,
+        )
+        if scheduled_after_agent is not None:
+            return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
+
+    if _hit_permission_gate(stdout, gate_stderr):
+        msg = "Agent could not complete because required tool access was denied."
+        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+        if stderr:
+            msg += f"\n\n{_format_stderr_summary(stderr)}"
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=summary or msg,
+            ended_at=now().isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "permission-gate", candidate.id, mode=mode)
+
+    if _hit_approval_gate(stdout, gate_stderr):
+        msg = "Agent could not complete because operator approval is required."
+        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+        if stderr:
+            msg += f"\n\n{_format_stderr_summary(stderr)}"
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=summary or msg,
+            ended_at=now().isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "approval-gate", candidate.id, mode=mode)
+
+    verdict = _parse_result_marker(stdout)
+    summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+    question = _extract_question(result, secrets, include_stderr=parse_stderr)
+
+    if verdict == "blocked":
+        if summary:
+            msg = summary
+        else:
+            msg = "Agent reported a blocked result."
+            if stderr:
+                msg += f"\n\n{_format_stderr_summary(stderr)}"
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=summary or "Agent reported a blocked result.",
+            ended_at=now().isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
+
+    if question:
+        question_body = f"**Symphony question:**\n\n{question}"
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="succeeded",
+            verdict="review",
+            summary=question,
+            ended_at=now().isoformat(),
+        )
+        try:
+            await adapter.add_comment(candidate.id, CommentPayload(body=question_body))
+            await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        except PlaneRateLimitError:
+            dispatch_state.pending_review_issue_ids.add(candidate.id)
+            dispatch_state.pending_completion_bodies[candidate.id] = question_body
+            LOGGER.info(
+                "pending_review_queued issue_id=%s reason=agent-question-park (post-agent comment/context rate-limited)",
+                candidate.id,
+            )
             raise
-    except Exception:
+        if await _handle_archived_terminal(
+            adapter, config, candidate, run_id, binding=binding
+        ):
+            return TickResult(True, "archived-terminal", candidate.id, mode=mode)
+        try:
+            await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+        except PlaneRateLimitError:
+            dispatch_state.pending_review_issue_ids.add(candidate.id)
+            LOGGER.info(
+                "pending_review_queued issue_id=%s reason=agent-question-park (post-agent transition rate-limited)",
+                candidate.id,
+            )
+            raise
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=in-review reason=agent-question-park",
+            candidate.id,
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _notify_review(
+            notifier,
+            candidate.name,
+            candidate.identifier,
+            reason="Operator question parked",
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "agent-question-park", candidate.id, mode=mode)
+
+    if not is_coding:
+        after_agent = await _fetch_issue(adapter, candidate.id)
+        if _is_state(
+            after_agent,
+            adapter.contract.state_name_for_role(TrackerRole.STATE_IN_REVIEW),
+            adapter.contract.state_value_for_role(TrackerRole.STATE_IN_REVIEW),
+        ):
+            return TickResult(True, "agent-review", candidate.id, mode=mode)
+        if _is_state(
+            after_agent,
+            adapter.contract.state_name_for_role(TrackerRole.STATE_BLOCKED),
+            adapter.contract.state_value_for_role(TrackerRole.STATE_BLOCKED),
+        ):
+            return TickResult(True, "agent-blocked", candidate.id, mode=mode)
+
+    reason_code = (
+        "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
+    )
+    if summary:
+        completion_body = f"**Symphony completed:**\n\n{summary}"
+    else:
+        completion_body = "**Symphony completed:** Agent finished without a summary."
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="succeeded",
+        verdict=verdict or "review",
+        summary=summary,
+        ended_at=now().isoformat(),
+    )
+    try:
+        await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+    except PlaneRateLimitError:
+        dispatch_state.pending_review_issue_ids.add(candidate.id)
+        dispatch_state.pending_completion_bodies[candidate.id] = completion_body
+        LOGGER.info(
+            "pending_review_queued issue_id=%s reason=%s (post-agent comment/context rate-limited)",
+            candidate.id,
+            reason_code,
+        )
         raise
+    if await _handle_archived_terminal(adapter, config, candidate, run_id, binding=binding):
+        return TickResult(True, "archived-terminal", candidate.id, mode=mode)
+    try:
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+    except PlaneRateLimitError:
+        dispatch_state.pending_review_issue_ids.add(candidate.id)
+        LOGGER.info(
+            "pending_review_queued issue_id=%s reason=%s (post-agent transition rate-limited)",
+            candidate.id,
+            reason_code,
+        )
+        raise
+    LOGGER.info(
+        "state_transitioned issue_id=%s state=in-review reason=%s",
+        candidate.id,
+        reason_code,
+    )
+    _iu, _du = _build_urls(config, candidate.id)
+    await _notify_review(
+        notifier,
+        candidate.name,
+        candidate.identifier,
+        reason=(
+            "Conversation response ready"
+            if mode == "conversation"
+            else "Agent completed, awaiting review"
+        ),
+        issue_url=_iu,
+        dashboard_url=_du,
+    )
+    return TickResult(True, reason_code, candidate.id, mode=mode)
+
+
+async def run_tick(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    agent_runner: Callable[..., AgentResult],
+    render_prompt: Callable[[CandidateIssue], str],
+    compaction_agent_runner: Callable[..., AgentResult] | None = None,
+    lock_path: Path | None = None,
+    poller: Callable[[TrackerAdapter], Any] | None = None,
+    repo_dirty: Callable[[Path], bool] | None = None,
+    diff_stat: Callable[[Path], str] | None = None,
+    auto_commit: Callable[..., str] | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    notifier: TelegramNotifier | None = None,
+    run_blocked_reconciler: bool = True,
+    dispatch_state: _DispatchState | None = None,
+    binding: ProjectBinding | None = None,
+) -> TickResult:
+    """Run one scheduler tick without sleeping forever."""
+
+    tick_binding = binding or _binding_from_config(config)
+    is_coding = tick_binding is not None and tick_binding.binding_type == "coding"
+    dispatch_state = dispatch_state or _new_dispatch_state(config)
+
+    selection = await _select_run_tick_candidate(
+        config,
+        adapter,
+        now=now,
+        notifier=notifier,
+        run_blocked_reconciler=run_blocked_reconciler,
+        dispatch_state=dispatch_state,
+        binding=tick_binding,
+        poller=poller,
+    )
+    if isinstance(selection, TickResult):
+        return selection
+
+    candidate = selection.candidate
+    try:
+        gate = await _gate_run_tick_candidate(
+            config,
+            adapter,
+            candidate,
+            binding=tick_binding,
+            notifier=notifier,
+        )
+        if isinstance(gate, TickResult):
+            return gate
+
+        prepared = await _prepare_run_tick_dispatch(
+            config,
+            adapter,
+            gate.candidate,
+            gate.fresh_issue,
+            gate.mode,
+            render_prompt,
+            compaction_agent_runner or agent_runner,
+            now=now,
+            binding=tick_binding,
+            notifier=notifier,
+        )
+        if isinstance(prepared, TickResult):
+            return prepared
+
+        dispatched = await _dispatch_run_tick_agent(
+            config,
+            adapter,
+            prepared.candidate,
+            prepared.prompt,
+            agent_runner=agent_runner,
+            render_prompt=render_prompt,
+            comments_text=prepared.comments_text,
+            compaction_agent_runner=compaction_agent_runner,
+            run_id=prepared.run_id,
+            run_log_path=prepared.run_log_path,
+            claim_dt=prepared.claim_dt,
+            secrets=prepared.secrets,
+            mode=gate.mode,
+            now=now,
+            binding=tick_binding,
+            notifier=notifier,
+        )
+        if isinstance(dispatched, TickResult):
+            return dispatched
+
+        return await _classify_terminal(
+            config,
+            adapter,
+            dispatched.candidate,
+            dispatched.result,
+            run_id=dispatched.run_id,
+            run_log_path=dispatched.run_log_path,
+            claim_dt=dispatched.claim_dt,
+            secrets=prepared.secrets,
+            parse_stderr=prepared.parse_stderr,
+            mode=gate.mode,
+            is_coding=is_coding,
+            notifier=notifier,
+            dispatch_state=dispatch_state,
+            now=now,
+            binding=tick_binding,
+        )
     finally:
         await _release_candidate(candidate.id, dispatch_state=dispatch_state)
 
