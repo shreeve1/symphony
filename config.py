@@ -14,10 +14,10 @@ import yaml
 from model_catalog import KNOWN_AGENTS
 from tracker_contract import (
     DEFAULT_CONTRACT,
-    PlaneUserMapping,
     RoleBinding,
     TrackerContract,
     TrackerRole,
+    TrackerUserMapping,
 )
 
 
@@ -622,18 +622,18 @@ def _role_binding(raw: Any, *, prefix: str) -> RoleBinding:
     return RoleBinding(name=name, uuid=str(raw.get("uuid") or ""))
 
 
-def _users(raw: Any, *, prefix: str) -> tuple[PlaneUserMapping, ...]:
+def _users(raw: Any, *, prefix: str) -> tuple[TrackerUserMapping, ...]:
     if raw is None:
         return DEFAULT_CONTRACT.users
     if not isinstance(raw, list):
         raise ConfigError(f"{prefix}: expected list")
-    users: list[PlaneUserMapping] = []
+    users: list[TrackerUserMapping] = []
     for idx, item in enumerate(raw):
         user_prefix = f"{prefix}[{idx}]"
         if not isinstance(item, dict):
             raise ConfigError(f"{user_prefix}: expected mapping")
         users.append(
-            PlaneUserMapping(
+            TrackerUserMapping(
                 homelab_user=_required_string(item, "homelab_user", user_prefix),
                 plane_uuid=_required_string(item, "plane_uuid", user_prefix),
                 plane_display_name=_required_string(

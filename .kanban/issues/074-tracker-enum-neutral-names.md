@@ -1,11 +1,13 @@
 ---
 id: 074
 title: Tracker enum neutral names with Plane* aliases
-status: pending
+status: in-progress
 blocked_by: [64]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build

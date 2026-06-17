@@ -1,13 +1,14 @@
 """Symphony-owned tracker role contract.
 
 The scheduler branches on engine roles; this contract maps those roles to the
-concrete Plane state/label names and UUIDs for one binding.
+concrete tracker state/label names and UUIDs for one binding.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TypeAlias
 
 
 class TrackerRole(str, Enum):
@@ -45,8 +46,8 @@ class RoleBinding:
     uuid: str = ""
 
 
-class PlaneState(str, Enum):
-    """Compatibility names for Plane issue states."""
+class TrackerState(str, Enum):
+    """Canonical tracker issue states."""
 
     TODO = "Todo"
     IN_REVIEW = "In Review"
@@ -55,8 +56,8 @@ class PlaneState(str, Enum):
     DONE = "Done"
 
 
-class PlaneLabel(str, Enum):
-    """Compatibility names for labels used by tests and non-engine helpers."""
+class TrackerLabel(str, Enum):
+    """Canonical tracker labels used by tests and non-engine helpers."""
 
     PATROL = "patrol"
     SECURITY = "security"
@@ -73,34 +74,41 @@ class PlaneLabel(str, Enum):
     HAS_WORKTREE = "has-worktree"
 
 
-STATE_TO_ROLE: dict[PlaneState, TrackerRole] = {
-    PlaneState.TODO: TrackerRole.STATE_TODO,
-    PlaneState.IN_REVIEW: TrackerRole.STATE_IN_REVIEW,
-    PlaneState.RUNNING: TrackerRole.STATE_RUNNING,
-    PlaneState.BLOCKED: TrackerRole.STATE_BLOCKED,
-    PlaneState.DONE: TrackerRole.STATE_DONE,
+PlaneState: TypeAlias = TrackerState
+PlaneLabel: TypeAlias = TrackerLabel
+
+
+STATE_TO_ROLE: dict[TrackerState, TrackerRole] = {
+    TrackerState.TODO: TrackerRole.STATE_TODO,
+    TrackerState.IN_REVIEW: TrackerRole.STATE_IN_REVIEW,
+    TrackerState.RUNNING: TrackerRole.STATE_RUNNING,
+    TrackerState.BLOCKED: TrackerRole.STATE_BLOCKED,
+    TrackerState.DONE: TrackerRole.STATE_DONE,
 }
 
-LABEL_TO_ROLE: dict[PlaneLabel, TrackerRole] = {
-    PlaneLabel.PLAN: TrackerRole.MODE_PLAN,
-    PlaneLabel.BUILD: TrackerRole.MODE_BUILD,
-    PlaneLabel.APPROVAL_REQUIRED: TrackerRole.APPROVAL_REQUIRED,
-    PlaneLabel.APPROVED: TrackerRole.APPROVED,
-    PlaneLabel.SCHEDULED: TrackerRole.SCHEDULED,
-    PlaneLabel.HAS_WORKTREE: TrackerRole.HAS_WORKTREE,
+LABEL_TO_ROLE: dict[TrackerLabel, TrackerRole] = {
+    TrackerLabel.PLAN: TrackerRole.MODE_PLAN,
+    TrackerLabel.BUILD: TrackerRole.MODE_BUILD,
+    TrackerLabel.APPROVAL_REQUIRED: TrackerRole.APPROVAL_REQUIRED,
+    TrackerLabel.APPROVED: TrackerRole.APPROVED,
+    TrackerLabel.SCHEDULED: TrackerRole.SCHEDULED,
+    TrackerLabel.HAS_WORKTREE: TrackerRole.HAS_WORKTREE,
 }
 
-ROLE_TO_COMPAT_LABEL: dict[TrackerRole, PlaneLabel] = {
+ROLE_TO_COMPAT_LABEL: dict[TrackerRole, TrackerLabel] = {
     role: label for label, role in LABEL_TO_ROLE.items()
 }
 
 
 @dataclass(frozen=True)
-class PlaneUserMapping:
+class TrackerUserMapping:
     homelab_user: str
     plane_uuid: str
     plane_display_name: str
     role: str = "admin"
+
+
+PlaneUserMapping: TypeAlias = TrackerUserMapping
 
 
 @dataclass(frozen=True)
@@ -114,8 +122,8 @@ class TrackerContract:
     state_roles: dict[TrackerRole, RoleBinding] = field(default_factory=dict)
     label_roles: dict[TrackerRole, RoleBinding] = field(default_factory=dict)
     extra_label_ids: dict[str, str] = field(default_factory=dict)
-    users: tuple[PlaneUserMapping, ...] = (
-        PlaneUserMapping(
+    users: tuple[TrackerUserMapping, ...] = (
+        TrackerUserMapping(
             homelab_user="james",
             plane_uuid="0423d289-e898-43a1-8aaf-b66010dc85ac",
             plane_display_name="James",
@@ -136,26 +144,26 @@ class TrackerContract:
         return ids
 
     @property
-    def states(self) -> tuple[PlaneState, ...]:
+    def states(self) -> tuple[TrackerState, ...]:
         return tuple(STATE_TO_ROLE.keys())
 
     @property
-    def labels(self) -> tuple[PlaneLabel, ...]:
-        return tuple(PlaneLabel)
+    def labels(self) -> tuple[TrackerLabel, ...]:
+        return tuple(TrackerLabel)
 
     @property
-    def provisioned_labels(self) -> tuple[PlaneLabel, ...]:
-        return tuple(PlaneLabel)
+    def provisioned_labels(self) -> tuple[TrackerLabel, ...]:
+        return tuple(TrackerLabel)
 
     @property
-    def overlay_labels(self) -> tuple[PlaneLabel, ...]:
+    def overlay_labels(self) -> tuple[TrackerLabel, ...]:
         return (
-            PlaneLabel.SECURITY,
-            PlaneLabel.INFRA,
-            PlaneLabel.NETWORK,
-            PlaneLabel.MEDIA,
-            PlaneLabel.STORAGE,
-            PlaneLabel.DOCKER,
+            TrackerLabel.SECURITY,
+            TrackerLabel.INFRA,
+            TrackerLabel.NETWORK,
+            TrackerLabel.MEDIA,
+            TrackerLabel.STORAGE,
+            TrackerLabel.DOCKER,
         )
 
     def state_binding(self, role: TrackerRole) -> RoleBinding:
@@ -221,7 +229,7 @@ class TrackerContract:
     def overlay_label_names(self) -> set[str]:
         return {label.value for label in self.overlay_labels}
 
-    def user_by_homelab_name(self, name: str) -> PlaneUserMapping | None:
+    def user_by_homelab_name(self, name: str) -> TrackerUserMapping | None:
         for user in self.users:
             if user.homelab_user == name:
                 return user
@@ -259,7 +267,7 @@ class TrackerContract:
         return errors
 
 
-PlaneContract = TrackerContract
+PlaneContract: TypeAlias = TrackerContract
 
 
 DEFAULT_CONTRACT = TrackerContract(
@@ -291,24 +299,24 @@ DEFAULT_CONTRACT = TrackerContract(
 )
 
 
-def coerce_state_role(state: PlaneState | TrackerRole) -> TrackerRole:
+def coerce_state_role(state: TrackerState | TrackerRole) -> TrackerRole:
     if isinstance(state, TrackerRole):
         return state
     return STATE_TO_ROLE[state]
 
 
-def coerce_label_role(label: PlaneLabel | TrackerRole) -> TrackerRole | None:
+def coerce_label_role(label: TrackerLabel | TrackerRole) -> TrackerRole | None:
     if isinstance(label, TrackerRole):
         return label
     return LABEL_TO_ROLE.get(label)
 
 
-def label_name(label: PlaneLabel | TrackerRole, contract: TrackerContract = DEFAULT_CONTRACT) -> str:
+def label_name(label: TrackerLabel | TrackerRole, contract: TrackerContract = DEFAULT_CONTRACT) -> str:
     role = coerce_label_role(label)
     if role is not None:
         return contract.label_name_for_role(role)
     return label.value
 
 
-def state_name(state: PlaneState | TrackerRole, contract: TrackerContract = DEFAULT_CONTRACT) -> str:
+def state_name(state: TrackerState | TrackerRole, contract: TrackerContract = DEFAULT_CONTRACT) -> str:
     return contract.state_name_for_role(coerce_state_role(state))

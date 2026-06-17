@@ -25,11 +25,11 @@ from skill_mode_map import mode_for_skill
 from tracker_types import CandidateIssue
 from tracker_contract import (
     DEFAULT_CONTRACT,
-    PlaneLabel,
-    PlaneState,
     RoleBinding,
     TrackerContract,
+    TrackerLabel,
     TrackerRole,
+    TrackerState,
     coerce_label_role,
     coerce_state_role,
 )
@@ -86,7 +86,7 @@ class PodiumTrackerAdapter:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
-    def _state_value(self, state: PlaneState | TrackerRole) -> str:
+    def _state_value(self, state: TrackerState | TrackerRole) -> str:
         return PODIUM_STATE_BY_ROLE[coerce_state_role(state)]
 
     def _row_to_issue(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -176,7 +176,7 @@ class PodiumTrackerAdapter:
 
     async def list_issues(
         self,
-        state_filter: PlaneState | TrackerRole | None = None,
+        state_filter: TrackerState | TrackerRole | None = None,
         *,
         per_page: int = PAGE_SIZE,
         max_pages: int = MAX_PAGES_PER_TICK,
@@ -226,7 +226,7 @@ class PodiumTrackerAdapter:
 
     async def list_issues_by_state(
         self,
-        state: PlaneState | TrackerRole,
+        state: TrackerState | TrackerRole,
         *,
         per_page: int = PAGE_SIZE,
         max_pages: int = MAX_PAGES_PER_TICK,
@@ -307,7 +307,7 @@ class PodiumTrackerAdapter:
         }
 
     async def transition_state(
-        self, issue_id: str, state: PlaneState | TrackerRole
+        self, issue_id: str, state: TrackerState | TrackerRole
     ) -> dict[str, Any]:
         next_state = self._state_value(state)
         with self.connect() as connection:
@@ -333,17 +333,17 @@ class PodiumTrackerAdapter:
         return await self.get_issue(issue_id)
 
     async def add_label(
-        self, issue_id: str, label: PlaneLabel | TrackerRole
+        self, issue_id: str, label: TrackerLabel | TrackerRole
     ) -> dict[str, Any]:
         return await self.add_labels(issue_id, [label])
 
     async def remove_label(
-        self, issue_id: str, label: PlaneLabel | TrackerRole
+        self, issue_id: str, label: TrackerLabel | TrackerRole
     ) -> dict[str, Any]:
         return await self.remove_labels(issue_id, [label])
 
     async def add_labels(
-        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+        self, issue_id: str, labels: list[TrackerLabel | TrackerRole]
     ) -> dict[str, Any]:
         updates = _infra_role_updates(labels, adding=True)
         if not updates:
@@ -351,7 +351,7 @@ class PodiumTrackerAdapter:
         return await self._update_issue_columns(issue_id, updates)
 
     async def remove_labels(
-        self, issue_id: str, labels: list[PlaneLabel | TrackerRole]
+        self, issue_id: str, labels: list[TrackerLabel | TrackerRole]
     ) -> dict[str, Any]:
         updates = _infra_role_updates(labels, adding=False)
         if not updates:
@@ -660,7 +660,7 @@ _RUN_UPDATE_COLUMNS = tuple(key for key in _RUN_INSERT_COLUMNS if key != "issue_
 
 
 def _infra_role_updates(
-    labels: list[PlaneLabel | TrackerRole], *, adding: bool
+    labels: list[TrackerLabel | TrackerRole], *, adding: bool
 ) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     for label in labels:
