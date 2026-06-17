@@ -1,13 +1,14 @@
 ---
 id: 075
 title: Agent callback env dual-emit + tracker-neutral agent text
-status: review
+status: done
 blocked_by: [67, 64]
 parent: null
 priority: 0
 created: 2026-06-17
 updated: 2026-06-17
 actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -19,10 +20,10 @@ Phase 6 / findings L2-02 + L4-03 (`.rpiv/artifacts/architecture-reviews/2026-06-
 
 ## Acceptance criteria
 
-- [ ] Agent env emits both the new `SYMPHONY_TRACKER_*` and the legacy `SYMPHONY_PLANE_*` callback names — a test asserts both present.
-- [ ] `prompt_renderer.py` caveat and `schedule.py` docstrings use tracker-neutral wording; content-asserting tests updated accordingly.
-- [ ] No removal of the legacy `SYMPHONY_PLANE_*` emit (dual-emit, not cutover).
-- [ ] `uv run pytest` passes.
+- [x] Agent env emits both the new `SYMPHONY_TRACKER_*` and the legacy `SYMPHONY_PLANE_*` callback names — a test asserts both present.
+- [x] `prompt_renderer.py` caveat and `schedule.py` docstrings use tracker-neutral wording; content-asserting tests updated accordingly.
+- [x] No removal of the legacy `SYMPHONY_PLANE_*` emit (dual-emit, not cutover).
+- [x] `uv run pytest` passes.
 
 ## Verification
 
@@ -32,3 +33,11 @@ Phase 6 / findings L2-02 + L4-03 (`.rpiv/artifacts/architecture-reviews/2026-06-
 
 - Blocked by #067 (Plane-secret de-shipping lands first; both touch the agent env build).
 - Blocked by #064 (tracker vocabulary home).
+
+## Implementation Notes
+
+Added a shared `_tracker_callback_env` helper that emits `SYMPHONY_TRACKER_*` aliases alongside the legacy `SYMPHONY_PLANE_*` callback names for Plane-tracker bindings only. Local/RPC and remote Podium bindings still receive no tracker callback secrets or legacy Plane helper env. Updated agent-visible prompt/schedule wording from Plane-specific phrasing to tracker-neutral issue/comment phrasing, with content assertions covering the prompt caveat.
+
+## Actionable Review Notes
+
+Fresh reviewer diffed `89090adb00851b3e87822236f2c2b3976ab50877..HEAD`, read every changed file, verified no Podium callback-env leak or secret leak, ran `uv run pytest` (891 passed, 2 skipped), ran touched-file ruff, and returned `RALPH_REVIEW: PASS`.

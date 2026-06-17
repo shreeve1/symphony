@@ -154,3 +154,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** New tracker contract annotations should use `TrackerState`, `TrackerLabel`, and `TrackerUserMapping`; existing Plane importers may continue using aliases until the planned compatibility cleanup.
 **Verification:** `uv run pytest` (891 passed, 2 skipped); `uv run ruff check tracker_contract.py tracker_adapter.py tracker_podium.py config.py tests/test_tracker_contract.py`; focused contract/Podium/config tests passed; touched-file LSP diagnostics clean; fresh review `RALPH_REVIEW: PASS`.
 **Actionable review:** Re-read `git diff c21666a1eea8cbbf1abcd08aaf23512dec90fb73 HEAD`, inspected every changed file, verified acceptance criteria, reran `uv run pytest` (891 passed, 2 skipped), and checked touched-file LSP diagnostics clean.
+
+## #075 Agent callback env dual-emit + tracker-neutral agent text — 2026-06-17
+
+**What changed:** Added `_tracker_callback_env` so Plane-tracker agents receive tracker-neutral `SYMPHONY_TRACKER_*` aliases alongside the legacy `SYMPHONY_PLANE_*` callback env, and updated agent-visible prompt/schedule wording from Plane-specific comments/tickets to tracker-neutral issue/comment wording.
+**Files:** `agent_runner.py`, `prompt_renderer.py`, `schedule.py`, `tests/test_agent_runner.py`, `tests/test_remote_agent.py`, `tests/test_prompt_renderer_podium.py`, `.kanban/issues/075-agent-env-dual-emit-neutral-text.md`.
+**Decisions:** Dual-emit is Plane-tracker compatibility only; Podium bindings still receive no tracker callback env, no legacy Plane callback env, and no `plane` helper.
+**Conventions established:** New agent-facing callback names should use `SYMPHONY_TRACKER_*`; legacy `SYMPHONY_PLANE_*` remains emitted only where Plane-tracker rollback/back-compat requires it.
+**Notes for next iteration:** The `plane` helper / `plane_cli.py` rename remains deferred to Phase 7; issue #076 is independently eligible.
+**Verification:** `uv run pytest` (891 passed, 2 skipped); focused agent-runner/remote/prompt/schedule tests passed; `uv run ruff check agent_runner.py prompt_renderer.py schedule.py tests/test_agent_runner.py tests/test_remote_agent.py tests/test_prompt_renderer_podium.py tests/test_schedule.py`; touched-file LSP diagnostics clean; fresh review `RALPH_REVIEW: PASS`.
