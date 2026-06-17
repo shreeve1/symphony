@@ -222,3 +222,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Persistent Claude session cleanup belongs in the scheduler poll loop only for local `claude_persist` bindings, and tmux-facing sweeps must stay off the event loop.
 **Notes for next iteration:** Issue #082 can add boot-lock semantics on top of the per-poll sweep without reimplementing issue liveness or config parsing.
 **Verification:** `uv run pytest tests/test_scheduler.py tests/test_claude_persist.py tests/test_config.py` (215 passed), `uv run python -m py_compile scheduler/__init__.py config.py`, `uv run ruff check scheduler/__init__.py config.py tests/test_scheduler.py tests/test_config.py`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
+
+## #082 Lock-gated boot reaping of persistent Claude sockets — 2026-06-17
+
+**What changed:** Added lock-aware Claude boot reaping: persistent sockets bypass pidfile live-owner protection only after the scheduler confirms it holds the single-instance lock; without lock confirmation they keep the pid/start-time guard. `run_bindings_loop` now acquires and holds the configured lock before the boot reaper and passes the truthful `lock_confirmed` value.
+**Files:** `claude_runner.py`, `main.py`, `tests/test_claude_runner.py`, `tests/test_main.py`, `.kanban/issues/082-claude-boot-reaper-lock-gated.md`.
+**Decisions:** Warm Claude sessions are within-scheduler-lifetime only; after a restart, persistent tmux sockets are reaped under confirmed lock and Claude resumes cold from transcript state.
+**Conventions established:** Boot-time tmux reaping must prefer leak-over-kill unless single-instance lock ownership is confirmed.
+**Notes for next iteration:** Issue #083 can expose Claude steer without needing to solve restart reattach; restart behavior is cold resume by design.
+**Verification:** `uv run pytest tests/test_claude_runner.py tests/test_claude_persist.py` (58 passed), `uv run python -m py_compile claude_runner.py main.py`, `uv run pytest tests/test_main.py -q` (15 passed), `uv run ruff check claude_runner.py main.py tests/test_claude_runner.py tests/test_main.py`, touched-file LSP diagnostics clean, fresh review `RALPH_REVIEW: PASS`.

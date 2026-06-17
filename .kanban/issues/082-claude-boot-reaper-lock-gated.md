@@ -1,11 +1,13 @@
 ---
 id: 082
 title: Lock-gated boot reaping of persistent Claude sockets
-status: review
+status: done
 blocked_by: [77]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -22,10 +24,10 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 6.6–6.7.
 
 ## Acceptance criteria
 
-- [ ] With `lock_confirmed=True`, a persist-named socket WITH a live matching pidfile is still reaped at boot (C2 regression).
-- [ ] With `lock_confirmed=False`, the same socket is KEPT (pid-guard fallback), so a concurrent peer scheduler's warm sessions are never killed (round-2 W1 regression).
-- [ ] Non-persist nonce sockets keep the existing guarded reaping in both cases.
-- [ ] The entrypoint passes a truthful `lock_confirmed` derived from actual lock ownership.
+- [x] With `lock_confirmed=True`, a persist-named socket WITH a live matching pidfile is still reaped at boot (C2 regression).
+- [x] With `lock_confirmed=False`, the same socket is KEPT (pid-guard fallback), so a concurrent peer scheduler's warm sessions are never killed (round-2 W1 regression).
+- [x] Non-persist nonce sockets keep the existing guarded reaping in both cases.
+- [x] The entrypoint passes a truthful `lock_confirmed` derived from actual lock ownership.
 
 ## Verification
 
@@ -34,3 +36,9 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 6.6–6.7.
 ## Blocked by
 
 - Blocked by #77 (needs persist socket naming).
+
+## Implementation Notes
+
+- Added `lock_confirmed` to `reap_orphan_claude_sockets`; persistent sockets bypass the live-pid guard only when boot lock ownership is confirmed.
+- Added startup lock acquisition in `run_bindings_loop` and pass-through to the Claude boot reaper.
+- Documented warm Claude sessions as scheduler-lifetime only: restart forces cold resume from transcript.
