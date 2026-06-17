@@ -1,7 +1,7 @@
 ---
 id: 069
 title: Scope cooldown to _DispatchState; migrate test-only globals
-status: review
+status: done
 blocked_by: [68]
 parent: null
 priority: 0
@@ -21,10 +21,10 @@ Removing the globals here keeps the #071 package split from carrying them forwar
 
 ## Acceptance criteria
 
-- [ ] No `_PLANE_COOLDOWN_UNTIL` module global; cooldown is read/written only via `_DispatchState`.
-- [ ] A test asserts a 429 on one binding does not set cooldown on another binding's state.
-- [ ] The test-only globals are removed from `scheduler.py`; tests rely on fixtures instead. `_fallback_dispatch_state`/`init_run_semaphore` deleted if unused.
-- [ ] `uv run pytest` passes.
+- [x] No `_PLANE_COOLDOWN_UNTIL` module global; cooldown is read/written only via `_DispatchState`.
+- [x] A test asserts a 429 on one binding does not set cooldown on another binding's state.
+- [x] The test-only globals are removed from `scheduler.py`; tests rely on fixtures instead. `_fallback_dispatch_state`/`init_run_semaphore` deleted if unused.
+- [x] `uv run pytest` passes.
 
 ## Verification
 
@@ -47,3 +47,7 @@ Live restart verification completed in this Ralph worker:
 - Journal confirmed repeated `dispatch_completed dispatched=false reason=no-candidates` lines.
 - `uv run pytest` passed: 887 passed, 2 skipped.
 - Critical LSP diagnostics for `scheduler.py` and `tests/test_scheduler.py` were clean.
+
+## Implementation Notes
+
+Completed the previously blocked live verification gate for the #069 implementation. The code changes were already implemented and reviewed in earlier #069 commits; this worker restarted `symphony-host.service`, verified scheduler lifecycle log lines, reran `uv run pytest`, and moved the issue through review to done.
