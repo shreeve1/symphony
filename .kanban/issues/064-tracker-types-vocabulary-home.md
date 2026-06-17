@@ -1,7 +1,7 @@
 ---
 id: 064
 title: tracker_types.py — single home for tracker vocabulary
-status: review
+status: done
 blocked_by: [63]
 parent: null
 priority: 0
@@ -23,13 +23,13 @@ Repoint all importers, including `web/api/main.py:927` (`from tracker_podium imp
 
 ## Acceptance criteria
 
-- [ ] `tracker_types.py` exists with no in-scope/`web.*` import deps; defines `CandidateIssue`/`CommentPayload`/`IssuePayload` and the shared parse helpers once.
-- [ ] No `CandidateIssue` definition remains in `plane_adapter.py` or `tracker_podium.py`; both import it from `tracker_types`.
-- [ ] `TrackerAdapter` Protocol exists only in `tracker_adapter.py` (union method set); `plane_adapter.py` has no Protocol copy; `scheduler.py:34` imports it from `tracker_adapter`.
-- [ ] `web/api/main.py` imports `CandidateIssue` from `tracker_types`, not `tracker_podium`.
-- [ ] `_extract_labels` / ISO parse / cursor helpers exist once in `tracker_types`; `scheduler.py` and `blocked_reconciler.py` import them; the ISO fallback difference is a parameter.
-- [ ] Import graph stays acyclic (no cycle introduced).
-- [ ] `uv run pytest` passes (web/api import-repoint tests included).
+- [x] `tracker_types.py` exists with no in-scope/`web.*` import deps; defines `CandidateIssue`/`CommentPayload`/`IssuePayload` and the shared parse helpers once.
+- [x] No `CandidateIssue` definition remains in `plane_adapter.py` or `tracker_podium.py`; both import it from `tracker_types`.
+- [x] `TrackerAdapter` Protocol exists only in `tracker_adapter.py` (union method set); `plane_adapter.py` has no Protocol copy; `scheduler.py:34` imports it from `tracker_adapter`.
+- [x] `web/api/main.py` imports `CandidateIssue` from `tracker_types`, not `tracker_podium`.
+- [x] `_extract_labels` / ISO parse / cursor helpers exist once in `tracker_types`; `scheduler.py` and `blocked_reconciler.py` import them; the ISO fallback difference is a parameter.
+- [x] Import graph stays acyclic (no cycle introduced).
+- [x] `uv run pytest` passes (web/api import-repoint tests included).
 
 ## Verification
 
@@ -38,3 +38,7 @@ Repoint all importers, including `web/api/main.py:927` (`from tracker_podium imp
 ## Blocked by
 
 - Blocked by #063 (serializes the `scheduler.py` edit ordering).
+
+## Implementation Notes
+
+Added `tracker_types.py` as the neutral home for tracker vocabulary dataclasses and parse helpers. Repointed Plane, Podium, scheduler, blocked reconciler, web API, and poller imports through `tracker_types` / `tracker_adapter`. Fresh Ralph review passed with notes about harmless adjacent formatting churn in `blocked_reconciler.py`.

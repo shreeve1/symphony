@@ -48,3 +48,11 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept `main.py`'s `_render_candidate_prompt` mapper unchanged because it maps candidates to renderer data and is not the scheduler shim.
 **Conventions established:** Valid agent vocabulary now comes from `model_catalog.KNOWN_AGENTS`; schedule entity decoding should use `_decode_entity_at` while each caller owns quote-handling semantics.
 **Notes for next iteration:** Issue #064 is now unblocked and can use `KNOWN_AGENTS` as the single agent vocabulary source.
+
+## #064 tracker_types.py — single home for tracker vocabulary — 2026-06-17
+
+**What changed:** Added `tracker_types.py` as the neutral home for `CandidateIssue`, `CommentPayload`, `IssuePayload`, label/state helpers, ISO parsing, candidate conversion, and Plane-style cursor/page helpers; moved the `TrackerAdapter` Protocol home to `tracker_adapter.py`; repointed Plane, Podium, scheduler, blocked reconciler, web API, and poller imports.
+**Files:** `tracker_types.py`, `tracker_adapter.py`, `plane_adapter.py`, `tracker_podium.py`, `scheduler.py`, `blocked_reconciler.py`, `main.py`, `web/api/main.py`, `tests/test_plane_poller.py`, `.kanban/issues/064-tracker-types-vocabulary-home.md`.
+**Decisions:** The tracker layering is now `tracker_contract → tracker_types → tracker_adapter → {plane_adapter, tracker_podium}`; `tracker_types.py` stays stdlib-only and must not import in-scope or `web.*` modules.
+**Conventions established:** Tracker vocabulary dataclasses and parser helpers belong in `tracker_types.py`; adapter Protocol changes belong in `tracker_adapter.py`, not concrete adapter modules.
+**Notes for next iteration:** Issue #068 can use `tracker_types.CandidateIssue` and the unified `_parse_iso`/label helpers without importing Plane or Podium concrete adapters.
