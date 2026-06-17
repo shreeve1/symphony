@@ -262,8 +262,12 @@ class PlaneTrackerAdapter:
     ) -> list[dict[str, Any]]:
         if self.transport is None:
             raise RuntimeError("Transport not configured")
-        state_id = self._resolve_state(state_filter) if state_filter is not None else None
-        state_role = coerce_state_role(state_filter) if state_filter is not None else None
+        state_id = (
+            self._resolve_state(state_filter) if state_filter is not None else None
+        )
+        state_role = (
+            coerce_state_role(state_filter) if state_filter is not None else None
+        )
         issues: list[dict[str, Any]] = []
         cursor: str | None = None
         pages = 0
