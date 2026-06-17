@@ -111,6 +111,75 @@ def _issue() -> CandidateIssue:
     )
 
 
+def test_build_pi_command_print_mode_uses_skill_parent_and_prompt() -> None:
+    command = agent_runner_module._build_pi_command(
+        "/usr/local/bin/pi",
+        "provider",
+        "model:high",
+        skill_source="/home/james/.claude/skills/diagnose/SKILL.md",
+        rendered_prompt="do work",
+    )
+
+    assert command == [
+        "/usr/local/bin/pi",
+        "--print",
+        "--no-session",
+        "--provider",
+        "provider",
+        "--model",
+        "model:high",
+        "--skill",
+        "/home/james/.claude/skills/diagnose",
+        "do work",
+    ]
+
+
+def test_build_pi_command_rpc_mode_uses_session_without_prompt() -> None:
+    command = agent_runner_module._build_pi_command(
+        "pi",
+        "provider",
+        "model",
+        session_id="session-123",
+    )
+
+    assert command == [
+        "pi",
+        "--mode",
+        "rpc",
+        "--provider",
+        "provider",
+        "--model",
+        "model",
+        "--session-id",
+        "session-123",
+    ]
+
+
+def test_silent_exit_result_returns_failure_only_for_empty_output() -> None:
+    message = "pi exited 0 with empty stdout/stderr"
+    silent = agent_runner_module._silent_exit_result(
+        issue_id="issue-123",
+        exit_code=0,
+        duration_ms=25,
+        stdout="\n",
+        stderr=" ",
+        message=message,
+        log_event="pi_silent_exit",
+    )
+    noisy = agent_runner_module._silent_exit_result(
+        issue_id="issue-123",
+        exit_code=0,
+        duration_ms=25,
+        stdout="ok",
+        stderr="",
+        message=message,
+        log_event="pi_silent_exit",
+    )
+
+    assert silent == AgentResult(137, 25, False, "\n", message)
+    assert noisy is None
+
+
 def _init_git_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "-C", str(path), "init", "-b", "main"], check=True)

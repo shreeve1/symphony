@@ -100,6 +100,46 @@ class AgentResult:
     stderr: str = ""
 
 
+def _build_pi_command(
+    pi_bin: str,
+    provider: str,
+    model: str,
+    *,
+    skill_source: str = "",
+    rendered_prompt: str | None = None,
+    session_id: str | None = None,
+) -> list[str]:
+    command = [pi_bin]
+    if session_id is None:
+        command += ["--print", "--no-session"]
+    else:
+        command += ["--mode", "rpc"]
+    command += ["--provider", provider, "--model", model]
+    if session_id is not None:
+        command += ["--session-id", session_id]
+    if skill_source:
+        command += ["--skill", str(Path(skill_source).parent)]
+    if rendered_prompt is not None:
+        command.append(rendered_prompt)
+    return command
+
+
+def _silent_exit_result(
+    *,
+    issue_id: str,
+    exit_code: int,
+    duration_ms: int,
+    stdout: str,
+    stderr: str,
+    message: str,
+    log_event: str,
+) -> AgentResult | None:
+    if exit_code == 0 and not stdout.strip() and not stderr.strip():
+        LOGGER.warning("%s issue_id=%s", log_event, issue_id)
+        return AgentResult(137, duration_ms, False, stdout, message)
+    return None
+
+
 class AgentAdapter(Protocol):
     """Common dispatch contract for agent implementations."""
 
@@ -142,16 +182,12 @@ def verify_pi_support(
         raise AgentRunnerError(
             "Configured pi binary does not advertise `--print --no-session` support"
         )
-    command = [
+    command = _build_pi_command(
         pi_bin,
-        "--print",
-        "--no-session",
-        "--provider",
         provider,
-        "--model",
         model,
-        "ping",
-    ]
+        rendered_prompt="ping",
+    )
     try:
         probe = run_func(
             command,
@@ -293,22 +329,17 @@ def run_agent(
         # Plane-path fallback only.
         provider = getattr(issue, "resolved_provider", "") or config.pi_provider
         model = getattr(issue, "resolved_model", "") or config.pi_model
-        command = [
-            config.pi_bin,
-            "--print",
-            "--no-session",
-            "--provider",
-            provider,
-            "--model",
-            model,
-        ]
         skill_source = getattr(issue, "skill_source", "")
-        if skill_source:
-            # pi does not discover ~/.claude/skills on its own; load the
-            # issue's preferred skill explicitly (directory form keeps any
-            # skill assets alongside SKILL.md available).
-            command += ["--skill", str(Path(skill_source).parent)]
-        command.append(rendered_prompt)
+        # pi does not discover ~/.claude/skills on its own; load the issue's
+        # preferred skill explicitly (directory form keeps any skill assets
+        # alongside SKILL.md available).
+        command = _build_pi_command(
+            config.pi_bin,
+            provider,
+            model,
+            skill_source=skill_source,
+            rendered_prompt=rendered_prompt,
+        )
         cwd = str(worktree_path or config.homelab_repo_path)
         LOGGER.info(
             "pi_dispatch issue_id=%s provider=%s model=%s cwd=%s",
@@ -336,13 +367,20 @@ def run_agent(
                 exit_code,
                 duration_ms,
             )
-            if exit_code == 0 and not stdout.strip() and not stderr.strip():
-                message = (
+            silent_result = _silent_exit_result(
+                issue_id=issue.id,
+                exit_code=exit_code,
+                duration_ms=duration_ms,
+                stdout=stdout,
+                stderr=stderr,
+                message=(
                     "pi exited 0 with empty stdout/stderr; treating as failure because "
                     "provider/model/auth misconfiguration can otherwise look successful"
-                )
-                LOGGER.warning("pi_silent_exit issue_id=%s", issue.id)
-                return AgentResult(137, duration_ms, False, stdout, message)
+                ),
+                log_event="pi_silent_exit",
+            )
+            if silent_result is not None:
+                return silent_result
             return AgentResult(exit_code, duration_ms, False, stdout, stderr)
         except subprocess.TimeoutExpired:
             stdout, stderr = _terminate_process_group(
@@ -461,15 +499,6 @@ def run_remote_agent(
     # not exist on the remote, so dispatch by basename (probe confirmed `pi` is
     # on the remote PATH). A per-binding remote pi path is a future refinement.
     pi_name = Path(config.pi_bin).name or "pi"
-    pi_command = [
-        pi_name,
-        "--print",
-        "--no-session",
-        "--provider",
-        provider,
-        "--model",
-        model,
-    ]
     skill_source = getattr(issue, "skill_source", "")
     if skill_source:
         # The skill_source path is a LOCAL aidev skill dir; the remote host
@@ -482,7 +511,12 @@ def run_remote_agent(
             issue.id,
             skill_source,
         )
-    pi_command.append(rendered_prompt)
+    pi_command = _build_pi_command(
+        pi_name,
+        provider,
+        model,
+        rendered_prompt=rendered_prompt,
+    )
 
     port = _remote_callback_port(config.plane_api_url)
     remote_command = _build_remote_command(
@@ -537,13 +571,20 @@ def run_remote_agent(
                 exit_code,
                 duration_ms,
             )
-            if exit_code == 0 and not stdout.strip() and not stderr.strip():
-                message = (
+            silent_result = _silent_exit_result(
+                issue_id=issue.id,
+                exit_code=exit_code,
+                duration_ms=duration_ms,
+                stdout=stdout,
+                stderr=stderr,
+                message=(
                     "remote pi exited 0 with empty stdout/stderr; treating as failure "
                     "(provider/model/auth or SSH misconfiguration can look successful)"
-                )
-                LOGGER.warning("remote_pi_silent_exit issue_id=%s", issue.id)
-                return AgentResult(137, duration_ms, False, stdout, message)
+                ),
+                log_event="remote_pi_silent_exit",
+            )
+            if silent_result is not None:
+                return silent_result
             return AgentResult(exit_code, duration_ms, False, stdout, stderr)
         except subprocess.TimeoutExpired:
             stdout, stderr = _terminate_process_group(
@@ -607,20 +648,14 @@ def run_pi_rpc_agent(
         session_id = getattr(issue, "agent_session_id", "") or derive_session_id(
             issue.id
         )
-        command = [
-            config.pi_bin,
-            "--mode",
-            "rpc",
-            "--provider",
-            provider,
-            "--model",
-            model,
-            "--session-id",
-            session_id,
-        ]
         skill_source = getattr(issue, "skill_source", "")
-        if skill_source:
-            command += ["--skill", str(Path(skill_source).parent)]
+        command = _build_pi_command(
+            config.pi_bin,
+            provider,
+            model,
+            skill_source=skill_source,
+            session_id=session_id,
+        )
         cwd = str(config.homelab_repo_path)
         LOGGER.info(
             "pi_rpc_dispatch issue_id=%s provider=%s model=%s session_id=%s cwd=%s",
