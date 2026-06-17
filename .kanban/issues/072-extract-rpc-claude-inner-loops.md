@@ -1,7 +1,7 @@
 ---
 id: 072
 title: Extract RPC and Claude dispatch inner loops
-status: in-progress
+status: review
 blocked_by: []
 parent: null
 priority: 0
