@@ -1,11 +1,14 @@
 ---
 id: 072
 title: Extract RPC and Claude dispatch inner loops
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
+action_reviewed: 2026-06-17
 ---
 
 ## What to build
@@ -20,9 +23,9 @@ Independent of the scheduler decomposition — rides the same wave. (If #060/#06
 
 ## Acceptance criteria
 
-- [ ] `_drain_rpc_events` extracted; `run_pi_rpc_agent` reads setup → loop → teardown.
-- [ ] `_poll_claude_until_done` extracted; `run_claude_agent` reads setup → loop → teardown.
-- [ ] Behavior unchanged; `uv run pytest` passes.
+- [x] `_drain_rpc_events` extracted; `run_pi_rpc_agent` reads setup → loop → teardown.
+- [x] `_poll_claude_until_done` extracted; `run_claude_agent` reads setup → loop → teardown.
+- [x] Behavior unchanged; `uv run pytest` passes.
 
 ## Verification
 
@@ -33,3 +36,9 @@ Dispatch executor on the live path. Before this issue is marked done, James runs
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+- Extracted `_drain_rpc_events(process, deadline, run_id, ...)` returning `_DrainResult` from `agent_runner.run_pi_rpc_agent`, with steer forwarding, JSONL event parsing, timeout abort, and event-exit classification preserved.
+- Extracted `_poll_claude_until_done(...)` returning `AgentResult | None` from `claude_runner.run_claude_agent`, with done-file handling, session liveness, idle detection, nudges, and timeout handling preserved.
+- Verified `uv run pytest -q` (887 passed, 2 skipped), `uv run ruff check agent_runner.py claude_runner.py`, `git diff --check`, touched-file LSP diagnostics, fresh review `RALPH_REVIEW: PASS`, and live `symphony-host.service` restart lifecycle evidence on `code_sha=5cc9b4a`.
