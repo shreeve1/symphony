@@ -10,6 +10,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from importlib import import_module
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -573,17 +574,16 @@ def _resolve_cwd(
     create_worktree_func: Callable[[Path, str, str, str], Path] | None,
 ) -> Path:
     if getattr(issue, "worktree_active", False):
-        if create_worktree_func is None:
-            try:
-                from web.api.worktree import create_worktree
-            except ImportError:  # pragma: no cover - supports web/api import path
-                from worktree import create_worktree  # type: ignore[no-redef]
-            create_worktree_func = create_worktree
+        worktree_factory = create_worktree_func
+        if worktree_factory is None:
+            worktree_factory = import_module(
+                "worktree_facade"
+            ).create_worktree
         binding_name = getattr(issue, "binding_name", "") or (
             config.bindings[0].name if config.bindings else ""
         )
         base_branch = getattr(issue, "base_branch", "") or config.base_branch or "main"
-        return create_worktree_func(
+        return worktree_factory(
             config.homelab_repo_path, binding_name, issue.id, base_branch
         )
     return config.homelab_repo_path

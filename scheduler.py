@@ -574,10 +574,10 @@ def _worktree_run_fields(
         # agent runs directly in binding.repo_path. Return no worktree fields so
         # no local git/Path op is driven against the remote path.
         return {}
-    try:
-        from web.api.worktree import branch_name, worktree_dir
-    except ImportError:  # pragma: no cover - supports web/api import path
-        from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
+    worktree_helpers = import_module("worktree_facade")
+    branch_name = worktree_helpers.branch_name
+    worktree_dir = worktree_helpers.worktree_dir
+
     binding_name = getattr(candidate, "binding_name", "") or (
         resolved_binding.name if resolved_binding is not None else ""
     )
@@ -1041,10 +1041,9 @@ async def _handle_archived_terminal(
     # (→ PermissionError). Skip them but still clear the worktree_active column.
     is_remote = resolved_binding is not None and resolved_binding.is_remote
     if not is_remote:
-        try:
-            from web.api.worktree import remove_worktree, worktree_exists
-        except ImportError:  # pragma: no cover - supports web/api import path
-            from worktree import remove_worktree, worktree_exists  # type: ignore[no-redef]
+        worktree_helpers = import_module("worktree_facade")
+        remove_worktree = worktree_helpers.remove_worktree
+        worktree_exists = worktree_helpers.worktree_exists
 
         issue_id = str(candidate.id)
         if await asyncio.to_thread(

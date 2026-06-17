@@ -252,10 +252,7 @@ def run_agent(
     # The worktree persists after the run — cleanup happens on merge-on-done.
     worktree_path: Path | None = None
     if getattr(issue, "worktree_active", False):
-        try:
-            from web.api.worktree import create_worktree
-        except ImportError:  # pragma: no cover - supports web/api import path
-            from worktree import create_worktree  # type: ignore[no-redef]
+        create_worktree = import_module("worktree_facade").create_worktree
 
         binding_name = getattr(issue, "binding_name", "") or (
             config.bindings[0].name if config.bindings else ""

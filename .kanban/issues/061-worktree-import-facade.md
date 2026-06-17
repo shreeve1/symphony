@@ -1,11 +1,13 @@
 ---
 id: 061
 title: Single worktree import facade
-status: pending
+status: in-progress
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
