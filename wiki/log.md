@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-17] session-update | Issue #67 Plane secret de-shipping for Podium agents
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/067-plane-secret-deshipping-podium.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `agent_runner.py`; `tests/test_agent_runner.py`; `tests/test_remote_agent.py`; `bindings.yml`
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0225 superseded, C-0230 added)
+- Notes: Captured Issue #67 landing L6-02(a): Podium local/RPC/remote agents no longer receive Plane callback env/secrets or the `plane` helper; Plane-tracker bindings retain callback env and helper for rollback/back-compat. Verification: `uv run pytest` passed (887 passed, 2 skipped), touched-file LSP diagnostics clean, `git diff --check` clean, and changed-diff secret scan found only variable names plus fake test key `fake-plane-key-for-tests`. No env files or live secrets read.
+
 ## [2026-06-17] session-update | Issue #66 public runtime factory and web API reflection cleanup
 
 - Actor: agent (Ralph)
