@@ -99,3 +99,10 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** Issue #070 can decompose `run_tick` without carrying duplicate resume fallback branches.
 
 **Actionable review:** `git diff 7ef70d10a61f5b90663c73f8a47ad671e99384de HEAD` was empty at review start, so the review loop implemented the missing slice. Verification: `uv run ruff check scheduler.py tests/test_dispatch_compaction.py`; `uv run pytest tests/test_dispatch_compaction.py -q` (7 passed); touched-file LSP diagnostics clean; `uv run pytest` (888 passed, 2 skipped); live `symphony-restart` verification completed.
+
+## #069 Scope cooldown to _DispatchState — 2026-06-17
+
+**What changed:** Removed the global Plane cooldown and legacy test-only scheduler globals; direct dispatch calls now create explicit `_DispatchState` instances, and cooldown read/write/clear paths use only that state.
+**Files:** `scheduler.py`, `tests/test_scheduler.py`, `.kanban/issues/069-scope-cooldown-dispatchstate.md`.
+**Verification:** `uv run ruff check scheduler.py tests/test_scheduler.py`, `uv run pytest tests/test_scheduler.py -q`, `uv run pytest`, and touched-file LSP diagnostics passed. Fresh review returned `RALPH_REVIEW: PASS_WITH_NOTES`.
+**Blocker:** Mandatory live `symphony-restart` verification could not run because the harness blocked `sudo systemctl restart symphony-host.service` with `live-systemctl`, despite operator pre-approval. Issue remains blocked until live restart verification confirms `symphony_started`, `reconcile_startup_*`, and `dispatch_completed`.
