@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
-from claude_runner import claude_probe_failure_reason
+from claude_runner import claude_probe_failure_reason, sweep_persistent_claude_sessions
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from context_compaction import ContextCompactionError, estimate_tokens, maybe_compact
@@ -2314,6 +2314,31 @@ async def _wait_for_tasks_or_wake(
     return set(), set(pending), False
 
 
+def _get_issue_for_claude_reaper(adapter: TrackerAdapter, issue_id: str) -> dict[str, Any] | None:
+    try:
+        return asyncio.run(adapter.get_issue(issue_id))
+    except KeyError:
+        return None
+
+
+async def _sweep_persistent_claude_sessions(
+    binding: ProjectBinding,
+    adapter: TrackerAdapter,
+    *,
+    now: datetime,
+    idle_ttl_s: int,
+    max_live: int,
+) -> int:
+    return await asyncio.to_thread(
+        sweep_persistent_claude_sessions,
+        binding.name,
+        get_issue=lambda issue_id: _get_issue_for_claude_reaper(adapter, issue_id),
+        now=now.timestamp(),
+        idle_ttl_s=idle_ttl_s,
+        max_live=max_live,
+    )
+
+
 async def run_loop(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -2342,8 +2367,26 @@ async def run_loop(
         poll_interval=config.poll_interval_ms / 1000,
     )
 
+    loop_binding = binding or _binding_from_config(config)
+
     while True:
         now_dt = datetime.now(UTC)
+        if loop_binding is not None and loop_binding.claude_persist:
+            try:
+                await _sweep_persistent_claude_sessions(
+                    loop_binding,
+                    adapter,
+                    now=now_dt,
+                    idle_ttl_s=config.claude_persist_idle_ttl_s,
+                    max_live=config.claude_persist_max_live,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "claude_persist_sweep_failed binding=%s error=%s",
+                    loop_binding.name,
+                    exc,
+                    exc_info=True,
+                )
         run_blocked_reconcile = now_dt >= next_blocked_reconcile_at
         if now_dt >= next_log_retention_at:
             next_log_retention_at = now_dt + LOG_RETENTION_INTERVAL

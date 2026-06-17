@@ -1,11 +1,13 @@
 ---
 id: 081
 title: Wire the Claude reaper sweep into the scheduler loop
-status: pending
+status: in-progress
 blocked_by: [80]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-17
+actor: ralph
 ---
 
 ## What to build
@@ -29,7 +31,7 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 6.4–6.5.
 
 ## Verification
 
-`uv run pytest tests/test_scheduler.py tests/test_claude_persist.py tests/test_config.py` and `uv run python -m py_compile scheduler.py config.py`
+`uv run pytest tests/test_scheduler.py tests/test_claude_persist.py tests/test_config.py` and `uv run python -m py_compile scheduler/__init__.py config.py`
 
 ## Blocked by
 

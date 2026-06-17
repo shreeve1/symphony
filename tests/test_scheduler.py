@@ -3711,6 +3711,139 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
 
 
 @pytest.mark.asyncio
+async def test_run_loop_sweeps_persistent_claude_sessions_via_to_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class StopLoop(Exception):
+        pass
+
+    sweep_calls: list[dict[str, Any]] = []
+    to_thread_calls: list[Any] = []
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state="in_review"),
+        "latest_run_state": "succeeded",
+    }
+
+    def fake_sweep(binding_name, *, get_issue, now, idle_ttl_s, max_live):
+        sweep_calls.append(
+            {
+                "binding_name": binding_name,
+                "issue": get_issue("issue-1"),
+                "now": now,
+                "idle_ttl_s": idle_ttl_s,
+                "max_live": max_live,
+            }
+        )
+        return 0
+
+    async def fake_dispatch_one(
+        config,
+        adapter,
+        agent_runner,
+        render_prompt,
+        notifier,
+        run_blocked_reconciler,
+        dispatch_state=None,
+        binding=None,
+        compaction_agent_runner=None,
+    ):
+        return scheduler.TickResult(False, "no-candidates")
+
+    async def fake_sleep(seconds):
+        raise StopLoop
+
+    original_to_thread = scheduler.asyncio.to_thread
+
+    async def recording_to_thread(func, /, *args, **kwargs):
+        to_thread_calls.append(func)
+        return await original_to_thread(func, *args, **kwargs)
+
+    config = _config(
+        tmp_path,
+        run_cap=1,
+        poll_interval_ms=1,
+        claude_persist_idle_ttl_s=123,
+        claude_persist_max_live=4,
+    )
+    binding = replace(config.bindings[0], name="persist", claude_persist=True)
+    config = config.for_binding(binding)
+
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
+    monkeypatch.setattr(scheduler, "sweep_persistent_claude_sessions", fake_sweep)
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(scheduler.asyncio, "to_thread", recording_to_thread)
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        await scheduler.run_loop(
+            config,
+            _adapter(transport),
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+            binding=binding,
+        )
+
+    assert to_thread_calls == [fake_sweep]
+    assert sweep_calls == [
+        {
+            "binding_name": "persist",
+            "issue": transport.issues["issue-1"],
+            "now": sweep_calls[0]["now"],
+            "idle_ttl_s": 123,
+            "max_live": 4,
+        }
+    ]
+    assert sweep_calls[0]["issue"]["state"] == "in_review"
+    assert sweep_calls[0]["issue"]["latest_run_state"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_run_loop_skips_claude_sweep_for_non_persist_binding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class StopLoop(Exception):
+        pass
+
+    async def fake_dispatch_one(
+        config,
+        adapter,
+        agent_runner,
+        render_prompt,
+        notifier,
+        run_blocked_reconciler,
+        dispatch_state=None,
+        binding=None,
+        compaction_agent_runner=None,
+    ):
+        return scheduler.TickResult(False, "no-candidates")
+
+    async def fake_sleep(seconds):
+        raise StopLoop
+
+    def forbidden_sweep(*args, **kwargs):
+        raise AssertionError("non-persist bindings must not sweep")
+
+    config = _config(tmp_path, run_cap=1, poll_interval_ms=1)
+    binding = replace(config.bindings[0], name="cold", claude_persist=False)
+    config = config.for_binding(binding)
+
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
+    monkeypatch.setattr(scheduler, "sweep_persistent_claude_sessions", forbidden_sweep)
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        await scheduler.run_loop(
+            config,
+            _adapter(FakeTransport()),
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+            binding=binding,
+        )
+
+
+@pytest.mark.asyncio
 async def test_sleep_or_wake_preserves_poll_cadence_without_sentinel() -> None:
     slept: list[float] = []
 

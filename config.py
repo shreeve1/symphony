@@ -174,6 +174,8 @@ class SymphonyConfig:
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 3_600_000
     run_cap: int = 2
+    claude_persist_idle_ttl_s: int = 2_700
+    claude_persist_max_live: int = 8
     lock_path: Path | None = None
     telegram_bot_token: str | None = field(default=None, repr=False)
     telegram_chat_id: str | None = None
@@ -290,6 +292,12 @@ class SymphonyConfig:
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "3600000")),
             run_cap=int(source.get("SYMPHONY_RUN_CAP", "2")),
+            claude_persist_idle_ttl_s=int(
+                source.get("SYMPHONY_CLAUDE_PERSIST_IDLE_TTL_S", "2700")
+            ),
+            claude_persist_max_live=int(
+                source.get("SYMPHONY_CLAUDE_PERSIST_MAX_LIVE", "8")
+            ),
             lock_path=Path(source["SYMPHONY_LOCK_PATH"])
             if source.get("SYMPHONY_LOCK_PATH")
             else None,
