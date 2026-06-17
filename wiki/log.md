@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-17] session-update | Issue #65 binding probe extraction
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/065-extract-probe-binding.md`; architecture review `.rpiv/artifacts/architecture-reviews/2026-06-16_22-42-19_root-scheduler-module.md`; `main.py`; `tests/test_main.py`
+- Outputs: updated `wiki/analyses/root-scheduler-architecture-review.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0228 added)
+- Notes: Captured Issue #65 landing L0-03: `_probe_binding(config, binding)` now owns startup probe side effects and `run_bindings_loop` calls it before `_build_binding_runtime`; `_build_binding_runtime` is pure runtime wiring. Verification: `uv run pytest -q` passed (884 passed, 2 skipped), touched-file LSP diagnostics clean, `git diff --check` clean, and fresh Ralph review returned `RALPH_REVIEW: PASS`. No secrets or env files read.
+
 ## [2026-06-17] session-update | Issue #64 tracker vocabulary home
 
 - Actor: agent (Ralph)
