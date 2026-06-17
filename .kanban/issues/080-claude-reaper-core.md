@@ -1,7 +1,7 @@
 ---
 id: 080
 title: Issue-liveness reaper core for persistent Claude sessions
-status: in-progress
+status: review
 blocked_by: [77]
 parent: null
 priority: 0
