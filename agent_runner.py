@@ -92,6 +92,12 @@ class RpcProcessLike(ProcessLike, Protocol):
     def wait(self, timeout: float | None = None) -> int: ...
 
 
+class SteerReader(Protocol):
+    def __call__(
+        self, run_id: str, offset: int, *, environ: Mapping[str, str]
+    ) -> tuple[list[Mapping[str, object]], int]: ...
+
+
 @dataclass(frozen=True)
 class AgentResult:
     exit_code: int
@@ -1012,8 +1018,7 @@ def _drain_rpc_events(
     deadline: float,
     run_id: str,
     *,
-    read_queued_steers: Callable[[str, int], tuple[list[Mapping[str, object]], int]]
-    | None,
+    read_queued_steers: SteerReader | None,
     steer_offset: int,
     read_line: Callable[[float], tuple[str | None, bool]],
     close_reader: Callable[[], None],
