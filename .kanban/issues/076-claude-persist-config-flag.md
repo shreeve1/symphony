@@ -1,7 +1,7 @@
 ---
 id: 076
 title: Add claude_persist per-binding config flag
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
@@ -16,11 +16,11 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 1.1–1.4.
 
 ## Acceptance criteria
 
-- [ ] `ProjectBinding` (`config.py:80`) has `claude_persist: bool = False`.
-- [ ] The binding parser (`config.py:~414`, near `pi_mode`) reads `claude_persist`, coerces a YAML bool, defaults `False`, and raises `ConfigError` naming `<prefix>.claude_persist` on a non-bool value.
-- [ ] A remote binding with `claude_persist: true` raises `ConfigError` (Claude does not run remotely; ADR-0012). A remote binding with the flag absent/false parses fine.
-- [ ] `ClaudeAgentAdapter` receives the flag (pass `persist=binding.claude_persist` at `main.py:174`, mirroring `RemoteAgentAdapter(config=, binding=)` at `main.py:162`); adapter stores it without using it yet.
-- [ ] Existing `bindings.yml` (no `claude_persist` key) loads unchanged.
+- [x] `ProjectBinding` (`config.py:80`) has `claude_persist: bool = False`.
+- [x] The binding parser (`config.py:~414`, near `pi_mode`) reads `claude_persist`, coerces a YAML bool, defaults `False`, and raises `ConfigError` naming `<prefix>.claude_persist` on a non-bool value.
+- [x] A remote binding with `claude_persist: true` raises `ConfigError` (Claude does not run remotely; ADR-0012). A remote binding with the flag absent/false parses fine.
+- [x] `ClaudeAgentAdapter` receives the flag (pass `persist=binding.claude_persist` at `main.py:174`, mirroring `RemoteAgentAdapter(config=, binding=)` at `main.py:162`); adapter stores it without using it yet.
+- [x] Existing `bindings.yml` (no `claude_persist` key) loads unchanged.
 
 ## Verification
 
@@ -29,3 +29,7 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 1.1–1.4.
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+Added `ProjectBinding.claude_persist` with YAML bool parsing, default `False`, non-bool `ConfigError`, and remote-binding rejection. Passed the flag into `ClaudeAgentAdapter` as stored config only; no runtime behavior changes in this slice. Added config and runtime-constructor tests for true/default/invalid/remote cases.

@@ -163,3 +163,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** New agent-facing callback names should use `SYMPHONY_TRACKER_*`; legacy `SYMPHONY_PLANE_*` remains emitted only where Plane-tracker rollback/back-compat requires it.
 **Notes for next iteration:** The `plane` helper / `plane_cli.py` rename remains deferred to Phase 7; issue #076 is independently eligible.
 **Verification:** `uv run pytest` (891 passed, 2 skipped); focused agent-runner/remote/prompt/schedule tests passed; `uv run ruff check agent_runner.py prompt_renderer.py schedule.py tests/test_agent_runner.py tests/test_remote_agent.py tests/test_prompt_renderer_podium.py tests/test_schedule.py`; touched-file LSP diagnostics clean; fresh review `RALPH_REVIEW: PASS`.
+
+## #076 Add claude_persist per-binding config flag — 2026-06-17
+
+**What changed:** Added `ProjectBinding.claude_persist` with YAML bool parsing, default `False`, non-bool `ConfigError`, and remote-binding rejection. Passed `persist=binding.claude_persist` into `ClaudeAgentAdapter`, where it is stored but unused for now.
+**Files:** `config.py`, `main.py`, `claude_runner.py`, `tests/test_config.py`, `tests/test_main.py`, `.kanban/issues/076-claude-persist-config-flag.md`.
+**Decisions:** `claude_persist` is local-only in v1; remote bindings cannot enable it because Claude does not dispatch remotely under ADR-0012.
+**Conventions established:** Warm-session flags should parse as strict YAML booleans and stay inert until their behavior slice lands.
+**Notes for next iteration:** Issue #077 can consume `binding.claude_persist` from the Claude adapter without changing config parsing; docs/wiki update is intentionally deferred to issue #086.
+**Verification:** `uv run pytest tests/test_config.py` (52 passed), `uv run python -m py_compile config.py main.py agent_runner.py`, `uv run pytest tests/test_main.py -q` (13 passed), `uv run pytest -q` (896 passed, 2 skipped), `uv run ruff check config.py main.py claude_runner.py tests/test_config.py tests/test_main.py`, `git diff --check`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
