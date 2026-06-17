@@ -23,6 +23,7 @@ from typing import Protocol, cast
 
 import ssh_support
 from config import ProjectBinding, SymphonyConfig
+from model_catalog import KNOWN_AGENTS
 from plane_poller import CandidateIssue
 from proc_runtime import (
     DEFAULT_RUNTIME_DIR,
@@ -1027,8 +1028,9 @@ class RoutingAgentAdapter:
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
         agent = self.binding.resolve_agent(issue.labels)
+        pi_agent, claude_agent = KNOWN_AGENTS
         if self.binding.is_remote:
-            if agent != "pi":
+            if agent != pi_agent:
                 raise AgentRunnerError(
                     f"Remote binding `{self.binding.name}` supports only pi dispatch "
                     f"in v1 (ADR-0012); got `{agent}`"
@@ -1038,9 +1040,9 @@ class RoutingAgentAdapter:
                     f"Remote binding `{self.binding.name}` has no remote adapter configured"
                 )
             return self.remote_adapter(issue, rendered_prompt)
-        if agent == "pi":
+        if agent == pi_agent:
             return self.pi_adapter(issue, rendered_prompt)
-        if agent == "claude":
+        if agent == claude_agent:
             return self.claude_adapter(issue, rendered_prompt)
         raise AgentRunnerError(f"No agent adapter configured for `{agent}`")
 

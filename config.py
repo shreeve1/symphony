@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 import yaml
 
+from model_catalog import KNOWN_AGENTS
 from tracker_contract import (
     DEFAULT_CONTRACT,
     PlaneUserMapping,
@@ -196,14 +198,14 @@ class SymphonyConfig:
             object.__setattr__(self, "bindings", (binding,))
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> "SymphonyConfig":
+    def from_env(cls, env: dict[str, str] | None = None) -> SymphonyConfig:
         source = os.environ if env is None else env
         bindings_path = Path(source.get("SYMPHONY_BINDINGS_PATH", "bindings.yml"))
         use_bindings = bindings_path.is_file()
         required = _BINDINGS_ENV if use_bindings else _REQUIRED_ENV
         missing = [name for name in required if not source.get(name)]
         if missing:
-            raise EnvironmentError(
+            raise OSError(
                 "Missing required environment variables: " + ", ".join(missing)
             )
 
@@ -258,7 +260,7 @@ class SymphonyConfig:
             bindings=bindings,
         )
 
-    def for_binding(self, binding: ProjectBinding) -> "SymphonyConfig":
+    def for_binding(self, binding: ProjectBinding) -> SymphonyConfig:
         """Return config scoped to one project binding."""
 
         return replace(
@@ -562,8 +564,8 @@ def _required_string(raw: dict[str, Any], field_name: str, prefix: str) -> str:
 
 
 def _validate_agent(value: str, field_name: str) -> None:
-    if value not in {"pi", "claude"}:
-        raise ConfigError(f"{field_name} must be one of: pi, claude")
+    if value not in KNOWN_AGENTS:
+        raise ConfigError(f"{field_name} must be one of: {', '.join(KNOWN_AGENTS)}")
 
 
 def _reject_yaml_secrets(raw: Any, prefix: str) -> None:

@@ -591,7 +591,7 @@ def _worktree_run_fields(
     }
 
 
-def _render_candidate_prompt(
+def _invoke_renderer(
     render_prompt: Callable[..., str],
     candidate: CandidateIssue,
     *,
@@ -720,7 +720,7 @@ async def _render_for_dispatch(
             now=now,
             binding=binding,
         )
-    prompt = _render_candidate_prompt(
+    prompt = _invoke_renderer(
         render_prompt,
         candidate,
         resume=getattr(candidate, "resumed", False),

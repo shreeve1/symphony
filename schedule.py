@@ -136,6 +136,17 @@ _WS_RE = re.compile(r"[ \t\r\f\v]+")
 _HORIZ_WS = " \t\r\f\v"
 
 
+def _decode_entity_at(s: str, i: int) -> tuple[str, int] | None:
+    j = s.find(";", i + 1, i + 16)
+    if j == -1:
+        return None
+    literal = s[i : j + 1]
+    decoded = html.unescape(literal)
+    if decoded == literal:
+        return None
+    return decoded, j + 1
+
+
 def _normalize_outside_quotes(s: str) -> str:
     """Strip wrappers, decode entities, and collapse whitespace — quote-aware.
 
@@ -230,19 +241,17 @@ def _normalize_outside_quotes(s: str) -> str:
                 # not the still-encoded literal ``\&quot;``.  This mirrors
                 # the bare-entity branch below.
                 if nxt == "&":
-                    j = s.find(";", i + 2, i + 18)
-                    if j != -1:
-                        literal = s[i + 1 : j + 1]
-                        decoded = html.unescape(literal)
-                        if decoded != literal:
-                            out.append("\\")
-                            for dch in decoded:
-                                # A decoded ``"`` closes the span only if
-                                # the backslash didn't escape it.  Since
-                                # we *did* escape it, copy verbatim.
-                                out.append(dch)
-                            i = j + 1
-                            continue
+                    decoded_entity = _decode_entity_at(s, i + 1)
+                    if decoded_entity is not None:
+                        decoded, next_i = decoded_entity
+                        out.append("\\")
+                        for dch in decoded:
+                            # A decoded ``"`` closes the span only if
+                            # the backslash didn't escape it.  Since
+                            # we *did* escape it, copy verbatim.
+                            out.append(dch)
+                        i = next_i
+                        continue
                 out.append(ch)
                 out.append(nxt)
                 i += 2
@@ -254,31 +263,26 @@ def _normalize_outside_quotes(s: str) -> str:
                 i += 1
                 continue
             if ch == "&":
-                j = s.find(";", i + 1, i + 16)
-                if j != -1:
-                    literal = s[i : j + 1]
-                    decoded = html.unescape(literal)
-                    if decoded == literal:
-                        out.append(ch)
-                        i += 1
-                    else:
-                        for dch in decoded:
-                            if dch == '"':
-                                # Closing entity-encoded quote.
-                                in_quote = False
-                                quote_decoded = False
-                                out.append(dch)
-                            else:
-                                out.append(dch)
-                                if not in_quote:
-                                    # Opening of a new outer span; rare
-                                    # but treat the next decoded chars as
-                                    # outside until another quote arrives.
-                                    pass
-                        i = j + 1
-                else:
+                decoded_entity = _decode_entity_at(s, i)
+                if decoded_entity is None:
                     out.append(ch)
                     i += 1
+                else:
+                    decoded, next_i = decoded_entity
+                    for dch in decoded:
+                        if dch == '"':
+                            # Closing entity-encoded quote.
+                            in_quote = False
+                            quote_decoded = False
+                            out.append(dch)
+                        else:
+                            out.append(dch)
+                            if not in_quote:
+                                # Opening of a new outer span; rare
+                                # but treat the next decoded chars as
+                                # outside until another quote arrives.
+                                pass
+                    i = next_i
                 continue
             out.append(ch)
             i += 1
@@ -323,30 +327,25 @@ def _normalize_outside_quotes(s: str) -> str:
         # quoted span untouched (whitespace, wrappers, and other entity
         # literals all survive verbatim).
         if ch == "&":
-            j = s.find(";", i + 1, i + 16)
-            if j != -1:
-                literal = s[i : j + 1]
-                decoded = html.unescape(literal)
-                if decoded == literal:
-                    # Not a recognised entity — keep the raw text.
-                    emit_outside_char(ch)
-                    i += 1
-                else:
-                    for dch in decoded:
-                        if in_quote:
-                            # Within a decoded-quote span the inner chars
-                            # are still being decoded; emit verbatim and
-                            # close on a structural quote.
-                            if dch == '"':
-                                in_quote = False
-                                quote_decoded = False
-                            out.append(dch)
-                        else:
-                            emit_outside_char(dch, decoded=True)
-                    i = j + 1
-            else:
+            decoded_entity = _decode_entity_at(s, i)
+            if decoded_entity is None:
+                # Not a recognised entity — keep the raw text.
                 emit_outside_char(ch)
                 i += 1
+            else:
+                decoded, next_i = decoded_entity
+                for dch in decoded:
+                    if in_quote:
+                        # Within a decoded-quote span the inner chars
+                        # are still being decoded; emit verbatim and
+                        # close on a structural quote.
+                        if dch == '"':
+                            in_quote = False
+                            quote_decoded = False
+                        out.append(dch)
+                    else:
+                        emit_outside_char(dch, decoded=True)
+                i = next_i
             continue
 
         emit_outside_char(ch)
@@ -423,9 +422,7 @@ def _parse_iso_utc(value: str, *, field: str) -> datetime:
     if not raw:
         raise ScheduleParseError(f"{field} is empty")
     if not _ISO_8601_STRICT_RE.match(raw):
-        raise ScheduleParseError(
-            f"{field} is not a valid ISO 8601 datetime: {raw!r}"
-        )
+        raise ScheduleParseError(f"{field} is not a valid ISO 8601 datetime: {raw!r}")
     # datetime.fromisoformat in Python 3.11+ accepts the trailing 'Z'.  Be
     # defensive for older runtimes anyway.
     candidate = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
@@ -535,7 +532,7 @@ def parse_schedule_comment(
     if line is None or prefix is None:
         return None
 
-    payload = line[len(prefix):].strip()
+    payload = line[len(prefix) :].strip()
     tokens = _tokenise(payload)
 
     if prefix == SCHEDULE_PREFIX:
@@ -610,15 +607,11 @@ def _build_cancellation_event(
             f"unknown keys for Symphony-Schedule-Cancelled: {sorted(extras)!r}"
         )
     if "reason" not in tokens:
-        raise ScheduleParseError(
-            "Symphony-Schedule-Cancelled missing required reason"
-        )
+        raise ScheduleParseError("Symphony-Schedule-Cancelled missing required reason")
     # Preserve verbatim; reject only when reason is whitespace-only.
     reason = tokens["reason"]
     if not reason.strip():
-        raise ScheduleParseError(
-            "Symphony-Schedule-Cancelled reason must be non-empty"
-        )
+        raise ScheduleParseError("Symphony-Schedule-Cancelled reason must be non-empty")
     return ScheduleEvent(
         event_type=ScheduleEventType.CANCELLATION,
         reason=reason,
@@ -646,7 +639,19 @@ def _quote_reason(reason: str) -> str:
     # truncate the reason on round-trip.  ``str.splitlines()`` recognises
     # \n, \r, \r\n, \v, \f, \x1c, \x1d, \x1e, \x85, \u2028, \u2029.
     if len(reason.splitlines()) > 1 or any(
-        ch in reason for ch in ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+        ch in reason
+        for ch in (
+            "\n",
+            "\r",
+            "\v",
+            "\f",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\x85",
+            "\u2028",
+            "\u2029",
+        )
     ):
         raise ValueError("reason must not contain line-breaking characters")
     escaped = reason.replace("\\", "\\\\").replace('"', '\\"')
@@ -671,7 +676,10 @@ def format_schedule_comment(
         raise ValueError("not_after must be timezone-aware")
     if not_after is not None and not_after < not_before:
         raise ValueError("not_after must be >= not_before")
-    parts = [SCHEDULE_PREFIX, f"not_before={not_before.astimezone(timezone.utc).isoformat()}"]
+    parts = [
+        SCHEDULE_PREFIX,
+        f"not_before={not_before.astimezone(timezone.utc).isoformat()}",
+    ]
     if not_after is not None:
         parts.append(f"not_after={not_after.astimezone(timezone.utc).isoformat()}")
     parts.append(f"reason={_quote_reason(reason)}")
