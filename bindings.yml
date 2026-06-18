@@ -19,6 +19,7 @@ bindings:
   base_branch: main
   default_agent: pi
   pi_mode: rpc
+  claude_persist: true
   approval:
     enabled: false
   landing:
