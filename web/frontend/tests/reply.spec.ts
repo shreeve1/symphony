@@ -49,8 +49,13 @@ test("composer posts a reply, clears the input, and the card moves to Todo", asy
 	await page.getByTestId("reply-send").click();
 	await replied;
 
-	// Draft clears on success.
+	// Draft clears on success, but the flyout stays open so the operator can
+	// watch the next Run append its completion summary.
 	await expect(input).toHaveValue("");
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("view-comments_md")).toContainText(
+		"Please continue with the next step.",
+	);
 
 	// Live board update flips the card into the Todo column.
 	await expect(

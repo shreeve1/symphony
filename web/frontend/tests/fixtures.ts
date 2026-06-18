@@ -73,7 +73,10 @@ export const test = base.extend<{
 export { expect };
 
 const E2E_DB_PATH = path.resolve(__dirname, "../test-results/podium-e2e.db");
-const E2E_PI_SESSION_DIR = path.resolve(__dirname, "../test-results/pi-sessions");
+const E2E_PI_SESSION_DIR = path.resolve(
+	__dirname,
+	"../test-results/pi-sessions",
+);
 // Same fixture bindings.yml the API webServer + global-setup use (see
 // playwright.config.ts). Helper subprocesses must read the throwaway repo paths
 // from here, not the live bindings.yml, or session-tail writes land in a real repo.
@@ -139,6 +142,25 @@ with connect() as connection:
     print(json.dumps({"issueId": cursor.lastrowid}))
 `;
 	return runDbScript<{ issueId: number }>(script);
+}
+
+export function setIssueComments(issueId: number, commentsMd: string) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+issue_id = ${issueId}
+comments = ${JSON.stringify(commentsMd)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    connection.execute(
+        "UPDATE issue SET comments_md = ?, updated_at = ?, last_event_at = ? WHERE id = ?",
+        (comments, now, now, issue_id),
+    )
+    connection.commit()
+print(json.dumps(True))
+`;
+	runDbScript<boolean>(script);
 }
 
 export function updateIssueState(issueId: number, state: string) {
@@ -287,6 +309,40 @@ with connect() as connection:
         WHERE id = ?
         """,
         (now, now, row["issue_id"]),
+    )
+    connection.commit()
+print(json.dumps(True))
+`;
+	runDbScript<boolean>(script);
+}
+
+export function finishRunWithIssueComment(runId: number, comment: string) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+run_id = ${runId}
+comment = ${JSON.stringify(comment)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    row = connection.execute("SELECT issue_id FROM run WHERE id = ?", (run_id,)).fetchone()
+    connection.execute(
+        """
+        UPDATE run
+        SET state = 'succeeded', verdict = 'review', summary = 'E2E polling finished',
+            exit_code = 0, ended_at = ?
+        WHERE id = ?
+        """,
+        (now, run_id),
+    )
+    connection.execute(
+        """
+        UPDATE issue
+        SET state = 'in_review', latest_run_state = 'succeeded', latest_verdict = 'review',
+            comments_md = COALESCE(comments_md, '') || ?, updated_at = ?, last_event_at = ?
+        WHERE id = ?
+        """,
+        ("\\n\\n" + comment.strip(), now, now, row["issue_id"]),
     )
     connection.commit()
 print(json.dumps(True))

@@ -17,6 +17,25 @@ export function issueListRefetchIntervalMs(issues: Issue[] | undefined) {
 	return hasActiveIssue(issues) ? 3_000 : 10_000;
 }
 
+export function issueDetailRefetchIntervalMs(
+	issue: Pick<Issue, "state" | "latest_run_state"> | null | undefined,
+) {
+	if (!issue) return false;
+	return issue.state === "todo" ||
+		issue.state === "running" ||
+		isActiveRunState(issue.latest_run_state)
+		? 3_000
+		: false;
+}
+
+export function runListRefetchIntervalMs(
+	runs: Pick<Run, "state">[] | undefined,
+) {
+	return (runs ?? []).some((run) => isActiveRunState(run.state))
+		? 3_000
+		: false;
+}
+
 export function runDetailRefetchIntervalMs(
 	run: Pick<Run, "state"> | null | undefined,
 ) {

@@ -17,7 +17,11 @@ import {
 	type Run,
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
-import { isActiveRunState } from "@/lib/polling";
+import {
+	isActiveRunState,
+	issueDetailRefetchIntervalMs,
+	runListRefetchIntervalMs,
+} from "@/lib/polling";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
@@ -367,13 +371,7 @@ function MetadataChips({
 // and flips the issue back to todo so the agent re-runs (server-side, atomic).
 // Sits at the top of the comments tab, above the thread, so it never gets
 // buried as Runs accumulate.
-function ReplyComposer({
-	issue,
-	onSent,
-}: {
-	issue: IssueDetail;
-	onSent?: () => void;
-}) {
+function ReplyComposer({ issue }: { issue: IssueDetail }) {
 	const queryClient = useQueryClient();
 	const [draft, setDraft] = useState("");
 	const taRef = useRef<HTMLTextAreaElement>(null);
@@ -396,7 +394,6 @@ function ReplyComposer({
 			queryClient.invalidateQueries({
 				queryKey: ["issues", issue.binding_name],
 			});
-			onSent?.();
 		},
 	});
 
@@ -618,11 +615,49 @@ function SteerComposer({
 }
 
 // Comments are stored as one chronological markdown blob (oldest first); each
-// entry is an appended block headed `### Operator Reply (…)` or `### Symphony AI
-// Summary`. Render the blob straight through so the headings act as the natural
-// separators, and auto-scroll to the newest entry when the flyout opens. Keeps
-// the `view-comments_md` testid as the container so existing coverage (text
-// presence) still holds.
+// entry is an appended block headed by a known marker. Operator entries
+// (`### Operator Reply/Steer/Abort (…)`) and any non-agent text are always
+// shown. Agent run summaries (`**Symphony completed:**`, `**Symphony
+// question:**`, `### Symphony AI Summary`) stack up one-per-run, so we collapse
+// them to only the most recent — older completions stay in Run history. The
+// blob is rendered straight through (no sub-heading split) so a multi-heading
+// summary is never shredded. Keeps the `view-comments_md` testid as the
+// container so existing coverage (text presence) still holds.
+const AGENT_SUMMARY_MARKERS = [
+	"**Symphony completed:**",
+	"**Symphony question:**",
+	"### Symphony AI Summary",
+] as const;
+
+// Split only at known entry headers, never at arbitrary sub-headings, so a
+// summary containing `### …` sections is not broken into pieces.
+const ENTRY_BOUNDARY =
+	/\n+(?=### Operator Reply \(|### Operator Steer \(|### Operator Abort \(|### Symphony AI Summary|\*\*Symphony completed:\*\*|\*\*Symphony question:\*\*)/;
+
+function isAgentSummary(entry: string): boolean {
+	return AGENT_SUMMARY_MARKERS.some((marker) => entry.startsWith(marker));
+}
+
+function collapseCompletions(source: string): {
+	text: string;
+	hiddenCount: number;
+} {
+	const entries = source.split(ENTRY_BOUNDARY);
+	let lastAgentIndex = -1;
+	entries.forEach((entry, index) => {
+		if (isAgentSummary(entry.trim())) lastAgentIndex = index;
+	});
+	if (lastAgentIndex === -1) return { text: source, hiddenCount: 0 };
+	let hiddenCount = 0;
+	const kept = entries.filter((entry, index) => {
+		if (!isAgentSummary(entry.trim())) return true;
+		if (index === lastAgentIndex) return true;
+		hiddenCount += 1;
+		return false;
+	});
+	return { text: kept.join("\n\n").trim(), hiddenCount };
+}
+
 function CommentsThread({
 	issueId,
 	source,
@@ -631,22 +666,47 @@ function CommentsThread({
 	source: string;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
-	// Land on the newest comment when the flyout opens. Keyed on issueId (not
-	// source) so a background poll never yanks the operator down mid-read.
+	const stickToBottomRef = useRef(true);
+	const isNearBottom = (el: HTMLDivElement) =>
+		el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+	// Land on the newest comment when the flyout opens.
 	useEffect(() => {
 		const el = scrollRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
+		if (!el) return;
+		el.scrollTop = el.scrollHeight;
+		stickToBottomRef.current = true;
 	}, [issueId]);
-	const hasComments = source.trim().length > 0;
+	// When new comments arrive, follow only if the operator was already reading
+	// the newest entry. Do not yank someone who scrolled up through history.
+	useEffect(() => {
+		const el = scrollRef.current;
+		if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+	}, [source]);
+	const { text, hiddenCount } = collapseCompletions(source);
+	const hasComments = text.trim().length > 0;
 	return (
 		<div
 			ref={scrollRef}
 			data-testid="view-comments_md"
+			onScroll={(event) => {
+				stickToBottomRef.current = isNearBottom(event.currentTarget);
+			}}
 			className="max-h-[60vh] overflow-y-auto"
 		>
 			{hasComments ? (
-				<div className="rounded-md border p-2">
-					<Markdown source={source} />
+				<div className="space-y-2">
+					{hiddenCount > 0 && (
+						<p
+							data-testid="hidden-completions-note"
+							className="text-xs text-muted-foreground"
+						>
+							{hiddenCount} earlier Symphony completion
+							{hiddenCount === 1 ? "" : "s"} hidden — see Run history below.
+						</p>
+					)}
+					<div className="rounded-md border p-2">
+						<Markdown source={text} />
+					</div>
 				</div>
 			) : (
 				<p className="rounded-md border p-2 text-xs text-muted-foreground">
@@ -682,11 +742,15 @@ export function IssueFlyout({
 		queryKey: ["issue", issueId],
 		queryFn: () => fetchIssue(issueId as number),
 		enabled: issueId != null,
+		refetchInterval: (query) => issueDetailRefetchIntervalMs(query.state.data),
 	});
 	const runs = useQuery({
 		queryKey: ["runs", issueId],
 		queryFn: () => fetchIssueRuns(issueId as number),
 		enabled: issueId != null,
+		refetchInterval: (query) =>
+			runListRefetchIntervalMs(query.state.data) ||
+			issueDetailRefetchIntervalMs(detail.data),
 	});
 	const patch = usePatchIssue();
 	const onPatch: OnPatch = (issuePatch) => {
@@ -866,7 +930,7 @@ export function IssueFlyout({
 										// accumulate; thread below renders oldest-first,
 										// scrolled to the newest entry on open.
 										<div className="space-y-3">
-											<ReplyComposer issue={issue} onSent={onClose} />
+											<ReplyComposer issue={issue} />
 											<CommentsThread
 												issueId={issue.id}
 												source={issue.comments_md}

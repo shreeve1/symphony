@@ -5,14 +5,17 @@ import {
 	expect,
 	expectCleanConsole,
 	finishRun,
+	finishRunWithIssueComment,
 	seedIssue,
 	seedRunningRunIssue,
 	test,
 	updateIssueState,
 } from "./fixtures";
 import {
+	issueDetailRefetchIntervalMs,
 	issueListRefetchIntervalMs,
 	runDetailRefetchIntervalMs,
+	runListRefetchIntervalMs,
 } from "../lib/polling";
 import { formatRunDuration } from "../lib/run-duration";
 
@@ -49,7 +52,11 @@ test("running duration helper formats live and terminal states", async () => {
 		}),
 	).toBe("9s");
 	expect(
-		formatRunDuration({ state: "succeeded", started_at: started, ended_at: null }),
+		formatRunDuration({
+			state: "succeeded",
+			started_at: started,
+			ended_at: null,
+		}),
 	).toBe("—");
 });
 
@@ -115,6 +122,23 @@ test("polling interval helpers gate active and idle states", async () => {
 			},
 		]),
 	).toBe(3_000);
+	expect(
+		issueDetailRefetchIntervalMs({ state: "todo", latest_run_state: null }),
+	).toBe(3_000);
+	expect(
+		issueDetailRefetchIntervalMs({
+			state: "in_review",
+			latest_run_state: "running",
+		}),
+	).toBe(3_000);
+	expect(
+		issueDetailRefetchIntervalMs({
+			state: "in_review",
+			latest_run_state: "succeeded",
+		}),
+	).toBe(false);
+	expect(runListRefetchIntervalMs([{ state: "queued" }])).toBe(3_000);
+	expect(runListRefetchIntervalMs([{ state: "succeeded" }])).toBe(false);
 	expect(runDetailRefetchIntervalMs({ state: "running" })).toBe(3_000);
 	expect(runDetailRefetchIntervalMs({ state: "succeeded" })).toBe(false);
 });
@@ -154,18 +178,21 @@ test("run detail polling picks up terminal run metadata and log", async ({
 	await page.goto("/homelab");
 	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
-	await expect(page.getByTestId("run-row").first()).toContainText(/running \d+s/);
+	await expect(page.getByTestId("run-row").first()).toContainText(
+		/running \d+s/,
+	);
 	await page.getByTestId("run-row").first().click();
 	await expect(page.getByTestId("run-detail-flyout")).toBeVisible();
 	await expect(page.getByTestId("run-field-duration")).toContainText(
 		/running \d+s/,
 	);
-	const firstDuration = await page.getByTestId("run-field-duration").textContent();
+	const firstDuration = await page
+		.getByTestId("run-field-duration")
+		.textContent();
 	await expect
-		.poll(
-			async () => page.getByTestId("run-field-duration").textContent(),
-			{ timeout: 2_500 },
-		)
+		.poll(async () => page.getByTestId("run-field-duration").textContent(), {
+			timeout: 2_500,
+		})
 		.not.toBe(firstDuration);
 
 	finishRun(runId, "polling complete\n");
@@ -187,6 +214,28 @@ test("run detail polling picks up terminal run metadata and log", async ({
 			/httperror: 404 GET .*\/api\/runs\/\d+\/log/,
 		],
 	});
+});
+
+test("open flyout polls scheduler-written completion comments", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e flyout completion poll ${Date.now()}`;
+	const { runId } = seedRunningRunIssue("homelab", title);
+	const aiSummary = "AI completion from direct scheduler write";
+
+	await openIssue(page, title);
+	await expect(page.getByTestId("view-comments_md")).not.toContainText(
+		aiSummary,
+	);
+
+	finishRunWithIssueComment(runId, `### Symphony AI Summary\n\n${aiSummary}`);
+
+	await expect(page.getByTestId("view-comments_md")).toContainText(aiSummary, {
+		timeout: 7_000,
+	});
+
+	expectCleanConsole(problems);
 });
 
 test("live issue updates sync between browser contexts", async ({
