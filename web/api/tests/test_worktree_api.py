@@ -352,6 +352,175 @@ def test_merge_on_done_noop_when_no_worktree(repo_and_db: tuple[Path, Path]) -> 
     assert response.json()["state"] == "done"
 
 
+# --- dirty-worktree commit re-dispatch tests (ADR-0014) ---
+
+
+def _set_comments_md(db_path: Path, issue_id: int, comments_md: str) -> None:
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE issue SET comments_md = ? WHERE id = ?", (comments_md, issue_id)
+        )
+        conn.commit()
+
+
+def test_done_dirty_worktree_redispatches_to_commit(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """Dirty worktree, no prior marker → state=todo, synthetic note appended,
+    worktree + branch intact, base branch NOT advanced."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import branch_name, create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    # Uncommitted agent output (untracked) — dirty worktree, no commits ahead.
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+
+    base_head_before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "todo"
+    assert main.COMMIT_REDISPATCH_REPLY_PREFIX in body["comments_md"]
+
+    # Worktree + branch left intact; base branch not advanced.
+    assert wt_path.is_dir()
+    branches = _git(repo, "branch", "--list").stdout
+    assert branch_name("trading", issue_str) in branches
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == base_head_before
+
+
+def test_done_dirty_worktree_blocks_at_cap(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """Dirty worktree with MAX prior markers → state=blocked, worktree intact."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+
+    # Pre-seed comments_md with MAX_COMMIT_REDISPATCH prior markers.
+    prior = "\n\n".join(
+        f"{main.COMMIT_REDISPATCH_REPLY_PREFIX} · 2026-06-1{n})\n\nbody"
+        for n in range(main.MAX_COMMIT_REDISPATCH)
+    )
+    _set_comments_md(db_path, issue_id, prior)
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "blocked"
+    assert "still" in body["comments_md"]
+    assert str(main.MAX_COMMIT_REDISPATCH) in body["comments_md"]
+    assert wt_path.is_dir()
+
+
+def test_done_clean_worktree_no_commits_teardown_no_redispatch(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """Clean worktree, no commits ahead → no-op merge + teardown, stays done,
+    no re-dispatch note (genuinely empty: nothing to lose)."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import worktree_dir
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+
+    from web.api.worktree import create_worktree
+
+    create_worktree(repo, "trading", issue_str, "main")  # clean, no edits
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "done"
+    assert main.COMMIT_REDISPATCH_REPLY_PREFIX not in (body["comments_md"] or "")
+    # Worktree torn down.
+    assert not worktree_dir(repo, "trading", issue_str).is_dir()
+
+
+def test_done_partial_commit_redispatches_not_partial_merge(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """One committed change ahead PLUS an uncommitted change → re-dispatch
+    (state=todo), note appended, worktree + branch intact, base unchanged. The
+    committed-ahead portion must NOT be partially merged."""
+    repo, db_path = repo_and_db
+    from web.api.worktree import branch_name, create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    # One committed change ahead of base.
+    (wt_path / "committed.txt").write_text("committed work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "partial commit")
+    # Plus an uncommitted change → worktree dirty.
+    (wt_path / "uncommitted.txt").write_text("not yet committed", encoding="utf-8")
+
+    base_head_before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "todo"
+    assert main.COMMIT_REDISPATCH_REPLY_PREFIX in body["comments_md"]
+    # No partial merge: base branch unchanged, worktree + branch intact.
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == base_head_before
+    assert wt_path.is_dir()
+    branches = _git(repo, "branch", "--list").stdout
+    assert branch_name("trading", issue_str) in branches
+
+
+def test_redispatch_note_matches_operator_reply_regex(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """The synthetic note header matches prompt_renderer's operator-reply regex
+    so it surfaces as the current request on resume, and is counted as one
+    attempt by _count_commit_redispatches."""
+    import prompt_renderer
+
+    repo, db_path = repo_and_db
+    from web.api.worktree import create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    comments_md = response.json()["comments_md"]
+
+    assert prompt_renderer._OPERATOR_REPLY_RE.search(comments_md) is not None
+    assert main._count_commit_redispatches(comments_md) == 1
+
+
 # --- archive teardown tests ---
 
 

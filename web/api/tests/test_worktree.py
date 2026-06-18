@@ -20,6 +20,7 @@ from web.api.worktree import (
     remove_worktree,
     worktree_dir,
     worktree_exists,
+    worktree_is_dirty,
 )
 
 
@@ -250,3 +251,54 @@ def test_base_repo_dirty_detects_tracked_edits(
     # Modify a tracked file in the base.
     (repo / "README.md").write_text("uncommitted change", encoding="utf-8")
     assert base_repo_dirty(repo)
+
+
+# --- worktree_is_dirty (ADR-0014) ---
+
+
+def test_worktree_is_dirty_clean_returns_false(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    """A freshly created worktree with no edits is clean."""
+    create_worktree(repo, binding_name, issue_id, "main")
+    assert not worktree_is_dirty(repo, binding_name, issue_id)
+
+
+def test_worktree_is_dirty_tracked_modification(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    """A modified tracked file inside the worktree is dirty."""
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "README.md").write_text("modified", encoding="utf-8")
+    assert worktree_is_dirty(repo, binding_name, issue_id)
+
+
+def test_worktree_is_dirty_untracked_file(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    """An untracked file inside the worktree is real agent output → dirty.
+
+    Unlike base_repo_dirty, untracked files are NOT excused here: a leaf
+    worktree has no nested Podium worktrees.
+    """
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    assert worktree_is_dirty(repo, binding_name, issue_id)
+
+
+def test_worktree_is_dirty_absent_worktree_returns_false(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    """No worktree directory → not dirty (nothing to lose)."""
+    assert not worktree_is_dirty(repo, binding_name, issue_id)
+
+
+def test_worktree_is_dirty_clean_after_commit(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    """Committed work in the worktree leaves it clean (Case 1, not re-dispatch)."""
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "agent change")
+    assert not worktree_is_dirty(repo, binding_name, issue_id)

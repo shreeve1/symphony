@@ -566,6 +566,17 @@ ALLOWED_REPLY_STATES = ("in_review", "blocked", "done")
 # own comments_md append, so the reply endpoint rejects them too.
 ACTIVE_RUN_STATES = ("queued", "running")
 
+# Worktree done-time commit re-dispatch (ADR-0014). When an Issue with an
+# active worktree is marked `done` but the worktree is dirty (uncommitted
+# work), Symphony re-dispatches the agent to commit its own work rather than
+# silently force-removing the worktree. Capped to avoid an infinite loop when
+# the agent repeatedly fails to commit; over the cap, fall back to `blocked`.
+MAX_COMMIT_REDISPATCH = 2
+# Substring used both as the synthetic operator-reply header and as the marker
+# counted to enforce MAX_COMMIT_REDISPATCH. Must keep the `### Operator Reply (`
+# shape so prompt_renderer's operator-reply regex surfaces it on resume.
+COMMIT_REDISPATCH_REPLY_PREFIX = "### Operator Reply (Symphony auto-commit"
+
 
 # Fields whose column is conceptually NOT NULL for an operator edit: explicit
 # null in the body is rejected rather than written through.
@@ -1289,6 +1300,7 @@ async def _maybe_merge_worktree(
             merge_worktree,
             worktree_dir,
             worktree_exists,
+            worktree_is_dirty,
         )
     except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
         from worktree import (  # type: ignore[no-redef]
@@ -1298,6 +1310,7 @@ async def _maybe_merge_worktree(
             merge_worktree,
             worktree_dir,
             worktree_exists,
+            worktree_is_dirty,
         )
 
     binding_name = current.get("binding_name", "")
@@ -1325,6 +1338,29 @@ async def _maybe_merge_worktree(
             connection.execute(
                 "SELECT * FROM issue WHERE id = ?", (issue_id,)
             ).fetchone()
+        )
+
+    # ADR-0014: a dirty worktree means the agent left uncommitted work. Never
+    # merge/force-remove it (silent data loss). Re-dispatch the agent to commit
+    # its own work, capped to avoid an infinite loop; over the cap, block.
+    if await asyncio.to_thread(worktree_is_dirty, repo_path, binding_name, issue_str):
+        comments_row = connection.execute(
+            "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        prior = _count_commit_redispatches(comments_row["comments_md"])
+        if prior >= MAX_COMMIT_REDISPATCH:
+            msg = (
+                f"Auto-commit re-dispatch halted: worktree at "
+                f"{worktree_dir(repo_path, binding_name, issue_str)} is still "
+                f"uncommitted after {MAX_COMMIT_REDISPATCH} re-dispatches. "
+                f"Branch {branch_name(binding_name, issue_str)} is unmerged and "
+                f"the worktree is intact for manual handling."
+            )
+            return await _append_blocked_and_publish(
+                connection, issue_id, current, msg
+            )
+        return await _redispatch_to_commit(
+            connection, issue_id, current, repo_path, binding_name, issue_str
         )
 
     # Precheck: base checkout must be clean.
@@ -1498,6 +1534,85 @@ async def _append_blocked_and_publish(
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )
+    return result
+
+
+def _count_commit_redispatches(comments_md: str | None) -> int:
+    """Count prior auto-commit re-dispatches recorded in ``comments_md``.
+
+    Each re-dispatch appends one ``COMMIT_REDISPATCH_REPLY_PREFIX`` marker, so a
+    plain substring count gives the number of prior attempts. A legacy NULL
+    comments_md counts as 0.
+    """
+    if not comments_md:
+        return 0
+    return comments_md.count(COMMIT_REDISPATCH_REPLY_PREFIX)
+
+
+async def _redispatch_to_commit(
+    connection: sqlite3.Connection,
+    issue_id: int,
+    current: dict[str, Any],
+    repo_path: Path,
+    binding_name: str,
+    issue_str: str,
+) -> dict[str, Any]:
+    """Re-dispatch a dirty worktree's agent to commit its own work (ADR-0014).
+
+    Appends a synthetic ``### Operator Reply (Symphony auto-commit · …)`` note
+    instructing the agent to test and commit its existing worktree changes, then
+    flips the Issue back to ``todo`` so the scheduler resumes it in the same
+    (idempotently preserved) dirty worktree. Leaves the worktree intact — no
+    merge, no force-removal. Mirrors ``reply_to_issue`` for the
+    append/flip/publish/wake mechanics.
+    """
+    try:
+        from web.api.worktree import branch_name, worktree_dir
+    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+        from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
+
+    # Re-read fresh comments_md/updated_at: patch_issue already committed
+    # state='done' and bumped updated_at before _maybe_merge_worktree ran, so
+    # current["updated_at"] is stale. Mirror _append_blocked_and_publish.
+    latest = connection.execute(
+        "SELECT comments_md, updated_at FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    now = _next_updated_at(latest["updated_at"])
+
+    wt_path = worktree_dir(repo_path, binding_name, issue_str)
+    branch = branch_name(binding_name, issue_str)
+    note = (
+        f"\n\n{COMMIT_REDISPATCH_REPLY_PREFIX} · {now})\n\n"
+        f"Your worktree at `{wt_path}` (branch `{branch}`) has uncommitted "
+        f"changes, but the Issue was marked done with nothing committed — so "
+        f"the work cannot be landed and would be lost.\n\n"
+        f"Commit only the work that already exists in the worktree: run the "
+        f"repo's tests for the changed code, then `git add -A && git commit` "
+        f"with a clear message. Do not start new work or expand scope. When the "
+        f"commit lands, end your turn."
+    )
+
+    cursor = connection.execute(
+        """
+        UPDATE issue
+           SET comments_md = COALESCE(comments_md, '') || ?,
+               state = 'todo',
+               updated_at = ?
+         WHERE id = ?
+        """,
+        (note, now, issue_id),
+    )
+    connection.commit()
+    assert cursor.rowcount == 1
+
+    row = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    touch_wake_sentinel()
     return result
 
 

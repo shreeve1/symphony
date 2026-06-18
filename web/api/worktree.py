@@ -113,6 +113,25 @@ def base_repo_dirty(repo_path: Path) -> bool:
     return False
 
 
+def worktree_is_dirty(repo_path: Path, binding_name: str, issue_id: str) -> bool:
+    """Return True if the Issue's worktree has uncommitted changes.
+
+    Runs ``git status --porcelain`` *inside the worktree* (not the base repo).
+    Any non-empty porcelain line — tracked modifications or untracked files —
+    counts as dirty. Unlike :func:`base_repo_dirty`, untracked files are NOT
+    excused: a leaf worktree has no nested Podium worktrees, so untracked files
+    there are real agent output that must be committed before merge.
+
+    Returns ``False`` when the worktree directory does not exist.
+    """
+    wt_path = worktree_dir(repo_path, binding_name, issue_id)
+    if not wt_path.is_dir():
+        return False
+    result = _run_git(wt_path, ["status", "--porcelain"], check=True)
+    assert result is not None  # check=True guarantees str
+    return any(line.strip() for line in result.splitlines())
+
+
 def merge_worktree(
     repo_path: Path,
     binding_name: str,

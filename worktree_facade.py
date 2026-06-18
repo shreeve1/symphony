@@ -14,6 +14,7 @@ try:
         remove_worktree,
         worktree_dir,
         worktree_exists,
+        worktree_is_dirty,
     )
 except ImportError:  # pragma: no cover - supports alternate import path
     from worktree import (  # type: ignore[no-redef]
@@ -22,6 +23,7 @@ except ImportError:  # pragma: no cover - supports alternate import path
         remove_worktree,
         worktree_dir,
         worktree_exists,
+        worktree_is_dirty,
     )
 
 __all__ = [
@@ -30,4 +32,5 @@ __all__ = [
     "remove_worktree",
     "worktree_dir",
     "worktree_exists",
+    "worktree_is_dirty",
 ]
