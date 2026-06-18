@@ -1,12 +1,12 @@
 ---
 id: 081
 title: Wire the Claude reaper sweep into the scheduler loop
-status: blocked
+status: review
 blocked_by: [80]
 parent: null
 priority: 0
 created: 2026-06-17
-updated: 2026-06-17
+updated: 2026-06-18
 actor: ralph
 ---
 
