@@ -43,9 +43,10 @@ PI_PROBE_TIMEOUT_SECONDS = 30
 PI_RPC_PROBE_TIMEOUT_SECONDS = 20
 RPC_STEER_POLL_INTERVAL_SECONDS = 0.5
 # Pidfile registry for live `pi --mode rpc` processes. Each dispatch writes
-# <runtime_dir>/rpc/<pid>.pid on launch and removes it on exit; a boot sweep
-# (reap_orphan_rpc_processes) kills any that a crashed scheduler left behind,
-# the RPC analogue of reap_orphan_claude_sockets (#058 orphan reaping).
+# <runtime_dir>/rpc/<pid>.pid on launch and removes it on exit; for remote RPC
+# runs this is the local SSH client pid, not the remote pi pid. A boot sweep
+# (reap_orphan_rpc_processes) kills any local pi/SSH handles a crashed scheduler
+# left behind, the RPC analogue of reap_orphan_claude_sockets (#058 orphan reaping).
 
 
 def _rpc_pidfile_dir(environ: Mapping[str, str] | None = None) -> Path:
@@ -493,6 +494,24 @@ def _ssh_base_args(remote, *, reverse_port: int | None = None) -> list[str]:
     return ssh_support.ssh_base_args(remote, reverse_port=reverse_port)
 
 
+def _cleanup_remote_tmp(
+    remote,
+    remote_tmp: str,
+    *,
+    run_func: Callable[..., CompletedLike],
+) -> None:
+    if not remote_tmp:
+        return
+    with suppress(Exception):
+        run_func(
+            _ssh_base_args(remote) + [f"rm -rf {shlex.quote(remote_tmp)}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PI_HELP_TIMEOUT_SECONDS,
+        )
+
+
 def _tar_directory_bytes(source_dir: Path) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
@@ -571,6 +590,7 @@ def run_remote_agent(
             timeout=PI_HELP_TIMEOUT_SECONDS,
         )
         if ship_skill.returncode != 0:
+            _cleanup_remote_tmp(remote, remote_tmp, run_func=run_func)
             raise AgentRunnerError(
                 f"Failed to ship skill to {remote.user}@{remote.host}: "
                 f"{_stderr_text(ship_skill).strip()}"
@@ -608,6 +628,7 @@ def run_remote_agent(
             timeout=PI_HELP_TIMEOUT_SECONDS,
         )
         if ship.returncode != 0:
+            _cleanup_remote_tmp(remote, remote_tmp, run_func=run_func)
             raise AgentRunnerError(
                 f"Failed to ship plane helper to {remote.user}@{remote.host}: "
                 f"{_stderr_text(ship).strip()}"
@@ -701,20 +722,21 @@ def run_remote_agent(
             exit_code,
             duration_ms,
         )
-        silent_result = _silent_exit_result(
-            issue_id=issue.id,
-            exit_code=exit_code,
-            duration_ms=duration_ms,
-            stdout=stdout,
-            stderr=stderr,
-            message=(
-                "remote pi RPC exited 0 with empty stdout/stderr; treating as failure "
-                "(provider/model/auth or SSH misconfiguration can look successful)"
-            ),
-            log_event="remote_pi_silent_exit",
-        )
-        if silent_result is not None:
-            return silent_result
+        if drain.event_exit_code is None:
+            silent_result = _silent_exit_result(
+                issue_id=issue.id,
+                exit_code=exit_code,
+                duration_ms=duration_ms,
+                stdout=stdout,
+                stderr=stderr,
+                message=(
+                    "remote pi RPC exited 0 with empty stdout/stderr; treating as failure "
+                    "because SSH closed before an agent_end event"
+                ),
+                log_event="remote_pi_silent_exit",
+            )
+            if silent_result is not None:
+                return silent_result
         return AgentResult(exit_code, duration_ms, False, stdout, stderr)
     finally:
         if run_id:
@@ -726,15 +748,7 @@ def run_remote_agent(
             with suppress(OSError):
                 pidfile.unlink(missing_ok=True)
         # Best-effort remote cleanup; the SSH channel close already SIGHUPs pi.
-        if remote_tmp:
-            with suppress(Exception):
-                run_func(
-                    _ssh_base_args(remote) + [f"rm -rf {shlex.quote(remote_tmp)}"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=PI_HELP_TIMEOUT_SECONDS,
-                )
+        _cleanup_remote_tmp(remote, remote_tmp, run_func=run_func)
 
 
 def run_pi_rpc_agent(
@@ -906,17 +920,20 @@ def reap_orphan_rpc_processes(
     unlink_func: Callable[[Path], object] | None = None,
     clear_stale_queues: Callable[..., int] | None = None,
 ) -> int:
-    """Kill orphan `pi --mode rpc` processes left behind by a prior scheduler.
+    """Kill orphan RPC process handles left behind by a prior scheduler.
 
     Boot-time sweep (#058 orphan reaping, the RPC analogue of
     ``reap_orphan_claude_sockets``). Every pidfile under ``<runtime>/rpc`` is
     from a previous instance — the current scheduler has not launched any RPC
-    run yet. A pid is killed only when it is still alive AND its
+    run yet. Local pi RPC runs record the pi process pid; remote RPC runs record
+    the local SSH client pid, so killing it closes the channel and should SIGHUP
+    the remote pi process. A pid is killed only when it is still alive AND its
     ``/proc/<pid>/stat`` start-time still matches the value recorded in the
     pidfile at launch; that start-time guard survives pid reuse and pi masking
     its own argv (its cmdline shows just ``pi``), which a cmdline check cannot.
     The pidfile is removed either way. The run reconciler independently fails
-    the stale Run rows, so this only cleans up leaked OS processes.
+    the stale Run rows. Remote-side pi processes that survive SSH death remain
+    outside the local boot sweep's reach.
     """
     alive_checker = is_alive or pid_alive
     start_time_reader = read_start_time or pid_start_time
@@ -1230,6 +1247,11 @@ class _DrainResult:
     event_exit_code: int | None
     timed_out: bool
     steer_offset: int
+
+
+def _close_rpc_stdin(process: RpcProcessLike) -> None:
+    with suppress(Exception):
+        process.stdin.close()
 
 
 def _send_rpc_abort(process: RpcProcessLike) -> None:

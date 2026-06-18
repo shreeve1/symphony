@@ -343,16 +343,34 @@ def test_run_remote_agent_forwards_queued_abort(tmp_path: Path) -> None:
 
 
 def test_run_remote_agent_silent_exit_is_failure(tmp_path: Path) -> None:
+    # SSH closed before any agent_end event and before the local handle saw an
+    # exit code (poll() -> None): drain.event_exit_code stays None, so the empty
+    # exit is treated as a failure (137).
     result = run_remote_agent(
         _config(tmp_path),
         _issue(),
         "go",
         binding=_remote_binding(),
         run_func=lambda *a, **k: Completed(returncode=0),
-        popen_factory=lambda *a, **k: FakeRpcProcess([]),
+        popen_factory=lambda *a, **k: FakeRpcProcess([], returncode=None),
     )
     assert result.exit_code == 137
     assert "empty stdout/stderr" in result.stderr
+
+
+def test_run_remote_agent_clean_empty_exit_is_not_failure(tmp_path: Path) -> None:
+    # Stream closed with the process reporting a clean exit code (poll() -> 0):
+    # drain.event_exit_code is 0, so the empty exit is NOT a silent failure.
+    result = run_remote_agent(
+        _config(tmp_path),
+        _issue(),
+        "go",
+        binding=_remote_binding(),
+        run_func=lambda *a, **k: Completed(returncode=0),
+        popen_factory=lambda *a, **k: FakeRpcProcess([], returncode=0),
+    )
+    assert result.exit_code == 0
+    assert result.timed_out is False
 
 
 def test_run_remote_agent_timeout_terminates(tmp_path: Path) -> None:
