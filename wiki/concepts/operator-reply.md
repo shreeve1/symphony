@@ -3,11 +3,12 @@ title: Operator reply comments
 type: concept
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-18
 sources:
   - web/api/main.py
   - prompt_renderer.py
   - web/frontend/components/IssueFlyout.tsx
+  - web/frontend/tests/reply.spec.ts
   - web/api/tests/test_reply.py
   - web/api/wake_signal.py
   - scheduler.py
@@ -73,7 +74,7 @@ Historical (now the re-feed floor, not the only mode): pi was invoked one-shot (
 
 ## Frontend
 
-`web/frontend/lib/api.ts` adds `postReply(id, body)`. `IssueFlyout.tsx` renders a `ReplyComposer` below the existing raw-blob `MarkdownEditor` on the comments tab (the raw editor stays intact). Send is gated via `isActiveRunState`: disabled with a hint when the issue is `running`/active-run ("Agent is running — reply when it parks for review.") or `todo` ("Already queued to run."), and on empty draft. On success it clears the draft and invalidates `["issue", id]` + `["issues", binding_name]`; a 409 surfaces as a transient `reply-error` [source: web/frontend/components/IssueFlyout.tsx].
+`web/frontend/lib/api.ts` adds `postReply(id, body)`. `IssueFlyout.tsx` renders a `ReplyComposer` at the top of the comments tab, above the chronological comment thread. Send is gated via `isActiveRunState`: disabled with a hint when the issue is `running`/active-run ("Agent is running — reply when it parks for review.") or `todo` ("Already queued to run."), and on empty draft. On success it clears the draft, invalidates `["issue", id]` + `["issues", binding_name]`, and calls the flyout close callback so the panel closes after a successful operator reply; failed sends do not close because the close is wired only through the mutation `onSuccess` path. The e2e reply spec asserts the successful send closes the flyout and the card moves to Todo [source: web/frontend/components/IssueFlyout.tsx] [source: web/frontend/tests/reply.spec.ts].
 
 ## Untrusted-content trade-off
 

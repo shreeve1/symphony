@@ -12,6 +12,37 @@ Append entries with this format:
 ---
 
 
+## [2026-06-18] session-update | ADR-0014 worktree commit-redispatch implemented (build)
+
+- Actor: agent
+- Inputs: `/dev-build plans/feature-worktree-done-commit-redispatch.md` build session; diff of `web/api/worktree.py`, `worktree_facade.py`, `web/api/main.py`, `docs/adr/0014-...md`, `web/api/tests/test_worktree*.py`; `plans/.feature-worktree-done-commit-redispatch.state.yml` build audit
+- Outputs: new `wiki/raw/sessions/2026-06-18-worktree-done-commit-redispatch-build.md`; updated `analyses/analysis-session-worktree-done-commit-redispatch.md` (Implementation landed section, title/frontmatter accepted); `CLAIMS.md` (+C-0250, C-0247→superseded, C-0248→superseded, C-0086 gap-closed note); `index.md`, `ROUTING.md`
+- Notes: ADR-0014 `proposed → accepted`. Shipped predicate is **dirty-only**, refining the ADR's "no commits ahead OR dirty" (C-0248) — clean-empty worktree falls through to no-op merge+teardown; partial commit re-dispatches. Silent-discard gap (C-0247) closed. pi wave audit: 0 critical / 1 warning (unguarded UPDATE, matches existing pattern; logged not gated). Full suite 926 passed; 1 pre-existing unrelated `agent_runner.py` failure. Deferred follow-up: optional atomic state-guard on `_redispatch_to_commit`/`_append_blocked_and_publish`.
+
+---
+
+
+## [2026-06-18] promotion | Worktree done-time commit-redispatch analysis
+
+- Actor: agent (Claude Code), operator-requested ("promote")
+- Inputs: `wiki/candidates/analysis-session-worktree-done-commit-redispatch.md` (lint: claim refs C-0246..C-0249 resolve, all cited source files exist, no broken links/secrets).
+- Outputs: moved candidate → `wiki/analyses/analysis-session-worktree-done-commit-redispatch.md` (`status: promoted`); `wiki/index.md` candidate queue emptied + Analyses row added; `wiki/CLAIMS.md` C-0246..C-0249 `Page` column repointed candidates→analyses; `wiki/ROUTING.md` Architecture + Decisions Pages lists + route note updated to authoritative; this log entry.
+- Notes: Promoted the analysis page as authoritative documentation of the worktree lifecycle, the silent-discard gap, and the accepted ADR-0014 design. ADR-0014 itself remains `proposed`/unbuilt; the page and C-0248 state that explicitly. No code change, no service restart, no live mutation.
+
+## [2026-06-18] session-update | Worktree feature walkthrough + ADR-0014 done-time commit-redispatch (proposed)
+
+- Actor: agent (Claude Code) + operator (James), via `/grill-me`
+- Inputs: grill-me walkthrough of the Podium worktree feature; read-only code review of `web/api/worktree.py`, `web/api/main.py:998-1390`, `scheduler/__init__.py:1699,1772`, `worktree_facade.py`, `bindings.yml`; live `git`/`sqlite3` inspection of `/home/james/symphony`; existing claims C-0007/C-0009/C-0084..C-0088.
+- Outputs: new ADR `docs/adr/0014-worktree-done-commit-redispatch.md` (`proposed`); edited `CONTEXT.md` (`Run`, `Run Worktree`, `Landing`, lifecycle bullet — worktree/landing generalized from infra-only to any binding type); new raw capture `wiki/raw/sessions/2026-06-18-worktree-done-commit-redispatch-design.md`; new candidate `wiki/candidates/analysis-session-worktree-done-commit-redispatch.md`; `wiki/CLAIMS.md` (C-0246..C-0249 added; C-0007/C-0009/C-0086 forward-noted); `wiki/index.md` candidate queue row; `wiki/ROUTING.md` Architecture + Decisions routes; this log entry.
+- Notes: Verified lifecycle and surfaced the only silent-data-loss path — an uncommitted worktree marked `done` makes `merge --ff-only` a no-op and `cleanup_worktree`'s `git worktree remove --force` deletes the work behind a green `done` (C-0247). Decision (ADR-0014, James-accepted, build deferred): at done-time re-dispatch the agent to commit its own work via the existing operator-reply→`todo` path (worktree persists, `create_worktree` idempotent), capped at 2 re-dispatches, then fall back to `blocked` — never auto-commit un-agent-committed work into `main` (C-0248). Also established: merge-on-done is operator-gated (scheduler sets `in_review`, never `done`) and not binding-type-gated, so `symphony` self-binding can enable worktrees safely (base on `main`, clean, `podium.db*` gitignored) — feature currently dormant (C-0246/C-0249). **No code implemented, no service restart, no Plane/Podium/DB mutation; no `.env` or `/home/james/symphony-host.env` read.** Candidate held (not auto-promoted) pending ADR-0014 implementation; promote ADR to `accepted` and supersede C-0247 on landing. Open follow-up: implement the guard + re-dispatch + loop-cap in `web/api/worktree.py`/`web/api/main.py` with tests, then decide whether to enable `worktree_active` on `symphony`.
+
+## [2026-06-18] session-update | Issue #51 reply send flyout auto-close
+
+- Actor: agent (Pi)
+- Inputs: Issue #51 operator report; `web/frontend/components/IssueFlyout.tsx`; `web/frontend/tests/reply.spec.ts`; `wiki/concepts/operator-reply.md`.
+- Outputs: updated `wiki/concepts/operator-reply.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0245 added); updated `wiki/log.md`.
+- Notes: Captured restored UI contract: successful operator reply send closes the Issue flyout while the backend `/reply` state flip and failed-send behavior remain unchanged. Verification: focused Playwright repro failed before fix, then `npx tsc --noEmit` and `PATH="$HOME/.local/bin:$PATH" npm run test:e2e -- reply.spec.ts flyout-auto-close.spec.ts` passed (5 tests). No secrets, env files, service restarts, or live API mutations.
+
 ## [2026-06-18] session-update | Podium skills refresh to 32-row catalog
 
 - Actor: agent (Pi)
