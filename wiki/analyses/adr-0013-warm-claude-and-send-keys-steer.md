@@ -64,8 +64,10 @@ ADR-0010 remains correct for pi: RPC `steer` is race-free by construction and is
 
 ## Soak status
 
-Implementation and review evidence is complete through #085. The manual canary/restart soak is issue #087 and remains pending; this page does not claim that live soak has completed. [source: .kanban/issues/087-MANUAL-canary-restart-soak.md]
+The manual canary/restart/live soak (issue #087) **PASSED 2026-06-18** on the live `symphony` binding (Podium smoke Issue #45, runs 81/82/83). All three behaviors were observed: warm reattach with no second ready-wait (`claude_dispatch resumed=true` + `claude_reattached`, 2s vs 13s cold), a Podium steer landing at the next turn (`claude_steer_delivered generation=1`), and terminal reap on close (`claude_persist_terminal_reaped state=done`). [source: .kanban/issues/087-MANUAL-canary-restart-soak.md] [source: wiki/raw/sessions/2026-06-18-claude-persist-canary-soak-087.md]
+
+**Deployment-contract bug found and fixed during the soak (C-0242).** Live steer/abort was accepted (HTTP 200) but never delivered, because the steer queue (`$SYMPHONY_RUNTIME_DIR/steer`, default `/tmp/symphony/steer`) was not shared between the writer `podium-api.service` (`PrivateTmp=no`) and the reader `symphony-host.service` (`PrivateTmp=yes`). Fixed by setting `SYMPHONY_RUNTIME_DIR=/run/symphony` via a drop-in on both units; the steer test passed only after the fix. This invariant applies to pi RPC steering too and is unit-config-only (not enforced in code). [source: web/api/steer_queue.py] [source: docs/adr/0013-warm-claude-session-and-send-keys-steer.md] [source: CLAUDE.md]
 
 ## Claims
 
-C-0240 in [CLAIMS.md](../CLAIMS.md). C-0176, C-0178, C-0193, and C-0239 are amended or refined by this ADR-0013 page.
+C-0240 and C-0242 in [CLAIMS.md](../CLAIMS.md). C-0176, C-0178, C-0193, and C-0239 are amended or refined by this ADR-0013 page.

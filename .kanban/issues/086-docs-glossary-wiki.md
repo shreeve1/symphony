@@ -41,6 +41,7 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 11.1–11.4.
 - Updated `wiki/index.md`, `wiki/ROUTING.md`, `wiki/log.md`, and `wiki/CLAIMS.md` with C-0240 plus ADR-0010/C-0176 amendments.
 - Recorded that manual canary/restart soak remains issue #087 and is not claimed complete here.
 - Verification command passed exactly as written; fresh Ralph review returned `RALPH_REVIEW: PASS`.
+- **Soak result (#087, 2026-06-18):** PASSED on live `symphony` binding. Smoke Issue #45 (runs 81/82/83) observed all three: warm reattach (no 2nd ready-wait), steer landing next turn (`claude_steer_delivered generation=1`), and terminal reap (`claude_persist_terminal_reaped state=done`). Soak surfaced and fixed a deployment bug — the steer queue needs a shared `SYMPHONY_RUNTIME_DIR=/run/symphony` across `podium-api.service` and `symphony-host.service` (PrivateTmp mismatch broke delivery for claude AND pi RPC). ADR-0013 `soak:` line and `CLAUDE.md` "Env locations" updated to record it.
 
 ## Blocked by
 

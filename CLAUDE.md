@@ -44,6 +44,7 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 - Dispatch model/provider for Podium bindings comes from repo-root `models.yml` (issue `preferred_model`, else the single `default: true` entry; `reasoning_effort` appends as a `:suffix`). `SYMPHONY_PI_PROVIDER`/`SYMPHONY_PI_MODEL` were removed from the unit at the 2026-06-12 cleanup; if ever set again they act only as the legacy Plane-path fallback.
 - `WorkingDirectory=/home/james/symphony` — `bindings.yml` auto-discovered at cwd; `SYMPHONY_BINDINGS_PATH` not required.
 - `SYMPHONY_LOCK_PATH` — optional; if set, `config.py` uses it as the single-instance lock file path. Currently `/run/symphony/symphony.lock` on the unit.
+- `SYMPHONY_RUNTIME_DIR` — root for the live steer/abort queue (`$SYMPHONY_RUNTIME_DIR/steer`, `web/api/steer_queue.py`); default `/tmp/symphony`. **Must resolve to the same path for BOTH `podium-api.service` (the queue writer) and `symphony-host.service` (the queue reader), or live steer/abort silently no-ops** (HTTP 200, never delivered). symphony-host has `PrivateTmp=yes`, so the default `/tmp/symphony` is namespaced per-service and the two units never share it. Set to `/run/symphony` (shared, not namespaced by `PrivateTmp`, already holds the lock) via a `runtime-dir.conf` drop-in on each unit. Added 2026-06-18 (issue #087 soak found steer broken without it). Affects pi RPC steer too.
 
 ## Required env vars (bindings mode)
 
