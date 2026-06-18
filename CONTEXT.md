@@ -55,15 +55,15 @@ The outcome of a single dispatch, declared by the agent via a `SYMPHONY_RESULT:`
 _Avoid_: "ok/failed" (the real vocabulary is done/review/blocked), "exit status" (that is one input, not the verdict itself)
 
 **Run**:
-A single dispatch of one issue to one agent — the unit a Verdict describes. For **coding bindings** the agent runs directly in the bound repo's checkout (no per-Run worktree) and owns its own git operations; Symphony only renders the prompt, runs the agent, scrapes the [[Verdict]], and transitions the issue. A Run may execute as one autonomous pass, or later as a staged pipeline (research → … → commit) where stages hand off one at a time inside the same Run.
+A single dispatch of one issue to one agent — the unit a Verdict describes. By default the agent runs directly in the bound repo's checkout and owns its own git operations; Symphony only renders the prompt, runs the agent, scrapes the [[Verdict]], and transitions the issue. Independently of [[project-binding]] type, an Issue with `worktree_active=true` executes the Run in a [[Run Worktree]] and Symphony [[Landing|lands]] it on Done; the agent still owns the commit. A Run may execute as one autonomous pass, or later as a staged pipeline (research → … → commit) where stages hand off one at a time inside the same Run.
 _Avoid_: "job" (a Run is one dispatch; the scheduler tick that may start several Runs is not itself a Run)
 
 **Run Worktree**:
-An opt-in Podium per-Issue persistent worktree controlled by the Issue's `worktree_active` column. When active, Symphony dispatches in `worktrees/<binding>/<issue_id>` on branch `podium/<binding>/<issue_id>` and leaves the worktree intact on blocked/abort paths for operator inspection. When inactive, the agent runs directly in the bound repo checkout.
+An opt-in Podium per-Issue persistent worktree controlled by the Issue's `worktree_active` column, available to any [[project-binding]] regardless of type (coding or infra). When active, Symphony dispatches in `worktrees/<binding>/<issue_id>` on branch `podium/<binding>/<issue_id>` and leaves the worktree intact on blocked/abort paths for operator inspection. When inactive, the agent runs directly in the bound repo checkout. Remote bindings (ADR-0012) force `worktree_active` off — the agent commits directly in the remote checkout over SSH.
 _Avoid_: "workspace" (a tracker-level concept), "checkout" (the shared repo checkout is the non-worktree execution path)
 
 **Landing**:
-Converging a completed Run's work back into the repo's base branch. For **coding bindings** Symphony performs no landing step — the agent commits (and pushes, if its Workflow allows) directly inside the bound repo's checkout, and the human inspects / merges from there. For **infra bindings** with `worktree_active=true`, Podium attempts a fast-forward merge into the Issue's base branch when the Issue moves to Done, then tears down the worktree. If the base checkout is dirty or FF-only merge fails, the Issue moves to Blocked and the worktree remains for operator inspection. Infra bindings without active worktrees run in the bound checkout and have no separate landing step.
+Converging a completed Run's work back into the repo's base branch. Without an active worktree Symphony performs no landing step — the agent commits (and pushes, if its Workflow allows) directly inside the bound repo's checkout, and the human inspects / merges from there. For **any binding (coding or infra) with `worktree_active=true`**, Podium attempts a fast-forward merge of the worktree branch into the Issue's base branch when the Issue moves to Done, then tears down the worktree. If the base checkout is dirty or the FF-only merge fails (base diverged / conflict), the Issue moves to Blocked and the worktree remains for operator inspection. If the worktree holds work the agent never committed, Symphony re-dispatches the agent to commit it rather than discarding it, falling back to Blocked after a retry cap (ADR-0014).
 _Avoid_: "deploy" (Landing merges a branch; what happens to infra after a merge is separate), "PR" (a PR is one optional Landing shape, not Landing itself)
 
 **Project Scaffold**:
@@ -118,7 +118,7 @@ _Avoid_: "reply" (a reply is between-Run and flips state; a Steer is mid-run and
 - A Podium issue carries a preferred **Skill**; Mode remains a compatibility bridge
 - Symphony dispatches an issue to one **Agent**, as one **Run**
 - A **Run** executes either in the bound checkout or in an opt-in **Run Worktree**; a global cap bounds how many Runs are live at once
-- A finished **Run** may trigger **Landing** when an infra issue uses an active Podium worktree
+- A finished **Run** may trigger **Landing** when an issue (coding or infra) uses an active Podium worktree
 - An issue's history lives in three stores: the **native CLI session** (verbatim, agent-owned, the [[Session Resume]] substrate and the primary memory on the resume path), **Issue Context** (agent-curated cumulative log — the re-feed floor + UI observability), and **Issue Comments** (the operator↔AI thread — human record + operator input channel). On resume only the newest operator-reply delta is injected; the session is authoritative. On the re-feed floor the session is absent and Context+Comments are re-injected — worst case equals pre-Resume behavior.
 
 ## Historical
