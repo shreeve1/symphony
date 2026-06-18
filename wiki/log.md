@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-18] session-update | Issue #086 docs glossary wiki for warm Claude sessions
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/086-docs-glossary-wiki.md`; `CONTEXT.md`; `docs/adr/0013-warm-claude-session-and-send-keys-steer.md`; `.kanban/issues/076-claude-persist-config-flag.md`–`.kanban/issues/085-frontend-claude-steer-ui.md`; `wiki/analyses/adr-0010-pi-rpc-dispatch-for-live-steering.md`; `wiki/concepts/session-resume-continuity.md`.
+- Outputs: updated `CONTEXT.md` (`Steering` and new `Warm Session` term); accepted `docs/adr/0013-warm-claude-session-and-send-keys-steer.md`; ingested `wiki/raw/adr-0013-warm-claude-session-and-send-keys-steer.md`; promoted `wiki/analyses/adr-0013-warm-claude-and-send-keys-steer.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0240 added; C-0176/C-0178/C-0193/C-0239 amended); updated `wiki/log.md`.
+- Notes: Captured ADR-0013 as accepted after #076–#085 implementation/review, while explicitly leaving manual canary/restart soak to issue #087. Verification: exact issue grep/test command passed; candidate citation lint passed; no secrets or `.env` contents read.
+
 ## [2026-06-17] session-update | Issue #083 Claude persist steering API
 
 - Actor: agent (Ralph)
