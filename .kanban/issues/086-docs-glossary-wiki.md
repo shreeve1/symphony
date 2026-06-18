@@ -1,7 +1,7 @@
 ---
 id: 086
 title: Docs, glossary, and wiki for warm Claude sessions + steering
-status: in-progress
+status: review
 blocked_by: [76, 77, 78, 79, 80, 81, 82, 83, 84, 85]
 parent: null
 priority: 0
