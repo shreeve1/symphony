@@ -29,7 +29,7 @@ const waitForReply = (page: Page) =>
 			res.ok(),
 	);
 
-test("composer posts a reply, clears the input, and the card moves to Todo", async ({
+test("composer posts a reply, closes the flyout, and the card moves to Todo", async ({
 	page,
 	problems,
 }) => {
@@ -49,13 +49,7 @@ test("composer posts a reply, clears the input, and the card moves to Todo", asy
 	await page.getByTestId("reply-send").click();
 	await replied;
 
-	// Draft clears on success, but the flyout stays open so the operator can
-	// watch the next Run append its completion summary.
-	await expect(input).toHaveValue("");
-	await expect(page.getByTestId("issue-flyout")).toBeVisible();
-	await expect(page.getByTestId("view-comments_md")).toContainText(
-		"Please continue with the next step.",
-	);
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
 
 	// Live board update flips the card into the Todo column.
 	await expect(
@@ -99,7 +93,7 @@ test("no console errors during the reply flow", async ({ page, problems }) => {
 	await page.getByTestId("reply-send").click();
 	await replied;
 
-	await expect(input).toHaveValue("");
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
 	await expect(
 		page
 			.getByTestId("column-todo")

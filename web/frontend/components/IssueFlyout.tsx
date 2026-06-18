@@ -371,7 +371,13 @@ function MetadataChips({
 // and flips the issue back to todo so the agent re-runs (server-side, atomic).
 // Sits at the top of the comments tab, above the thread, so it never gets
 // buried as Runs accumulate.
-function ReplyComposer({ issue }: { issue: IssueDetail }) {
+function ReplyComposer({
+	issue,
+	onSent,
+}: {
+	issue: IssueDetail;
+	onSent: () => void;
+}) {
 	const queryClient = useQueryClient();
 	const [draft, setDraft] = useState("");
 	const taRef = useRef<HTMLTextAreaElement>(null);
@@ -394,6 +400,7 @@ function ReplyComposer({ issue }: { issue: IssueDetail }) {
 			queryClient.invalidateQueries({
 				queryKey: ["issues", issue.binding_name],
 			});
+			onSent();
 		},
 	});
 
@@ -930,7 +937,7 @@ export function IssueFlyout({
 										// accumulate; thread below renders oldest-first,
 										// scrolled to the newest entry on open.
 										<div className="space-y-3">
-											<ReplyComposer issue={issue} />
+											<ReplyComposer issue={issue} onSent={onClose} />
 											<CommentsThread
 												issueId={issue.id}
 												source={issue.comments_md}
