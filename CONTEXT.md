@@ -16,12 +16,16 @@ _Avoid_: "the UI" (Podium is the tracker too, not just a frontend), "Symphony We
 The mapping that ties one tracker project to one git repo plus its dispatch config. The unit Symphony iterates over. A binding carries: its tracker kind (`podium` today; Plane retained only for rollback/dormant adapter compatibility), the repo path and base branch; `default_agent` (`pi` or `claude`, see [[Agent]]); a **binding_type** of `coding` or `infra` that gates several engine behaviours; an `approval.enabled` flag (off for the current bindings — and coding bindings skip the approval gate regardless); and the [[Landing]] policy. **Coding bindings** (today: `trading` and `symphony`) skip Symphony's schedule, blocked reconciler, and approval gate — the agent owns its own git operations and Symphony performs no landing step. **Infra bindings** (today: `homelab`) run all three and may project approval/schedule roles onto Podium issue columns.
 _Avoid_: "workspace" (that is a Plane-era concept above the project)
 
+**Remote Binding**:
+A Project Binding whose repo checkout lives on another trusted LAN/tailnet host and whose binding entry carries a `remote:` transport target. It remains a normal coding binding from the operator's perspective: issue prompt, preferred Skill, pi RPC session continuity, and Steering should match local coding bindings. The difference is location, not workflow — Symphony stays central while the agent process runs in the remote checkout over SSH.
+_Avoid_: "remote agent" or "symphony-remote" (there is no deployed Symphony component on the remote host), "special binding" (the target is local coding binding parity)
+
 **Mode**:
 Historical: superseded by [[Skill]] in 2026-06-Podium. Plane-era Mode values (`plan`, `build`, `execute`, `conversation`) survive only as a compatibility bridge inside the prompt renderer and scheduler until every caller speaks Skill directly.
 _Avoid_: "task type", "stage"
 
 **Agent**:
-The coding tool Symphony shells out to in order to do an issue's work. **Two are live: pi and claude**, selected per issue by the [[agent-adapter]] seam (the routing adapter resolves the issue's agent on every dispatch). pi dispatches one-shot via `--print --no-session --provider <p> --model <m>` from the bound repo's checkout directory. claude dispatches through an interactive tmux send-keys session (`--permission-mode bypassPermissions --model <m>`, empty provider, bare model id), reintroduced 2026-06-13 after having been dropped at the thin-engine cutover. The seam still lets a third agent be added without touching the engine.
+The coding tool Symphony shells out to in order to do an issue's work. **Two are live: pi and claude**, selected per issue by the [[agent-adapter]] seam (the routing adapter resolves the issue's agent on every dispatch). pi dispatches via `--mode rpc --provider <p> --model <m>` from the bound repo's checkout directory, with the one-shot `--print --no-session` path retained only as a rollback/legacy mode. claude dispatches through an interactive tmux send-keys session (`--permission-mode bypassPermissions --model <m>`, empty provider, bare model id), reintroduced 2026-06-13 after having been dropped at the thin-engine cutover. The seam still lets a third agent be added without touching the engine.
 _Avoid_: "model" (the model is a parameter of an agent, not the agent itself), "pi only" (claude is live again as of 2026-06-13)
 
 **Workflow**:

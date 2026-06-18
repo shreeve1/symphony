@@ -100,8 +100,8 @@ def scaffold_podium_binding(
             raise ValueError("remote bindings require binding_type 'coding' (v1)")
         if request.default_agent != "pi":
             raise ValueError("remote bindings require default_agent 'pi' (v1)")
-        if request.pi_mode != "one-shot":
-            raise ValueError("remote bindings require pi_mode 'one-shot' (v1)")
+        if request.pi_mode != "rpc":
+            raise ValueError("remote bindings require pi_mode 'rpc'")
 
     with connect(db_path) as connection:
         _ensure_schema(connection)
@@ -198,9 +198,7 @@ def remove_podium_binding(
             connection.commit()
 
     if not removed_from_yaml and db_action == "absent":
-        raise ValueError(
-            f"binding not found in bindings.yml or Podium DB: {name}"
-        )
+        raise ValueError(f"binding not found in bindings.yml or Podium DB: {name}")
 
     return PodiumBindingRemovalResult(
         binding_name=name,

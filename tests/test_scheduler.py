@@ -4480,13 +4480,19 @@ def test_dispatch_gate_blocks_remote_claude(tmp_path: Path) -> None:
 
 
 # T.8.2
-def test_dispatch_gate_blocks_remote_preferred_skill(tmp_path: Path) -> None:
+def test_dispatch_gate_allows_remote_preferred_skill(tmp_path: Path) -> None:
+    skill_file = tmp_path / "skills" / "some-skill" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text("---\nname: some-skill\n---\n", encoding="utf-8")
     config = _config(tmp_path)
     binding = _remote_binding(config)
-    candidate = replace(_candidate("issue-1"), preferred_skill="some-skill")
+    candidate = replace(
+        _candidate("issue-1"),
+        preferred_skill="some-skill",
+        skill_source=str(skill_file),
+    )
     _, error = scheduler._apply_dispatch_gate(candidate, binding)
-    assert error is not None
-    assert "do not support preferred_skill" in error
+    assert error is None
 
 
 # T.9.1

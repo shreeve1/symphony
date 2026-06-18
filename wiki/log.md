@@ -12,6 +12,13 @@ Append entries with this format:
 ---
 
 
+## [2026-06-18] session-update | Podium skills refresh to 32-row catalog
+
+- Actor: agent (Pi)
+- Inputs: `symphony-skills` workflow; `web/cli/podium_skills.py`; `tests/skills/test_catalog_maintenance_skills.py`; live refresh command outputs captured in `wiki/raw/sessions/2026-06-18-podium-skills-refresh-32-row-catalog.md`.
+- Outputs: live Podium `skill` table refreshed to match the default scan (32 rows); new raw capture `wiki/raw/sessions/2026-06-18-podium-skills-refresh-32-row-catalog.md`; updated `wiki/analyses/podium-skills-catalog-refresh.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0241 added, C-0136 noted as historical row-count snapshot); updated `wiki/log.md`.
+- Notes: Read-only FK preflight found no `issue.preferred_skill` blockers; live refresh added `netbird-troubleshoot` and `tralph-merge`, removed seventeen stale file-backed rows, and post-refresh diff was empty (`scanned=32 existing=32`). Verification: `uv run pytest tests/skills/test_catalog_maintenance_skills.py` passed (7 tests). No service restart, Plane API call, `.env` read, or `/home/james/symphony-host.env` read.
+
 ## [2026-06-18] session-update | Issue #086 docs glossary wiki for warm Claude sessions
 
 - Actor: agent (Ralph)
@@ -950,3 +957,12 @@ Append entries with this format:
 - Inputs: `.kanban/issues/087-MANUAL-canary-restart-soak.md`; live `symphony-host.service` + `podium-api.service`; Podium smoke Issue #45 (runs 81/82/83); `claude_runner.py`, `web/api/steer_queue.py`, `web/api/main.py`, `scheduler/__init__.py`; journal evidence.
 - Outputs: new raw session capture `wiki/raw/sessions/2026-06-18-claude-persist-canary-soak-087.md`; updated promoted page `wiki/analyses/adr-0013-warm-claude-and-send-keys-steer.md` (Soak status now PASSED + deployment bug); claim **C-0242** added; **C-0240** soak-pending note amended; `wiki/index.md` ADR-0013 row + `wiki/ROUTING.md` Continuity keywords updated; this log entry. Non-wiki: `docs/adr/0013-...md` `soak:` line + consequence bullet, `.kanban/issues/087` (status done, ACs ticked, soak result) + `.kanban/issues/086` soak note, `CLAUDE.md` "Env locations" `SYMPHONY_RUNTIME_DIR`, `~/homelab/docs/runbooks/automation/symphony.md` failure pointer, two `runtime-dir.conf` drop-ins (+ `.bak.2026-06-18`).
 - Notes: Soak PASSED on the live `symphony` binding — warm reattach (no 2nd ready-wait), steer landing next turn, reap on close all observed. Surfaced a real deployment bug: live steer/abort was accepted (HTTP 200) but never delivered because the steer queue (`$SYMPHONY_RUNTIME_DIR/steer`) was not shared between the `PrivateTmp=no` writer (`podium-api.service`) and the `PrivateTmp=yes` reader (`symphony-host.service`); affected pi RPC too. Fixed by `SYMPHONY_RUNTIME_DIR=/run/symphony` drop-in on both units. ADR-0013 stays `accepted`. Open follow-up: consider a code-side startup check for steer-queue visibility (invariant is currently unit-config-only). No `/home/james/symphony-host.env` values read.
+
+---
+
+## [2026-06-18] session-update | Issue #44 remote binding local coding parity
+
+- Actor: Pi agent (Podium issue #44)
+- Inputs: operator grill-me decision to make remote bindings match local coding binding parity; `agent_runner.py`; `scheduler/__init__.py`; `config.py`; `bindings.yml`; `skill_migration.py`; `docs/adr/0012-remote-binding-ssh-exec.md`; `CONTEXT.md`; remote/scaffold/config/scheduler tests.
+- Outputs: remote bindings now require `pi_mode: rpc`; `n8n` binding changed from one-shot to rpc; remote dispatch runs SSH-piped `pi --mode rpc`, forwards Steering records, registers the local SSH process in the RPC pidfile registry, and ships selected preferred-skill directories to the remote temp dir before passing a remote `--skill` path; scaffold docs and validation updated; ADR-0012 and glossary updated; promoted analysis/index/routing updated; claim **C-0243** added; this log entry.
+- Notes: Target is local coding binding parity, not a separate remote workflow. Remaining deferred parity gaps: remote Session Tail over SSH if needed for live remote session-file viewing, remote worktrees/merge/teardown, remote context compaction, branch dropdowns, and remote orphan sweeps beyond killing the local SSH process group. Verification: `uv run pytest tests/test_remote_agent.py tests/test_config.py tests/test_scheduler.py tests/test_dispatch_gate.py tests/skills/test_binding_scaffold.py -q` passed (231 passed); `uv run pytest tests/test_agent_runner.py tests/test_remote_agent.py -q` passed (51 passed, 1 skipped); full `uv run pytest` passed (926 passed, 2 skipped). No `/home/james/symphony-host.env` read.

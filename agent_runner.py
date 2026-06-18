@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tarfile
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -491,6 +493,21 @@ def _ssh_base_args(remote, *, reverse_port: int | None = None) -> list[str]:
     return ssh_support.ssh_base_args(remote, reverse_port=reverse_port)
 
 
+def _tar_directory_bytes(source_dir: Path) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        for child in sorted(source_dir.iterdir()):
+            archive.add(child, arcname=child.name)
+    return buffer.getvalue()
+
+
+def _stderr_text(result: CompletedLike) -> str:
+    stderr = result.stderr
+    if isinstance(stderr, bytes):
+        return stderr.decode("utf-8", "replace")
+    return str(stderr)
+
+
 def run_remote_agent(
     config: SymphonyConfig,
     issue: CandidateIssue,
@@ -499,31 +516,36 @@ def run_remote_agent(
     binding: ProjectBinding,
     plane_cli_source: Path | None = None,
     run_func: Callable[..., CompletedLike] = subprocess.run,
-    popen_factory: Callable[..., ProcessLike] | None = None,
+    popen_factory: Callable[..., RpcProcessLike] | None = None,
     kill_process_group: Callable[[int, int], object] = os.killpg,
     clock: Callable[[], float] = time.monotonic,
+    environ: dict[str, str] | None = None,
 ) -> AgentResult:
-    """Run pi one-shot on a remote host over SSH (ADR-0012, v1).
+    """Run pi RPC on a remote host over SSH (ADR-0012).
 
-    Ships the ``plane`` callback helper only for Plane bindings, then executes
-    ``ssh -R <port>:127.0.0.1:<port> user@host 'cd <repo> && ... pi --print ...'``
-    so the loopback-only tracker API stays reachable through the reverse tunnel
-    without any LAN exposure. Verdict-only: Session Tail, steering, and remote
-    orphan reaping are deferred to v2. The local SSH process is the handle —
-    killing its group closes the channel and SIGHUPs the remote agent.
+    Ships the ``plane`` callback helper only for Plane bindings and ships the
+    selected skill directory when an issue has ``preferred_skill``. Then runs
+    ``ssh -R <port>:127.0.0.1:<port> user@host 'cd <repo> && ... pi --mode rpc'``.
+    The SSH process stdin/stdout are the pi RPC pipe, so steering and session
+    resume follow the local coding-binding path.
     """
 
     remote = binding.remote
     if remote is None:
         raise AgentRunnerError("run_remote_agent called for a non-remote binding")
     if popen_factory is None:
-        popen_factory = cast(Callable[..., ProcessLike], subprocess.Popen)
+        popen_factory = cast(Callable[..., RpcProcessLike], subprocess.Popen)
 
     helper_source = plane_cli_source or Path(__file__).with_name("plane_cli.py")
     ship_plane_helper = _uses_plane_tracker(config, binding)
     helper_text = helper_source.read_text() if ship_plane_helper else ""
-    remote_tmp = f"/tmp/symphony-remote-{issue.id}" if ship_plane_helper else ""
+    skill_source = getattr(issue, "skill_source", "")
+    needs_remote_tmp = ship_plane_helper or bool(skill_source)
+    remote_tmp = f"/tmp/symphony-remote-{issue.id}" if needs_remote_tmp else ""
     started = clock()
+    source_env = os.environ if environ is None else environ
+    pidfile: Path | None = None
+    run_id = str(getattr(issue, "active_run_id", "") or "")
 
     provider = getattr(issue, "resolved_provider", "") or config.pi_provider
     model = getattr(issue, "resolved_model", "") or config.pi_model
@@ -531,23 +553,36 @@ def run_remote_agent(
     # not exist on the remote, so dispatch by basename (probe confirmed `pi` is
     # on the remote PATH). A per-binding remote pi path is a future refinement.
     pi_name = Path(config.pi_bin).name or "pi"
-    skill_source = getattr(issue, "skill_source", "")
+    remote_skill_source = ""
+    session_id = getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
+
     if skill_source:
-        # The skill_source path is a LOCAL aidev skill dir; the remote host
-        # cannot resolve it. Never pass --skill to remote pi (the dispatch gate
-        # already blocks remote preferred_skill, ADR-0012 task 8.2); this is a
-        # defense-in-depth guard. Proper remote skill support (ship the skill
-        # dir) is a documented follow-up.
-        LOGGER.info(
-            "remote_skill_skipped issue_id=%s skill_source=%s",
-            issue.id,
-            skill_source,
+        remote_skill_dir = f"{remote_tmp}/skill"
+        skill_archive = _tar_directory_bytes(Path(skill_source).parent)
+        ship_skill = run_func(
+            _ssh_base_args(remote)
+            + [
+                f"mkdir -p {shlex.quote(remote_skill_dir)} && "
+                f"tar -C {shlex.quote(remote_skill_dir)} -xf -"
+            ],
+            input=skill_archive,
+            capture_output=True,
+            check=False,
+            timeout=PI_HELP_TIMEOUT_SECONDS,
         )
+        if ship_skill.returncode != 0:
+            raise AgentRunnerError(
+                f"Failed to ship skill to {remote.user}@{remote.host}: "
+                f"{_stderr_text(ship_skill).strip()}"
+            )
+        remote_skill_source = f"{remote_skill_dir}/SKILL.md"
+
     pi_command = _build_pi_command(
         pi_name,
         provider,
         model,
-        rendered_prompt=rendered_prompt,
+        skill_source=remote_skill_source,
+        session_id=session_id,
     )
 
     port = _remote_callback_port(config.plane_api_url)
@@ -555,7 +590,7 @@ def run_remote_agent(
         repo_path=str(binding.repo_path),
         exports=_remote_exports(config, issue, binding=binding),
         pi_command=pi_command,
-        helper_dir=remote_tmp,
+        helper_dir=remote_tmp if ship_plane_helper else "",
     )
 
     if ship_plane_helper:
@@ -575,65 +610,123 @@ def run_remote_agent(
         if ship.returncode != 0:
             raise AgentRunnerError(
                 f"Failed to ship plane helper to {remote.user}@{remote.host}: "
-                f"{ship.stderr.strip()}"
+                f"{_stderr_text(ship).strip()}"
             )
 
-    process: ProcessLike | None = None
+    process: RpcProcessLike | None = None
     try:
         LOGGER.info(
-            "remote_dispatch issue_id=%s host=%s repo=%s port=%s",
+            "remote_rpc_dispatch issue_id=%s host=%s repo=%s port=%s session_id=%s",
             issue.id,
             remote.host,
             binding.repo_path,
             port,
+            session_id,
         )
         process = popen_factory(
             _ssh_base_args(remote, reverse_port=port) + [remote_command],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,
         )
-        try:
-            stdout, stderr = process.communicate(timeout=config.run_timeout_ms / 1000)
-            duration_ms = int((clock() - started) * 1000)
-            exit_code = int(process.returncode or 0)
-            LOGGER.info(
-                "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=false remote=true",
-                issue.id,
-                exit_code,
-                duration_ms,
-            )
-            silent_result = _silent_exit_result(
-                issue_id=issue.id,
-                exit_code=exit_code,
-                duration_ms=duration_ms,
-                stdout=stdout,
-                stderr=stderr,
-                message=(
-                    "remote pi exited 0 with empty stdout/stderr; treating as failure "
-                    "(provider/model/auth or SSH misconfiguration can look successful)"
-                ),
-                log_event="remote_pi_silent_exit",
-            )
-            if silent_result is not None:
-                return silent_result
-            return AgentResult(exit_code, duration_ms, False, stdout, stderr)
-        except subprocess.TimeoutExpired:
-            stdout, stderr = _terminate_process_group(
-                process,
-                kill_process_group=kill_process_group,
-            )
+        with suppress(OSError):
+            pid_dir = _rpc_pidfile_dir(source_env)
+            pid_dir.mkdir(parents=True, exist_ok=True)
+            pidfile = pid_dir / f"{process.pid}.pid"
+            pidfile.write_text(pid_start_time(process.pid), encoding="utf-8")
+        process.stdin.write(
+            json.dumps({"type": "prompt", "message": rendered_prompt}) + "\n"
+        )
+        process.stdin.flush()
+
+        deadline = started + (config.run_timeout_ms / 1000)
+        steer_queue = import_module("web.api.steer_queue") if run_id else None
+        read_queued_steers = steer_queue.read_steer_records if steer_queue else None
+        read_line, close_reader = _rpc_line_reader(process)
+        drain = _drain_rpc_events(
+            process,
+            deadline,
+            run_id,
+            read_queued_steers=read_queued_steers,
+            steer_offset=0,
+            read_line=read_line,
+            close_reader=close_reader,
+            kill_process_group=kill_process_group,
+            clock=clock,
+            source_env=source_env,
+        )
+        if drain.timed_out:
             duration_ms = int((clock() - started) * 1000)
             LOGGER.info(
                 "agent_exited issue_id=%s exit_code=-1 duration_ms=%s timed_out=true remote=true",
                 issue.id,
                 duration_ms,
             )
-            return AgentResult(-1, duration_ms, True, stdout, stderr)
+            return AgentResult(
+                -1,
+                duration_ms,
+                True,
+                "".join(drain.assistant_parts),
+                "".join(drain.stderr_parts),
+            )
+
+        try:
+            process.wait(timeout=TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            _, stderr = _terminate_process_group(
+                process,
+                kill_process_group=kill_process_group,
+            )
+            if stderr:
+                drain.stderr_parts.append(stderr)
+        else:
+            leftover_stderr = _read_remaining(process.stderr)
+            if leftover_stderr:
+                drain.stderr_parts.append(leftover_stderr)
+        duration_ms = int((clock() - started) * 1000)
+        exit_code = int(
+            drain.event_exit_code
+            if drain.event_exit_code is not None
+            else (process.returncode or 0)
+        )
+        if drain.error_seen and exit_code == 0:
+            exit_code = 1
+        stdout = "".join(drain.assistant_parts)
+        stderr = "".join(drain.stderr_parts)
+        LOGGER.info(
+            "agent_exited issue_id=%s exit_code=%s duration_ms=%s timed_out=false remote=true",
+            issue.id,
+            exit_code,
+            duration_ms,
+        )
+        silent_result = _silent_exit_result(
+            issue_id=issue.id,
+            exit_code=exit_code,
+            duration_ms=duration_ms,
+            stdout=stdout,
+            stderr=stderr,
+            message=(
+                "remote pi RPC exited 0 with empty stdout/stderr; treating as failure "
+                "(provider/model/auth or SSH misconfiguration can look successful)"
+            ),
+            log_event="remote_pi_silent_exit",
+        )
+        if silent_result is not None:
+            return silent_result
+        return AgentResult(exit_code, duration_ms, False, stdout, stderr)
     finally:
+        if run_id:
+            with suppress(Exception):
+                import_module("web.api.steer_queue").clear_steer_queue(
+                    run_id, environ=environ
+                )
+        if pidfile is not None:
+            with suppress(OSError):
+                pidfile.unlink(missing_ok=True)
         # Best-effort remote cleanup; the SSH channel close already SIGHUPs pi.
-        if ship_plane_helper:
+        if remote_tmp:
             with suppress(Exception):
                 run_func(
                     _ssh_base_args(remote) + [f"rm -rf {shlex.quote(remote_tmp)}"],
@@ -973,7 +1066,7 @@ class PiAgentAdapter:
 
 @dataclass(frozen=True)
 class RemoteAgentAdapter:
-    """Pi one-shot adapter that dispatches over SSH to a remote host (ADR-0012)."""
+    """Pi RPC adapter that dispatches over SSH to a remote host (ADR-0012)."""
 
     config: SymphonyConfig
     binding: ProjectBinding

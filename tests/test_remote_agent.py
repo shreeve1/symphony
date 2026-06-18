@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import io
+import json
+import signal
 import subprocess
+from dataclasses import replace
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -18,6 +23,8 @@ from config import ProjectBinding, RemotePolicy, SymphonyConfig
 from plane_poller import CandidateIssue
 from tracker_contract import DEFAULT_CONTRACT
 
+steer_queue = import_module("web.api.steer_queue")
+
 
 class Completed:
     def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0):
@@ -26,17 +33,37 @@ class Completed:
         self.returncode = returncode
 
 
-class FakeProcess:
-    def __init__(self, responses: list[object] | None = None, returncode: int = 0):
+class FakeRpcProcess:
+    def __init__(self, lines: list[str] | None = None, returncode: int = 0):
         self.pid = 4242
         self.returncode = returncode
-        self.responses = responses or [("agent output", "")]
+        self.stdin = io.StringIO()
+        if lines is None:
+            lines = [json.dumps({"type": "agent_end", "exit_code": returncode}) + "\n"]
+        self.stdout = io.StringIO("".join(lines))
+        self.stderr = io.StringIO("")
+        self.wait_calls: list[float | None] = []
+        self.communicate_calls: list[float | None] = []
+
+    def poll(self) -> int | None:
+        if self.stdout.tell() == len(self.stdout.getvalue()):
+            return self.returncode
+        return None
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls.append(timeout)
+        return self.returncode
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]:
-        response = self.responses.pop(0)
-        if isinstance(response, BaseException):
-            raise response
-        return response  # type: ignore[return-value]
+        self.communicate_calls.append(timeout)
+        return self.stdout.read(), self.stderr.read()
+
+
+def _rpc_done(text: str, *, exit_code: int = 0) -> list[str]:
+    return [
+        json.dumps({"type": "message_update", "delta": text}) + "\n",
+        json.dumps({"type": "agent_end", "exit_code": exit_code}) + "\n",
+    ]
 
 
 def _config(tmp_path: Path) -> SymphonyConfig:
@@ -106,9 +133,11 @@ def test_run_remote_agent_omits_plane_env_and_helper_for_podium(tmp_path: Path) 
         run_calls.append((command, kwargs))
         return Completed(returncode=0)
 
+    process = FakeRpcProcess(_rpc_done("done"))
+
     def fake_popen(command, **kwargs):
         popen_calls.append((command, kwargs))
-        return FakeProcess(responses=[("done", "")])
+        return process
 
     result = run_remote_agent(
         _config(tmp_path),
@@ -145,9 +174,15 @@ def test_run_remote_agent_omits_plane_env_and_helper_for_podium(tmp_path: Path) 
     assert "SYMPHONY_PLANE_WORKSPACE_SLUG" not in remote_command
     assert "PLANE_DASHBOARD_URL" not in remote_command
     assert "PATH=/tmp/symphony-remote-issue-27:$PATH" not in remote_command
-    # pi dispatched by basename so the remote PATH resolves it.
-    assert " pi --print --no-session" in remote_command
-    assert "'do the work'" in remote_command
+    # pi dispatched by basename so the remote PATH resolves it, using RPC parity.
+    assert " pi --mode rpc" in remote_command
+    assert "--session-id" in remote_command
+    assert "do the work" not in remote_command
+    assert popen_calls[0][1]["stdin"] is subprocess.PIPE
+    assert json.loads(process.stdin.getvalue().splitlines()[0]) == {
+        "type": "prompt",
+        "message": "do the work",
+    }
 
 
 def test_run_remote_agent_ships_helper_and_plane_env_for_plane_binding(
@@ -162,7 +197,7 @@ def test_run_remote_agent_ships_helper_and_plane_env_for_plane_binding(
 
     def fake_popen(command, **kwargs):
         popen_calls.append((command, kwargs))
-        return FakeProcess(responses=[("done", "")])
+        return FakeRpcProcess(_rpc_done("done"))
 
     run_remote_agent(
         _config(tmp_path),
@@ -188,6 +223,7 @@ def test_run_remote_agent_ships_helper_and_plane_env_for_plane_binding(
     assert "export SYMPHONY_PLANE_API_URL=http://127.0.0.1:8000;" in remote_command
     assert "export SYMPHONY_PLANE_API_KEY=fake-plane-key-for-tests;" in remote_command
     assert "PATH=/tmp/symphony-remote-issue-27:$PATH" in remote_command
+    assert " pi --mode rpc" in remote_command
 
     cleanup_cmd, _ = run_calls[-1]
     assert "rm -rf /tmp/symphony-remote-issue-27" in cleanup_cmd[-1]
@@ -211,7 +247,9 @@ def test_run_remote_agent_identity_flag(tmp_path: Path) -> None:
         "go",
         binding=binding,
         run_func=lambda *a, **k: Completed(returncode=0),
-        popen_factory=lambda c, **k: popen_calls.append(c) or FakeProcess([("x", "")]),
+        popen_factory=lambda c, **k: (
+            popen_calls.append(c) or FakeRpcProcess(_rpc_done("x"))
+        ),
     )
 
     exec_cmd = popen_calls[0]
@@ -219,14 +257,15 @@ def test_run_remote_agent_identity_flag(tmp_path: Path) -> None:
     assert "/keys/id_ed25519" in exec_cmd
 
 
-def test_run_remote_agent_does_not_append_skill(tmp_path: Path) -> None:
-    # ADR-0012 defense-in-depth: skill_source is a local aidev path the remote
-    # host cannot resolve, so --skill must never reach the remote pi argv.
-    import dataclasses
-
-    issue = dataclasses.replace(
-        _issue(), skill_source="/home/james/.claude/skills/foo/SKILL.md"
-    )
+def test_run_remote_agent_ships_skill_and_uses_remote_skill_path(
+    tmp_path: Path,
+) -> None:
+    skill_file = tmp_path / "skills" / "foo" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text("---\nname: foo\n---\n", encoding="utf-8")
+    (skill_file.parent / "asset.txt").write_text("asset\n", encoding="utf-8")
+    issue = replace(_issue(), skill_source=str(skill_file))
+    run_calls: list[tuple[list[str], dict]] = []
     popen_calls: list[list[str]] = []
 
     run_remote_agent(
@@ -234,12 +273,73 @@ def test_run_remote_agent_does_not_append_skill(tmp_path: Path) -> None:
         issue,
         "go",
         binding=_remote_binding(),
-        run_func=lambda *a, **k: Completed(returncode=0),
-        popen_factory=lambda c, **k: popen_calls.append(c) or FakeProcess([("x", "")]),
+        run_func=lambda c, **k: run_calls.append((c, k)) or Completed(returncode=0),
+        popen_factory=lambda c, **k: (
+            popen_calls.append(c) or FakeRpcProcess(_rpc_done("x"))
+        ),
     )
 
+    ship_cmd, ship_kwargs = run_calls[0]
+    assert "tar -C /tmp/symphony-remote-issue-27/skill -xf -" in ship_cmd[-1]
+    assert isinstance(ship_kwargs["input"], bytes)
     remote_command = popen_calls[0][-1]
-    assert "--skill" not in remote_command
+    assert "--skill /tmp/symphony-remote-issue-27/skill" in remote_command
+    cleanup_cmd, _ = run_calls[-1]
+    assert "rm -rf /tmp/symphony-remote-issue-27" in cleanup_cmd[-1]
+
+
+def test_run_remote_agent_forwards_queued_steer(tmp_path: Path) -> None:
+    process = FakeRpcProcess(_rpc_done("ok"))
+    environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record(
+        "run-remote-1",
+        _issue().id,
+        kind="steer",
+        message="tighten scope",
+        environ=environ,
+    )
+    issue = replace(_issue(), active_run_id="run-remote-1")
+
+    result = run_remote_agent(
+        _config(tmp_path),
+        issue,
+        "prompt",
+        binding=_remote_binding(),
+        run_func=lambda *a, **k: Completed(returncode=0),
+        popen_factory=lambda *a, **k: process,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ=environ,
+    )
+
+    assert result.exit_code == 0
+    commands = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
+    assert commands[0] == {"type": "prompt", "message": "prompt"}
+    assert {"type": "steer", "message": "tighten scope"} in commands
+
+
+def test_run_remote_agent_forwards_queued_abort(tmp_path: Path) -> None:
+    process = FakeRpcProcess(_rpc_done("ok"))
+    environ = {"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)}
+    steer_queue.write_steer_record(
+        "run-remote-2", _issue().id, kind="abort", environ=environ
+    )
+    issue = replace(_issue(), active_run_id="run-remote-2")
+
+    run_remote_agent(
+        _config(tmp_path),
+        issue,
+        "prompt",
+        binding=_remote_binding(),
+        run_func=lambda *a, **k: Completed(returncode=0),
+        popen_factory=lambda *a, **k: process,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        environ=environ,
+    )
+
+    commands = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
+    assert {"type": "abort"} in commands
 
 
 def test_run_remote_agent_silent_exit_is_failure(tmp_path: Path) -> None:
@@ -249,7 +349,7 @@ def test_run_remote_agent_silent_exit_is_failure(tmp_path: Path) -> None:
         "go",
         binding=_remote_binding(),
         run_func=lambda *a, **k: Completed(returncode=0),
-        popen_factory=lambda *a, **k: FakeProcess([("", "")]),
+        popen_factory=lambda *a, **k: FakeRpcProcess([]),
     )
     assert result.exit_code == 137
     assert "empty stdout/stderr" in result.stderr
@@ -257,12 +357,7 @@ def test_run_remote_agent_silent_exit_is_failure(tmp_path: Path) -> None:
 
 def test_run_remote_agent_timeout_terminates(tmp_path: Path) -> None:
     kills: list[tuple[int, int]] = []
-    proc = FakeProcess(
-        responses=[
-            subprocess.TimeoutExpired(cmd="ssh", timeout=1.0),
-            ("partial", "terminated"),
-        ]
-    )
+    proc = FakeRpcProcess([])
 
     result = run_remote_agent(
         _config(tmp_path),
@@ -272,11 +367,12 @@ def test_run_remote_agent_timeout_terminates(tmp_path: Path) -> None:
         run_func=lambda *a, **k: Completed(returncode=0),
         popen_factory=lambda *a, **k: proc,
         kill_process_group=lambda pid, sig: kills.append((pid, sig)),
+        clock=iter([0.0, 2.0, 2.1]).__next__,
     )
 
     assert result.timed_out is True
     assert result.exit_code == -1
-    assert kills and kills[0][0] == proc.pid
+    assert kills == [(proc.pid, signal.SIGTERM)]
 
 
 def test_run_remote_agent_ship_failure_raises(tmp_path: Path) -> None:
@@ -289,7 +385,7 @@ def test_run_remote_agent_ship_failure_raises(tmp_path: Path) -> None:
             run_func=lambda *a, **k: Completed(
                 stderr="permission denied", returncode=255
             ),
-            popen_factory=lambda *a, **k: FakeProcess(),
+            popen_factory=lambda *a, **k: FakeRpcProcess(),
         )
 
 

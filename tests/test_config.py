@@ -417,7 +417,7 @@ bindings:
     base_branch: main
     default_agent: pi
     type: coding
-    pi_mode: one-shot
+    pi_mode: rpc
     tracker: podium
     remote:
       host: 100.95.224.218
@@ -506,7 +506,7 @@ def _write_remote_binding(
     bindings_path: Path,
     *,
     binding_type: str = "coding",
-    pi_mode: str = "one-shot",
+    pi_mode: str = "rpc",
     default_agent: str = "pi",
     claude_persist: str = "",
 ) -> None:
@@ -551,10 +551,10 @@ def test_remote_binding_with_infra_type_rejected(tmp_path: Path):
         _load_remote_binding(bindings_path)
 
 
-def test_remote_binding_with_rpc_pi_mode_rejected(tmp_path: Path):
+def test_remote_binding_with_oneshot_pi_mode_rejected(tmp_path: Path):
     bindings_path = tmp_path / "bindings.yml"
-    _write_remote_binding(bindings_path, pi_mode="rpc")
-    with pytest.raises(ConfigError, match="remote bindings require 'one-shot'"):
+    _write_remote_binding(bindings_path, pi_mode="one-shot")
+    with pytest.raises(ConfigError, match="remote bindings require 'rpc'"):
         _load_remote_binding(bindings_path)
 
 
@@ -565,13 +565,13 @@ def test_remote_binding_with_claude_default_agent_rejected(tmp_path: Path):
         _load_remote_binding(bindings_path)
 
 
-def test_remote_binding_coding_oneshot_pi_parses(tmp_path: Path):
+def test_remote_binding_coding_rpc_pi_parses(tmp_path: Path):
     bindings_path = tmp_path / "bindings.yml"
     _write_remote_binding(bindings_path)
     binding = _load_remote_binding(bindings_path).bindings[0]
     assert binding.is_remote
     assert binding.binding_type == "coding"
-    assert binding.pi_mode == "one-shot"
+    assert binding.pi_mode == "rpc"
     assert binding.default_agent == "pi"
     assert binding.claude_persist is False
 

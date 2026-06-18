@@ -569,18 +569,11 @@ def _apply_dispatch_gate(
     defaults silently.
     """
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
-    if binding is not None and binding.is_remote:
-        if agent != "pi":
-            return candidate, (
-                "Dispatch blocked: remote bindings support only pi in v1 "
-                "(ADR-0012); clear the agent:claude label / preferred_agent."
-            )
-        if getattr(candidate, "preferred_skill", None):
-            return candidate, (
-                "Dispatch blocked: remote bindings do not support "
-                "preferred_skill in v1 (ADR-0012); clear preferred_skill or run "
-                "on a local binding."
-            )
+    if binding is not None and binding.is_remote and agent != "pi":
+        return candidate, (
+            "Dispatch blocked: remote bindings support only pi in v1 "
+            "(ADR-0012); clear the agent:claude label / preferred_agent."
+        )
     try:
         entry = resolve_model(
             getattr(candidate, "preferred_model", None), load_models(), agent=agent

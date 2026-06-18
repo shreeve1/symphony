@@ -97,7 +97,7 @@ def test_binding_scaffold_writes_remote_block(tmp_path: Path) -> None:
             name="n8n",
             repo_path=Path("/home/itadmin/itastack"),
             base_branch="main",
-            pi_mode="one-shot",
+            pi_mode="rpc",
             remote_host="100.95.224.218",
             remote_user="itadmin",
         ),
@@ -111,29 +111,29 @@ def test_binding_scaffold_writes_remote_block(tmp_path: Path) -> None:
     assert "identity" not in binding["remote"]
 
 
-def test_binding_scaffold_remote_requires_one_shot_pi_coding(tmp_path: Path) -> None:
+def test_binding_scaffold_remote_requires_rpc_pi_coding(tmp_path: Path) -> None:
     db_path = tmp_path / "podium.db"
     bindings_path = tmp_path / "bindings.yml"
 
-    base = dict(
-        name="bad",
-        repo_path=Path("/home/itadmin/itastack"),
-        base_branch="main",
-        remote_host="100.95.224.218",
-        remote_user="itadmin",
-    )
+    base = {
+        "name": "bad",
+        "repo_path": Path("/home/itadmin/itastack"),
+        "base_branch": "main",
+        "remote_host": "100.95.224.218",
+        "remote_user": "itadmin",
+    }
 
-    # rpc rejected for remote (v1 requires one-shot)
+    # one-shot rejected for remote (remote parity requires RPC)
     try:
         scaffold_podium_binding(
-            PodiumBindingScaffoldRequest(**base, pi_mode="rpc"),
+            PodiumBindingScaffoldRequest(**base, pi_mode="one-shot"),
             db_path=db_path,
             bindings_path=bindings_path,
         )
     except ValueError as exc:
-        assert "one-shot" in str(exc)
+        assert "rpc" in str(exc)
     else:
-        raise AssertionError("expected ValueError for remote pi_mode=rpc")
+        raise AssertionError("expected ValueError for remote pi_mode=one-shot")
 
     # host without user rejected
     try:
@@ -142,7 +142,7 @@ def test_binding_scaffold_remote_requires_one_shot_pi_coding(tmp_path: Path) -> 
                 name="bad2",
                 repo_path=Path("/home/itadmin/itastack"),
                 base_branch="main",
-                pi_mode="one-shot",
+                pi_mode="rpc",
                 remote_host="100.95.224.218",
             ),
             db_path=db_path,

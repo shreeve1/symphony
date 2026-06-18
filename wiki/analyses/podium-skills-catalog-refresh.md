@@ -3,13 +3,14 @@ title: Podium skill catalog refresh — CLI semantics, FK hazard, first live run
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-18
 sources:
   - web/cli/podium_skills.py
   - web/cli/podium.py
   - web/api/seed.py
   - .claude/skills/symphony-skills/SKILL.md
   - wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md
+  - wiki/raw/sessions/2026-06-18-podium-skills-refresh-32-row-catalog.md
 confidence: high
 tags: [podium, skills, catalog, cli, sqlite, foreign-key, operations]
 ---
@@ -45,6 +46,8 @@ Manual-row protection (`source = ''`) covers deletion only; the upsert overwrite
 50 rows after refresh: 44 added from dotfiles, 4 updated (`blueprint`, `code-review`, `diagnose`, `tdd`), `/diagnose` seed removed, manual rows `catalog-alpha`/`catalog-bravo` initially untouched. Post-run: zero pending diff vs scan; `uv run pytest tests/skills/test_catalog_maintenance_skills.py` 6 passed. [source: wiki/raw/sessions/2026-06-12-podium-skills-catalog-refresh.md]
 
 Same evening, James flagged `catalog-alpha`/`catalog-bravo` in the dropdown: they were leaked Playwright e2e fixtures, not operator rows. An older `seedSkills` version wrote them with `source=''` into the live DB (fixture strings traceable to `web/frontend/tests/skill-catalog.spec.ts`, commit `6d9f1c6`), and the `source=''` value made the refresh treat them as protected manual rows. Deleted after confirming zero FK references — final state 48 rows, zero manual rows. Current `web/frontend/tests/fixtures.ts` is isolated: `PODIUM_DB_PATH` → `web/test-results/podium-e2e.db`, rows tagged `source='e2e'` (which a live refresh would auto-delete if ever leaked, since `'e2e'` is neither manual nor in scan). [source: web/frontend/tests/fixtures.ts] [source: web/frontend/tests/skill-catalog.spec.ts]
+
+On 2026-06-18, another operator-confirmed live refresh updated the catalog to match the then-current default scan: `netbird-troubleshoot` and `tralph-merge` were added; seventeen stale file-backed rows were removed (`architecture-review`, `blueprint`, `changelog`, `code-review`, `design`, `discover`, `explore`, `gap-sweep`, `implement`, `omp-config`, `plan`, `question`, `research`, `revise`, `rpiv-merge`, `rpiv-monitor`, `triage-issue`, `validate`). A read-only FK preflight found no `issue.preferred_skill` blockers before deletion; post-refresh diff was empty with `scanned=32 existing=32`; `uv run pytest tests/skills/test_catalog_maintenance_skills.py` passed 7 tests. No service restart, Plane call, or env/secret read occurred. [source: wiki/raw/sessions/2026-06-18-podium-skills-refresh-32-row-catalog.md]
 
 ## Follow-ups
 

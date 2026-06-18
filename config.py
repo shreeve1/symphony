@@ -532,9 +532,9 @@ def _binding_from_mapping(
                 f"{prefix}.type: remote bindings require 'coding' in v1 "
                 f"(ADR-0012), got '{binding_type}'"
             )
-        if pi_mode != "one-shot":
+        if pi_mode != "rpc":
             raise ConfigError(
-                f"{prefix}.pi_mode: remote bindings require 'one-shot' in v1 "
+                f"{prefix}.pi_mode: remote bindings require 'rpc' "
                 f"(ADR-0012), got '{pi_mode}'"
             )
         if default_agent != "pi":
