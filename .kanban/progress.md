@@ -223,6 +223,7 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Persistent Claude session cleanup belongs in the scheduler poll loop only for local `claude_persist` bindings, and tmux-facing sweeps must stay off the event loop.
 **Notes for next iteration:** Issue #082 can add boot-lock semantics on top of the per-poll sweep without reimplementing issue liveness or config parsing.
 **Verification:** `uv run pytest tests/test_scheduler.py tests/test_claude_persist.py tests/test_config.py` (215 passed), `uv run python -m py_compile scheduler/__init__.py config.py`, `uv run ruff check scheduler/__init__.py config.py tests/test_scheduler.py tests/test_config.py`, touched-file LSP diagnostics clean, and fresh review `RALPH_REVIEW: PASS`.
+**Actionable review 2026-06-18:** Cleared the auto-parked unconfirmed-review blocker after a fresh review re-read `git diff ae87a2d015859a5bef8f471b27514944c9893ffc HEAD`, inspected the #081 code files, reran the exact verification command (216 passed + py_compile), checked critical LSP diagnostics clean, and found no unrelated code diff.
 
 ## #082 Lock-gated boot reaping of persistent Claude sockets — 2026-06-17
 

@@ -1,13 +1,14 @@
 ---
 id: 081
 title: Wire the Claude reaper sweep into the scheduler loop
-status: review
+status: done
 blocked_by: [80]
 parent: null
 priority: 0
 created: 2026-06-17
 updated: 2026-06-18
 actor: ralph
+action_reviewed: 2026-06-18
 ---
 
 ## What to build
@@ -40,11 +41,8 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 6.4–6.5.
 - The sweep runs through `asyncio.to_thread`; its `get_issue` closure calls the tracker adapter's single-issue `get_issue`, preserving real `state` and `latest_run_state` instead of inferring terminal state from poll absence.
 - Updated the verification command from the removed pre-#071 `scheduler.py` path to the current `scheduler/__init__.py` package entrypoint.
 - Fresh review result: `RALPH_REVIEW: PASS`.
+- Actionable review on 2026-06-18 re-ran the exact verification command, checked critical diagnostics, and confirmed the only current-worker diff was issue metadata.
 
 ## Blocked by
 
 - Blocked by #80 (needs the sweep function).
-
-## Blocker
-
-Auto-parked by review-each: the independent review worker returned no DONE sentinel (timeout, BLOCKED, or FAIL), so completion is unconfirmed. Re-run review or inspect `git diff f5f99c0468bc58e9b23b8b8680bf3c791c4e3842 HEAD` before marking done.
