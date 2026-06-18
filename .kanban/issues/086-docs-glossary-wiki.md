@@ -1,11 +1,13 @@
 ---
 id: 086
 title: Docs, glossary, and wiki for warm Claude sessions + steering
-status: review
+status: done
 blocked_by: [76, 77, 78, 79, 80, 81, 82, 83, 84, 85]
 parent: null
 priority: 0
 created: 2026-06-17
+updated: 2026-06-18
+actor: ralph
 ---
 
 ## What to build
@@ -23,13 +25,21 @@ Source: `plans/warm-claude-session-and-send-keys-steer.md` tasks 11.1–11.4.
 
 ## Acceptance criteria
 
-- [ ] `CONTEXT.md` contains a `Warm Session` term and a Claude clause in `Steering`; the stale `_Avoid_: send-keys` framing is revised.
-- [ ] A promoted `wiki/analyses/adr-0013-*.md` exists with `status: promoted`; `wiki/index.md`, `wiki/ROUTING.md`, `wiki/log.md` reference it; `wiki/CLAIMS.md` marks the `C-0176`/ADR-0010 amendment.
-- [ ] No broken wikilinks introduced (lint passes).
+- [x] `CONTEXT.md` contains a `Warm Session` term and a Claude clause in `Steering`; the stale `_Avoid_: send-keys` framing is revised.
+- [x] A promoted `wiki/analyses/adr-0013-*.md` exists with `status: promoted`; `wiki/index.md`, `wiki/ROUTING.md`, `wiki/log.md` reference it; `wiki/CLAIMS.md` marks the `C-0176`/ADR-0010 amendment.
+- [x] No broken wikilinks introduced (lint passes).
 
 ## Verification
 
 `grep -q "Warm Session" CONTEXT.md && grep -q "adr-0013" wiki/index.md wiki/ROUTING.md && grep -q "0013" wiki/CLAIMS.md && test -f wiki/analyses/adr-0013-warm-claude-and-send-keys-steer.md`
+
+## Implementation Notes
+
+- Added `Warm Session` to `CONTEXT.md` and updated `Steering` so pi RPC and persistent-Claude send-keys semantics are both explicit.
+- Ingested the accepted ADR-0013 source into `wiki/raw/` and promoted `wiki/analyses/adr-0013-warm-claude-and-send-keys-steer.md` with `status: promoted`.
+- Updated `wiki/index.md`, `wiki/ROUTING.md`, `wiki/log.md`, and `wiki/CLAIMS.md` with C-0240 plus ADR-0010/C-0176 amendments.
+- Recorded that manual canary/restart soak remains issue #087 and is not claimed complete here.
+- Verification command passed exactly as written; fresh Ralph review returned `RALPH_REVIEW: PASS`.
 
 ## Blocked by
 

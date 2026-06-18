@@ -262,3 +262,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Claude steering copy should state that steer is queued for Claude's next turn, while abort interrupts the current turn now via Esc.
 **Verification:** `cd web/frontend && pnpm test:e2e tests/steer-flyout.spec.ts` (5 passed); touched-file LSP diagnostics had only the pre-existing Next client-props serialization warning on `IssueFlyout.onClose`.
 **Actionable review:** Initial review diff from `4c92b533e165f3eb69b43be870893bbdd475bca2` to `HEAD` was empty, so the review loop implemented the missing slice, read every changed file, verified all acceptance criteria, and added `action_reviewed: 2026-06-17`.
+
+## #086 Docs, glossary, and wiki for warm Claude sessions + steering — 2026-06-18
+
+**What changed:** Updated `CONTEXT.md` with the `Warm Session` term and persistent-Claude steering semantics, ingested ADR-0013 as a raw wiki source, promoted the ADR-0013 analysis page, and amended index/routing/log/claims entries.
+**Files:** `CONTEXT.md`, `wiki/raw/adr-0013-warm-claude-session-and-send-keys-steer.md`, `wiki/analyses/adr-0013-warm-claude-and-send-keys-steer.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md`, `wiki/log.md`, `.kanban/issues/086-docs-glossary-wiki.md`.
+**Decisions:** ADR-0013 is documented as accepted for the implemented #076–#085 behavior; manual canary/restart soak remains issue #087 and is not claimed complete by #086.
+**Conventions established:** Use `Warm Session` for issue-scoped persistent Claude tmux sessions; describe normal Claude steer as next-turn send-keys append and Claude abort as the interrupt path.
+**Notes for next iteration:** Issue #087 can perform the manual canary/restart soak and should update the ADR/wiki only with live soak evidence it actually observes.
+**Verification:** Exact issue command passed; markdown link lint passed; touched-file LSP diagnostics unavailable for markdown but produced no diagnostics; fresh review `RALPH_REVIEW: PASS`.
