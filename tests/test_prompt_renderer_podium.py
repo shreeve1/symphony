@@ -20,7 +20,7 @@ def test_skill_to_mode_projection_table() -> None:
     assert mode_for_skill(None) == "execute"
 
 
-def test_podium_render_prompt_reads_comments_and_context_without_truncation(
+def test_podium_render_prompt_reads_comments_without_truncation_and_omits_context(
     tmp_path: Path,
 ) -> None:
     workflow = tmp_path / "WORKFLOW.md"
@@ -43,8 +43,9 @@ def test_podium_render_prompt_reads_comments_and_context_without_truncation(
     assert "mode=plan" in prompt
     assert long_comments in prompt
     assert "[Earlier previous comments truncated]" not in prompt
-    assert "Prior run details < /issue_context>" in prompt
-    assert "## Issue Context" in prompt
+    # context_md is dormant: no longer injected into Podium prompts.
+    assert "Prior run details" not in prompt
+    assert "## Issue Context" not in prompt
     assert "Do podium work" in prompt
 
 
@@ -369,7 +370,8 @@ def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
     assert "mode=plan" in full
     assert "# POD-15: Fresh issue" in full
     assert "This is the description" in full
-    assert "Context content" in full
+    # context_md is dormant: present on the dataclass but not rendered.
+    assert "Context content" not in full
     assert "<previous_comments>" in full
     assert "First, invoke the `dev-plan` skill" in full
     assert "Repo policy" in full

@@ -1,9 +1,9 @@
 ---
 title: Podium #026 — engine-built Issue Context compaction
 type: analysis
-status: promoted
+status: superseded
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-06-18
 sources:
   - context_compaction.py
   - scheduler.py
@@ -14,11 +14,24 @@ sources:
   - tests/test_context_compaction.py
   - tests/test_dispatch_compaction.py
   - web/api/tests/test_context_compaction.py
+  - wiki/raw/sessions/2026-06-18-retire-context-md-refeed-floor.md
 confidence: high
-tags: [podium, context-compaction, scheduler, issue-context, alembic]
+tags: [podium, context-compaction, scheduler, issue-context, alembic, retired]
 ---
 
 # Podium #026 — engine-built Issue Context compaction
+
+> **RETIRED 2026-06-18.** Context compaction and the `context_md` prompt re-feed
+> floor were retired (`plans/retire-context-md-refeed-floor.md`). `context_md` is
+> no longer injected into prompts, `context_compaction.py` is deleted, automatic
+> scheduler compaction (`_maybe_compact_context`) and the manual
+> `POST /api/issues/{id}/compact` endpoint are gone, and
+> `PodiumTrackerAdapter.replace_context`/`context_compaction_settings` are removed.
+> `context_md` remains a dormant stored column (no schema-destructive migration);
+> `binding_settings.context_compact_*` columns and revision
+> `0002_context_compaction_settings` survive but are inert. See the Retirement
+> section below and **C-0244**; claims **C-0095/C-0096/C-0097/C-0098** are
+> superseded. The sections below describe the now-removed V1 design for history.
 
 ## Summary
 
@@ -52,6 +65,22 @@ ADR-0005 described Issue Context compaction as having "zero schema impact." The 
 
 Implementation verification passed with `uv run pytest`: 563 passed, 1 skipped. Touched-file LSP diagnostics reported no errors. Fresh review inspected `git diff 981a2e9501af261ca56744edcef06c68fc73345a HEAD`, read every changed file, ran `uv run pytest`, compiled touched Python files, confirmed clean git status, and returned `RALPH_REVIEW: PASS`.
 
+## Retirement (2026-06-18)
+
+`plans/retire-context-md-refeed-floor.md` retired this feature. The driver: operator interaction moved to comments, session continuity is native CLI resume where possible, and Session tab/run logs cover observability — so `context_md` in prompts created a duplicate memory surface plus an extra pre-dispatch agent invocation and compaction failure modes.
+
+Removed:
+
+- `prompt_renderer.render_issue_context_block(...)` injection and the function itself — `context_md` no longer enters Podium prompts. [source: prompt_renderer.py]
+- `scheduler/__init__._maybe_compact_context`, `SchedulerContextCompactionError`, the `context_compaction` import, and the `context-compaction-failed` dispatch outcome. [source: scheduler/__init__.py]
+- `POST /api/issues/{id}/compact` + `_compact_issue_context` (route now 404/405). [source: web/api/main.py] [source: web/api/tests/test_context_compaction.py]
+- `context_compaction.py` and `tests/test_context_compaction.py` (deleted).
+- `PodiumTrackerAdapter.replace_context` and `context_compaction_settings`. [source: tracker_podium.py]
+
+Kept (dormant compatibility): the `context_md` column (`web/api/schema.py`), `IssueData.context_md`, `PodiumTrackerAdapter.append_context`/`_append_context` (the scheduler still appends each run's output to `context_md` for storage/observability, not compaction), the `compaction_agent_runner` dispatch parameter, and the `binding_settings.context_compact_*` columns + revision `0002_context_compaction_settings`. No schema-destructive migration was added. [source: web/api/schema.py] [source: scheduler/__init__.py] [source: wiki/raw/sessions/2026-06-18-retire-context-md-refeed-floor.md]
+
+Verification: `uv run pytest` → 917 passed, 2 skipped; 10 files changed, +40/−692. [source: wiki/raw/sessions/2026-06-18-retire-context-md-refeed-floor.md]
+
 ## Claims
 
-C-0095 .. C-0098 in [CLAIMS.md](../CLAIMS.md).
+C-0095 .. C-0098 in [CLAIMS.md](../CLAIMS.md) — **all superseded by C-0244** (2026-06-18 retirement).

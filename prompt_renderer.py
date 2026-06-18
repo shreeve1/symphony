@@ -184,20 +184,6 @@ def render_previous_comments_block(
     )
 
 
-def render_issue_context_block(context_text: str) -> str:
-    context = context_text.strip()
-    if not context:
-        return ""
-    escaped = _escape_untrusted_block(context)
-    return (
-        "## Issue Context\n"
-        "The following Podium Issue Context is AI-managed continuity from prior runs.\n\n"
-        "<issue_context>\n"
-        f"{escaped}\n"
-        "</issue_context>"
-    )
-
-
 def _render_schedule_context(issue: IssueData) -> str:
     if not issue.schedule_not_before:
         return ""
@@ -281,9 +267,6 @@ def render_prompt(
         )
         if comments_block:
             rendered = f"{rendered}\n\n{comments_block}"
-        context_block = render_issue_context_block(issue.context_md)
-        if context_block:
-            rendered = f"{rendered}\n\n{context_block}"
 
     issue_block = (
         f"<issue>\n"

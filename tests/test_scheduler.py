@@ -4382,32 +4382,6 @@ def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
     )
 
 
-# T.6.3
-@pytest.mark.asyncio
-async def test_maybe_compact_context_early_returns_for_remote(
-    tmp_path: Path,
-) -> None:
-    config = _config(tmp_path)
-    binding = _remote_binding(config)
-
-    class _CompactAdapter:
-        stores_context = True
-
-        def replace_context(self, *a, **k):  # pragma: no cover - must not run
-            raise AssertionError("compaction ran for a remote binding")
-
-    candidate = replace(_candidate("issue-1"), context_md="x" * 200_000)
-    result = await scheduler._maybe_compact_context(
-        config,
-        cast(TrackerAdapter, _CompactAdapter()),
-        candidate,
-        lambda issue, prompt: AgentResult(0, 1, False),
-        now=lambda: datetime.now(UTC),
-        binding=binding,
-    )
-    assert result is candidate
-
-
 # T.6.4
 @pytest.mark.asyncio
 async def test_prepare_resume_candidate_local_unchanged(

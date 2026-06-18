@@ -3,11 +3,12 @@ title: Prompt renderer
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-06-12
+updated: 2026-06-18
 sources:
   - prompt_renderer.py
   - skill_mode_map.py
   - tests/test_prompt_renderer_podium.py
+  - wiki/raw/sessions/2026-06-18-retire-context-md-refeed-floor.md
 confidence: high
 tags: [prompt-renderer, workflow, variable-substitution, schedule-context, podium, skill-mode-map]
 ---
@@ -30,9 +31,9 @@ Variable substitution currently maps only the legacy template variables (`id`, `
 
 `_escape_issue_content` prevents `</issue>` from closing the rendered issue block [source: prompt_renderer.py#72-73]. `_escape_untrusted_block` escapes `</issue>`, `</previous_comments>`, and `</issue_context>` for comment/context blocks [source: prompt_renderer.py#76-81].
 
-`render_previous_comments_block(comments_text, *, truncate=True, flag_operator_replies=False)` preserves Plane behavior by default: it strips empty input, tail-truncates to `_PREVIOUS_COMMENTS_MAX_CHARS = 12000`, prepends `[Earlier previous comments truncated]` when truncating, and wraps content in `<previous_comments>` [source: prompt_renderer.py#19,109-124]. Podium calls the same helper with `truncate=False`, because engine-built compaction owns Podium size control [source: prompt_renderer.py#182-185]. The keyword-only `flag_operator_replies` (Podium path only) appends, after the untrusted-context caveat, a directive that blocks headed `### Operator Reply` are the operator's directives and the most recent one is the current request to act on, while other comment text stays untrusted; the Plane path leaves it `False` and is byte-for-byte unchanged [source: prompt_renderer.py#109-124,182-185]. See [Operator reply comments](operator-reply.md).
+`render_previous_comments_block(comments_text, *, truncate=True, flag_operator_replies=False)` preserves Plane behavior by default: it strips empty input, tail-truncates to `_PREVIOUS_COMMENTS_MAX_CHARS = 12000`, prepends `[Earlier previous comments truncated]` when truncating, and wraps content in `<previous_comments>` [source: prompt_renderer.py]. Podium calls the same helper with `truncate=False` so the full operator/comment continuity surface is preserved [source: prompt_renderer.py]. The keyword-only `flag_operator_replies` (Podium path only) appends, after the untrusted-context caveat, a directive that blocks headed `### Operator Reply` are the operator's directives and the most recent one is the current request to act on, while other comment text stays untrusted; the Plane path leaves it `False` and is byte-for-byte unchanged [source: prompt_renderer.py]. See [Operator reply comments](operator-reply.md).
 
-`render_issue_context_block(context_text)` wraps Podium Issue Context in a dedicated `## Issue Context` / `<issue_context>` block and escapes closing tags [source: prompt_renderer.py#127-138].
+> **RETIRED 2026-06-18 (C-0244):** `render_issue_context_block` and the `context_md`/`## Issue Context` prompt block were removed. `context_md` is no longer injected into any Podium prompt; `comments_md` is the sole Symphony-managed prompt continuity surface for non-resumed dispatch. `IssueData.context_md` remains a dormant field (stored/serialized only). `_escape_untrusted_block` still defensively escapes `</issue_context>` even though no context block is emitted [source: prompt_renderer.py] [source: wiki/raw/sessions/2026-06-18-retire-context-md-refeed-floor.md].
 
 ## Schedule context
 
@@ -61,14 +62,13 @@ Podium path:
 2. Loads and substitutes `WORKFLOW.md`.
 3. Appends schedule context for non-coding bindings.
 4. Appends non-truncated `comments_md` through the previous-comments block.
-5. Appends `context_md` through the Issue Context block.
-6. Appends the final `<issue>` block [source: prompt_renderer.py#171-197].
+5. Appends the final `<issue>` block [source: prompt_renderer.py]. (The former step that appended `context_md` through an Issue Context block was removed 2026-06-18 — C-0244.)
 
 The final `<issue>` block remains last and escapes `name` + `description` [source: prompt_renderer.py#190-197].
 
 ## Test coverage
 
-`tests/test_prompt_renderer_podium.py` verifies the Skill→Mode table, Podium direct reads from `comments_md`/`context_md`, no Podium comment truncation, missing/unknown skill defaulting to `execute`, and Plane-path regression behavior [source: tests/test_prompt_renderer_podium.py#9-85].
+`tests/test_prompt_renderer_podium.py` verifies the Skill→Mode table, that Podium prompts include `comments_md` but **not** `context_md` (dormant), no Podium comment truncation, missing/unknown skill defaulting to `execute`, and Plane-path regression behavior [source: tests/test_prompt_renderer_podium.py].
 
 ## Notes / known divergences
 

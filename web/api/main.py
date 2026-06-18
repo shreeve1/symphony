@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib.util
-import inspect
 import logging
 import os
 import sqlite3
@@ -12,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
@@ -84,53 +82,12 @@ touch_wake_sentinel = _wake_signal.touch_wake_sentinel
 write_steer_record = _steer_queue.write_steer_record
 
 
-def _load_engine_main_for_legacy_app_dir() -> Any:
-    """Load repo-root main.py when this file is imported as `main`.
-
-    `uvicorn main:app` from `web/api` binds this module to sys.modules["main"],
-    so a normal `from main import build_binding_runtime` would import this
-    partially-initialized API module instead of the scheduler entrypoint.
-    """
-    repo_root = Path(__file__).resolve().parents[2]
-    spec = importlib.util.spec_from_file_location(
-        "_symphony_engine_main", repo_root / "main.py"
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load scheduler entrypoint")
-    module = importlib.util.module_from_spec(spec)
-    import sys
-
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 try:
-    from config import SymphonyConfig
-    from context_compaction import estimate_tokens, maybe_compact
-
-    if __name__ == "main":  # uvicorn main:app from web/api
-        build_binding_runtime = (
-            _load_engine_main_for_legacy_app_dir().build_binding_runtime
-        )
-    else:
-        from main import build_binding_runtime
-
     _model_catalog = import_module("model_catalog")
 except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from config import SymphonyConfig  # type: ignore[no-redef]
-    from context_compaction import estimate_tokens, maybe_compact  # type: ignore[no-redef]
-
-    if __name__ == "main":
-        build_binding_runtime = (
-            _load_engine_main_for_legacy_app_dir().build_binding_runtime
-        )
-    else:
-        from main import build_binding_runtime  # type: ignore[no-redef]
-
     _model_catalog = import_module("model_catalog")
 
 
@@ -966,92 +923,6 @@ def get_issue(
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
     return _row(row)
-
-
-@app.post("/api/issues/{issue_id}/compact")
-async def compact_issue_context(
-    issue_id: int,
-    connection: sqlite3.Connection = Depends(get_connection),
-) -> dict[str, Any]:
-    _get_issue_or_404(connection, issue_id)
-    return await _compact_issue_context(issue_id)
-
-
-async def _compact_issue_context(issue_id: int) -> dict[str, Any]:
-    from tracker_types import CandidateIssue
-
-    config = SymphonyConfig.from_env()
-    with connect() as connection:
-        row = connection.execute(
-            "SELECT * FROM issue WHERE id = ?", (issue_id,)
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="issue not found")
-    binding_name = str(row["binding_name"] or "")
-    binding = next(
-        (item for item in config.bindings if item.name == binding_name), None
-    )
-    if binding is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"binding {binding_name!r} is not configured for compaction",
-        )
-    # Context compaction is deferred for remote bindings (ADR-0012): the
-    # compaction agent's cwd would be a remote repo_path. Routing it through
-    # RemoteAgentAdapter is a documented follow-up; refuse here instead.
-    if _is_remote_binding(binding_name):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"context compaction is not supported for remote binding "
-                f"{binding_name!r} (ADR-0012)"
-            ),
-        )
-    runtime = build_binding_runtime(config, binding)
-    adapter = runtime.adapter
-    if not getattr(adapter, "stores_context", False):
-        raise HTTPException(status_code=422, detail="tracker does not store context")
-    settings_fn = getattr(adapter, "context_compaction_settings", None)
-    settings = {"threshold_tokens": 16_000, "keep_recent_runs": 3}
-    if callable(settings_fn):
-        settings_result = settings_fn(binding_name)
-        if inspect.isawaitable(settings_result):
-            settings_result = await settings_result
-        if isinstance(settings_result, dict):
-            if "threshold_tokens" in settings_result:
-                settings["threshold_tokens"] = int(settings_result["threshold_tokens"])
-            if "keep_recent_runs" in settings_result:
-                settings["keep_recent_runs"] = int(settings_result["keep_recent_runs"])
-    issue = CandidateIssue(
-        id=str(row["id"]),
-        identifier=str(row["id"]),
-        name=str(row["title"] or ""),
-        description=str(row["description"] or ""),
-        labels=(),
-        created_at=str(row["created_at"] or ""),
-        comments_md=str(row["comments_md"] or ""),
-        context_md=str(row["context_md"] or ""),
-        preferred_skill=row["preferred_skill"],
-        worktree_active=bool(row["worktree_active"] or False),
-        base_branch=str(row["base_branch"] or ""),
-        binding_name=binding_name,
-    )
-    compacted = await asyncio.to_thread(
-        maybe_compact,
-        issue,
-        binding,
-        runtime.agent_adapter,
-        threshold_tokens=int(settings["threshold_tokens"]),
-        keep_recent_runs=int(settings["keep_recent_runs"]),
-    )
-    changed = compacted != issue.context_md
-    if changed:
-        await cast(Any, adapter).replace_context(str(issue_id), compacted)
-    return {
-        "issue_id": issue_id,
-        "compacted": changed,
-        "token_count": estimate_tokens(compacted),
-    }
 
 
 @app.patch("/api/issues/{issue_id}")
