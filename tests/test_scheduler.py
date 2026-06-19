@@ -1195,6 +1195,50 @@ async def test_approval_gate_ignores_benign_approval_phrases(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "policy_phrase",
+    [
+        "destructive actions without explicit approval",
+        "destructive actions without James approval",
+    ],
+)
+async def test_approval_gate_does_not_override_explicit_result_summary(
+    tmp_path: Path, policy_phrase: str
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    stdout = (
+        "SYMPHONY_RESULT: done\n"
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        f"Policy note mentions {policy_phrase}.\n"
+        "SYMPHONY_SUMMARY_END"
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+    assert not any(
+        "operator approval is required" in c["comment_html"]
+        for c in transport.comments["issue-1"]
+    )
+    assert any(
+        f"Policy note mentions {policy_phrase}." in c["comment_html"]
+        for c in transport.comments["issue-1"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_build_mode_follows_normal_flow(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["build-1"] = _issue("build-1", labels=[PlaneLabel.BUILD.value])

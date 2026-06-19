@@ -1574,9 +1574,12 @@ async def _classify_terminal(
         if scheduled_after_agent is not None:
             return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
+    verdict = _parse_result_marker(stdout)
+    summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+    question = _extract_question(result, secrets, include_stderr=parse_stderr)
+
     if _hit_permission_gate(stdout, gate_stderr):
         msg = "Agent could not complete because required tool access was denied."
-        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
         await _finish_run_record(
@@ -1603,9 +1606,8 @@ async def _classify_terminal(
         )
         return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
-    if _hit_approval_gate(stdout, gate_stderr):
+    if verdict is None and question is None and _hit_approval_gate(stdout, gate_stderr):
         msg = "Agent could not complete because operator approval is required."
-        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
         await _finish_run_record(
@@ -1631,10 +1633,6 @@ async def _classify_terminal(
             dashboard_url=_du,
         )
         return TickResult(True, "approval-gate", candidate.id, mode=mode)
-
-    verdict = _parse_result_marker(stdout)
-    summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
-    question = _extract_question(result, secrets, include_stderr=parse_stderr)
 
     if verdict == "blocked":
         if summary:

@@ -3,7 +3,7 @@ title: "#046 Unify agent output contract and clean the comment stream"
 type: analysis
 status: promoted
 created: 2026-06-13
-updated: 2026-06-15
+updated: 2026-06-19
 sources:
   - .kanban/issues/046-unified-output-contract.md
   - prompt_renderer.py
@@ -17,6 +17,7 @@ sources:
   - wiki/raw/sessions/2026-06-13-unified-output-contract.md
   - wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md
   - wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md
+  - wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md
   - .kanban/issues/052-question-park.md
 confidence: high
 tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflow]
@@ -39,6 +40,12 @@ Issue #046 collapses the agent end-of-run contract into one engine-owned source 
 `scheduler._parse_question_block(*streams)` returns the last `SYMPHONY_QUESTION_BEGIN` / `SYMPHONY_QUESTION_END` block, strips ANSI/marker lines, and `_extract_question` redacts secrets before bounding with the same summary bound [source: scheduler.py]. In `run_tick`, a question block after a clean agent exit records the Run as `succeeded` with verdict `question`, posts `**Symphony question:**` with the extracted text, transitions the Issue to `in_review`, and notifies review; `SYMPHONY_RESULT: blocked` still takes the unchanged blocked path before question handling [source: scheduler.py; source: tests/test_scheduler.py; source: .kanban/issues/052-question-park.md]. This makes Question Park a third terminal outcome of the shared output contract, not a new issue state or separate state machine.
 
 **Known live drift (2026-06-15):** `symphony` Issue `25` / Run `36` showed that the scheduler's `verdict="question"` persistence path does not match the Podium schema: `run.verdict` and `issue.latest_verdict` still allow only `done|review|blocked`, so `_finish_run_record` raised a SQLite CHECK error after a clean agent exit. The Issue moved to `in_review` via stale-running fallback while the latest Run stayed `running`. See [podium-question-park-verdict-drift](podium-question-park-verdict-drift.md) and C-0211 [source: wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md].
+
+## Approval-gate precedence fix (2026-06-19)
+
+Podium issue #53 (`Homelab workflow`) exposed a second output-contract precedence bug: Claude runs 111 and 113 emitted explicit terminal markers (`SYMPHONY_RESULT: review` then `SYMPHONY_RESULT: done`), but the scheduler still blocked the issue because `_classify_terminal` checked `_hit_approval_gate(...)` before parsing the result/question markers. The broad approval regex matched successful policy-summary prose such as `destructive actions without explicit approval` and `destructive actions without James approval` [source: wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md].
+
+The fix preserves markerless approval-needed blocking but makes explicit contract markers authoritative for approval-gate classification: `_classify_terminal` now extracts `verdict`, `summary`, and `question` before the approval gate, and only runs `_hit_approval_gate(...)` when both `verdict is None` and `question is None`. Permission-gate handling still precedes result handling. Regression coverage asserts the two known policy phrases inside a `SYMPHONY_RESULT: done` summary transition to review instead of blocked [source: scheduler/__init__.py; source: tests/test_scheduler.py; source: wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md].
 
 ## Verbatim posting, no header wrapper
 

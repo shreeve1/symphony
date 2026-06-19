@@ -1031,3 +1031,12 @@ Append entries with this format:
 - Change made (homelab repo commit `ebdc588`, local, NOT pushed; only `CLAUDE.md` + `WORKFLOW.md` staged out of a dirty tree): added "Symphony Agent Safety Policy" section to homelab `CLAUDE.md` (baseline prohibitions, excluded services, approval-required categories); rewrote WORKFLOW.md rules 12/16/17 to pointer-reference CLAUDE.md, retaining only the autonomy posture. Render-tested via `prompt_renderer.load_workflow` (frontmatter OK, enumerations gone, pointers present).
 - Outputs: new claim **C-0255**; **C-0027** note annotated (source relocated to CLAUDE.md); `wiki/entities/workflow-homelab.md` 2026-06-19 update banner; this entry.
 - Notes: no `/home/james/symphony-host.env` read; no Plane/Podium mutation; no push; no service restart. Symphony self-binding untouched.
+
+## [2026-06-19] session-update | Approval-gate output-contract false positive
+
+- Actor: agent (Pi)
+- Inputs: operator request on issue #55 to patch issue #53 (`Homelab workflow`) repeatedly blocking; read-only evidence from `podium.db`, `/home/james/symphony/runs/111.log`, `/home/james/symphony/runs/113.log`; `scheduler/__init__.py`; `scheduler/markers.py`; `tests/test_scheduler.py`.
+- Outputs: new raw capture `wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md`; updated `wiki/analyses/podium-046-unified-output-contract.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0256 added); this log entry.
+- Notes: Fixed approval-gate precedence so explicit `SYMPHONY_RESULT` / `SYMPHONY_QUESTION` markers are authoritative for approval-gate classification; markerless approval-needed exits still block. Verification: focused approval-gate tests passed (5), ruff passed. Full `tests/test_scheduler.py` timed out at 180s after partial progress; rerun later if a full green scheduler module is needed. No secrets, env files, DB mutations, service restarts, or pushes.
+
+---
