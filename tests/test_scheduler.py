@@ -1193,6 +1193,49 @@ async def test_approval_gate_ignores_benign_approval_phrases(
 
 
 @pytest.mark.asyncio
+async def test_verdict_marker_honored_when_summary_exceeds_report_truncation(
+    tmp_path: Path,
+) -> None:
+    """Head SYMPHONY_RESULT survives a >REPORT_MAX_BYTES summary (run 120 regress).
+
+    ``_format_report`` tail-truncates stdout to REPORT_MAX_BYTES (2 KB), which
+    dropped the head verdict marker for long summaries while leaving approval
+    prose in the surviving tail — classifying a clean ``done`` run as a spurious
+    approval-gate block (issues #053/#055/#057). Classification now reads the
+    raw stream, so the marker is honored and the gate never fires.
+    """
+
+    from scheduler import REPORT_MAX_BYTES
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    filler = "Investigated the dispatch loop and reconcile lifecycle. " * 60
+    assert len(filler.encode("utf-8")) > REPORT_MAX_BYTES
+    stdout = (
+        "SYMPHONY_RESULT: done\n"
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        f"{filler}\n"
+        "Noted policy: cannot proceed without approval for destructive prune.\n"
+        "SYMPHONY_SUMMARY_END\n"
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "policy_phrase",
     [

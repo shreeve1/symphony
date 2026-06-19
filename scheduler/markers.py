@@ -54,7 +54,7 @@ def _parse_result_marker(stdout: str) -> str | None:
 
     if not stdout:
         return None
-    matches = _RESULT_MARKER_RE.findall(stdout)
+    matches = _RESULT_MARKER_RE.findall(_ANSI_ESCAPE_RE.sub("", stdout))
     if not matches:
         return None
     return matches[-1].lower()
@@ -160,10 +160,10 @@ def _parse_run_metrics(stdout: str) -> dict[str, Any]:
 def _hit_permission_gate(stdout: str, stderr: str) -> bool:
     """Return true when the executor clean-exited after denied tool access."""
 
-    return bool(_PERMISSION_GATE_RE.search(f"{stdout}\n{stderr}"))
+    return bool(_PERMISSION_GATE_RE.search(_ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}")))
 
 
 def _hit_approval_gate(stdout: str, stderr: str) -> bool:
     """Return true when a clean exit still needs operator approval."""
 
-    return bool(_APPROVAL_GATE_RE.search(f"{stdout}\n{stderr}"))
+    return bool(_APPROVAL_GATE_RE.search(_ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}")))
