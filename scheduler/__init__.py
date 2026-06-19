@@ -21,30 +21,14 @@ from claude_runner import claude_probe_failure_reason, sweep_persistent_claude_s
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
-from repo_host import repo_host_for
 from notifier import (
     TelegramNotifier,
     format_blocked_message,
     format_review_message,
 )
 from plane_adapter import PlaneRateLimitError
-from tracker_adapter import TrackerAdapter
-from tracker_types import (
-    CandidateIssue,
-    CommentPayload,
-    _extract_labels,
-    _is_state,
-    _candidate_from_issue,
-    _parse_iso,
-)
 from prompt_renderer import render_previous_comments_block
-from session_continuity import (
-    ACTION_RESUME,
-    REASON_SESSION_ABSENT,
-    ResumeDecision,
-    derive_session_id,
-    evaluate_resume_eligibility,
-)
+from repo_host import repo_host_for
 from schedule import (
     CandidateComment,
     ScheduleEvent,
@@ -52,26 +36,68 @@ from schedule import (
     ScheduleParseError,
     latest_event,
 )
+from session_continuity import (
+    ACTION_RESUME,
+    REASON_SESSION_ABSENT,
+    ResumeDecision,
+    derive_session_id,
+    evaluate_resume_eligibility,
+)
+from tracker_adapter import TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
+from tracker_types import (
+    CandidateIssue,
+    CommentPayload,
+    _candidate_from_issue,
+    _extract_labels,
+    _is_state,
+    _parse_iso,
+)
 from web.api.db import resolve_run_log_root
 
 from .markers import (
     _bound_summary_block as _bound_summary_block,
+)
+from .markers import (
     _hit_approval_gate as _hit_approval_gate,
+)
+from .markers import (
     _hit_permission_gate as _hit_permission_gate,
+)
+from .markers import (
     _parse_question_block as _parse_question_block,
+)
+from .markers import (
     _parse_result_marker as _parse_result_marker,
+)
+from .markers import (
     _parse_run_metrics as _parse_run_metrics,
+)
+from .markers import (
     _parse_summary_block as _parse_summary_block,
+)
+from .markers import (
     _parse_summary_marker as _parse_summary_marker,
 )
 from .sanitize import (
     _collect_secrets as _collect_secrets,
+)
+from .sanitize import (
     _extract_question as _extract_question,
+)
+from .sanitize import (
     _extract_summary as _extract_summary,
+)
+from .sanitize import (
     _format_previous_comment_body as _format_previous_comment_body,
+)
+from .sanitize import (
     _format_report as _format_report,
+)
+from .sanitize import (
     _format_stderr_summary as _format_stderr_summary,
+)
+from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
 
@@ -127,6 +153,13 @@ class _DispatchState:
     ``run_cap``, so total host-wide concurrent runs is ``run_cap × num_bindings``.
     Operators must size ``run_cap`` accordingly — the cap is per-project, not
     per-host.
+
+    **Remote-binding cap:** remote bindings (``binding.is_remote``) disable
+    worktree isolation, so every Run for one such binding ``cd``s into the same
+    ``repo_path`` on the remote host. To prevent concurrent writers on one git
+    working tree, ``_effective_run_cap`` clamps the semaphore to 1 for remote
+    bindings regardless of ``run_cap``, so a remote binding runs at most one Run
+    at a time.
     """
 
     semaphore: asyncio.Semaphore
@@ -139,9 +172,23 @@ class _DispatchState:
     pending_completion_bodies: dict[str, str] = field(default_factory=dict)
 
 
-def _new_dispatch_state(config: SymphonyConfig) -> _DispatchState:
+def _effective_run_cap(config: SymphonyConfig, binding: ProjectBinding | None) -> int:
+    """Per-binding concurrency cap: 1 for remote bindings, else ``run_cap``.
+
+    Remote bindings have no worktree isolation (``_worktree_run_fields``
+    returns ``{}`` for ``binding.is_remote``), so concurrent Runs would share
+    one git working tree on the remote host. Capping at 1 serializes them.
+    """
+    if binding is not None and binding.is_remote:
+        return 1
+    return config.run_cap
+
+
+def _new_dispatch_state(
+    config: SymphonyConfig, *, binding: ProjectBinding | None = None
+) -> _DispatchState:
     return _DispatchState(
-        semaphore=asyncio.Semaphore(config.run_cap),
+        semaphore=asyncio.Semaphore(_effective_run_cap(config, binding)),
         in_flight_ids=set(),
         in_flight_lock=asyncio.Lock(),
         poll_interval=config.poll_interval_ms / 1000,
@@ -1819,7 +1866,7 @@ async def run_tick(
 
     tick_binding = binding or _binding_from_config(config)
     is_coding = tick_binding is not None and tick_binding.binding_type == "coding"
-    dispatch_state = dispatch_state or _new_dispatch_state(config)
+    dispatch_state = dispatch_state or _new_dispatch_state(config, binding=tick_binding)
 
     selection = await _select_run_tick_candidate(
         config,
@@ -1922,7 +1969,7 @@ async def _dispatch_one(
     and releases the slot on every exit path. The semaphore slot is held for
     the entire Run duration so the cap correctly blocks new dispatches when full.
     """
-    state = dispatch_state or _new_dispatch_state(config)
+    state = dispatch_state or _new_dispatch_state(config, binding=binding)
     async with state.semaphore:
         try:
             result = await run_tick(
@@ -2250,14 +2297,9 @@ async def run_loop(
     next_blocked_reconcile_at = datetime.now(UTC)
     next_log_retention_at = datetime.now(UTC) + LOG_RETENTION_INTERVAL
     active_tasks: set[asyncio.Task[TickResult]] = set()
-    state = _DispatchState(
-        semaphore=asyncio.Semaphore(config.run_cap),
-        in_flight_ids=set(),
-        in_flight_lock=asyncio.Lock(),
-        poll_interval=config.poll_interval_ms / 1000,
-    )
-
     loop_binding = binding or _binding_from_config(config)
+    state = _new_dispatch_state(config, binding=loop_binding)
+    effective_cap = _effective_run_cap(config, loop_binding)
 
     while True:
         now_dt = datetime.now(UTC)
@@ -2317,7 +2359,7 @@ async def run_loop(
         # once duplicates Plane pagination/reconciler work while idle and can
         # trip Plane 429s; subsequent cycles fill remaining slots while long
         # Runs are active.
-        slots_available = config.run_cap - len(active_tasks)
+        slots_available = effective_cap - len(active_tasks)
         if slots_available > 0 and cooldown_remaining <= 0:
             dispatch_kwargs: dict[str, Any] = {}
             if binding is not None:

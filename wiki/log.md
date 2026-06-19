@@ -1040,3 +1040,12 @@ Append entries with this format:
 - Notes: Fixed approval-gate precedence so explicit `SYMPHONY_RESULT` / `SYMPHONY_QUESTION` markers are authoritative for approval-gate classification; markerless approval-needed exits still block. Verification: focused approval-gate tests passed (5), ruff passed. Full `tests/test_scheduler.py` timed out at 180s after partial progress; rerun later if a full green scheduler module is needed. No secrets, env files, DB mutations, service restarts, or pushes.
 
 ---
+
+## [2026-06-19] update | C-0251 implemented — serialize dispatch per remote binding
+
+- Actor: agent (/dev-build of plans/fix-serialize-remote-binding-dispatch.md)
+- Inputs: plans/fix-serialize-remote-binding-dispatch.md; scheduler/__init__.py; tests/test_scheduler.py; docs/adr/0012-remote-binding-ssh-exec.md; wiki/CLAIMS.md (C-0251); wiki/analyses/adr-0012-remote-binding-ssh-exec.md; wiki/index.md.
+- Outputs: scheduler/__init__.py (`_effective_run_cap` helper, `_new_dispatch_state` binding kwarg, run_loop semaphore via factory + slots clamp, docstring); tests/test_scheduler.py (5 new tests); docs/adr/0012 amendment rewritten; wiki/CLAIMS.md C-0251 body rewritten (status active, implemented 2026-06-19); wiki/analyses/adr-0012 C-0251 bullet rewritten; wiki/index.md C-0251 phrasing flipped; this log entry.
+- Notes: Implemented as a per-binding dispatch semaphore sized to 1 for `binding.is_remote` via `_effective_run_cap` + `_new_dispatch_state`; the reserve-function gate originally proposed in C-0251 was rejected as redundant under the semaphore — all wiki/ADR text updated to describe the implemented design, no remaining reference to a reserve-function gate the code does not implement. Verification: new tests pass; full scheduler module green (153). Wave-end pi audit (gpt-5.5) on the scheduler+test diff returned no findings. Restart of symphony-host.service still required for the change to take effect (deploy step, not yet run). No secrets, DB mutations, or pushes.
+
+---

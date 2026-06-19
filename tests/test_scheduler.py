@@ -14,26 +14,24 @@ import pytest
 import scheduler
 from agent_runner import AgentResult
 from config import ApprovalPolicy, ProjectBinding, RemotePolicy, SymphonyConfig
-from plane_poller import CandidateIssue
-from scheduler import (
-    reconcile_startup,
-    reconcile_stale_running,
-    run_tick,
-    _resolve_mode,
-    _extract_labels,
-    _dispatch_one,
-    _reserve_candidate,
-    _release_candidate,
-    _DispatchState,
-    _cooldown_remaining_s,
-    _record_rate_limit,
-    reconcile_pending_review,
-)
-from schedule import format_cancellation_comment, format_schedule_comment
-
 from notifier import TelegramNotifier
-
 from plane_adapter import PlaneAdapter, PlaneRateLimitError
+from plane_poller import CandidateIssue
+from schedule import format_cancellation_comment, format_schedule_comment
+from scheduler import (
+    _cooldown_remaining_s,
+    _dispatch_one,
+    _DispatchState,
+    _extract_labels,
+    _record_rate_limit,
+    _release_candidate,
+    _reserve_candidate,
+    _resolve_mode,
+    reconcile_pending_review,
+    reconcile_stale_running,
+    reconcile_startup,
+    run_tick,
+)
 from tracker_adapter import TrackerAdapter
 from tracker_contract import (
     DEFAULT_CONTRACT,
@@ -3333,6 +3331,51 @@ def test_new_dispatch_state_uses_config_poll_interval(tmp_path: Path) -> None:
     assert state.poll_interval == 5.0
 
 
+# --- _effective_run_cap tests (remote-binding serialization, C-0251) ---
+
+
+def test_effective_run_cap_remote_is_one(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_cap=3)
+    remote_binding = _remote_binding(config)
+
+    assert remote_binding.is_remote
+    assert scheduler._effective_run_cap(config, remote_binding) == 1
+
+
+def test_effective_run_cap_local_uses_run_cap(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_cap=3)
+    local_binding = _local_binding(config)
+
+    assert not local_binding.is_remote
+    assert scheduler._effective_run_cap(config, local_binding) == config.run_cap
+    assert scheduler._effective_run_cap(config, None) == config.run_cap
+
+
+def test_new_dispatch_state_remote_semaphore_serializes(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_cap=3)
+    remote_binding = _remote_binding(config)
+
+    state = scheduler._new_dispatch_state(config, binding=remote_binding)
+
+    assert state.semaphore.locked() is False
+    assert asyncio.run(_acquire_then_locked(state.semaphore)) is True
+
+
+def test_new_dispatch_state_local_semaphore_allows_run_cap(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_cap=2)
+    local_binding = _local_binding(config)
+
+    state = scheduler._new_dispatch_state(config, binding=local_binding)
+
+    assert asyncio.run(_acquire_then_locked(state.semaphore)) is False
+
+
+async def _acquire_then_locked(sem: asyncio.Semaphore) -> bool:
+    """Acquire one slot, return whether the semaphore is then locked."""
+    await sem.acquire()
+    return sem.locked()
+
+
 # --- _dispatch_one tests ---
 
 
@@ -3815,6 +3858,78 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
         )
 
     assert calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_run_loop_remote_clamps_concurrent_tasks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A remote binding clamps slots_available to 1: a second cycle must not
+    start a second _dispatch_one task while the first remote Run is in-flight,
+    even though run_cap >= 2 (exercises task [3.1])."""
+
+    class StopLoop(Exception):
+        pass
+
+    real_sleep = asyncio.sleep  # capture before monkeypatch
+    starts: list[bool] = []
+    wait_calls: list[int] = []
+    blocker = asyncio.Event()  # holds the first dispatch in-flight across cycles
+
+    async def fake_dispatch_one(
+        config,
+        adapter,
+        agent_runner,
+        render_prompt,
+        notifier,
+        run_blocked_reconciler,
+        dispatch_state=None,
+        binding=None,
+        compaction_agent_runner=None,
+    ):
+        starts.append(True)
+        await blocker.wait()  # stay in-flight so the task remains active
+        return scheduler.TickResult(False, "no-candidates")
+
+    async def fake_wait_for_tasks_or_wake(tasks, timeout):
+        # Drive the loop deterministically: yield once so the just-spawned
+        # _dispatch_one task can start and park on the blocker, report it as
+        # still pending (nothing done), and stop after the second cycle.
+        wait_calls.append(timeout)
+        await real_sleep(0)
+        if len(wait_calls) >= 2:
+            raise StopLoop
+        return set(), set(tasks), False
+
+    config = _config(tmp_path, run_cap=2, poll_interval_ms=1)
+    remote_binding = _remote_binding(config)
+    config = config.for_binding(remote_binding)
+
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(
+        scheduler, "_wait_for_tasks_or_wake", fake_wait_for_tasks_or_wake
+    )
+
+    try:
+        with pytest.raises(StopLoop):
+            await scheduler.run_loop(
+                config,
+                _adapter(FakeTransport()),
+                agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+                render_prompt=lambda issue: "prompt",
+                binding=remote_binding,
+            )
+
+        # Two poll cycles ran but only one _dispatch_one started, because
+        # effective_cap=1 for the remote binding clamps slots_available to 0
+        # while the first Run is in-flight (with run_cap=2 a local binding would
+        # have started a second task in the second cycle).
+        assert len(wait_calls) >= 2
+        assert starts == [True]
+    finally:
+        blocker.set()  # let the dangling in-flight task complete cleanly
+        await real_sleep(0)
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@ title: ADR-0012 — Remote Bindings dispatch over SSH-exec
 type: analysis
 status: promoted
 created: 2026-06-15
-updated: 2026-06-16
+updated: 2026-06-19
 sources:
   - docs/adr/0012-remote-binding-ssh-exec.md
   - config.py (RemotePolicy, ProjectBinding.remote, _remote_from_mapping, remote invariants)
@@ -102,3 +102,13 @@ The deferred "host badge UI" got its first slice (text label only). Operator wan
 There is **no dedicated remote-binding skill** — remote bindings are created by `symphony-binding-scaffold` (umbrella `symphony-onboard-project`). The label above is data-driven, so it auto-applies to any binding whose `bindings.yml` entry has a `remote:` block. The remaining gap was that the scaffold helper had no remote inputs, so the live `n8n` block was hand-added. Now `PodiumBindingScaffoldRequest` accepts `remote_host`/`remote_user`/`remote_identity`; when host+user are set, `scaffold_podium_binding` writes a `remote: {host, user, identity?}` block and enforces the remote invariants (`coding`/`pi`/`rpc`), raising `ValueError` early rather than emitting a `bindings.yml` entry `config.py` would reject. Future remote bindings created via the skill therefore get the SSH dispatch transport, pi RPC parity, and the "name — repo" label with no hand-editing.
 
 **Deploy topology (load-bearing):** this change spans two services, *not* the scheduler. `podium-api.service` (loopback `127.0.0.1:8090`) serves the new JSON fields and needs a `systemctl restart`. `podium-web.service` (`10.20.20.16:8091`, `next start`) serves a **prebuilt** bundle and needs `web/frontend/deploy.sh` (build into staging → atomic stop/swap/start), *not* a plain restart. `symphony-host.service` (the scheduler) serves neither — restarting it does nothing for this label. First deploy went live 2026-06-16 (podium-api restarted 15:49 UTC, podium-web 15:52 UTC, root=200); live helpers confirm `is_remote(n8n)=True` / `repo_name=itastack`.
+
+## Gap walkthrough 2026-06-19 (growing-fleet hardening) — C-0251–C-0254
+
+A `/grill-me` walkthrough of the dispatch path, treating remote bindings as a **growing capability** (more hosts over time, not a solo `n8n` demonstrator). Gap ledger and dispositions (full evidence: `wiki/raw/sessions/2026-06-19-remote-binding-gap-walkthrough.md`):
+
+- **Concurrency isolation — serialize per remote binding (implemented 2026-06-19), C-0251.** Worktrees are inert for remote, the agent commits directly in `repo_path`, and `run_cap` is **per binding** (each binding has its own `run_loop` + `_DispatchState`; live unit `SYMPHONY_RUN_CAP=3`). So one remote binding could run up to 3 `pi` processes in one working tree → corruption. Fix: a pure helper `_effective_run_cap(config, binding)` returns `1` when `binding.is_remote` else `config.run_cap`; `_new_dispatch_state` sizes the dispatch semaphore through it at every construction site, and `run_loop` clamps `slots_available` to the effective cap. The semaphore wraps the whole Run (incl. reservation), so size 1 ⇒ ≤1 in-flight Run and covers resumed/wake/operator-reply re-dispatch. The reserve-function gate (`_reserve_candidate`/`_reserve_specific_candidate` on `binding.is_remote`) was considered and **rejected as redundant** under the semaphore. Local bindings unchanged. Chosen over over-SSH remote worktrees (v2).
+- **SSH keepalive — implemented 2026-06-19, C-0253.** `ssh_support.ssh_base_args` emits `-o ServerAliveInterval=15 -o ServerAliveCountMax=4`; idle NAT/Tailscale timeouts no longer drop the long pi RPC channel. Does not survive a true partition.
+- **Native Session Resume cannot engage for remote — v2 follow-up, C-0252.** `session_continuity` does local-FS `.exists()`/`glob()` against `~/.pi/agent/sessions/`, but the remote transcript lives on the remote host (and `_dispatch_cwd` hands remote the local `homelab_repo_path`), so resume always degrades to `refeed` → cold re-dispatch. Resume-over-SSH is tracked, sibling of the deferred remote Session Tail.
+- **Secrets are the remote host's job — contract reaffirmed, C-0254.** `_remote_exports` forwards only `SYMPHONY_ISSUE_ID`/`TERM`/`NO_COLOR` (plus Plane callback for Plane). Remote agents own their env (SSH profile / repo `.env`), per ADR-0011. Not a gap.
+- **Still deferred (v2):** remote orphan reaping, pre-dispatch reachability gate, remote worktrees, remote Session Tail over SSH, styled host chip.
