@@ -2,6 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(sudo systemctl restart symphony-host.service)"
+    ],
+    "additionalDirectories": [
+      "/home/james/homelab"
     ]
   },
   "hooks": {

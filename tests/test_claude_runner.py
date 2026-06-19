@@ -1088,6 +1088,134 @@ def test_claude_idle_exhausts_nudges_and_fails_fast(tmp_path: Path) -> None:
     assert any("kill-session" in call for call in fake.calls)
 
 
+_PERMISSION_MODAL = (
+    "Do you want to make this edit to SKILL.md?\n"
+    "❯ 1. Yes\n"
+    "  2. Yes, and allow Claude to edit its own settings for this session\n"
+    "  3. No\n\n"
+    "Esc to cancel · Tab to amend\n\n"
+    # Real Claude panes keep the status footer below the modal; include it so the
+    # fixture passes _wait_until_ready (which matches this marker) instead of
+    # spinning forever under a frozen clock.
+    "⏵⏵ bypass permissions on (shift+tab to cycle)"
+)
+
+
+class _PermissionModalThenCompletesTmux:
+    """Pane parked on a permission modal until Escape is sent; the agent then
+    recovers (rejects the edit) and finishes the completion protocol."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.escapes = 0
+        self.nudge_count = 0
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.recovered = False
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            if "appear to have stopped" in prompt:
+                self.nudge_count += 1
+            return Completed()
+        if "send-keys" in command and "Escape" in command:
+            self.escapes += 1
+            if self.result_file is not None and self.done_file is not None:
+                self.result_file.write_text("SYMPHONY_RESULT: done", encoding="utf-8")
+                self.done_file.write_text("", encoding="utf-8")
+                self.recovered = True
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout="working" if self.recovered else _PERMISSION_MODAL)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_permission_modal_is_dismissed_then_completes(tmp_path: Path) -> None:
+    fake = _PermissionModalThenCompletesTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        session_file=transcript,
+    )
+
+    # Escape rejected the modal once; the agent recovered and completed without
+    # being nudged or mislabelled as timed out.
+    assert fake.escapes == 1
+    assert fake.nudge_count == 0
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert result.stdout == "SYMPHONY_RESULT: done"
+
+
+class _PermissionModalPersistsTmux:
+    """Pane stays on the permission modal no matter how many times Escape is
+    sent -- a non-bypassable .claude/ edit prompt that never clears."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.escapes = 0
+        self.nudge_count = 0
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            if "appear to have stopped" in prompt:
+                self.nudge_count += 1
+            return Completed()
+        if "send-keys" in command and "Escape" in command:
+            self.escapes += 1
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout=_PERMISSION_MODAL)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_permission_modal_persists_and_aborts(tmp_path: Path) -> None:
+    fake = _PermissionModalPersistsTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,  # never trips run_timeout_ms; modal abort terminates
+        sleep=lambda _: None,
+        session_file=transcript,
+    )
+
+    # Rejected MODAL_DISMISS_ATTEMPTS times, never nudged, aborted with a clear
+    # reason rather than the generic "Agent timed out."
+    assert fake.escapes == claude_runner.MODAL_DISMISS_ATTEMPTS
+    assert fake.nudge_count == 0
+    assert result.exit_code == -1
+    assert result.timed_out is False
+    assert "bypassPermissions does not suppress" in result.stderr
+
+
 class _ChangingPaneCompletesTmux:
     """Pane changes on every capture (the working spinner/elapsed timer redraws),
     so the idle detector must never fire; done lands after a while."""

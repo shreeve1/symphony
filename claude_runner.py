@@ -57,6 +57,22 @@ RESULT_GRACE_STEP_SECONDS = 0.5
 # number of times, then give up early rather than burning the full timeout.
 IDLE_POLLS_BEFORE_NUDGE = 30
 IDLE_NUDGE_ATTEMPTS = 2
+# A parked pane can be a Claude permission prompt rather than an ended turn:
+# ``--permission-mode bypassPermissions`` does NOT suppress confirmation modals
+# for edits under ``.claude/`` (Claude's own settings/skills), so an agent that
+# touches those files hangs on an unanswerable modal until the run times out and
+# is mislabelled "Agent timed out." When an idle pane matches a permission modal,
+# send Escape to reject it (giving the agent a chance to recover and complete);
+# if it keeps reappearing after this many rejections, abort with a clear reason
+# instead of nudging.
+MODAL_DISMISS_ATTEMPTS = 2
+# A Claude permission modal shows a numbered Yes/No choice list plus an
+# escape/confirm hint footer; require both so ordinary agent output never matches.
+_MODAL_CHOICE_RE = re.compile(r"(?im)^\s*(?:❯\s*)?\d+\.\s+(?:Yes|No)\b")
+_MODAL_HINT_RE = re.compile(
+    r"(?i)\besc to (?:cancel|reject|interrupt)\b"
+    r"|do you want to (?:make this edit|proceed|create|run|allow)"
+)
 _CLAUDE_PROBE_FAILURE_REASON: str | None = None
 
 
@@ -933,6 +949,7 @@ def _poll_claude_until_done(
     last_mtime: float | None = None
     unchanged_polls = 0
     nudges_used = 0
+    modals_dismissed = 0
     generation = 0
     steer_offset = 0
     read_queued_steers = _load_steer_reader(run_id)
@@ -1020,6 +1037,39 @@ def _poll_claude_until_done(
             last_pane = pane
             last_mtime = mtime
         if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
+            if _hit_permission_modal(pane):
+                _send_escape(run_func, socket_path, session_name)
+                modals_dismissed += 1
+                LOGGER.info(
+                    "claude_permission_modal_dismissed issue_id=%s dismiss=%s",
+                    issue.id,
+                    modals_dismissed,
+                )
+                if modals_dismissed >= MODAL_DISMISS_ATTEMPTS:
+                    duration_ms = int((clock() - started) * 1000)
+                    tail = _capture_pane_tail(
+                        socket_path, session_name, run_func=run_func
+                    )
+                    stderr = (
+                        "claude parked at a permission prompt that "
+                        "--permission-mode bypassPermissions does not suppress "
+                        "(e.g. an edit under .claude/); sent Escape to reject it "
+                        f"{MODAL_DISMISS_ATTEMPTS} times but it kept reappearing, "
+                        f"so the run was aborted\n{tail}"
+                    )
+                    LOGGER.info(
+                        "claude_permission_modal_blocked issue_id=%s dismissed=%s "
+                        "duration_ms=%s",
+                        issue.id,
+                        modals_dismissed,
+                        duration_ms,
+                    )
+                    return _logged_result(issue, -1, duration_ms, False, "", stderr)
+                unchanged_polls = 0
+                last_pane = None
+                last_mtime = None
+                sleep(1.0)
+                continue
             if nudges_used >= IDLE_NUDGE_ATTEMPTS:
                 duration_ms = int((clock() - started) * 1000)
                 tail = _capture_pane_tail(socket_path, session_name, run_func=run_func)
@@ -1359,6 +1409,25 @@ def _send_nudge(
     """
     prompt_file.write_text(_nudge_text(result_file, done_file), encoding="utf-8")
     _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
+
+
+def _hit_permission_modal(pane: str) -> bool:
+    """True when the pane is parked on a Claude permission-confirmation modal.
+
+    Requires both a numbered Yes/No choice line and a modal hint footer so a
+    static pane of ordinary agent output never trips the detector.
+    """
+    return bool(_MODAL_CHOICE_RE.search(pane) and _MODAL_HINT_RE.search(pane))
+
+
+def _send_escape(
+    run_func: Callable[..., CompletedLike],
+    socket_path: Path,
+    session_name: str,
+) -> None:
+    """Send Escape to reject a Claude permission modal (mirrors the abort path)."""
+    with suppress(OSError):
+        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Escape")
 
 
 def _read_result_with_grace(
