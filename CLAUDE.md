@@ -37,6 +37,16 @@ This is the Symphony host-native scheduler source repo. It is live infrastructur
 - `systemctl restart symphony-host.service` is pre-approved: restart whenever needed without asking. Still run the pre-sanity and post-restart verification from the `symphony-restart` skill.
 - Ask James before `systemctl stop`, unit edits, Plane API mutations, or smoke ticket requeues unless he has already approved that exact live mutation.
 
+## Unattended modal handling (claude_runner)
+
+Claude runs unattended (`--permission-mode bypassPermissions`), but bypass does **not** suppress every confirmation modal — `.claude/` edits and the `rm -rf /` / `rm -rf ~` circuit breakers still prompt, and an unanswerable modal used to hang the run and surface as the misleading "Agent timed out". `_poll_claude_until_done` now drives parked modals automatically (`claude_runner.py`):
+
+- **Permission / Yes-No modal → Enter.** Option 1 ("Yes") is pre-selected, so Enter approves and the agent continues. This is a **blanket auto-approve with no carve-out** — it also accepts the `rm -rf /` / `rm -rf ~` circuit breakers (operator decision, 2026-06-19). The unattended agent can therefore execute a destructive command it raised by mistake; the binding sandbox and WORKFLOW.md are the only remaining guardrails.
+- **Multi-choice question picker → Escape, wait `MODAL_QUESTION_SETTLE_SECONDS`, then paste "proceed with your recommendations".** This is a fallback for an agent that wrongly opened an interactive picker; the correct path is the `SYMPHONY_QUESTION` park, which completes cleanly without a modal.
+- If the same modal pane persists past `MODAL_STUCK_LIMIT` automated interactions (Enter / auto-reply not landing), the run aborts with a clear reason instead of looping.
+
+Log lines: `claude_permission_modal_approved`, `claude_question_modal_autoreplied`, `claude_modal_stuck`. Detection is best-effort regex on the captured pane (`_hit_permission_modal` = Yes/No choices + hint; `_hit_question_modal` = non-Yes/No choices + selection/escape hint).
+
 ## Env locations
 
 - `/home/james/symphony-host.env` — secret values (`PLANE_API_KEY`, etc.).

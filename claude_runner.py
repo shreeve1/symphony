@@ -57,21 +57,43 @@ RESULT_GRACE_STEP_SECONDS = 0.5
 # number of times, then give up early rather than burning the full timeout.
 IDLE_POLLS_BEFORE_NUDGE = 30
 IDLE_NUDGE_ATTEMPTS = 2
-# A parked pane can be a Claude permission prompt rather than an ended turn:
+# A parked pane can be a Claude prompt rather than an ended turn:
 # ``--permission-mode bypassPermissions`` does NOT suppress confirmation modals
-# for edits under ``.claude/`` (Claude's own settings/skills), so an agent that
-# touches those files hangs on an unanswerable modal until the run times out and
-# is mislabelled "Agent timed out." When an idle pane matches a permission modal,
-# send Escape to reject it (giving the agent a chance to recover and complete);
-# if it keeps reappearing after this many rejections, abort with a clear reason
-# instead of nudging.
-MODAL_DISMISS_ATTEMPTS = 2
+# for edits under ``.claude/`` (Claude's own settings/skills) or the circuit
+# breakers for root/home recursive deletes, so an agent that hits one hangs on an
+# unanswerable modal until the run times out and is mislabelled "Agent timed out."
+# Running unattended, we drive these modals automatically instead:
+#   * Permission / Yes-No modal -> send Enter. Option 1 ("Yes") is pre-selected,
+#     so Enter approves the action and the agent continues. NOTE: this is a
+#     blanket auto-approve with no carve-out -- it also accepts the rm -rf //
+#     rm -rf ~ circuit breakers (operator decision, 2026-06-19).
+#   * Multi-choice question picker -> send Escape to dismiss it, wait, then paste
+#     a "proceed with your recommendations" reply so the agent acts on its own
+#     best judgement (the agent is supposed to use the SYMPHONY_QUESTION park
+#     instead; this is a fallback for one that wrongly opened an interactive
+#     picker).
+# If the SAME modal pane persists this many consecutive interactions (Enter or
+# auto-reply did not clear it), abort with a clear reason instead of looping.
+MODAL_STUCK_LIMIT = 3
+# Settle delay after dismissing a question picker before pasting the auto-reply,
+# so the TUI returns to an empty input box first.
+MODAL_QUESTION_SETTLE_SECONDS = 5.0
+MODAL_QUESTION_REPLY = "proceed with your recommendations"
 # A Claude permission modal shows a numbered Yes/No choice list plus an
 # escape/confirm hint footer; require both so ordinary agent output never matches.
 _MODAL_CHOICE_RE = re.compile(r"(?im)^\s*(?:❯\s*)?\d+\.\s+(?:Yes|No)\b")
 _MODAL_HINT_RE = re.compile(
     r"(?i)\besc to (?:cancel|reject|interrupt)\b"
     r"|do you want to (?:make this edit|proceed|create|run|allow)"
+)
+# A multi-choice question picker shows numbered options that are NOT Yes/No, plus
+# a selection/escape hint footer; require both, and exclude Yes/No modals (those
+# are handled as permission approvals), so ordinary numbered output never matches.
+_QUESTION_CHOICE_RE = re.compile(r"(?im)^\s*(?:❯\s*)?\d+\.\s+\S")
+_QUESTION_HINT_RE = re.compile(
+    r"(?i)\besc to (?:cancel|reject|interrupt|go back)\b"
+    r"|↑|↓|\b(?:use\s+)?arrow(?:\s+keys)?\b"
+    r"|\bto select\b"
 )
 _CLAUDE_PROBE_FAILURE_REASON: str | None = None
 
@@ -949,7 +971,8 @@ def _poll_claude_until_done(
     last_mtime: float | None = None
     unchanged_polls = 0
     nudges_used = 0
-    modals_dismissed = 0
+    stuck_modal_pane: str | None = None
+    stuck_count = 0
     generation = 0
     steer_offset = 0
     read_queued_steers = _load_steer_reader(run_id)
@@ -1037,34 +1060,57 @@ def _poll_claude_until_done(
             last_pane = pane
             last_mtime = mtime
         if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
-            if _hit_permission_modal(pane):
-                _send_escape(run_func, socket_path, session_name)
-                modals_dismissed += 1
-                LOGGER.info(
-                    "claude_permission_modal_dismissed issue_id=%s dismiss=%s",
-                    issue.id,
-                    modals_dismissed,
-                )
-                if modals_dismissed >= MODAL_DISMISS_ATTEMPTS:
+            is_permission = _hit_permission_modal(pane)
+            is_question = not is_permission and _hit_question_modal(pane)
+            if is_permission or is_question:
+                # Track a modal that refuses to clear: same pane across repeated
+                # interactions means Enter / the auto-reply is not landing.
+                if pane == stuck_modal_pane:
+                    stuck_count += 1
+                else:
+                    stuck_modal_pane = pane
+                    stuck_count = 1
+                if stuck_count > MODAL_STUCK_LIMIT:
                     duration_ms = int((clock() - started) * 1000)
                     tail = _capture_pane_tail(
                         socket_path, session_name, run_func=run_func
                     )
                     stderr = (
-                        "claude parked at a permission prompt that "
-                        "--permission-mode bypassPermissions does not suppress "
-                        "(e.g. an edit under .claude/); sent Escape to reject it "
-                        f"{MODAL_DISMISS_ATTEMPTS} times but it kept reappearing, "
-                        f"so the run was aborted\n{tail}"
+                        "claude parked at a prompt that did not clear after "
+                        f"{MODAL_STUCK_LIMIT} automated interactions "
+                        "(Enter to approve / Escape+reply to a question); "
+                        f"the run was aborted\n{tail}"
                     )
                     LOGGER.info(
-                        "claude_permission_modal_blocked issue_id=%s dismissed=%s "
-                        "duration_ms=%s",
+                        "claude_modal_stuck issue_id=%s attempts=%s duration_ms=%s",
                         issue.id,
-                        modals_dismissed,
+                        stuck_count,
                         duration_ms,
                     )
                     return _logged_result(issue, -1, duration_ms, False, "", stderr)
+                if is_permission:
+                    # Option 1 ("Yes") is pre-selected; Enter approves it. Blanket
+                    # auto-approve, no carve-out (operator decision 2026-06-19).
+                    _send_enter(run_func, socket_path, session_name)
+                    LOGGER.info(
+                        "claude_permission_modal_approved issue_id=%s attempt=%s",
+                        issue.id,
+                        stuck_count,
+                    )
+                else:
+                    # Multi-choice picker: dismiss it, let the TUI settle, then
+                    # tell the agent to proceed on its own recommendation.
+                    _send_escape(run_func, socket_path, session_name)
+                    sleep(MODAL_QUESTION_SETTLE_SECONDS)
+                    prompt_file.write_text(MODAL_QUESTION_REPLY, encoding="utf-8")
+                    _paste_and_submit(
+                        run_func, socket_path, session_name, prompt_file, sleep=sleep
+                    )
+                    LOGGER.info(
+                        "claude_question_modal_autoreplied issue_id=%s attempt=%s",
+                        issue.id,
+                        stuck_count,
+                    )
                 unchanged_polls = 0
                 last_pane = None
                 last_mtime = None
@@ -1420,12 +1466,34 @@ def _hit_permission_modal(pane: str) -> bool:
     return bool(_MODAL_CHOICE_RE.search(pane) and _MODAL_HINT_RE.search(pane))
 
 
+def _hit_question_modal(pane: str) -> bool:
+    """True when the pane is parked on a multi-choice question picker.
+
+    Requires numbered (non Yes/No) choices plus a selection/escape hint footer,
+    and excludes Yes/No permission modals (handled as approvals), so a static
+    pane of ordinary numbered output never trips the detector.
+    """
+    if _hit_permission_modal(pane):
+        return False
+    return bool(_QUESTION_CHOICE_RE.search(pane) and _QUESTION_HINT_RE.search(pane))
+
+
+def _send_enter(
+    run_func: Callable[..., CompletedLike],
+    socket_path: Path,
+    session_name: str,
+) -> None:
+    """Send Enter to approve a Claude permission modal's pre-selected option."""
+    with suppress(OSError):
+        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Enter")
+
+
 def _send_escape(
     run_func: Callable[..., CompletedLike],
     socket_path: Path,
     session_name: str,
 ) -> None:
-    """Send Escape to reject a Claude permission modal (mirrors the abort path)."""
+    """Send Escape to dismiss a Claude modal (mirrors the abort path)."""
     with suppress(OSError):
         _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Escape")
 

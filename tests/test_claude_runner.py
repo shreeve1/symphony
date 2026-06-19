@@ -1101,43 +1101,71 @@ _PERMISSION_MODAL = (
 )
 
 
-class _PermissionModalThenCompletesTmux:
-    """Pane parked on a permission modal until Escape is sent; the agent then
-    recovers (rejects the edit) and finishes the completion protocol."""
+_QUESTION_MODAL = (
+    "Which database should we use?\n"
+    "❯ 1. Postgres\n"
+    "  2. SQLite\n"
+    "  3. MySQL\n\n"
+    "↑/↓ to select · Esc to cancel\n\n"
+    # Same status footer as the permission fixture, so _wait_until_ready passes.
+    "⏵⏵ bypass permissions on (shift+tab to cycle)"
+)
+
+
+class _PermissionModalThenApprovesTmux:
+    """Pane parked on a permission modal until Enter approves the pre-selected
+    'Yes'; the agent then proceeds and finishes the completion protocol."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.enters = 0
         self.escapes = 0
         self.nudge_count = 0
         self.result_file: Path | None = None
         self.done_file: Path | None = None
+        self.modal_captures = 0
         self.recovered = False
 
     def __call__(self, command, **kwargs):
         self.calls.append(command)
         if "load-buffer" in command:
             prompt = Path(command[-1]).read_text(encoding="utf-8")
-            self.result_file = _path_after(prompt, "literal result file path:")
-            self.done_file = _path_after(prompt, "literal done file path:")
+            if "literal result file path:" in prompt:
+                self.result_file = _path_after(prompt, "literal result file path:")
+            if "literal done file path:" in prompt:
+                self.done_file = _path_after(prompt, "literal done file path:")
             if "appear to have stopped" in prompt:
                 self.nudge_count += 1
             return Completed()
-        if "send-keys" in command and "Escape" in command:
-            self.escapes += 1
-            if self.result_file is not None and self.done_file is not None:
+        if "send-keys" in command and "Enter" in command:
+            # The idle handler's approval Enter lands only after the loop has
+            # idled on the modal; the startup submit Enter comes far earlier.
+            if (
+                not self.recovered
+                and self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE
+                and self.result_file is not None
+                and self.done_file is not None
+            ):
+                self.enters += 1
                 self.result_file.write_text("SYMPHONY_RESULT: done", encoding="utf-8")
                 self.done_file.write_text("", encoding="utf-8")
                 self.recovered = True
             return Completed()
+        if "send-keys" in command and "Escape" in command:
+            self.escapes += 1
+            return Completed()
         if "capture-pane" in command:
-            return Completed(stdout="working" if self.recovered else _PERMISSION_MODAL)
+            if self.recovered:
+                return Completed(stdout="working")
+            self.modal_captures += 1
+            return Completed(stdout=_PERMISSION_MODAL)
         if "has-session" in command:
             return Completed(returncode=0)
         return Completed()
 
 
-def test_claude_permission_modal_is_dismissed_then_completes(tmp_path: Path) -> None:
-    fake = _PermissionModalThenCompletesTmux()
+def test_claude_permission_modal_is_approved_then_completes(tmp_path: Path) -> None:
+    fake = _PermissionModalThenApprovesTmux()
     transcript = tmp_path / "session.jsonl"
     transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
 
@@ -1154,9 +1182,10 @@ def test_claude_permission_modal_is_dismissed_then_completes(tmp_path: Path) -> 
         session_file=transcript,
     )
 
-    # Escape rejected the modal once; the agent recovered and completed without
-    # being nudged or mislabelled as timed out.
-    assert fake.escapes == 1
+    # Enter approved the modal once (no Escape); the agent proceeded and
+    # completed without being nudged or mislabelled as timed out.
+    assert fake.enters == 1
+    assert fake.escapes == 0
     assert fake.nudge_count == 0
     assert result.exit_code == 0
     assert result.timed_out is False
@@ -1164,13 +1193,14 @@ def test_claude_permission_modal_is_dismissed_then_completes(tmp_path: Path) -> 
 
 
 class _PermissionModalPersistsTmux:
-    """Pane stays on the permission modal no matter how many times Escape is
-    sent -- a non-bypassable .claude/ edit prompt that never clears."""
+    """Pane stays on the permission modal no matter how many times Enter is
+    sent -- a prompt that never clears (e.g. a wedged TUI)."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
-        self.escapes = 0
+        self.approval_enters = 0
         self.nudge_count = 0
+        self.modal_captures = 0
 
     def __call__(self, command, **kwargs):
         self.calls.append(command)
@@ -1179,10 +1209,12 @@ class _PermissionModalPersistsTmux:
             if "appear to have stopped" in prompt:
                 self.nudge_count += 1
             return Completed()
-        if "send-keys" in command and "Escape" in command:
-            self.escapes += 1
+        if "send-keys" in command and "Enter" in command:
+            if self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE:
+                self.approval_enters += 1
             return Completed()
         if "capture-pane" in command:
+            self.modal_captures += 1
             return Completed(stdout=_PERMISSION_MODAL)
         if "has-session" in command:
             return Completed(returncode=0)
@@ -1207,13 +1239,89 @@ def test_claude_permission_modal_persists_and_aborts(tmp_path: Path) -> None:
         session_file=transcript,
     )
 
-    # Rejected MODAL_DISMISS_ATTEMPTS times, never nudged, aborted with a clear
-    # reason rather than the generic "Agent timed out."
-    assert fake.escapes == claude_runner.MODAL_DISMISS_ATTEMPTS
+    # Approved MODAL_STUCK_LIMIT times, never nudged, aborted with a clear reason
+    # rather than the generic "Agent timed out."
+    assert fake.approval_enters == claude_runner.MODAL_STUCK_LIMIT
     assert fake.nudge_count == 0
     assert result.exit_code == -1
     assert result.timed_out is False
-    assert "bypassPermissions does not suppress" in result.stderr
+    assert "did not clear" in result.stderr
+
+
+class _QuestionModalThenAutoRepliesTmux:
+    """Pane parked on a multi-choice question picker; the idle handler dismisses
+    it with Escape and pastes a 'proceed with your recommendations' reply, after
+    which the agent completes the protocol."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.escapes = 0
+        self.reply_pasted = 0
+        self.nudge_count = 0
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.recovered = False
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            text = Path(command[-1]).read_text(encoding="utf-8")
+            if "literal result file path:" in text:
+                self.result_file = _path_after(text, "literal result file path:")
+            if "literal done file path:" in text:
+                self.done_file = _path_after(text, "literal done file path:")
+            if claude_runner.MODAL_QUESTION_REPLY in text:
+                self.reply_pasted += 1
+            if "appear to have stopped" in text:
+                self.nudge_count += 1
+            return Completed()
+        if "send-keys" in command and "Enter" in command:
+            if (
+                self.reply_pasted
+                and not self.recovered
+                and self.result_file is not None
+                and self.done_file is not None
+            ):
+                self.result_file.write_text("SYMPHONY_RESULT: done", encoding="utf-8")
+                self.done_file.write_text("", encoding="utf-8")
+                self.recovered = True
+            return Completed()
+        if "send-keys" in command and "Escape" in command:
+            self.escapes += 1
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout="working" if self.recovered else _QUESTION_MODAL)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_question_modal_autoreplies_then_completes(tmp_path: Path) -> None:
+    fake = _QuestionModalThenAutoRepliesTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        session_file=transcript,
+    )
+
+    # Escape dismissed the picker once and the proceed-reply was pasted; the
+    # agent then completed without being nudged or timed out.
+    assert fake.escapes == 1
+    assert fake.reply_pasted == 1
+    assert fake.nudge_count == 0
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert result.stdout == "SYMPHONY_RESULT: done"
 
 
 class _ChangingPaneCompletesTmux:
