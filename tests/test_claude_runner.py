@@ -1324,6 +1324,89 @@ def test_claude_question_modal_autoreplies_then_completes(tmp_path: Path) -> Non
     assert result.stdout == "SYMPHONY_RESULT: done"
 
 
+class _DriftingPermissionModalTmux:
+    """A permission modal whose pane text changes on every Enter, so the
+    consecutive-stuck counter keeps resetting and only the total-interaction
+    backstop can abort it."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.approval_enters = 0
+        self.nudge_count = 0
+        self.modal_captures = 0
+        self.revision = 0
+
+    def __call__(self, command, **kwargs):
+        self.calls.append(command)
+        if "load-buffer" in command:
+            prompt = Path(command[-1]).read_text(encoding="utf-8")
+            if "appear to have stopped" in prompt:
+                self.nudge_count += 1
+            return Completed()
+        if "send-keys" in command and "Enter" in command:
+            if self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE:
+                self.approval_enters += 1
+                self.revision += 1  # pane drifts -> stuck_count will reset
+            return Completed()
+        if "capture-pane" in command:
+            self.modal_captures += 1
+            # Same Yes/No modal, but a per-revision suffix makes each idle
+            # window's pane differ from the previous interaction's pane.
+            return Completed(stdout=f"{_PERMISSION_MODAL}\nrev {self.revision}")
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_claude_drifting_modal_aborts_on_total_backstop(tmp_path: Path) -> None:
+    fake = _DriftingPermissionModalTmux()
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")  # static mtime => transcript idle
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        mkdtemp=lambda **_: str(tmp_path / "run"),
+        remove_tree=lambda path: None,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,  # frozen: only the total backstop can terminate
+        sleep=lambda _: None,
+        session_file=transcript,
+    )
+
+    # The consecutive guard never fires (pane drifts each cycle); the total
+    # backstop aborts after MODAL_TOTAL_LIMIT interactions are sent.
+    assert fake.approval_enters == claude_runner.MODAL_TOTAL_LIMIT
+    assert fake.nudge_count == 0
+    assert result.exit_code == -1
+    assert result.timed_out is False
+    assert "total automated interactions" in result.stderr
+
+
+def test_question_detector_ignores_numbered_list_without_picker_footer() -> None:
+    # An idle agent pane: a numbered list plus a stray up-arrow glyph, but no
+    # real picker footer. Must NOT be taken for a question modal (would wrongly
+    # Escape + auto-reply instead of nudging completion).
+    pane = (
+        "Here are the options I considered:\n"
+        "1. Use Postgres\n"
+        "2. Use SQLite\n"
+        "↑ see the tradeoffs above\n\n"
+        "⏵⏵ bypass permissions on (shift+tab to cycle)"
+    )
+    assert claude_runner._hit_question_modal(pane) is False
+    assert claude_runner._hit_permission_modal(pane) is False
+
+
+def test_question_detector_matches_real_picker() -> None:
+    # A real picker (numbered non-Yes/No choices + a selection/escape footer)
+    # is still detected after tightening the hint regex.
+    assert claude_runner._hit_question_modal(_QUESTION_MODAL) is True
+    assert claude_runner._hit_permission_modal(_QUESTION_MODAL) is False
+
+
 class _ChangingPaneCompletesTmux:
     """Pane changes on every capture (the working spinner/elapsed timer redraws),
     so the idle detector must never fire; done lands after a while."""

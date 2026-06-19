@@ -75,6 +75,13 @@ IDLE_NUDGE_ATTEMPTS = 2
 # If the SAME modal pane persists this many consecutive interactions (Enter or
 # auto-reply did not clear it), abort with a clear reason instead of looping.
 MODAL_STUCK_LIMIT = 3
+# Backstop for a modal whose pane text drifts between interaction cycles (e.g. a
+# footer timer/token counter), which would keep resetting the consecutive
+# counter above and never trip it: abort after this many TOTAL automated modal
+# interactions in one run, regardless of pane equality. A healthy unattended run
+# hits 0 modals, and each interaction needs a full idle window first, so this is
+# generous yet well under the wall-clock run timeout.
+MODAL_TOTAL_LIMIT = 12
 # Settle delay after dismissing a question picker before pasting the auto-reply,
 # so the TUI returns to an empty input box first.
 MODAL_QUESTION_SETTLE_SECONDS = 5.0
@@ -92,7 +99,7 @@ _MODAL_HINT_RE = re.compile(
 _QUESTION_CHOICE_RE = re.compile(r"(?im)^\s*(?:❯\s*)?\d+\.\s+\S")
 _QUESTION_HINT_RE = re.compile(
     r"(?i)\besc to (?:cancel|reject|interrupt|go back)\b"
-    r"|↑|↓|\b(?:use\s+)?arrow(?:\s+keys)?\b"
+    r"|\b(?:use\s+)?arrow(?:\s+keys)?\b"
     r"|\bto select\b"
 )
 _CLAUDE_PROBE_FAILURE_REASON: str | None = None
@@ -973,6 +980,7 @@ def _poll_claude_until_done(
     nudges_used = 0
     stuck_modal_pane: str | None = None
     stuck_count = 0
+    modal_actions_total = 0
     generation = 0
     steer_offset = 0
     read_queued_steers = _load_steer_reader(run_id)
@@ -1064,27 +1072,40 @@ def _poll_claude_until_done(
             is_question = not is_permission and _hit_question_modal(pane)
             if is_permission or is_question:
                 # Track a modal that refuses to clear: same pane across repeated
-                # interactions means Enter / the auto-reply is not landing.
+                # interactions means Enter / the auto-reply is not landing. Count
+                # total interactions too, as a backstop against a modal whose pane
+                # text drifts between cycles (which keeps resetting stuck_count).
                 if pane == stuck_modal_pane:
                     stuck_count += 1
                 else:
                     stuck_modal_pane = pane
                     stuck_count = 1
-                if stuck_count > MODAL_STUCK_LIMIT:
+                modal_actions_total += 1
+                consecutive_stuck = stuck_count > MODAL_STUCK_LIMIT
+                if consecutive_stuck or modal_actions_total > MODAL_TOTAL_LIMIT:
                     duration_ms = int((clock() - started) * 1000)
                     tail = _capture_pane_tail(
                         socket_path, session_name, run_func=run_func
                     )
+                    reason = (
+                        f"the same prompt did not clear after {MODAL_STUCK_LIMIT} "
+                        "consecutive automated interactions"
+                        if consecutive_stuck
+                        else "prompts kept reappearing past "
+                        f"{MODAL_TOTAL_LIMIT} total automated interactions"
+                    )
                     stderr = (
-                        "claude parked at a prompt that did not clear after "
-                        f"{MODAL_STUCK_LIMIT} automated interactions "
+                        "claude parked at a prompt it could not get past "
                         "(Enter to approve / Escape+reply to a question); "
-                        f"the run was aborted\n{tail}"
+                        f"{reason}, so the run was aborted\n{tail}"
                     )
                     LOGGER.info(
-                        "claude_modal_stuck issue_id=%s attempts=%s duration_ms=%s",
+                        "claude_modal_stuck issue_id=%s consecutive=%s total=%s "
+                        "interactions_sent=%s duration_ms=%s",
                         issue.id,
                         stuck_count,
+                        modal_actions_total,
+                        modal_actions_total - 1,
                         duration_ms,
                     )
                     return _logged_result(issue, -1, duration_ms, False, "", stderr)
