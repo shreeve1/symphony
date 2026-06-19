@@ -41,6 +41,7 @@
 | Page | Summary | Sources | Updated |
 |------|---------|---------|---------|
 | [analyses/adr-0001-claude-tmux.md](analyses/adr-0001-claude-tmux.md) | ADR-0001 — Dispatch Claude through tmux send-keys, not print mode | `wiki/raw/adr-0001-claude-tmux.md` | 2026-06-09 |
+| [analyses/analysis-session-claude-modal-autodrive.md](analyses/analysis-session-claude-modal-autodrive.md) | Run #128 "Agent timed out" root cause + unattended modal auto-drive (Enter to approve, Escape+auto-reply to questions; blanket no-carve-out) | `runs/128.log`, `claude_runner.py`, `wiki/raw/sessions/2026-06-19-claude-modal-autodrive.md` | 2026-06-19 |
 | [analyses/thin-engine-e2e-test.md](analyses/thin-engine-e2e-test.md) | Thin engine E2E smoke test — dispatch lifecycle, code drift root cause, provider/model config, stale worktree cleanup | `wiki/raw/sessions/2026-06-09-thin-engine-e2e-test.md` | 2026-06-09 |
 | [analyses/adr-0002-generalize-symphony.md](analyses/adr-0002-generalize-symphony.md) | ADR-0002 — Generalize Symphony behind adapter seams | `wiki/raw/adr-0002-generalize-symphony.md` | 2026-06-09 |
 | [analyses/adr-0003-worktree-per-run.md](analyses/adr-0003-worktree-per-run.md) | ADR-0003 — Worktree-per-run with global concurrency cap | `wiki/raw/adr-0003-worktree-per-run.md` | 2026-06-09 |
