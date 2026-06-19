@@ -8,6 +8,9 @@ sources:
   - .kanban/issues/046-unified-output-contract.md
   - prompt_renderer.py
   - scheduler.py
+  - scheduler/__init__.py
+  - scheduler/markers.py
+  - scheduler/sanitize.py
   - tracker_podium.py
   - claude_runner.py
   - tests/test_scheduler.py
@@ -18,6 +21,7 @@ sources:
   - wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md
   - wiki/raw/sessions/2026-06-15-issue-max-question-verdict-drift.md
   - wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md
+  - wiki/raw/sessions/2026-06-19-approval-gate-report-truncation-marker-drop.md
   - .kanban/issues/052-question-park.md
 confidence: high
 tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflow]
@@ -46,6 +50,12 @@ Issue #046 collapses the agent end-of-run contract into one engine-owned source 
 Podium issue #53 (`Homelab workflow`) exposed a second output-contract precedence bug: Claude runs 111 and 113 emitted explicit terminal markers (`SYMPHONY_RESULT: review` then `SYMPHONY_RESULT: done`), but the scheduler still blocked the issue because `_classify_terminal` checked `_hit_approval_gate(...)` before parsing the result/question markers. The broad approval regex matched successful policy-summary prose such as `destructive actions without explicit approval` and `destructive actions without James approval` [source: wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md].
 
 The fix preserves markerless approval-needed blocking but makes explicit contract markers authoritative for approval-gate classification: `_classify_terminal` now extracts `verdict`, `summary`, and `question` before the approval gate, and only runs `_hit_approval_gate(...)` when both `verdict is None` and `question is None`. Permission-gate handling still precedes result handling. Regression coverage asserts the two known policy phrases inside a `SYMPHONY_RESULT: done` summary transition to review instead of blocked [source: scheduler/__init__.py; source: tests/test_scheduler.py; source: wiki/raw/sessions/2026-06-19-approval-gate-output-contract-false-positive.md].
+
+### Follow-on: report-truncation marker drop (2026-06-19, C-0257)
+
+The same false positive recurred on issues #53/#55/#57 (run 120) even on a service that already had the precedence fix. Distinct root cause: `_classify_terminal` parsed the verdict marker and gates from the **2 KB tail-truncated** `_format_report` output (`_parse_result_marker(stdout)`, `_hit_*_gate(stdout, ...)`). `_format_report` → `_sanitize_report(..., max_bytes=REPORT_MAX_BYTES=2048)` keeps only the trailing 2048 bytes, so an agent summary larger than ~2 KB pushed the head `SYMPHONY_RESULT` marker out of the surviving tail → `verdict=None` while approval-policy prose in the tail re-tripped `_hit_approval_gate` → spurious `approval-gate` block. The precedence guard could not help because the marker was dropped before parsing; `_extract_summary`/`_extract_question` already read the raw streams, making this an inconsistency [source: scheduler/sanitize.py; source: scheduler/__init__.py; source: runs/120.log].
+
+The fix classifies verdict + permission/approval gates from the raw `result.stdout`/`result.stderr` streams (`class_stdout`/`class_stderr`, gated by `parse_stderr`), mirroring `_extract_summary`; the truncated `_format_report` output is retained only for bounded human-facing comments. `_parse_result_marker`, `_hit_permission_gate`, and `_hit_approval_gate` strip ANSI internally so feeding raw streams preserves the prior sanitized-input matching. Regression test `test_verdict_marker_honored_when_summary_exceeds_report_truncation` (head marker + >`REPORT_MAX_BYTES` summary + tail approval prose) fails pre-fix (`approval-gate`) and passes post-fix (`agent-marker-review`). Deployed live (commit `2cf2eb2`), reproduced on smoke Issue 58 / Run 122 (succeeded, verdict=done) with an offline `runs/122.log` probe confirming the old truncated-parse path would have blocked, and the three stuck issues 53/55/57 were requeued (`PATCH state=todo`) and re-ran clean to `in_review` [source: scheduler/__init__.py; source: scheduler/markers.py; source: tests/test_scheduler.py; source: wiki/raw/sessions/2026-06-19-approval-gate-report-truncation-marker-drop.md].
 
 ## Verbatim posting, no header wrapper
 
