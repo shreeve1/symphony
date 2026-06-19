@@ -27,6 +27,7 @@ from scheduler import (
     _release_candidate,
     _reserve_candidate,
     _resolve_mode,
+    _validated_fallback_plan_path,
     reconcile_pending_review,
     reconcile_stale_running,
     reconcile_startup,
@@ -1372,6 +1373,73 @@ async def test_build_mode_removes_stale_plan_label_before_running(
     assert result.mode == "build"
     assert PlaneLabel.PLAN.value not in labels
     assert PlaneLabel.BUILD.value in labels
+
+
+@pytest.mark.asyncio
+async def test_build_mode_accepts_id_prefixed_plan_filename(tmp_path: Path) -> None:
+    # Plane-era convention: the plan is named ``{id}-{title}.md`` while the
+    # Podium issue identifier is just the id. Build must still find it.
+    transport = FakeTransport()
+    transport.issues["build-1"] = _issue("build-1", labels=[PlaneLabel.BUILD.value])
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "build-1-temporal.md").write_text("# Plan\n", encoding="utf-8")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("build-1", labels=[PlaneLabel.BUILD.value])],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-clean-review"
+    assert result.mode == "build"
+
+
+def test_validated_fallback_plan_path_prefers_exact_match(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    exact = plan_dir / "59.md"
+    exact.write_text("# Plan\n", encoding="utf-8")
+    (plan_dir / "59-temporal.md").write_text("# Plan\n", encoding="utf-8")
+
+    found = _validated_fallback_plan_path(tmp_path, _candidate("59"))
+    assert found == exact.resolve()
+
+
+def test_validated_fallback_plan_path_accepts_id_prefixed_match(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    titled = plan_dir / "59-temporal.md"
+    titled.write_text("# Plan\n", encoding="utf-8")
+
+    found = _validated_fallback_plan_path(tmp_path, _candidate("59"))
+    assert found == titled.resolve()
+
+
+def test_validated_fallback_plan_path_ambiguous_returns_none(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "59-temporal.md").write_text("# Plan\n", encoding="utf-8")
+    (plan_dir / "59-other.md").write_text("# Plan\n", encoding="utf-8")
+
+    assert _validated_fallback_plan_path(tmp_path, _candidate("59")) is None
+
+
+def test_validated_fallback_plan_path_no_prefix_false_match(tmp_path: Path) -> None:
+    # ``591-*.md`` must not satisfy issue 59 — the ``-`` separator is required.
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "591-other.md").write_text("# Plan\n", encoding="utf-8")
+
+    assert _validated_fallback_plan_path(tmp_path, _candidate("59")) is None
+
+
+def test_validated_fallback_plan_path_missing_returns_none(tmp_path: Path) -> None:
+    assert _validated_fallback_plan_path(tmp_path, _candidate("59")) is None
 
 
 # --- Label UUID extraction tests ---

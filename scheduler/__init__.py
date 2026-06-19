@@ -890,6 +890,13 @@ def _expected_plan_path(repo_path: Path, issue: CandidateIssue) -> Path:
     return (repo_path / "plans" / f"{_issue_slug(issue)}.md").resolve()
 
 
+def _plan_stem_matches_issue(stem: str, slug: str) -> bool:
+    """A plan file belongs to the issue if its stem is the slug, or the slug
+    followed by a ``-`` separator (the Plane-era ``{id}-{title}`` convention)."""
+
+    return stem == slug or stem.startswith(f"{slug}-")
+
+
 def _state_path_for_plan(plan_path: Path) -> Path:
     return plan_path.with_name(f".{plan_path.stem}.state.yml")
 
@@ -905,12 +912,11 @@ def _final_non_empty_line(body: str) -> str | None:
 def _validate_issue_plan_path(
     repo_path: Path, issue: CandidateIssue, raw_path: str
 ) -> Path:
-    expected = _expected_plan_path(repo_path, issue)
     plans_dir = (repo_path / "plans").resolve()
     candidate = Path(raw_path).expanduser().resolve()
     if not raw_path.startswith("/"):
         raise ValueError("plan path is not absolute")
-    if candidate != expected:
+    if not _plan_stem_matches_issue(candidate.stem, _issue_slug(issue)):
         raise ValueError("plan path does not match the current issue slug")
     if candidate.parent != plans_dir:
         raise ValueError("plan path is outside the homelab plans directory")
@@ -925,8 +931,29 @@ def _validated_fallback_plan_path(
     repo_path: Path, issue: CandidateIssue
 ) -> Path | None:
     expected = _expected_plan_path(repo_path, issue)
+    if expected.is_file():
+        try:
+            return _validate_issue_plan_path(repo_path, issue, str(expected))
+        except ValueError:
+            return None
+
+    # Fall back to the Plane-era ``plans/{id}-{title}.md`` convention. The Plan
+    # author may still name plans with a title suffix while the Podium issue
+    # identifier is just the numeric id, so the exact ``{id}.md`` is absent.
+    slug = _issue_slug(issue)
+    plans_dir = (repo_path / "plans").resolve()
+    if not plans_dir.is_dir():
+        return None
+    matches = sorted(
+        path
+        for path in plans_dir.glob(f"{slug}-*.md")
+        if path.is_file() and _plan_stem_matches_issue(path.stem, slug)
+    )
+    if len(matches) != 1:
+        # Zero matches: no plan. Multiple matches: ambiguous, refuse to guess.
+        return None
     try:
-        return _validate_issue_plan_path(repo_path, issue, str(expected))
+        return _validate_issue_plan_path(repo_path, issue, str(matches[0]))
     except ValueError:
         return None
 
