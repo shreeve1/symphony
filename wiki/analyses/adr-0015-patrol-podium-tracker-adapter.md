@@ -126,9 +126,16 @@ committed, **inert** (nothing applied/restarted).
   `patrol-passes-marker` `DEFAULT_RULES` entry) — the reconcile call site passes
   no per-tracker rules, so consolidation avoids plumbing tracker-kind; the Plane
   comment path is byte-for-byte preserved (marker only survives on Podium).
-- **Remaining:** Wave C (wire `worker.py` + `PATROL_TRACKER` toggle, dry-run,
-  restart patrol worker) + the gated `podium-api` window (apply migration 0009,
-  create `homelab-patrol` binding, restart). See C-0266.
+- **Binding routing revised 2026-06-20 (C-0267):** patrols post to the
+  **existing `homelab` binding**, not a new `homelab-patrol` binding (mirrors the
+  Plane setup; drops the scaffold + new WORKFLOW.md prereqs). No Wave A/B code
+  change — `PodiumAdapter(binding="homelab")` is Wave C wiring; dedup
+  (`?external_id=` AND `binding_name=homelab`) and the reconciler rule (keyed on
+  the `homelab-patrol-` external_id prefix) stay correctly scoped.
+- **Remaining:** gated `podium-api` window (apply migration 0009; restart
+  `podium-api` + `symphony-host`; **no new binding/WORKFLOW.md**) + Wave C (wire
+  `worker.py` + `PATROL_TRACKER` toggle + worker-host config `binding=homelab`,
+  dry-run, restart patrol worker). See C-0266 / C-0267.
 
 ## Related
 
