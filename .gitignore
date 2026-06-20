@@ -16,6 +16,4 @@ test-results/
 .pi-lens/
 .rpiv/
 artifacts/
-docs/adr
-CONTEXT.md
 *.archive
