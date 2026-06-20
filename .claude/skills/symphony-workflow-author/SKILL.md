@@ -16,6 +16,10 @@ Author or replace a bound repository `WORKFLOW.md` — the per-repo **autonomy p
 
 `WORKFLOW.md` carries **autonomy** instruction (how to operate under Symphony's orchestration), not safety enforcement; safety remains the bound repo's responsibility.
 
+## Generic template
+
+Start every infra `WORKFLOW.md` from the bundled project-agnostic template at `templates/WORKFLOW.infra.md` (relative to this skill). It is the generalized infra autonomy policy — agent role, before-acting/git/execution/completion rules, and plan/build mode lifecycle — with **no** project specifics baked in. Adapt only binding-level autonomy knobs (front-matter `poll_interval_ms`/`run_timeout_ms`, medium-risk posture). Do **not** re-add project specifics (host/service doc layout, access sub-agent names, absolute plan paths, owner identity) — those belong in the repo's `CLAUDE.md`/`AGENTS.md`, which the template tells the agent to read. The template names the Symphony engine interface (`plane` verbs, output contract, mode lifecycle) deliberately; that is common to every binding, not project-specific.
+
 ## Tracker posture
 
 This skill is tracker-agnostic. It does not write Podium or Plane. It edits repository policy on disk, then render-tests against `prompt_renderer.py` so either tracker can supply Issue fields.
