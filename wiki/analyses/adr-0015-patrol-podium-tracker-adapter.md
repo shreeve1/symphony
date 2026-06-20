@@ -155,9 +155,13 @@ committed, **inert** (nothing applied/restarted).
   config fields; `PODIUM_API_TOKEN` required when tracker=podium. Live dry-run
   (10/10) caught + fixed a real bug — `find_by_external_id` didn't parse the live
   API's bare-list response (mock returned `{"results":[...]}`). Marker round-trip
-  confirmed live (C-0265). **Remaining:** worker env (`PODIUM_API_TOKEN` +
-  `PATROL_TRACKER=podium`) + restart `homelab-temporal-patrol-worker.service` —
-  operator paused after the dry-run; patrols still on Plane until then.
+  confirmed live (C-0265).
+- **CUTOVER COMPLETE (2026-06-20, C-0270).** Worker env got
+  `PODIUM_API_TOKEN`+`PATROL_TRACKER=podium`; `homelab-temporal-patrol-worker.service`
+  restarted clean (`patrol_tracker=podium binding=homelab`, no 401). **ADR-0015
+  fully landed** — patrols now write to the `homelab` Podium binding; first live
+  write on the next Temporal-scheduled cycle. Plane retained as a slot-in backend
+  (`PATROL_TRACKER=plane`).
 - See C-0266 / C-0267 / C-0268 / C-0269 / C-0270.
 
 ## Related
