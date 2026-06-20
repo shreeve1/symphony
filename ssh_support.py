@@ -10,7 +10,18 @@ from __future__ import annotations
 
 
 def ssh_base_args(remote, *, reverse_port: int | None = None) -> list[str]:
-    args = ["ssh", "-o", "BatchMode=yes"]
+    # ServerAlive* keepalives stop an idle NAT/Tailscale timeout from dropping
+    # the long-lived pi RPC channel (ADR-0012). 15s probes, 4 misses (~60s) to
+    # declare the link dead.
+    args = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=4",
+    ]
     if remote.identity:
         args += ["-i", remote.identity]
     if reverse_port is not None:

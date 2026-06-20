@@ -10,6 +10,10 @@ def test_ssh_base_args_base_form() -> None:
         "ssh",
         "-o",
         "BatchMode=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=4",
         "itadmin@100.95.224.218",
     ]
 
@@ -21,6 +25,10 @@ def test_ssh_base_args_identity_appends_flag() -> None:
         "ssh",
         "-o",
         "BatchMode=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=4",
         "-i",
         "/keys/id_ed25519",
         "u@h",
