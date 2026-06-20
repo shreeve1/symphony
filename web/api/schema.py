@@ -48,8 +48,14 @@ CREATE TABLE IF NOT EXISTS issue(
   approved BOOLEAN DEFAULT FALSE,
   scheduled_for TIMESTAMP NULL,
   inbox_dismissed_at TIMESTAMP NULL,
+  -- Deterministic dedup key (ADR-0015). Nullable: UI-created issues leave it
+  -- NULL; SQLite treats NULLs as distinct so many NULL rows coexist under the
+  -- global UNIQUE index below.
+  external_id TEXT,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ix_issue_external_id ON issue(external_id);
 
 CREATE TABLE IF NOT EXISTS run(
   id INTEGER PRIMARY KEY,

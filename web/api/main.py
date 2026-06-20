@@ -502,6 +502,7 @@ class IssuePatch(BaseModel):
     base_branch: str | None = None
     comments_md: str | None = None
     context_md: str | None = None
+    external_id: str | None = None
 
 
 class IssueCreate(BaseModel):
@@ -527,6 +528,7 @@ class IssueCreate(BaseModel):
     approved: bool = False
     scheduled_for: str | None = None
     base_branch: str | None = None
+    external_id: str | None = None
 
 
 class ReplyCreate(BaseModel):
@@ -675,39 +677,35 @@ def list_binding_issues(
     name: str,
     state: Literal["todo", "in_review", "running", "blocked", "done", "archived"]
     | None = None,
+    external_id: str | None = None,
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> list[dict[str, Any]]:
     _get_binding_or_404(connection, name)
-    if state is None:
-        rows = connection.execute(
-            """
-            SELECT
-              id, binding_name, title, description, state, priority, preferred_agent,
-              preferred_model, preferred_skill, reasoning_effort, worktree_active,
-              approval_required, approved, scheduled_for,
-              base_branch, created_at, updated_at,
-              latest_run_id, latest_verdict, latest_run_state, last_event_at
-            FROM issue
-            WHERE binding_name = ?
-            ORDER BY updated_at DESC, id DESC
-            """,
-            (name,),
-        ).fetchall()
-    else:
-        rows = connection.execute(
-            """
-            SELECT
-              id, binding_name, title, description, state, priority, preferred_agent,
-              preferred_model, preferred_skill, reasoning_effort, worktree_active,
-              approval_required, approved, scheduled_for,
-              base_branch, created_at, updated_at,
-              latest_run_id, latest_verdict, latest_run_state, last_event_at
-            FROM issue
-            WHERE binding_name = ? AND state = ?
-            ORDER BY updated_at DESC, id DESC
-            """,
-            (name, state),
-        ).fetchall()
+    # external_id powers PodiumAdapter.find_by_external_id (ADR-0015); it ANDs
+    # cleanly with the existing optional state filter.
+    clauses = ["binding_name = ?"]
+    params: list[Any] = [name]
+    if state is not None:
+        clauses.append("state = ?")
+        params.append(state)
+    if external_id is not None:
+        clauses.append("external_id = ?")
+        params.append(external_id)
+    rows = connection.execute(
+        f"""
+        SELECT
+          id, binding_name, title, description, state, priority, preferred_agent,
+          preferred_model, preferred_skill, reasoning_effort, worktree_active,
+          approval_required, approved, scheduled_for,
+          base_branch, created_at, updated_at,
+          latest_run_id, latest_verdict, latest_run_state, last_event_at,
+          external_id
+        FROM issue
+        WHERE {' AND '.join(clauses)}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(params),
+    ).fetchall()
     return [_row(row) for row in rows]
 
 
@@ -830,33 +828,40 @@ async def create_binding_issue(
         issue.worktree_active = False
 
     now = datetime.now(UTC).isoformat()
-    cursor = connection.execute(
-        """
-        INSERT INTO issue(
-          binding_name, title, description, state, priority, preferred_agent,
-          preferred_model, preferred_skill, reasoning_effort, worktree_active,
-          approval_required, approved, scheduled_for, base_branch, comments_md,
-          context_md, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)
-        """,
-        (
-            name,
-            issue.title,
-            issue.description,
-            issue.priority,
-            issue.preferred_agent,
-            issue.preferred_model,
-            issue.preferred_skill,
-            issue.reasoning_effort,
-            issue.worktree_active,
-            issue.approval_required,
-            issue.approved,
-            issue.scheduled_for,
-            issue.base_branch or _base_branch_for(name),
-            now,
-            now,
-        ),
-    )
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, priority, preferred_agent,
+              preferred_model, preferred_skill, reasoning_effort, worktree_active,
+              approval_required, approved, scheduled_for, base_branch, comments_md,
+              context_md, external_id, created_at, updated_at
+            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?)
+            """,
+            (
+                name,
+                issue.title,
+                issue.description,
+                issue.priority,
+                issue.preferred_agent,
+                issue.preferred_model,
+                issue.preferred_skill,
+                issue.reasoning_effort,
+                issue.worktree_active,
+                issue.approval_required,
+                issue.approved,
+                issue.scheduled_for,
+                issue.base_branch or _base_branch_for(name),
+                issue.external_id,
+                now,
+                now,
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        # Global UNIQUE(external_id) (ADR-0015): a duplicate external_id is the
+        # adapter's dedup signal, surfaced as a conflict so the caller can fall
+        # back to find_by_external_id + update rather than create.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     connection.commit()
     row = connection.execute(
         "SELECT * FROM issue WHERE id = ?", (cursor.lastrowid,)
@@ -992,10 +997,15 @@ async def patch_issue(
 
     changed["updated_at"] = _next_updated_at(current["updated_at"])
     assignments = ", ".join(f"{name} = ?" for name in changed)
-    connection.execute(
-        f"UPDATE issue SET {assignments} WHERE id = ?",
-        (*changed.values(), issue_id),
-    )
+    try:
+        connection.execute(
+            f"UPDATE issue SET {assignments} WHERE id = ?",
+            (*changed.values(), issue_id),
+        )
+    except sqlite3.IntegrityError as exc:
+        # Mirrors create: a duplicate external_id (global UNIQUE, ADR-0015) is a
+        # conflict, not a 500 — the caller should reconcile via find_by_external_id.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     connection.commit()
 
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()

@@ -30,6 +30,7 @@ the required marker, or carry the ``approval-required`` label.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -72,6 +73,63 @@ _CONSECUTIVE_PASSES_RE = re.compile(
 # weaker signal: it proves a Symphony run touched the ticket post-block, but
 # not that the underlying check passed.
 _SYMPHONY_COMPLETED_RE = re.compile(r"Symphony completed:", re.IGNORECASE)
+
+# Podium patrol-status marker embedded in issue["description"] (ADR-0015 §4).
+# Format: ``<!-- patrol-status: {compact-json} -->``. JSON keys of interest:
+# ``consecutive_passes`` (int), ``last_pass_at`` / ``last_fail_at`` (ISO8601).
+# LAST valid marker wins. On Plane the editor strips HTML comments from the
+# description so no marker survives — the comment-counting path handles that.
+_PATROL_STATUS_MARKER_RE = re.compile(
+    r"<!--\s*patrol-status:\s*(?P<json>\{.*?\})\s*-->", re.DOTALL
+)
+
+
+def _parse_patrol_marker(description: str | None) -> dict[str, Any] | None:
+    """Return the LAST valid ``patrol-status`` marker payload, or None.
+
+    Tolerant of malformed markers: a marker whose body is not valid JSON is
+    skipped, and the most recent parseable one wins. Returns None when the
+    description carries no marker at all (the Plane case).
+    """
+    if not description:
+        return None
+    payload: dict[str, Any] | None = None
+    for match in _PATROL_STATUS_MARKER_RE.finditer(description):
+        try:
+            candidate = json.loads(match.group("json"))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(candidate, dict):
+            payload = candidate
+    return payload
+
+
+def _evaluate_marker(
+    rule: ReconcileRule, marker: dict[str, Any]
+) -> tuple[bool, str]:
+    """Evaluate a parsed patrol marker against the rule's pass threshold.
+
+    Fires iff ``consecutive_passes >= rule.min_pass_comments_since_fail`` AND
+    both ``last_pass_at`` and ``last_fail_at`` parse AND last_pass_at >
+    last_fail_at. Any missing/unparseable field returns (False, ...) so the
+    caller falls through to the comment-counting path.
+    """
+    consecutive = marker.get("consecutive_passes")
+    if not isinstance(consecutive, int):
+        return False, "marker-no-consecutive-passes"
+    if consecutive < rule.min_pass_comments_since_fail:
+        return (
+            False,
+            f"marker-passes-below-threshold "
+            f"({consecutive}<{rule.min_pass_comments_since_fail})",
+        )
+    last_pass = _parse_iso(marker.get("last_pass_at"), force_utc=True)
+    last_fail = _parse_iso(marker.get("last_fail_at"), force_utc=True)
+    if last_pass is None or last_fail is None:
+        return False, "marker-missing-timestamps"
+    if last_pass <= last_fail:
+        return False, "marker-fail-newer-than-pass"
+    return True, "marker-cure"
 
 
 @dataclass(frozen=True)
@@ -391,28 +449,71 @@ async def reconcile_blocked(
             )
             continue
 
-        try:
-            comments = await _fetch_comments(adapter, issue_id)
-        except Exception as exc:
-            decisions.append(
-                ReconcileDecision(
+        # Marker-first cure (ADR-0015 §4): on Podium the patrol writer embeds a
+        # <!-- patrol-status: {...} --> marker in the description carrying
+        # consecutive_passes + last_pass_at/last_fail_at. Trust it directly —
+        # Podium stores plain markdown so the marker survives round-trips,
+        # unlike Plane's editor which strips HTML comments (C-0014/C-0035).
+        # When the marker fires we skip the comment fetch entirely. When it is
+        # present but does not fire, OR is absent (the Plane case), fall through
+        # to the unchanged discrete-comment-counting path.
+        marker = _parse_patrol_marker(issue.get("description"))
+        cure_source = "comment"
+        fires = False
+        reason = ""
+        marker_cured = False
+        if marker is not None:
+            marker_fires, marker_reason = _evaluate_marker(rule, marker)
+            if marker_fires:
+                fires, reason, cure_source, marker_cured = (
+                    True,
+                    marker_reason,
+                    "marker",
+                    True,
+                )
+                LOGGER.info(
+                    "blocked_reconcile_marker_cure issue_id=%s identifier=%s "
+                    "rule=%s consecutive_passes=%s",
                     issue_id,
                     identifier,
-                    name,
-                    external_id,
-                    rule=rule,
-                    target_state=None,
-                    reason=f"comment-fetch-failed: {exc}",
+                    rule.name,
+                    marker.get("consecutive_passes"),
                 )
-            )
-            LOGGER.warning(
-                "blocked_reconcile_comment_fetch_failed issue_id=%s error=%s",
-                issue_id,
-                exc,
-            )
-            continue
+            else:
+                LOGGER.info(
+                    "blocked_reconcile_marker_no_cure issue_id=%s identifier=%s "
+                    "rule=%s reason=%s",
+                    issue_id,
+                    identifier,
+                    rule.name,
+                    marker_reason,
+                )
 
-        fires, reason = _evaluate_rule(rule, comments)
+        if not marker_cured:
+            # No marker (Plane), or marker present but not curing: fall back to
+            # the unchanged discrete-comment-counting path.
+            try:
+                comments = await _fetch_comments(adapter, issue_id)
+            except Exception as exc:
+                decisions.append(
+                    ReconcileDecision(
+                        issue_id,
+                        identifier,
+                        name,
+                        external_id,
+                        rule=rule,
+                        target_state=None,
+                        reason=f"comment-fetch-failed: {exc}",
+                    )
+                )
+                LOGGER.warning(
+                    "blocked_reconcile_comment_fetch_failed issue_id=%s error=%s",
+                    issue_id,
+                    exc,
+                )
+                continue
+
+            fires, reason = _evaluate_rule(rule, comments)
         if not fires:
             decisions.append(
                 ReconcileDecision(
@@ -448,11 +549,13 @@ async def reconcile_blocked(
         target_state_name = _target_state_name(adapter, rule.target_state)
         if not apply:
             LOGGER.info(
-                "blocked_reconcile_would_apply issue_id=%s identifier=%s rule=%s target_state=%s",
+                "blocked_reconcile_would_apply issue_id=%s identifier=%s rule=%s "
+                "target_state=%s cure_source=%s",
                 issue_id,
                 identifier,
                 rule.name,
                 target_state_name,
+                cure_source,
             )
             decisions.append(decision)
             continue
@@ -505,11 +608,13 @@ async def reconcile_blocked(
             )
 
         LOGGER.info(
-            "blocked_reconcile_applied issue_id=%s identifier=%s rule=%s target_state=%s",
+            "blocked_reconcile_applied issue_id=%s identifier=%s rule=%s "
+            "target_state=%s cure_source=%s",
             issue_id,
             identifier,
             rule.name,
             _target_state_name(adapter, rule.target_state),
+            cure_source,
         )
         decisions.append(
             ReconcileDecision(
@@ -534,4 +639,6 @@ __all__ = [
     "ReconcileDecision",
     "ReconcileRule",
     "reconcile_blocked",
+    "_parse_patrol_marker",
+    "_evaluate_marker",
 ]

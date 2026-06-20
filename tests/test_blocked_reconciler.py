@@ -496,3 +496,148 @@ async def test_comments_returned_out_of_order_still_evaluated_by_timestamp():
     assert transport.issues["issue-110"]["state"] == adapter._resolve_state(
         PlaneState.DONE
     )
+
+
+# --- ADR-0015 §4: Podium marker-first cure ---------------------------------
+#
+# These mirror the Podium path: the patrol writer embeds a
+# <!-- patrol-status: {...} --> marker in issue["description"]. The reconciler
+# trusts the marker (consecutive_passes + last_pass_at/last_fail_at) and never
+# fetches comments when it fires. The Plane comment-counting path above is
+# unchanged and still covered by the no-marker tests.
+
+
+import json
+
+from blocked_reconciler import _evaluate_marker, _parse_patrol_marker
+
+
+def _marker_description(
+    *,
+    consecutive_passes,
+    last_pass_at: str | None = None,
+    last_fail_at: str | None = None,
+    prefix: str = "qbittorrent-ct108: SSH probe failed\n\n",
+) -> str:
+    payload: dict[str, Any] = {"consecutive_passes": consecutive_passes}
+    if last_pass_at is not None:
+        payload["last_pass_at"] = last_pass_at
+    if last_fail_at is not None:
+        payload["last_fail_at"] = last_fail_at
+    return f"{prefix}<!-- patrol-status: {json.dumps(payload)} -->"
+
+
+def _marker_issue(description: str) -> dict[str, Any]:
+    issue = _blocked_issue("issue-110", external_id="homelab-patrol-infra-ced58b20")
+    issue["description"] = description
+    return issue
+
+
+def test_parse_patrol_marker_last_valid_wins():
+    desc = (
+        "<!-- patrol-status: {\"consecutive_passes\": 1} -->\n"
+        "<!-- patrol-status: not json -->\n"
+        "<!-- patrol-status: {\"consecutive_passes\": 3} -->"
+    )
+    marker = _parse_patrol_marker(desc)
+    assert marker == {"consecutive_passes": 3}
+
+
+def test_parse_patrol_marker_absent_returns_none():
+    assert _parse_patrol_marker("plain description, no marker") is None
+    assert _parse_patrol_marker(None) is None
+
+
+@pytest.mark.asyncio
+async def test_marker_cure_fires_with_passes_and_pass_newer_than_fail():
+    now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    desc = _marker_description(
+        consecutive_passes=2,
+        last_fail_at=(now - timedelta(hours=6)).isoformat(),
+        last_pass_at=(now - timedelta(hours=1)).isoformat(),
+    )
+    # Comments are EMPTY: if the reconciler fell through to comment-counting it
+    # would NOT fire. So a fire proves the marker path drove the decision.
+    adapter, transport = _make_adapter(_marker_issue(desc), [])
+
+    decisions = await reconcile_blocked(adapter, apply=True)
+
+    assert len(decisions) == 1
+    assert decisions[0].applied is True
+    assert decisions[0].reason == "marker-cure"
+    assert transport.issues["issue-110"]["state"] == adapter._resolve_state(
+        PlaneState.DONE
+    )
+
+
+@pytest.mark.asyncio
+async def test_marker_does_not_fire_when_pass_not_newer_than_fail():
+    now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    desc = _marker_description(
+        consecutive_passes=5,
+        last_pass_at=(now - timedelta(hours=6)).isoformat(),
+        last_fail_at=(now - timedelta(hours=1)).isoformat(),
+    )
+    adapter, transport = _make_adapter(_marker_issue(desc), [])
+    before = transport.issues["issue-110"]["state"]
+
+    decisions = await reconcile_blocked(adapter, apply=True)
+
+    assert len(decisions) == 1
+    assert decisions[0].applied is False
+    # Marker did not cure and no comments exist -> comment path yields no-pass.
+    assert transport.issues["issue-110"]["state"] == before
+
+
+@pytest.mark.asyncio
+async def test_marker_below_threshold_does_not_fire():
+    now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    desc = _marker_description(
+        consecutive_passes=1,
+        last_fail_at=(now - timedelta(hours=6)).isoformat(),
+        last_pass_at=(now - timedelta(hours=1)).isoformat(),
+    )
+    adapter, transport = _make_adapter(_marker_issue(desc), [])
+    before = transport.issues["issue-110"]["state"]
+
+    decisions = await reconcile_blocked(adapter, apply=True)
+
+    assert decisions[0].applied is False
+    assert transport.issues["issue-110"]["state"] == before
+
+
+@pytest.mark.asyncio
+async def test_marker_missing_timestamps_falls_through_to_comments():
+    """Marker present with passes but no timestamps -> must NOT cure via marker;
+    falls through to comment-counting, which fires on two real passes."""
+    now = datetime(2026, 6, 20, 12, 0, tzinfo=UTC)
+    desc = _marker_description(consecutive_passes=2)  # no timestamps
+    fail = _patrol_fail("qbittorrent-ct108", now - timedelta(days=2))
+    pass1 = _patrol_pass("qbittorrent-ct108", 1, now - timedelta(hours=24))
+    pass2 = _patrol_pass("qbittorrent-ct108", 1, now - timedelta(hours=12))
+    adapter, transport = _make_adapter(_marker_issue(desc), [fail, pass1, pass2])
+
+    decisions = await reconcile_blocked(adapter, apply=True)
+
+    assert decisions[0].applied is True
+    # Reason came from the comment path, not the marker path.
+    assert decisions[0].reason == "pass"
+
+
+def test_evaluate_marker_unit():
+    rule = DEFAULT_RULES[0]
+    fires, reason = _evaluate_marker(
+        rule,
+        {
+            "consecutive_passes": 2,
+            "last_pass_at": "2026-06-20T11:00:00+00:00",
+            "last_fail_at": "2026-06-20T06:00:00+00:00",
+        },
+    )
+    assert fires is True and reason == "marker-cure"
+
+    fires, reason = _evaluate_marker(rule, {"consecutive_passes": 1})
+    assert fires is False and reason.startswith("marker-passes-below-threshold")
+
+    fires, reason = _evaluate_marker(rule, {"last_pass_at": "x"})
+    assert fires is False and reason == "marker-no-consecutive-passes"
