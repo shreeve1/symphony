@@ -634,8 +634,9 @@ function SteerComposer({
 
 // Comments are stored as one chronological markdown blob (oldest first); each
 // entry is an appended block headed by a known marker. Operator entries
-// (`### Operator Reply/Steer/Abort (…)`) and any non-agent text are always
-// shown. Agent run summaries (`**Symphony completed:**`, `**Symphony
+// (`### Operator Reply/Steer/Abort (…)`), patrol entries (`### Patrol (…)`,
+// the ADR-0017 /comment primitive), and any non-agent text are always shown.
+// Agent run summaries (`**Symphony completed:**`, `**Symphony
 // question:**`, `### Symphony AI Summary`) stack up one-per-run, so we collapse
 // them to only the most recent — older completions stay in Run history. The
 // blob is rendered straight through (no sub-heading split) so a multi-heading
@@ -650,7 +651,7 @@ const AGENT_SUMMARY_MARKERS = [
 // Split only at known entry headers, never at arbitrary sub-headings, so a
 // summary containing `### …` sections is not broken into pieces.
 const ENTRY_BOUNDARY =
-	/\n+(?=### Operator Reply \(|### Operator Steer \(|### Operator Abort \(|### Symphony AI Summary|\*\*Symphony completed:\*\*|\*\*Symphony question:\*\*)/;
+	/\n+(?=### Operator Reply \(|### Operator Steer \(|### Operator Abort \(|### Patrol \(|### Symphony AI Summary|\*\*Symphony completed:\*\*|\*\*Symphony question:\*\*)/;
 
 function isAgentSummary(entry: string): boolean {
 	return AGENT_SUMMARY_MARKERS.some((marker) => entry.startsWith(marker));

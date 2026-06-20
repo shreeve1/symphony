@@ -1166,6 +1166,68 @@ async def reply_to_issue(
     return result
 
 
+@app.post("/api/issues/{issue_id}/comment")
+async def comment_on_issue(
+    issue_id: int,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    """Append-only Comment primitive (ADR-0017).
+
+    Mirrors /reply's append + monotonic updated_at bump + issue.updated publish,
+    but drops the three reopen-coupled effects: no state flip to 'todo', no
+    run-state gate (works in ANY state — including running — and never 409s on
+    state grounds), and no wake-sentinel touch (no re-dispatch). Attribution is
+    caller-owned: the body is appended verbatim with no `### …` header, mirroring
+    the in-process agent path. Use /reply when you also want reopen + re-dispatch.
+    """
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
+
+    # A Comment shares Reply's body shape (single non-empty `body`); reuse the
+    # model. Unknown key -> 400, empty/invalid value -> 422 (like reply/patch).
+    try:
+        comment = ReplyCreate.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        for error in errors:
+            error.pop("ctx", None)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+    now = _next_updated_at(current["updated_at"])
+    appended = f"\n\n{comment.body.strip()}"  # verbatim, no `### …` header
+
+    # One atomic append + bump. No state clause and no run-state guard: a Comment
+    # never reopens and never 409s. COALESCE guards a legacy NULL comments_md.
+    cursor = connection.execute(
+        """
+        UPDATE issue
+           SET comments_md = COALESCE(comments_md, '') || ?,
+               updated_at = ?
+         WHERE id = ?
+        """,
+        (appended, now, issue_id),
+    )
+    connection.commit()
+
+    if cursor.rowcount == 0:
+        # Row vanished between the SELECT and the UPDATE; with no guard, 409 is
+        # impossible, so this is a genuine 404.
+        raise HTTPException(status_code=404, detail="issue not found")
+
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    return result
+
+
 @app.post("/api/issues/{issue_id}/steer")
 async def steer_issue(
     issue_id: int,
