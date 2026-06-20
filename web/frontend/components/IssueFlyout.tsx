@@ -33,6 +33,7 @@ import { useAppendTailEvent } from "@/components/QueryProvider";
 // reload. The #012c spec's "~480px" is only the default; validated by the
 // prototype, the panel is resizable from its left edge.
 const WIDTH_KEY = "podium-flyout-width";
+const MAXIMIZED_KEY = "podium-flyout-maximized";
 const DEFAULT_W = 480;
 const MIN_W = 360;
 const MAX_W = 900;
@@ -45,8 +46,13 @@ function useFlyoutWidth() {
 	const cleanupRef = useRef<(() => void) | null>(null);
 
 	useEffect(() => {
-		const saved = Number(window.localStorage.getItem(WIDTH_KEY));
-		if (saved >= MIN_W && saved <= MAX_W) setWidth(saved);
+		try {
+			const saved = Number(window.localStorage.getItem(WIDTH_KEY));
+			if (saved >= MIN_W && saved <= MAX_W) setWidth(saved);
+			setIsMaximized(window.localStorage.getItem(MAXIMIZED_KEY) === "true");
+		} catch {
+			// Storage unavailable — keep defaults.
+		}
 	}, []);
 
 	useEffect(() => () => cleanupRef.current?.(), []);
@@ -74,18 +80,23 @@ function useFlyoutWidth() {
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", onUp);
 	}, []);
-	const toggleMaximized = useCallback(
-		() => setIsMaximized((value) => !value),
-		[],
-	);
-	const restoreNormalWidth = useCallback(() => setIsMaximized(false), []);
+	const toggleMaximized = useCallback(() => {
+		setIsMaximized((value) => {
+			const next = !value;
+			try {
+				window.localStorage.setItem(MAXIMIZED_KEY, String(next));
+			} catch {
+				// Storage unavailable — in-memory state still works for this session.
+			}
+			return next;
+		});
+	}, []);
 
 	return {
 		panelWidth: isMaximized ? "100vw" : width,
 		isMaximized,
 		startDrag,
 		toggleMaximized,
-		restoreNormalWidth,
 	};
 }
 
@@ -734,13 +745,8 @@ export function IssueFlyout({
 	issueId: number | null;
 	onClose: () => void;
 }) {
-	const {
-		panelWidth,
-		isMaximized,
-		startDrag,
-		toggleMaximized,
-		restoreNormalWidth,
-	} = useFlyoutWidth();
+	const { panelWidth, isMaximized, startDrag, toggleMaximized } =
+		useFlyoutWidth();
 	const [tab, setTab] = useState<Tab>("comments");
 	const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 	const panelRef = useRef<HTMLElement | null>(null);
@@ -780,12 +786,12 @@ export function IssueFlyout({
 	const skillNames = (skills.data ?? []).map((s) => s.name);
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
-	// Reset nested flyout state each time a different issue opens.
+	// Reset nested flyout state each time a different issue opens. The maximized
+	// layout is intentionally not reset; it is the operator's last-used preference.
 	useEffect(() => {
 		setTab("comments");
 		setSelectedRunId(null);
-		restoreNormalWidth();
-	}, [issueId, restoreNormalWidth]);
+	}, [issueId]);
 
 	// Escape closes (click-outside is handled by the backdrop).
 	useEffect(() => {
