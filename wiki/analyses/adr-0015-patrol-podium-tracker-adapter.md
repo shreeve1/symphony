@@ -4,6 +4,7 @@ type: analysis
 status: promoted
 created: 2026-06-20
 updated: 2026-06-20
+last_event: 2026-06-20 reply-409 self-heal regression + close stickiness (C-0279–C-0281)
 sources:
   - docs/adr/0015-patrol-podium-tracker-adapter.md
   - /home/james/homelab/plans/59.md
@@ -15,6 +16,7 @@ sources:
   - /home/james/homelab/WORKFLOW.md
   - wiki/raw/sessions/2026-06-20-patrol-podium-adapter-grill.md
   - wiki/raw/sessions/2026-06-20-patrol-podium-cutover-verify-and-fixes.md
+  - wiki/raw/sessions/2026-06-20-patrol-podium-reply-409-and-close-stickiness.md
 confidence: high
 tags: [adr, patrol, podium, plane, tracker-adapter, ticket-writer, external-id, blocked-reconciler, temporal, homelab, cross-repo, proposed]
 ---
@@ -196,10 +198,64 @@ C-0274. An operator-approved manual `infra` patrol then exposed the real gap:
   `require` in a `type: module` package) aborted every pi dispatch host-wide until
   the operator added a `createRequire` shim. Tangential to the cutover.
 
+## First scheduled-cycle soak — reply-409 self-heal regression + close stickiness (2026-06-20, C-0279–C-0281)
+
+The first **scheduled** infra cycle (15:00 UTC, `patrol-infra-scheduled`) exposed
+a regression the manual create-only verification (C-0271) could not reach,
+because it only fires on the *second* failure of an existing issue (the reopen
+path):
+
+- **Self-heal 409 (C-0279).** `record_failure`'s reopen path flipped the issue to
+  `todo` (`update_issue`) and *then* posted the failure comment via `/reply`.
+  But `/reply` (`web/api/main.py:1135-1158`) is the operator-reopen endpoint: it
+  appends the comment AND flips `state='todo'`, gated to
+  `state IN ('in_review','blocked','done')` with no active run. The prior TODO
+  flip made the issue non-repliable → deterministic 409 → unhandled
+  `raise_for_status` → `record_patrol_check_result` fails → **workflow FAILED**,
+  starving every check after the first reopened issue. Dedup held (no dups).
+- **Close never stuck (C-0280).** Sibling bug: `record_pass`'s close path set
+  `state=DONE` then posted the close comment via `/reply`, which reopened the
+  closed issue to `todo`. Auto-cure-to-done bounced straight back out (issue 62
+  `closed`→`done`→`todo`→`in_review`), re-dispatching pi each cycle.
+- **Both masked by the same mock/real divergence class as C-0270/C-0271:**
+  `InMemoryPodiumTransport`'s `/reply` fake appended unconditionally and never
+  409'd, so the reopen + close paths looked green in unit tests + dry-run.
+- **Fix (homelab `0e163be` + `219424e`):** post the comment BEFORE the caller's
+  own state flip (the reply itself reopens), route all three reply-comment sites
+  (`record_failure`, `record_pass` close + pass) through a shared
+  `_post_comment_tolerating_409` helper (409 = active run mid-remediation,
+  non-fatal), and make the mock enforce the real state+run-state guard.
+  `TestPatrolPodiumReplyContract` reproduces both bugs (proven to fail against the
+  old orderings); full homelab-stack suite 732 passed. Verified live: two manual
+  `infra` cycles `COMPLETED`, 409s on issues 70/71 (active pi run) tolerated,
+  issue 63 closed→**stayed** `done`. Worker now `code_sha=219424e`.
+- **Residual / deferred (C-0281):** `/reply` reopens to `todo` on EVERY comment,
+  so below-threshold pass-recorded issues re-dispatch pi each cycle and a close
+  can be clobbered back to `in_review` by an in-flight pi run (issue 62 observed
+  `done`→`in_review` ~20s post-close). The reorder fix stops the workflow
+  failures but not the reopen churn; durable fix = a non-reopening comment
+  endpoint on podium-api (operator-gated, excluded service), deferred this
+  session.
+- **Resolved (C-0285, 2026-06-20, ADR-0017):** the deferred durable fix landed.
+  `POST /api/issues/{id}/comment` is the append-only Comment primitive (no state
+  flip, no run-state gate, never 409s, verbatim append); `add_comment` was
+  repointed `_reply_path`→`_comment_path` and stamps its own `### Patrol (<ts>)`
+  header, so patrol comments no longer reopen. `patrol_plane.py` logic is
+  unchanged — reopen/close stay owned by the explicit `update_issue(state=…)`
+  calls, so the C-0279/C-0280 `_post_comment_tolerating_409` + comment-before-flip
+  ordering are now **dead insurance** (kept until the contract soaks). Deployed
+  (`podium-api`/`podium-web` then worker on homelab `8a101eb`); a live docker
+  patrol confirmed `/comment` POSTs (`200`, no `/reply`, no `409`) with comment
+  and reopen decoupled (failure reopens via a separate `PATCH`). Pass-no-reopen
+  and close-stays-done remain test-covered; not live-observed (no docker check
+  passed the verification cycle). See C-0285 and
+  [Operator reply](../concepts/operator-reply.md#the-comment-sibling-adr-0017).
+
 ## Related
 
 - [ADR-0002 — generalize Symphony behind adapter seams](adr-0002-generalize-symphony.md)
 - [ADR-0005 — replace Plane with Podium](adr-0005-replace-plane-with-podium.md)
 - [Blocked reconciler implementation](../concepts/blocked-reconciler-implementation.md)
 - [Podium tracker](../concepts/podium-tracker.md)
-- Claims C-0263 / C-0264 / C-0265; notes on C-0014 / C-0035.
+- [Operator reply](../concepts/operator-reply.md) — the `/reply` reopen-on-comment semantics behind C-0279–C-0281.
+- Claims C-0263 / C-0264 / C-0265; first-cycle fixes C-0271–C-0275; soak regression C-0279 / C-0280 / C-0281; durable fix C-0285 (ADR-0017 `/comment`); notes on C-0014 / C-0035.

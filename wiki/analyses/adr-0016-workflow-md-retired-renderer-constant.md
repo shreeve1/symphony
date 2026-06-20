@@ -10,13 +10,14 @@ sources:
   - prompt_renderer.py
   - project_scaffold.py
   - CONTEXT.md
+  - wiki/raw/sessions/2026-06-20-adr-0016-implementation-landed.md
 confidence: high
 tags: [adr, workflow, renderer-constant, binding-type, infra, coding, portability, claude-md, autonomy, safety, rule-11, untrusted-input, patrol, preferred-skill, prompt-renderer]
 ---
 
 # ADR-0016 — WORKFLOW.md retired for infra; portable contract becomes a renderer constant
 
-`accepted` 2026-06-20 (design pass; implementation not started). Outcome of a grill-me design session. Supersedes the **file-based** half of [ADR-0011](adr-0011-workflow-md-infra-only.md); ADR-0011's `binding_type` split and "safety is the repo's job" stance remain in force.
+`accepted`; **landed 2026-06-20** (symphony `7e71b10`, homelab `2458429`). Design from a grill-me session; implemented via `/dev-build`. Supersedes the **file-based** half of [ADR-0011](adr-0011-workflow-md-infra-only.md); ADR-0011's `binding_type` split and "safety is the repo's job" stance remain in force. [source: wiki/raw/sessions/2026-06-20-adr-0016-implementation-landed.md]
 
 ## The principle
 
@@ -45,9 +46,10 @@ With rule 11 narrowed, a patrol writes `use the <name> skill` in the issue body 
 
 ## Consequences and follow-ups
 
-- **Implementation pending** — `prompt_renderer.py` INFRA constant + skip `load_workflow` for infra, file deletions, `CLAUDE.md` autonomy migration, tests, James-approved `symphony-restart`.
-- **Order of operations** — renderer change lands before deleting `~/homelab/WORKFLOW.md`, else dispatch hits `workflow-missing`.
-- **Scaffold churn** — `symphony-binding-scaffold` stops emitting infra `WORKFLOW.md`; `symphony-workflow-author` (infra-only since ADR-0011) becomes obsolete, retire with the template.
+- **Implementation landed 2026-06-20** — `prompt_renderer.py` `INFRA_PREAMBLE` constant + infra skips `load_workflow` (`load_workflow`/`WorkflowConfig`/`_parse_frontmatter` deleted, `path` vestigial); `~/homelab/WORKFLOW.md` deleted with safety+scoped-autonomy migrated to `~/homelab/CLAUDE.md`; the homelab patrol-router renderer repointed to a bundled `default_workflow.md`; `project_scaffold.py` no longer emits a `WORKFLOW.md`; tests green. Symphony `7e71b10`, homelab `2458429`. [source: wiki/raw/sessions/2026-06-20-adr-0016-implementation-landed.md]
+- **Deployed via restart** — `symphony-host.service` (the only `render_prompt` consumer, via `python -m main`) is the live dispatcher; it loads code at process start, so the deploy is an operator-approved `systemctl restart` onto `7e71b10` (2026-06-20T20:26Z: `symphony_started code_sha=7e71b10 bindings=5`, claude+pi probes ok, no `workflow-missing`). An interim read of a momentary stopped snapshot wrongly concluded "dormant / deploy=commit, no restart" — corrected (see C-0282). Render also verified offline against the live homelab binding (infra+podium): `INFRA_PREAMBLE` + narrowed rule 11 + identifier substitution present, no file-sourced content, `WORKFLOW.md` absent. **Live-dispatch autonomy behavior not yet exercised** (awaits the next real homelab infra candidate). [source: wiki/raw/sessions/2026-06-20-adr-0016-implementation-landed.md]
+- **Order of operations (honored)** — renderer change committed before `~/homelab/WORKFLOW.md` deletion, so no `workflow-missing`.
+- **Scaffold churn (done)** — `project_scaffold.py` stops emitting infra `WORKFLOW.md`; the `WORKFLOW.infra.md` template + `symphony-workflow-author` skill were already absent and their stale test refs were retired.
 - Supersedes C-0203's "infra still requires WORKFLOW.md (missing file hard block)" and C-0204's "WORKFLOW.md is autonomy policy"; amends C-0026 (medium-risk autonomy home → `CLAUDE.md`).
 
 ## Related

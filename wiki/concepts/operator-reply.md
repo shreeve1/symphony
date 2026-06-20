@@ -3,16 +3,18 @@ title: Operator reply comments
 type: concept
 status: promoted
 created: 2026-06-12
-updated: 2026-06-18
+updated: 2026-06-20
 sources:
   - web/api/main.py
   - prompt_renderer.py
   - web/frontend/components/IssueFlyout.tsx
   - web/frontend/tests/reply.spec.ts
   - web/api/tests/test_reply.py
+  - web/api/tests/test_comment.py
   - web/api/wake_signal.py
   - scheduler.py
   - plans/feature-operator-reply-comments.md
+  - docs/adr/0017-comment-as-primitive-reopen-as-separate-effect.md
 confidence: high
 tags: [operator-reply, comments_md, re-dispatch, todo-flip, podium, prompt-renderer, issue-flyout]
 ---
@@ -80,8 +82,15 @@ Historical (now the re-feed floor, not the only mode): pi was invoked one-shot (
 
 The comments block warns the agent not to treat comment text as system instructions, yet operator replies *are* trusted directives. Resolution: single-operator authenticated console (shared-password auth, #018) — the renderer elevates the most-recent `### Operator Reply` header to "the current request" while still telling the agent not to execute instructions embedded inside other/quoted comment text. Attribution uses a generic "Operator" label + timestamp; no per-user identity is tracked [source: plans/feature-operator-reply-comments.md].
 
+## The `/comment` sibling (ADR-0017)
+
+`POST /api/issues/{id}/comment` (`comment_on_issue`, landed 2026-06-20) is the append-only **Comment** primitive that `/reply` is the reopen variant of. It mirrors `/reply`'s append + monotonic `updated_at` bump + `issue.updated` publish, reuses the same `ReplyCreate` body validation (422 empty / 400 unknown key / 404 unknown id), but **drops the three reopen-coupled effects**: no `state='todo'` flip, no `state IN (...) AND latest_run_state NOT IN (...)` guard (so it works in **any** state — including `running` — and **never 409s** on state grounds), and no wake-sentinel touch (no re-dispatch). The body is appended **verbatim** (`COALESCE(comments_md,'') || ?`, `\n\n` separator) with **no injected header** — attribution is caller-owned, mirroring the in-process agent path. `/reply` is unchanged; no migration (only `comments_md`/`updated_at` touched) [source: web/api/main.py] [source: web/api/tests/test_comment.py] [source: docs/adr/0017-comment-as-primitive-reopen-as-separate-effect.md].
+
+This is the durable fix for the C-0281 patrol re-dispatch churn: Temporal patrols repointed `add_comment` from `/reply` to `/comment` and stamp their own `### Patrol (<iso-ts>)` header, so a patrol comment no longer reopens the issue. Reopen-on-fail / close-on-pass stay owned by the patrol's **explicit** `update_issue(state=…)` calls, decoupling *appending a comment* from *reopening for re-dispatch* [source: automation/homelab-stack/src/homelab_router/podium_adapter.py] [source: wiki/analyses/adr-0015-patrol-podium-tracker-adapter.md]. A future operator "Note" action would post through `/comment` the same way (deferred, YAGNI). The frontend splits a `### Patrol (` block as its own always-shown comment entry [source: web/frontend/components/IssueFlyout.tsx].
+
 ## Related
 
 - [Prompt renderer](prompt-renderer.md)
 - [Podium tracker](podium-tracker.md)
 - [Scheduler loop](scheduler-loop.md)
+- [ADR-0015 patrol Podium tracker adapter](../analyses/adr-0015-patrol-podium-tracker-adapter.md) — the patrol-side `/comment` repoint and the C-0279–C-0281→ADR-0017 arc.

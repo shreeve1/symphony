@@ -55,6 +55,16 @@ Live snapshot of the unit file on `aidev` as of 2026-06-09, with later drop-in d
 
 [source: wiki/raw/symphony-host.service#13-20]
 
+### Drop-in `override.conf` (live, not in base unit)
+
+`/etc/systemd/system/symphony-host.service.d/override.conf` carries `PI_BIN`, `NoNewPrivileges=no` (see below), and the live concurrency cap:
+
+| Var | Value | Notes |
+|---|---|---|
+| `SYMPHONY_RUN_CAP` | `2` | **per-binding** live Run cap (was `3` until 2026-06-20). `config.py:176` default `2`; remote bindings clamp to 1 via `_effective_run_cap`. Host-wide ceiling ≈ `run_cap × num_bindings` — see [C-0251] / [C-0284]. |
+
+[source: wiki/raw/sessions/2026-06-20-run-cap-reduced-to-2.md#durable-facts]
+
 ## What's NOT in the unit file
 
 Secrets and runtime executor config live in `/home/james/symphony-host.env` and are loaded via `EnvironmentFile=`. Per CLAUDE.md "Required env vars (bindings mode)":
