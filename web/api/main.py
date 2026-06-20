@@ -62,6 +62,7 @@ record_failed_attempt = _auth.record_failed_attempt
 sign_session = _auth.sign_session
 verify_password = _auth.verify_password
 verify_session = _auth.verify_session
+verify_bearer_token = _auth.verify_bearer_token
 resolve_run_log_root = _db.resolve_run_log_root
 connect = _db.connect
 get_connection = _db.get_connection
@@ -336,6 +337,10 @@ async def require_auth(request: Request, call_next):
         return await call_next(request)
     config = _get_auth_config()
     if verify_session(request.cookies.get(COOKIE_NAME), config):
+        return await call_next(request)
+    # Service-to-service callers (e.g. the Temporal patrol worker) authenticate
+    # with a Bearer token instead of the browser session cookie.
+    if verify_bearer_token(request.headers.get("authorization"), config):
         return await call_next(request)
     return JSONResponse({"detail": "not authenticated"}, status_code=401)
 

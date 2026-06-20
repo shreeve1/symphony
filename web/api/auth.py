@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class AuthConfig:
     password_hash: str
     session_secret: str
+    api_token: str | None = None
 
 
 _failed_attempts: dict[str, list[float]] = {}
@@ -59,11 +60,32 @@ def config_from_environment() -> AuthConfig:
         raise RuntimeError(f"Podium auth env missing: {', '.join(missing)}")
     assert password_hash is not None
     assert session_secret is not None
-    return AuthConfig(password_hash=password_hash, session_secret=session_secret)
+    # Optional service-to-service Bearer token (PODIUM_API_TOKEN). Unset → the
+    # API stays cookie-only and `verify_bearer_token` always returns False.
+    api_token = os.environ.get("PODIUM_API_TOKEN") or None
+    return AuthConfig(
+        password_hash=password_hash,
+        session_secret=session_secret,
+        api_token=api_token,
+    )
 
 
 def verify_password(password: str, config: AuthConfig) -> bool:
     return _bcrypt.checkpw(password.encode(), config.password_hash.encode())
+
+
+def verify_bearer_token(header_value: str | None, config: AuthConfig) -> bool:
+    """Validate an ``Authorization: Bearer <token>`` header against the config.
+
+    Returns False when no service token is configured, the header is missing or
+    malformed, or the token does not match. The comparison is constant-time.
+    """
+    if not config.api_token or not header_value:
+        return False
+    scheme, _, token = header_value.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return False
+    return hmac.compare_digest(token.strip(), config.api_token)
 
 
 def hash_password(password: str) -> str:

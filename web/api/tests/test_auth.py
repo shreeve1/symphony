@@ -93,3 +93,43 @@ def test_health_is_public_when_unauthenticated(monkeypatch, tmp_path) -> None:
         response = client.get("/api/health")
 
     assert response.status_code == 200
+
+
+def test_bearer_token_authenticates_without_cookie(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
+    monkeypatch.setenv("PODIUM_API_TOKEN", "service-token-xyz")
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/bindings",
+            headers={"Authorization": "Bearer service-token-xyz"},
+        )
+
+    assert response.status_code == 200
+
+
+def test_wrong_bearer_token_returns_401(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
+    monkeypatch.setenv("PODIUM_API_TOKEN", "service-token-xyz")
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/bindings",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+
+    assert response.status_code == 401
+
+
+def test_bearer_token_ignored_when_unset(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
+    monkeypatch.delenv("PODIUM_API_TOKEN", raising=False)
+    monkeypatch.setattr(auth, "load_dotenv", lambda path=auth.REPO_ROOT / ".env": None)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/bindings",
+            headers={"Authorization": "Bearer service-token-xyz"},
+        )
+
+    assert response.status_code == 401
