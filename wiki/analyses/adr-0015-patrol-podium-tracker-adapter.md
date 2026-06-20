@@ -132,10 +132,33 @@ committed, **inert** (nothing applied/restarted).
   change — `PodiumAdapter(binding="homelab")` is Wave C wiring; dedup
   (`?external_id=` AND `binding_name=homelab`) and the reconciler rule (keyed on
   the `homelab-patrol-` external_id prefix) stay correctly scoped.
-- **Remaining:** gated `podium-api` window (apply migration 0009; restart
-  `podium-api` + `symphony-host`; **no new binding/WORKFLOW.md**) + Wave C (wire
-  `worker.py` + `PATROL_TRACKER` toggle + worker-host config `binding=homelab`,
-  dry-run, restart patrol worker). See C-0266 / C-0267.
+- **Gated `podium-api` window APPLIED LIVE 2026-06-20 at full parity (C-0268).**
+  Migration 0009 applied to live `podium.db` (0008→`0009 (head)`; `external_id`
+  column + `ix_issue_external_id` index present); `podium-api` restarted (Wave B
+  endpoint live — `?external_id=zzz`→200 `[]`); `symphony-host` restarted
+  (`symphony_started`/`reconcile_startup_completed`×5/`dispatch_completed`; cure
+  live — `blocked_reconcile_skipped issue_id=61 external_id=`). `homelab` binding
+  unchanged. Backup `/backup/podium-2026-06-20.db`. **No new binding/WORKFLOW.md**
+  (C-0267). Two ops facts: alembic config is at repo ROOT (`-c alembic.ini`, not
+  `web/api/alembic.ini`); migration MUST precede the podium-api restart or Wave B
+  startup crashes on `_schema_drift` missing-column. Benign nit: `INITIAL_REVISION`
+  left at 0008 → per-startup `podium_schema_revision_mismatch` warning (non-fatal).
+- **Auth gap found + closed during Wave C (C-0269, symphony `69bf3f3`, 2nd gated
+  window).** podium-api was cookie-only; Wave A's Podium transport speaks Bearer.
+  Added an optional `PODIUM_API_TOKEN` Bearer path to the `require_auth`
+  middleware (constant-time, cookie-fallback, unset→cookie-only). Token set in
+  `symphony-host.env` + podium-api restarted; verified bearer→200 / bad→401 /
+  cookie→200.
+- **Wave C built + dry-run-verified, worker cutover DEFERRED (C-0270, homelab
+  `d160955`/`2e4fad6`).** `worker.py` selects `PodiumAdapter(binding=homelab)` vs
+  `PlaneAdapter` via `WorkerConfig.patrol_tracker` (default `podium`); new podium
+  config fields; `PODIUM_API_TOKEN` required when tracker=podium. Live dry-run
+  (10/10) caught + fixed a real bug — `find_by_external_id` didn't parse the live
+  API's bare-list response (mock returned `{"results":[...]}`). Marker round-trip
+  confirmed live (C-0265). **Remaining:** worker env (`PODIUM_API_TOKEN` +
+  `PATROL_TRACKER=podium`) + restart `homelab-temporal-patrol-worker.service` —
+  operator paused after the dry-run; patrols still on Plane until then.
+- See C-0266 / C-0267 / C-0268 / C-0269 / C-0270.
 
 ## Related
 
