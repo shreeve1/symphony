@@ -109,11 +109,26 @@ schema-before-adapter per plan 59's literal order (risks a second gated restart)
 
 ## Consequences / status
 
-- `proposed` — unbuilt. Two excluded-service changes (migration + reconciler
-  rule) land in one operator-scheduled `podium-api`/`symphony-host` window.
 - Plane stays a working slot-in backend (`PATROL_TRACKER=plane`).
 - Cross-repo: homelab and symphony commit independently to their own `main`.
-- Next: `/dev-build` Wave A.
+
+**Build status (2026-06-20, via `/dev-build`):** Waves A + B built, tested,
+committed, **inert** (nothing applied/restarted).
+- Wave A — homelab `e86d69d`: neutral `ticket_types.py` seam + `PodiumAdapter`/
+  `podium_http.py` (imports only `ticket_types`, verified) + marker
+  `last_pass_at`/`last_fail_at`. pi audit clean; 172 targeted pass.
+- Wave B — symphony `44d6b5f`: migration `0009` (`external_id` + global-unique
+  nullable index, idempotent), schema parity, `external_id` on create/PATCH +
+  UNIQUE→409, `?external_id=` filter, marker-first reconciler cure. pi audit 0
+  critical / 2 warnings (auto-fixed); full suite 966 passed.
+- **§4 revised during build:** cure shipped as a *unified marker-first-with-
+  comment-fallback inside the existing patrol rule* (not a separate
+  `patrol-passes-marker` `DEFAULT_RULES` entry) — the reconcile call site passes
+  no per-tracker rules, so consolidation avoids plumbing tracker-kind; the Plane
+  comment path is byte-for-byte preserved (marker only survives on Podium).
+- **Remaining:** Wave C (wire `worker.py` + `PATROL_TRACKER` toggle, dry-run,
+  restart patrol worker) + the gated `podium-api` window (apply migration 0009,
+  create `homelab-patrol` binding, restart). See C-0266.
 
 ## Related
 
