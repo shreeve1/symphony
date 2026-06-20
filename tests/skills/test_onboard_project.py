@@ -10,7 +10,7 @@ def test_onboard_project_uses_migrated_podium_subskills() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
 
     assert "symphony-binding-scaffold" in text
-    assert "symphony-workflow-author" in text
+    # symphony-workflow-author retired (ADR-0016) — no longer referenced.
     assert "symphony-restart" in text
     assert "symphony-binding-smoke" in text
     assert "Do not call `symphony-project-scaffold`" in text

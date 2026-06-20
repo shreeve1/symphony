@@ -84,7 +84,6 @@ def _render_candidate_prompt(
     tracker_kind: Literal["plane", "podium"] = "plane",
     resume: bool = False,
 ) -> str:
-    workflow_path = (repo_path or Path.cwd()) / "WORKFLOW.md"
     issue_data = IssueData(
         id=issue.id,
         identifier=issue.identifier,
@@ -106,12 +105,11 @@ def _render_candidate_prompt(
     if tracker_kind == "podium":
         return render_prompt(
             issue_data,
-            path=workflow_path,
             binding_type=binding_type,
             tracker_kind="podium",
             resume=resume,
         )
-    return render_prompt(issue_data, path=workflow_path, binding_type=binding_type)
+    return render_prompt(issue_data, binding_type=binding_type)
 
 
 def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> None:

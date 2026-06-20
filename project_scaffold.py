@@ -47,24 +47,6 @@ _LABEL_ROLE_BY_NAME: dict[str, TrackerRole] = {
 }
 _EXTRA_LABEL_NAMES: tuple[str, ...] = ("agent:claude", "agent:pi")
 
-WORKFLOW_STUB = """# WORKFLOW.md
-
-Describe this repository's Symphony workflow before enabling dispatch.
-
-Symphony provides issue id, identifier, title, description, labels, mode, and
-schedule context. Keep repo-specific policy here; Symphony only renders it.
-
-## Modes
-
-- conversation: Default read-only prompt/response turn.
-- plan: Produce a reviewable plan artifact; do not change production code.
-- build: Implement an approved plan.
-
-## Repository rules
-
-- Replace this stub with project-specific instructions before running agents.
-"""
-
 _SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _SLUG_MAX_LEN = 12
 
@@ -106,7 +88,6 @@ class ProjectScaffoldResult:
     project: ScaffoldProject
     binding_name: str
     bindings_path: Path
-    workflow_path: Path
 
 
 class ProjectScaffoldTracker(Protocol):
@@ -252,9 +233,6 @@ async def scaffold_project(
     default_agent: str = "pi",
     approval_enabled: bool = False,
     landing_mode: str = "local",
-    workflow_stub: str = WORKFLOW_STUB,
-    workflow_output_path: Path | None = None,
-    workflow_allow_overwrite: bool = False,
     existing_project_id: str | None = None,
 ) -> ProjectScaffoldResult:
     """Create a mock/live-gated Plane project and append its binding.
@@ -292,13 +270,10 @@ async def scaffold_project(
         read_path=bindings_read_path,
         output_path=bindings_output_path,
     )
-    workflow_path = workflow_output_path or (repo_path / "WORKFLOW.md")
-    _write_workflow_stub(workflow_path, workflow_stub, allow_overwrite=workflow_allow_overwrite)
     return ProjectScaffoldResult(
         project=project,
         binding_name=project.slug,
         bindings_path=bindings_output_path or bindings_path,
-        workflow_path=workflow_path,
     )
 
 
@@ -342,7 +317,6 @@ def _preflight_check(
     *,
     repo_path: Path,
     bindings_path: Path,
-    workflow_path: Path,
     project_slug: str,
 ) -> None:
     """Validate prerequisites before a live Plane mutation."""
@@ -359,8 +333,6 @@ def _preflight_check(
         for existing in raw["bindings"]:
             if isinstance(existing, dict) and existing.get("name") == project_slug:
                 raise ProjectScaffoldError(f"binding already exists: name={project_slug}")
-    if workflow_path.exists():
-        raise ProjectScaffoldError(f"{workflow_path}: WORKFLOW.md already exists")
 
 
 def _binding_entry(
@@ -447,13 +419,6 @@ def _append_binding(
     target.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
 
-def _write_workflow_stub(path: Path, content: str, *, allow_overwrite: bool = False) -> None:
-    if path.exists() and not allow_overwrite:
-        raise ProjectScaffoldError(f"{path}: WORKFLOW.md already exists")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-
-
 def _resources_from_response(data: dict[str, Any]) -> tuple[TrackerResource, ...]:
     raw = data.get("results") if isinstance(data, dict) else None
     if not isinstance(raw, list):
@@ -514,12 +479,10 @@ async def _main(argv: "list[str] | None" = None) -> int:
     validate_project_slug(args.slug)
 
     bindings_path = Path(os.environ.get("SYMPHONY_BINDINGS_PATH") or args.bindings_path)
-    workflow_path = args.repo_path / "WORKFLOW.md"
 
     if args.dry_run:
         tracker = MockProjectScaffoldTracker()
         preview_bindings = bindings_path.parent / ".bindings.yml.preview"
-        preview_workflow = bindings_path.parent / ".WORKFLOW.md.preview"
         result = await scaffold_project(
             tracker,
             bindings_path=bindings_path,
@@ -532,12 +495,9 @@ async def _main(argv: "list[str] | None" = None) -> int:
             default_agent=args.default_agent,
             approval_enabled=args.approval_enabled,
             landing_mode=args.landing_mode,
-            workflow_output_path=preview_workflow,
-            workflow_allow_overwrite=True,
         )
         print("Dry-run complete.")
         print(f"  Preview bindings: {result.bindings_path}")
-        print(f"  Preview workflow: {result.workflow_path}")
         print("  NOTE: UUIDs in preview are synthetic placeholders.")
         return 0
 
@@ -548,7 +508,6 @@ async def _main(argv: "list[str] | None" = None) -> int:
     _preflight_check(
         repo_path=args.repo_path,
         bindings_path=bindings_path,
-        workflow_path=workflow_path,
         project_slug=args.slug,
     )
 
@@ -590,7 +549,6 @@ async def _main(argv: "list[str] | None" = None) -> int:
     print("Live scaffold complete.")
     print(f"  Project: {result.project.name} ({result.project.slug})")
     print(f"  Bindings: {result.bindings_path}")
-    print(f"  Workflow: {result.workflow_path}")
     return 0
 
 

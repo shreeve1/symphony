@@ -67,12 +67,12 @@ class FakeScaffoldTracker:
 
 
 @pytest.mark.asyncio
-async def test_project_scaffold_mock_creates_template_binding_and_workflow(tmp_path: Path):
+async def test_project_scaffold_mock_creates_template_binding(tmp_path: Path):
     tracker = FakeScaffoldTracker()
     repo_path = tmp_path / "repo"
     bindings_path = tmp_path / "bindings.yml"
 
-    result = await scaffold_project(
+    await scaffold_project(
         tracker,
         bindings_path=bindings_path,
         repo_path=repo_path,
@@ -82,7 +82,8 @@ async def test_project_scaffold_mock_creates_template_binding_and_workflow(tmp_p
         default_agent="claude",
     )
 
-    assert result.workflow_path == repo_path / "WORKFLOW.md"
+    # ADR-0016: the scaffold no longer emits a WORKFLOW.md.
+    assert not (repo_path / "WORKFLOW.md").exists()
     assert tracker.requests == [
         ScaffoldProjectRequest(
             name="Tools",
@@ -93,7 +94,6 @@ async def test_project_scaffold_mock_creates_template_binding_and_workflow(tmp_p
     ]
     assert "patrol" not in tracker.requests[0].labels
     assert "security" not in tracker.requests[0].labels
-    assert result.workflow_path.read_text(encoding="utf-8").startswith("# WORKFLOW.md")
 
     config = SymphonyConfig.from_env(
         {
@@ -217,24 +217,21 @@ async def test_scaffold_project_with_bindings_output_path(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_scaffold_project_with_workflow_output_path(tmp_path: Path):
+async def test_scaffold_project_does_not_emit_workflow(tmp_path: Path):
+    """ADR-0016: scaffolding writes only the binding; no WORKFLOW.md is created."""
     tracker = FakeScaffoldTracker()
     repo_path = tmp_path / "repo"
-    workflow_path = tmp_path / ".WORKFLOW.md.preview"
 
-    result = await scaffold_project(
+    await scaffold_project(
         tracker,
         bindings_path=tmp_path / "bindings.yml",
         repo_path=repo_path,
         project_name="Tools",
         project_slug="tools",
         base_branch="main",
-        workflow_output_path=workflow_path,
     )
 
-    assert workflow_path.exists()
     assert not (repo_path / "WORKFLOW.md").exists()
-    assert result.workflow_path == workflow_path
 
 
 @pytest.mark.asyncio
@@ -349,21 +346,6 @@ def test_preflight_check_rejects_missing_repo(tmp_path: Path):
         _preflight_check(
             repo_path=missing_repo,
             bindings_path=tmp_path / "bindings.yml",
-            workflow_path=tmp_path / "WORKFLOW.md",
-            project_slug="tools",
-        )
-
-
-def test_preflight_check_rejects_existing_workflow(tmp_path: Path):
-    repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    workflow_path = tmp_path / "WORKFLOW.md"
-    workflow_path.write_text("exists")
-    with pytest.raises(ProjectScaffoldError, match="WORKFLOW.md already exists"):
-        _preflight_check(
-            repo_path=repo_path,
-            bindings_path=tmp_path / "bindings.yml",
-            workflow_path=workflow_path,
             project_slug="tools",
         )
 
@@ -377,7 +359,6 @@ def test_preflight_check_rejects_malformed_bindings(tmp_path: Path):
         _preflight_check(
             repo_path=repo_path,
             bindings_path=bindings_path,
-            workflow_path=tmp_path / "WORKFLOW.md",
             project_slug="tools",
         )
 
@@ -391,7 +372,6 @@ def test_preflight_check_rejects_duplicate_name(tmp_path: Path):
         _preflight_check(
             repo_path=repo_path,
             bindings_path=bindings_path,
-            workflow_path=tmp_path / "WORKFLOW.md",
             project_slug="tools",
         )
 

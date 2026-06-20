@@ -40,7 +40,9 @@ def test_podium_render_prompt_reads_comments_without_truncation_and_omits_contex
         tracker_kind="podium",
     )
 
-    assert "mode=plan" in prompt
+    # ADR-0016: mode no longer renders into the prompt body (the WORKFLOW.md
+    # `mode={{issue.mode}}` line is gone); the /dev-plan skill directive stands in.
+    assert "First, invoke the `dev-plan` skill" in prompt
     assert long_comments in prompt
     assert "[Earlier previous comments truncated]" not in prompt
     # context_md is dormant: no longer injected into Podium prompts.
@@ -93,27 +95,26 @@ def test_coding_binding_renders_without_workflow_file(tmp_path: Path) -> None:
     assert "SYMPHONY_RESULT" in prompt
 
 
-def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(
-    tmp_path: Path,
-) -> None:
-    workflow = tmp_path / "WORKFLOW.md"
-    workflow.write_text("mode={{issue.mode}}\n", encoding="utf-8")
-
+def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute() -> None:
+    # ADR-0016: mode (execute) is projected onto IssueData but no longer renders
+    # into the prompt text, so assert the skill-directive behavior instead. The
+    # mode projection itself is covered by test_skill_to_mode_projection_table.
     unknown = render_prompt(
         IssueData(identifier="POD-2", preferred_skill="/not-catalogued"),
-        path=workflow,
         tracker_kind="podium",
     )
     missing = render_prompt(
         IssueData(identifier="POD-3", preferred_skill=None),
-        path=workflow,
         tracker_kind="podium",
     )
 
-    assert "mode=execute" in unknown
-    assert "mode=execute" in missing
-    # [2.4]/[T.2.2] skill-less render emits no skill-invoke directive.
+    # An uncatalogued skill still emits its invoke directive (catalog only drives
+    # mode projection); a skill-less render emits none ([2.4]/[T.2.2]).
+    assert "First, invoke the `not-catalogued` skill" in unknown
     assert "First, invoke" not in missing
+    # Both still render the engine-owned infra constant.
+    assert "Symphony performs no git operations for this binding." in unknown
+    assert "Symphony performs no git operations for this binding." in missing
 
 
 _OPERATOR_REPLY_DIRECTIVE = (
@@ -367,14 +368,15 @@ def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
         resume=False,
     )
 
-    assert "mode=plan" in full
     assert "# POD-15: Fresh issue" in full
     assert "This is the description" in full
     # context_md is dormant: present on the dataclass but not rendered.
     assert "Context content" not in full
     assert "<previous_comments>" in full
     assert "First, invoke the `dev-plan` skill" in full
-    assert "Repo policy" in full
+    # ADR-0016: the infra constant renders (the temp WORKFLOW.md is ignored).
+    assert "Symphony performs no git operations for this binding." in full
+    assert "Repo policy" not in full
 
 
 def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
@@ -396,7 +398,9 @@ def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
     )
     comments_block = render_previous_comments_block(long_comments)
 
-    assert "mode=build" in prompt
+    # ADR-0016: the plane infra path renders the engine-owned constant, not the
+    # temp WORKFLOW.md body (so no `mode=build` line); the constant is present.
+    assert "Symphony performs no git operations for this binding." in prompt
     assert "not consumed by Plane renderer" not in prompt
     assert "## Issue Context" not in prompt
     assert "[Earlier previous comments truncated]" in comments_block

@@ -31,7 +31,7 @@ def test_troubleshooter_skill_is_podium_era_and_read_only() -> None:
     assert "sqlite3" in text
     assert "symphony-binding-scaffold" in text
     assert "symphony-binding-smoke" in text
-    assert "symphony-workflow-author" in text
+    # symphony-workflow-author retired (ADR-0016) — no longer referenced.
     assert "symphony-plane-recover" in text
     assert "read-only" in text.lower()
     assert "Never read or print" in text
