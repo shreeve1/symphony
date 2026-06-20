@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0008_fix_issue_archived_check"
+INITIAL_REVISION = "0009_issue_external_id"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
