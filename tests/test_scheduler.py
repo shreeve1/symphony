@@ -1344,6 +1344,49 @@ async def test_build_mode_returns_to_plan_when_no_plan_exists(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_build_mode_blocks_when_skill_forces_build_and_no_plan(
+    tmp_path: Path,
+) -> None:
+    # Skill-driven mode (Podium): the Build label is projected from
+    # preferred_skill every tick, so returning to Plan mode is a no-op and the
+    # issue would bounce forever. The gate must block once instead of looping.
+    transport = FakeTransport()
+    build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
+    transport.issues["build-1"] = _issue("build-1", labels=[build_uuid])
+    called = False
+
+    def agent_runner(issue: CandidateIssue, prompt: str) -> AgentResult:
+        nonlocal called
+        called = True
+        return AgentResult(0, 10, False)
+
+    candidate = replace(
+        _candidate("build-1", labels=[PlaneLabel.BUILD.value]),
+        preferred_skill="dev-build",
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [candidate],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.dispatched is False
+    assert result.reason == "build-plan-missing-skill-driven-blocked"
+    assert called is False
+    assert (
+        transport.issues["build-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    # Exactly one comment posted — no per-tick duplication.
+    assert len(transport.comments["build-1"]) == 1
+    assert "retry forever" in transport.comments["build-1"][0]["comment_html"]
+
+
+@pytest.mark.asyncio
 async def test_build_mode_removes_stale_plan_label_before_running(
     tmp_path: Path,
 ) -> None:

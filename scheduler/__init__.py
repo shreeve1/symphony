@@ -43,6 +43,7 @@ from session_continuity import (
     derive_session_id,
     evaluate_resume_eligibility,
 )
+from skill_mode_map import mode_for_skill
 from tracker_adapter import TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from tracker_types import (
@@ -1277,6 +1278,38 @@ async def _gate_run_tick_candidate(
 
         plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
         if plan_path is None:
+            # When the work-shape is projected from preferred_skill (Podium),
+            # the Build mode label is recomputed from the skill every tick, so
+            # the add-plan/remove-build flip below is a silent no-op: the issue
+            # re-enters Build mode next tick, finds no plan again, and bounces
+            # todo<->build forever while re-posting an identical comment each
+            # time (unbounded comments_md growth). Detect that case and block
+            # once with a precise reason instead of looping.
+            if mode_for_skill(getattr(candidate, "preferred_skill", None)) == "build":
+                _iu, _du = _build_urls(config, candidate.id)
+                await _block_issue(
+                    adapter,
+                    candidate.id,
+                    (
+                        "Build could not start: the preferred skill forces Build "
+                        f"mode but no readable plan file was found at "
+                        f"plans/{_issue_slug(candidate)}.md. Symphony cannot return "
+                        "this issue to Plan mode because the mode is projected from "
+                        "the skill, so it would retry forever. Provide the plan file "
+                        "or change the preferred skill to dev-plan."
+                    ),
+                    issue_name=candidate.name,
+                    issue_identifier=candidate.identifier,
+                    notifier=notifier,
+                    issue_url=_iu,
+                    dashboard_url=_du,
+                )
+                return TickResult(
+                    False,
+                    "build-plan-missing-skill-driven-blocked",
+                    candidate.id,
+                    mode=mode,
+                )
             try:
                 await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
                 await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
