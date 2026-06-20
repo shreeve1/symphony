@@ -1344,12 +1344,13 @@ async def test_build_mode_returns_to_plan_when_no_plan_exists(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_build_mode_blocks_when_skill_forces_build_and_no_plan(
+async def test_build_mode_blocks_when_skill_forces_build_after_grace(
     tmp_path: Path,
 ) -> None:
     # Skill-driven mode (Podium): the Build label is projected from
     # preferred_skill every tick, so returning to Plan mode is a no-op and the
-    # issue would bounce forever. The gate must block once instead of looping.
+    # issue would bounce forever. Once the grace window of return-to-plan
+    # attempts is spent (counted in comments_md), the gate blocks terminally.
     transport = FakeTransport()
     build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
     transport.issues["build-1"] = _issue("build-1", labels=[build_uuid])
@@ -1360,9 +1361,13 @@ async def test_build_mode_blocks_when_skill_forces_build_and_no_plan(
         called = True
         return AgentResult(0, 10, False)
 
+    spent_grace = "Returning this issue to Plan mode\n" * (
+        scheduler.BUILD_PLAN_MISSING_GRACE_ATTEMPTS
+    )
     candidate = replace(
         _candidate("build-1", labels=[PlaneLabel.BUILD.value]),
         preferred_skill="dev-build",
+        comments_md=spent_grace,
     )
 
     result = await run_tick(
@@ -1381,9 +1386,43 @@ async def test_build_mode_blocks_when_skill_forces_build_and_no_plan(
         transport.issues["build-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
-    # Exactly one comment posted — no per-tick duplication.
+    # Exactly one comment posted by the block — no per-tick duplication.
     assert len(transport.comments["build-1"]) == 1
     assert "retry forever" in transport.comments["build-1"][0]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_build_mode_skill_driven_returns_to_plan_within_grace(
+    tmp_path: Path,
+) -> None:
+    # Within the grace window (fewer prior return-to-plan attempts than the
+    # cap), a skill-driven issue still returns to Plan mode so a plan that
+    # lands seconds later can self-heal — it must NOT block yet.
+    transport = FakeTransport()
+    build_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.BUILD.value]
+    transport.issues["build-1"] = _issue("build-1", labels=[build_uuid])
+
+    candidate = replace(
+        _candidate("build-1", labels=[PlaneLabel.BUILD.value]),
+        preferred_skill="dev-build",
+        comments_md="Returning this issue to Plan mode\n",
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [candidate],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.dispatched is False
+    assert result.reason == "build-plan-missing-returned-to-plan"
+    assert (
+        transport.issues["build-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
 
 
 @pytest.mark.asyncio

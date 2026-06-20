@@ -120,6 +120,14 @@ STDERR_SUMMARY_MAX_LINES = 8
 STDERR_SUMMARY_MAX_CHARS = 900
 PREVIOUS_COMMENT_MAX_CHARS = 1500
 PREVIOUS_COMMENT_TAIL_CHARS = 500
+# Infra build gate: how many times to retry the return-to-plan recovery for a
+# skill-driven (Podium) issue with no plan file before blocking it terminally.
+# A short grace window lets a plan that lands seconds later self-heal, while
+# still bounding the otherwise-infinite bounce and its comment growth.
+BUILD_PLAN_MISSING_GRACE_ATTEMPTS = 3
+# Stable substring of the return-to-plan recovery comment, counted in
+# comments_md to track how many grace attempts have already been spent.
+_BUILD_PLAN_RETURN_MARKER = "Returning this issue to Plan mode"
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
 # from agent stderr so failure comments are readable on Plane, which renders
 # fenced code as plain text.
@@ -1281,22 +1289,40 @@ async def _gate_run_tick_candidate(
             # When the work-shape is projected from preferred_skill (Podium),
             # the Build mode label is recomputed from the skill every tick, so
             # the add-plan/remove-build flip below is a silent no-op: the issue
-            # re-enters Build mode next tick, finds no plan again, and bounces
-            # todo<->build forever while re-posting an identical comment each
-            # time (unbounded comments_md growth). Detect that case and block
-            # once with a precise reason instead of looping.
-            if mode_for_skill(getattr(candidate, "preferred_skill", None)) == "build":
+            # re-enters Build mode next tick and would bounce todo<->build
+            # forever, re-posting an identical comment each time (unbounded
+            # comments_md growth). Bound it: allow a short grace window (so a
+            # plan that lands seconds later still self-heals via return-to-plan)
+            # by counting the return-to-plan comments already posted, then block
+            # once the grace is spent.
+            #
+            # This guard is inert on the Plane path: plane_adapter candidates
+            # never carry preferred_skill, so mode_for_skill(None) == "execute"
+            # and the existing return-to-plan recovery (which DOES stick on
+            # Plane, where a planning agent can regenerate the plan) is used as
+            # before.
+            skill_forces_build = (
+                mode_for_skill(getattr(candidate, "preferred_skill", None)) == "build"
+            )
+            prior_return_to_plan = candidate.comments_md.count(_BUILD_PLAN_RETURN_MARKER)
+            if (
+                skill_forces_build
+                and prior_return_to_plan >= BUILD_PLAN_MISSING_GRACE_ATTEMPTS
+            ):
+                slug = _issue_slug(candidate)
                 _iu, _du = _build_urls(config, candidate.id)
                 await _block_issue(
                     adapter,
                     candidate.id,
                     (
                         "Build could not start: the preferred skill forces Build "
-                        f"mode but no readable plan file was found at "
-                        f"plans/{_issue_slug(candidate)}.md. Symphony cannot return "
-                        "this issue to Plan mode because the mode is projected from "
-                        "the skill, so it would retry forever. Provide the plan file "
-                        "or change the preferred skill to dev-plan."
+                        "mode but no readable plan file was found at "
+                        f"plans/{slug}.md (or plans/{slug}-<title>.md) after "
+                        f"{BUILD_PLAN_MISSING_GRACE_ATTEMPTS} attempts. Symphony "
+                        "cannot return this issue to Plan mode because the mode is "
+                        "projected from the skill, so it would retry forever. "
+                        "Provide the plan file or change the preferred skill to "
+                        "dev-plan."
                     ),
                     issue_name=candidate.name,
                     issue_identifier=candidate.identifier,
