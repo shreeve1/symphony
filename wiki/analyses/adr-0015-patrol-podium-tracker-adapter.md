@@ -10,7 +10,11 @@ sources:
   - blocked_reconciler.py
   - web/api/main.py
   - tracker_podium.py
+  - automation/homelab-stack/src/homelab_router/podium_adapter.py
+  - automation/homelab-stack/src/homelab_worker/schedule_patrols.py
+  - /home/james/homelab/WORKFLOW.md
   - wiki/raw/sessions/2026-06-20-patrol-podium-adapter-grill.md
+  - wiki/raw/sessions/2026-06-20-patrol-podium-cutover-verify-and-fixes.md
 confidence: high
 tags: [adr, patrol, podium, plane, tracker-adapter, ticket-writer, external-id, blocked-reconciler, temporal, homelab, cross-repo, proposed]
 ---
@@ -163,6 +167,34 @@ committed, **inert** (nothing applied/restarted).
   write on the next Temporal-scheduled cycle. Plane retained as a slot-in backend
   (`PATROL_TRACKER=plane`).
 - See C-0266 / C-0267 / C-0268 / C-0269 / C-0270.
+
+**First-live-cycle verification + post-cutover fixes (2026-06-20, C-0271–C-0275).**
+The scheduled cutover criterion ("first write on the next Temporal cycle") was
+unreachable because **all six patrol schedules are created paused by design**
+(`schedule_patrols.py:111`; explicit unpause is a separate step Wave C skipped) —
+C-0274. An operator-approved manual `infra` patrol then exposed the real gap:
+
+- **Int-id wedge (C-0271).** Live podium-api returns INTEGER issue ids, but
+  `TicketActivityOutcome.issue_id` is typed `str | None`, so Temporal failed to
+  decode the activity result (`Failed converting to str | None from 62`) and
+  retried the workflow task forever. The Podium write itself succeeded (issue 62
+  created, dedup-clean, marker + `med` priority correct) — only the workflow
+  wedged. Mock/real divergence (the in-memory transport stringifies ids; the
+  dry-run had no real id) masked it, exactly like the C-0270 bare-list bug. Fixed
+  by `PodiumAdapter._coerce_row_id` (homelab `a716349`) + 2 regression tests;
+  re-verified live: workflow `COMPLETED`, ids round-trip as strings.
+- **Auto-remediation confirmed + accepted (C-0272).** Each finding auto-dispatches
+  a pi agent (`gpt-5.5:high`, `cwd=/home/james/homelab`) that remediates the live
+  host (issue 62: journal vacuum, syslog truncation, docker/cache prune, `/`
+  86%→79%). One `infra` patrol = 10 findings → 10 dispatches. Operator accepts.
+- **Plane-CLI residue retired (C-0273).** homelab `WORKFLOW.md` still told the
+  agent to call `plane done|review|blocked`; now routes completion solely through
+  the `SYMPHONY_RESULT` verdict (rule 21). homelab `a716349`.
+- **All 6 schedules unpaused (C-0274)** via `schedule_patrols unpause --live
+  --worker-deployed`; infra next fires 15:00 UTC.
+- **Host-global pi break (C-0275).** A broken `ponytail` pi extension (CJS
+  `require` in a `type: module` package) aborted every pi dispatch host-wide until
+  the operator added a `createRequire` shim. Tangential to the cutover.
 
 ## Related
 

@@ -12,6 +12,16 @@ Append entries with this format:
 ---
 
 
+## [2026-06-20] session-update | ADR-0015 patrol→Podium first-live-cycle verification + post-cutover fixes
+
+- Actor: agent (Claude Code) + operator (James); operator-approved manual patrol triggers, operator fixed the pi extension
+- Inputs: handoff `/tmp/handoff-3LhvCu.md`; live read-only diagnosis (worker/symphony-host journals, `podium.db` issues 62–72, bearer/token-hash probes, `temporal schedule list/describe`, `temporal workflow describe`); homelab `podium_adapter.py`/`patrol_plane.py`/`schedule_patrols.py`/`WORKFLOW.md`; symphony `prompt_renderer.py` (trailer-parse grep); `~/dotfiles/.pi/agent/extensions/ponytail/`
+- Outputs: homelab commit `a716349` (`PodiumAdapter._coerce_row_id` int→str fix + 2 regression tests; `WORKFLOW.md` Plane-CLI→`SYMPHONY_RESULT` cleanup); new raw capture `wiki/raw/sessions/2026-06-20-patrol-podium-cutover-verify-and-fixes.md`; updated `wiki/analyses/adr-0015-patrol-podium-tracker-adapter.md` (first-live-cycle section + sources/frontmatter); `wiki/CLAIMS.md` (C-0271–C-0275 added; C-0270 qualified); `wiki/index.md`; `wiki/ROUTING.md`; this log entry. Live: worker restarted onto `a716349`; all 6 patrol schedules unpaused (operator-approved); issue 62 re-dispatched to verify pi.
+- Notes: The first real patrol finding wedged `PatrolWorkflow` — live podium-api returns INTEGER issue ids, `TicketActivityOutcome.issue_id` is `str | None`, Temporal rejected the int at the activity-result boundary and retried forever; the Podium write itself succeeded (create/dedup/marker/`med` all correct). Mock/real divergence (in-memory transport stringifies ids; dry-run had no real id) masked it. Fixed by coercing at the adapter boundary; re-verified `COMPLETED`. Confirmed (operator-accepted) that patrol findings auto-dispatch a pi agent that remediates the live host. Retired Plane-CLI completion residue from homelab WORKFLOW.md (nothing parses the issue commit trailer). Answered "why paused": schedules are created paused by design (`schedule_patrols.py:111`); Wave C never ran the unpause — now all 6 unpaused (infra next 15:00 UTC). A freshly-installed broken `ponytail` pi extension (CJS `require` in a `type:module` package) briefly disabled ALL pi dispatch host-wide; operator fixed via `createRequire` shim, re-verified. Pre-existing stale test `test_prompt_renderer.py::...documents_medium_risk_autonomy` fails before+after (excluded-service names moved to CLAUDE.md by a prior refactor) — not touched. Pre-existing homelab `CLAUDE.md` drift left unstaged. No secret env values printed (token compared by sha256 only).
+
+---
+
+
 ## [2026-06-18] session-update | ADR-0014 worktree commit-redispatch implemented (build)
 
 - Actor: agent
