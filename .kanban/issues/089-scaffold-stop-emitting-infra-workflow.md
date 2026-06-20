@@ -16,9 +16,10 @@ Source plan: `plans/adr-0016-workflow-md-renderer-constant.md` (group 4).
 
 - In `project_scaffold.py` remove: the `WORKFLOW_STUB` constant (`:50-66`), the `_write_workflow_stub` call (`:295-296`), the `_write_workflow_stub` function (`:450`), the "WORKFLOW.md already exists" guards (`:363`, `:452`), the `workflow_stub`/`workflow_output_path`/`workflow_allow_overwrite` parameters, the `ProjectScaffoldResult.workflow_path` field, and the CLI `.WORKFLOW.md.preview` block (`:517-522`). Keep all edits self-consistent (no dangling references).
 - Update `tests/test_project_scaffold.py` for the removed emission / preview / result field.
-- Cheap guard (acceptance): confirm no `WORKFLOW.infra.md` template or `symphony-workflow-author` skill remain in the repo (they were already absent — found only in `~/.local/share/Trash/`). If present anywhere in-repo, remove them.
+- **Reconcile the skill tests (pi review — NOT doc-only).** The `symphony-workflow-author` skill dir is already absent from `.claude/skills/`, but three skill tests still reference it: `tests/skills/test_workflow_author.py:6` (`SKILL_PATH = Path(".claude/skills/symphony-workflow-author/SKILL.md")`), `tests/skills/test_onboard_project.py:13` and `tests/skills/test_restart_troubleshooter.py:34` (`assert "symphony-workflow-author" in text`). Retiring the skill means: delete `test_workflow_author.py`, and remove the `symphony-workflow-author` assertions from the other two (or repoint to whatever replaced it). If a live skill copy exists elsewhere, delete it and the `symphony-onboard-project` branch invoking it. Net: no skill test references a non-existent `symphony-workflow-author`.
+- Confirm no `WORKFLOW.infra.md` template remains in-repo (was found only in `~/.local/share/Trash/`).
 
-Disjoint files from issue 088 (parallel-safe). Do NOT touch `prompt_renderer.py`, `main.py`, or the homelab repo.
+Disjoint source files from issue 088 (parallel-safe), but both touch the test suite — run the full suite at the end. Do NOT touch `prompt_renderer.py`, `main.py`, or the homelab repo.
 
 ## Acceptance criteria
 
@@ -26,8 +27,9 @@ Disjoint files from issue 088 (parallel-safe). Do NOT touch `prompt_renderer.py`
 - [ ] Running the Plane scaffold path creates no `WORKFLOW.md` and no `.WORKFLOW.md.preview` artifact.
 - [ ] `grep -rn "WORKFLOW_STUB\|_write_workflow_stub\|workflow_path\|WORKFLOW.md.preview" project_scaffold.py` returns nothing.
 - [ ] `grep -rln "WORKFLOW.infra.md" . | grep -v .venv | grep -v Trash` returns nothing; no `symphony-workflow-author` dir under `.claude/skills/`.
+- [ ] `grep -rn "symphony-workflow-author" tests/` returns nothing (the 3 skill tests reconciled).
 - [ ] `tests/test_project_scaffold.py` updated and passing.
-- [ ] Full suite green.
+- [ ] Full suite green (no NEW failures vs the #088 baseline; the reconciled skill tests no longer error on the missing skill).
 
 ## Verification
 

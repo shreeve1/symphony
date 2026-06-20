@@ -21,7 +21,9 @@ Source plan: `plans/adr-0016-workflow-md-renderer-constant.md` (groups 1 and 2).
 - Delete now-dead `load_workflow`, `WorkflowConfig`, `_parse_frontmatter` from `prompt_renderer.py` (grep-confirm no other importer first).
 - Update the `prompt_renderer.py` module docstring (`:1-6`) to describe the engine-owned infra preamble + coding "issue is the prompt".
 - In `main.py` `_build_prompt` (`:85-114`), drop the dead `workflow_path` computation; stop passing `path` (or pass `None`).
-- Rewrite the three file-reading infra tests in `tests/test_prompt_renderer.py` for constant behavior (see acceptance). Fix any other infra-prompt assertions that break across the suite.
+- Rewrite the three file-reading infra tests in `tests/test_prompt_renderer.py` for constant behavior (see acceptance).
+- Rewrite the infra-render cases in `tests/test_prompt_renderer_podium.py` that assert file-sourced bodies (pi review): the `_default_workflow(tmp_path)` cases asserting `mode=...`/`Repo policy` from a temp `WORKFLOW.md` — e.g. `test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute` and any sibling that greps the temp-file body. Keep `binding_type="coding"` cases and the `plane_path` case as-is; re-point each infra case to assert constant content or mode/skill behavior independent of the file body.
+- **Confirm the suite baseline first** (pi review): the skill tests `tests/skills/test_workflow_author.py`, `test_onboard_project.py`, `test_restart_troubleshooter.py` reference `.claude/skills/symphony-workflow-author/SKILL.md`, which is **already absent** — so the suite may not be fully green today. Run `uv run pytest -q` BEFORE changing anything to record the real baseline; "green" for this issue = no NEW failures vs that baseline (skill-test reconciliation is issue #089).
 
 Keep plan/build sections (no removal in this change). Do NOT touch the homelab repo, coding-binding behavior, or the scaffold (issue 089).
 
@@ -34,7 +36,8 @@ Keep plan/build sections (no removal in this change). Do NOT touch the homelab r
 - [ ] Coding binding behavior unchanged (`body=""`, issue-is-the-prompt; ignores any `WORKFLOW.md`).
 - [ ] `load_workflow`, `WorkflowConfig`, `_parse_frontmatter` removed; `grep -rn "load_workflow\|WorkflowConfig\|_parse_frontmatter" --include="*.py" . | grep -v .venv` returns nothing.
 - [ ] Plan Mode and Build Mode sections remain present in the constant.
-- [ ] Full suite green.
+- [ ] Infra-render cases in `tests/test_prompt_renderer_podium.py` that asserted temp-`WORKFLOW.md` body content are re-pointed to the constant / mode-skill behavior; coding + plane_path cases unchanged.
+- [ ] Suite baseline recorded before changes; no NEW failures introduced (pre-existing skill-test breakage from the absent `symphony-workflow-author` is out of scope here → #089).
 
 ## Verification
 
