@@ -1194,3 +1194,12 @@ Append entries with this format:
 - Outputs: CLAIMS C-0288 (cleanup landed); C-0285/C-0286 notes updated to point at C-0288 (dead-insurance sub-facts superseded); index.md + ROUTING.md adr-0015 rows extended. Code commit homelab `086487d` (patrol_plane.py only).
 - Unresolved: no worker restart forced (behavior-identical; next natural restart picks it up). Handoff item 4 (uncommitted wiki/CONTEXT) still operator-batched.
 - Notes: no secrets. Other modified files in the homelab working tree (config/router/monitor/worker + their tests) are unrelated pre-existing changes, left untouched.
+
+## [2026-06-20] grill+ingest | ADR-0018: patrol medium-risk updates self-schedule into the maintenance window (proposed)
+
+- Actor: agent (Claude Code), `/grill-me` "review anything outstanding between Temporal patrols and Podium".
+- Inputs: live `podium.db` (issues 62–76), patrol/symphony journals, `patrol_config.py`, `scheduler/__init__.py`, `schedule.py`, `tracker_podium.py`, `web/api/{schema,main}.py`; three operator decision answers.
+- Durable knowledge: patrols→Podium is live + healthy (auto-cure proven on 62/69); medium-risk findings (package/image updates, reboots, prunes) correctly BLOCK awaiting a maintenance window that Podium can't grant. Verified the detection cron never runs in-window (infra `0 3,15` UTC = 8pm/8am LA vs 12am–6am LA window) and that Podium's dormant scheduling machinery already requires the `Symphony-Schedule` comment (column=flag, comment=time). Operator chose hands-off agent self-scheduling reusing the grammar + a first-class infra-only Schedule control in the Podium UI.
+- Outputs: ADR `docs/adr/0018-patrol-medium-risk-window-scheduling.md` (`proposed`); raw session `wiki/raw/sessions/2026-06-20-patrol-window-scheduling-grill.md`; analysis `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md` (promoted); CLAIMS C-0289/C-0290/C-0291; index.md + ROUTING.md (Scheduling + Decisions) rows added.
+- Unresolved: no code yet — implementation plan/issues to follow (symphony: `SYMPHONY_SCHEDULE` marker + scheduler handling + UI + window constant + dedup-don't-clobber guard; homelab: INFRA_PREAMBLE block→schedule rule). Recommend verifying the apply path on one real finding before flipping INFRA_PREAMBLE.
+- Notes: no secrets read/written; live board observed, not mutated. Carried-over chores (stale `test_default_workflow_documents_medium_risk_autonomy`, ponytail pi-extension ESM bug, homelab Plane-CLI doc debt) noted, not addressed.
