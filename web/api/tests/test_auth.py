@@ -133,3 +133,47 @@ def test_bearer_token_ignored_when_unset(monkeypatch, tmp_path) -> None:
         )
 
     assert response.status_code == 401
+
+
+def test_bearer_authenticates_mutating_endpoint(monkeypatch, tmp_path) -> None:
+    # The service token authorizes mutating routes too (not just GET) — the
+    # security-relevant capability. PATCH a nonexistent issue: a 401 would mean
+    # auth failed; 404 means auth passed and the route ran.
+    monkeypatch.setenv("PODIUM_DB_PATH", str(tmp_path / "podium.db"))
+    monkeypatch.setenv("PODIUM_API_TOKEN", "service-token-xyz")
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/issues/999999",
+            json={"title": "x"},
+            headers={"Authorization": "Bearer service-token-xyz"},
+        )
+
+    assert response.status_code != 401
+
+
+@pytest.mark.parametrize(
+    "header,expected",
+    [
+        ("Bearer tok", True),
+        ("bearer tok", True),  # scheme is case-insensitive
+        ("  Bearer   tok  ", True),  # surrounding whitespace tolerated
+        ("Bearer wrong", False),
+        ("Bearer", False),  # scheme only, no token
+        ("Bearer ", False),  # empty token
+        ("Basic tok", False),  # wrong scheme
+        ("tok", False),  # no scheme
+        ("", False),
+        (None, False),
+    ],
+)
+def test_verify_bearer_token_header_parsing(header, expected) -> None:
+    config = auth.AuthConfig(
+        password_hash="unused", session_secret="unused", api_token="tok"
+    )
+    assert auth.verify_bearer_token(header, config) is expected
+
+
+def test_verify_bearer_token_false_when_no_token_configured() -> None:
+    config = auth.AuthConfig(password_hash="unused", session_secret="unused")
+    assert auth.verify_bearer_token("Bearer anything", config) is False

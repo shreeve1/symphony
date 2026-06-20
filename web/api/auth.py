@@ -82,10 +82,11 @@ def verify_bearer_token(header_value: str | None, config: AuthConfig) -> bool:
     """
     if not config.api_token or not header_value:
         return False
-    scheme, _, token = header_value.partition(" ")
+    scheme, _, token = header_value.strip().partition(" ")
+    token = token.strip()
     if scheme.lower() != "bearer" or not token:
         return False
-    return hmac.compare_digest(token.strip(), config.api_token)
+    return hmac.compare_digest(token, config.api_token)
 
 
 def hash_password(password: str) -> str:
