@@ -1,7 +1,7 @@
 ---
 id: 97
 title: Frontend Schedule control (infra-only) — new-issue modal + flyout
-status: review
+status: done
 blocked_by: [96]
 parent: null
 priority: 0
@@ -42,16 +42,22 @@ issue-96 endpoints.
 
 ## Acceptance criteria
 
-- [ ] The Schedule control renders for an infra binding's new-issue modal and flyout, and does NOT render for a coding binding.
-- [ ] Selecting "Next maintenance window" schedules via the endpoint with `not_before:"next_window"`; "Custom" sends an ISO8601-with-offset value; a reason is always sent (default applied).
-- [ ] New-issue scheduling uses the atomic create-and-schedule path (issue held immediately, no raw future `scheduled_for`).
-- [ ] The raw `scheduled_for` `ChipText` is removed from `IssueFlyout.tsx`; manual scheduling no longer goes through `IssuePatch.scheduled_for`.
-- [ ] `IssueCard.tsx` renders a "Scheduled" chip for a held-scheduled Todo and nothing for an unscheduled Todo.
-- [ ] `web/frontend/tests/schedule.spec.ts` exists and passes (control + card chip); the frontend builds.
+- [x] The Schedule control renders for an infra binding's new-issue modal and flyout, and does NOT render for a coding binding.
+- [x] Selecting "Next maintenance window" schedules via the endpoint with `not_before:"next_window"`; "Custom" sends an ISO8601-with-offset value; a reason is always sent (default applied).
+- [x] New-issue scheduling uses the atomic create-and-schedule path (issue held immediately, no raw future `scheduled_for`).
+- [x] The raw `scheduled_for` `ChipText` is removed from `IssueFlyout.tsx`; manual scheduling no longer goes through `IssuePatch.scheduled_for`.
+- [x] `IssueCard.tsx` renders a "Scheduled" chip for a held-scheduled Todo and nothing for an unscheduled Todo.
+- [x] `web/frontend/tests/schedule.spec.ts` exists and passes (control + card chip); the frontend builds.
 
 ## Verification
 
 `cd web/frontend && pnpm test:e2e schedule.spec.ts && pnpm build`
+
+## Implementation Notes
+
+- Added a shared frontend schedule control with next-window, custom datetime-with-offset, and none modes.
+- Wired infra-only new-issue scheduling through `IssueCreate.schedule` and existing-issue scheduling through `POST`/`DELETE /schedule`.
+- Added a board-card Scheduled chip and Playwright coverage for modal, flyout, coding-hide, and card-chip behavior.
 
 ## Blocked by
 

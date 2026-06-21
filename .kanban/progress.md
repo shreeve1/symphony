@@ -35,3 +35,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Schedule API is infra-only and uses the same label/comment rails as agent-emitted schedule markers; `IssueCreate.schedule` is the only race-free create-time scheduling path.
 **Notes for next iteration:** Issue #97 can rely on `/api/bindings` `binding_type`, `POST`/`DELETE /schedule`, and `IssueCreate.schedule` for the frontend control.
 **Verification:** `uv run pytest web/api/tests/test_schedule_endpoint.py web/api/tests/test_endpoints.py -q` (9 passed); fresh review passed; LSP diagnostics clean for touched Python files.
+
+## #97 Frontend schedule controls — 2026-06-21
+
+**What changed:** Added the infra-only Podium Schedule control in the new-issue modal and issue flyout, wired create-time `schedule` payloads plus existing-issue `POST`/`DELETE /schedule`, and added a board-card Scheduled chip.
+**Files:** `web/frontend/components/ScheduleControl.tsx`, `web/frontend/components/NewIssueModal.tsx`, `web/frontend/components/IssueFlyout.tsx`, `web/frontend/components/IssueCard.tsx`, `web/frontend/lib/api.ts`, `web/frontend/tests/schedule.spec.ts`, `web/frontend/pnpm-workspace.yaml`, `.kanban/issues/097-frontend-schedule-control-infra-only.md`
+**Decisions:** The modal derives infra/coding from `/api/bindings.binding_type`; custom datetime input is converted to ISO8601 with the browser's local offset before submission; `scheduled_for` remains a hold indicator while the flyout parses the latest `Symphony-Schedule` line for display.
+**Conventions established:** Frontend manual scheduling uses the schedule endpoints only; `IssuePatch.scheduled_for` is not used as the UI scheduling path.
+**Notes for next iteration:** Issue #98 is still the manual/cross-repo homelab policy/dedup slice; this Ralph run did not touch it.
+**Verification:** `cd web/frontend && pnpm test:e2e schedule.spec.ts && pnpm build` (3 Playwright tests passed; Next build passed); fresh review passed with a note that `web/frontend/pnpm-workspace.yaml` is a build prerequisite for approved `sharp` builds; LSP diagnostics had only pre-existing non-critical client-component/FormEvent warnings.
