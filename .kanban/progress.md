@@ -8,3 +8,12 @@ This file tracks implementation notes across Ralph iterations.
 **Files:** `schedule.py`, `scheduler/__init__.py`, `tests/test_schedule.py`, `tests/test_scheduler.py`, `.kanban/issues/093-schedule-foundations-next-window-prefer-last.md`
 **Decisions:** Window constants now live in `schedule.py`; scheduler keeps compatibility aliases but delegates to `schedule.next_maintenance_window`. `prefer_last` remains opt-in and is enabled only for Podium-style single-blob comments.
 **Verification:** `uv run pytest tests/test_schedule.py tests/test_scheduler.py -q` (226 passed); LSP diagnostics clean for touched Python files.
+
+## #94 SYMPHONY_SCHEDULE output marker — 2026-06-21
+
+**What changed:** Added stdout parsing for `SYMPHONY_SCHEDULE` markers, stripped schedule marker lines from summary/question blocks, and documented schedule as the fourth terminal outcome.
+**Files:** `scheduler/markers.py`, `scheduler/__init__.py`, `prompt_renderer.py`, `tests/test_schedule.py`, `tests/test_prompt_renderer.py`, `.kanban/issues/094-symphony-schedule-marker.md`
+**Decisions:** The marker parser reuses `schedule.parse_schedule_comment` so explicit timestamps, `next_window`, and non-empty reasons follow the same grammar as tracker schedule comments. Scheduling policy remains out of `INFRA_PREAMBLE`; the output contract only documents the mechanism.
+**Conventions established:** Schedule terminal outcomes use a column-0 `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."` line plus a summary block.
+**Notes for next iteration:** Issue #95 wires this parser into terminal classification and must decide malformed-marker blocking behavior from a present-but-unparseable marker.
+**Verification:** `uv run pytest tests/test_schedule.py tests/test_prompt_renderer.py tests/test_prompt_renderer_podium.py -q` (90 passed); fresh review passed; LSP diagnostics clean for touched Python files.

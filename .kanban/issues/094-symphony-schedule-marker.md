@@ -1,13 +1,14 @@
 ---
 id: 94
 title: SYMPHONY_SCHEDULE output marker — parse + output contract + INFRA_PREAMBLE
-status: review
+status: done
 blocked_by: [93]
 parent: null
 priority: 0
 created: 2026-06-21
 updated: 2026-06-21
 actor: ralph
+action_reviewed: 2026-06-21
 ---
 
 ## What to build
@@ -41,12 +42,12 @@ issue 95).
 
 ## Acceptance criteria
 
-- [ ] `_parse_schedule_marker` parses a valid marker (explicit ISO + offset) → `(datetime, reason)`; last-occurrence wins; ANSI-wrapped lines parse.
-- [ ] `not_before=next_window` resolves via `next_maintenance_window`.
-- [ ] Missing/empty reason, missing/malformed `not_before`, or a bare natural-language timestamp → `None`/flagged (not silently accepted).
-- [ ] `_MARKER_LINE_RE` strips a `SYMPHONY_SCHEDULE:` line out of a `SYMPHONY_SUMMARY_BEGIN/END` block.
-- [ ] `OUTPUT_CONTRACT` documents the marker with the `<next_window|iso8601-with-offset>` form; `INFRA_PREAMBLE` no longer mandates only `SYMPHONY_RESULT`.
-- [ ] Existing prompt-renderer tests still pass.
+- [x] `_parse_schedule_marker` parses a valid marker (explicit ISO + offset) → `(datetime, reason)`; last-occurrence wins; ANSI-wrapped lines parse.
+- [x] `not_before=next_window` resolves via `next_maintenance_window`.
+- [x] Missing/empty reason, missing/malformed `not_before`, or a bare natural-language timestamp → `None`/flagged (not silently accepted).
+- [x] `_MARKER_LINE_RE` strips a `SYMPHONY_SCHEDULE:` line out of a `SYMPHONY_SUMMARY_BEGIN/END` block.
+- [x] `OUTPUT_CONTRACT` documents the marker with the `<next_window|iso8601-with-offset>` form; `INFRA_PREAMBLE` no longer mandates only `SYMPHONY_RESULT`.
+- [x] Existing prompt-renderer tests still pass.
 
 ## Verification
 
@@ -55,3 +56,10 @@ issue 95).
 ## Blocked by
 
 - Blocked by #93 (uses `next_maintenance_window` / `next_window` resolution).
+
+## Implementation Notes
+
+- Added `_parse_schedule_marker` for column-0 `SYMPHONY_SCHEDULE:` stdout markers, with ANSI stripping, last-marker selection, `next_window` resolution, and strict schedule-comment parsing for ISO timestamps and non-empty reasons.
+- Added `SCHEDULE` to machine-marker stripping and re-exported the parser from `scheduler`.
+- Updated the shared output contract and infra preamble so schedule is a terminal mechanism without embedding policy.
+- Added parser, marker-stripping, and renderer regression coverage; verified with `uv run pytest tests/test_schedule.py tests/test_prompt_renderer.py tests/test_prompt_renderer_podium.py -q`.
