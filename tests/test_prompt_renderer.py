@@ -32,7 +32,9 @@ def test_render_prompt_uses_infra_preamble_constant_and_substitutes() -> None:
     assert "## Symphony output contract" in prompt
     assert "SYMPHONY_SUMMARY_BEGIN" in prompt
     assert "SYMPHONY_RESULT: done" in prompt
+    assert "SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset>" in prompt
     assert "SYMPHONY_QUESTION_BEGIN" in prompt
+    assert "exactly one `SYMPHONY_RESULT`" not in prompt
 
 
 def test_render_prompt_narrowed_rule_11_present_old_wording_absent() -> None:

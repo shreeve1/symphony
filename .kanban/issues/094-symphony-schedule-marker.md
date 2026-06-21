@@ -1,11 +1,13 @@
 ---
 id: 94
 title: SYMPHONY_SCHEDULE output marker — parse + output contract + INFRA_PREAMBLE
-status: pending
+status: in-progress
 blocked_by: [93]
 parent: null
 priority: 0
 created: 2026-06-21
+updated: 2026-06-21
+actor: ralph
 ---
 
 ## What to build

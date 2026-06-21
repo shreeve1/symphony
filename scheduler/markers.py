@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
+
+from schedule import ScheduleParseError, parse_schedule_comment
 
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m).
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _RESULT_MARKER_RE = re.compile(
     r"^[ \t]*SYMPHONY_RESULT:[ \t]*(done|review|blocked)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SCHEDULE_MARKER_RE = re.compile(
+    r"^SYMPHONY_SCHEDULE:[ \t]*(?P<payload>.+?)[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _QUESTION_BLOCK_RE = re.compile(
@@ -28,7 +35,7 @@ _SUMMARY_BLOCK_RE = re.compile(
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 _MARKER_LINE_RE = re.compile(
-    r"^[ \t]*SYMPHONY_(?:RESULT|SUMMARY|COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):.*$",
+    r"^[ \t]*SYMPHONY_(?:RESULT|SCHEDULE|SUMMARY|COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):.*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _QUESTION_MARKER_LINE_RE = re.compile(
@@ -58,6 +65,30 @@ def _parse_result_marker(stdout: str) -> str | None:
     if not matches:
         return None
     return matches[-1].lower()
+
+
+def _parse_schedule_marker(
+    stdout: str, *, now: datetime | None = None
+) -> tuple[datetime, str] | None:
+    """Return the last SYMPHONY_SCHEDULE marker when it parses, or None."""
+
+    if not stdout:
+        return None
+    cleaned = _ANSI_ESCAPE_RE.sub("", stdout)
+    matches = list(_SCHEDULE_MARKER_RE.finditer(cleaned))
+    if not matches:
+        return None
+    payload = matches[-1].group("payload")
+    try:
+        event = parse_schedule_comment(
+            f"Symphony-Schedule: {payload}",
+            now=now or datetime.now(timezone.utc),
+        )
+    except ScheduleParseError:
+        return None
+    if event is None or event.not_before is None or not event.reason.strip():
+        return None
+    return event.not_before, event.reason
 
 
 def _parse_summary_marker(*streams: str) -> str | None:

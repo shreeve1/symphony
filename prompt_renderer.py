@@ -31,6 +31,9 @@ End every run by emitting exactly one terminal outcome:
 - Completed or needs review: emit `SYMPHONY_RESULT: done` or
   `SYMPHONY_RESULT: review`, plus a summary block.
 - Blocked on an error: emit `SYMPHONY_RESULT: blocked`, plus a summary block.
+- Deferring to a maintenance window: emit
+  `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."`,
+  plus a summary block — use `next_window` unless a specific time is required.
 - Needs operator clarification: emit a question block instead of
   `SYMPHONY_RESULT`:
 
@@ -107,22 +110,21 @@ rules strictly:
 
 12. Always include a work summary in your `SYMPHONY_SUMMARY` block (rule 15) —
     it is the per-run comment Symphony posts on the issue.
-13. Signal the terminal state with the `SYMPHONY_RESULT: done|review|blocked`
-    verdict (rule 15). Do NOT call any tracker CLI — Symphony owns the issue
-    state transition from the verdict marker.
+13. Signal the terminal state using the appended Symphony output contract
+    (rule 15). Do NOT call any tracker CLI — Symphony owns the issue state
+    transition from terminal markers.
 14. If the issue cannot be completed, emit `SYMPHONY_RESULT: blocked` with a
     clear explanation of the blocker in the summary.
 15. **End every run with the Symphony output contract.** Symphony appends the
     authoritative contract to your prompt (`## Symphony output contract`).
-    Emit, on their own lines in stdout: exactly one
-    `SYMPHONY_RESULT: done|review|blocked` verdict, and a
-    `SYMPHONY_SUMMARY_BEGIN` / `SYMPHONY_SUMMARY_END` block holding your natural
-    end-of-turn summary — what you did, findings, and any questions for the
-    operator. Symphony posts that block verbatim as the issue comment, so write
-    it for a human reader (markdown allowed). The legacy single-line
-    `SYMPHONY_SUMMARY: <one sentence>` form is still accepted as a fallback.
-    The summary is the only per-run signal on the issue for a clean run — the
-    scheduler does NOT echo stdout or stderr into the comment.
+    Emit one terminal outcome marker and a `SYMPHONY_SUMMARY_BEGIN` /
+    `SYMPHONY_SUMMARY_END` block holding your natural end-of-turn summary —
+    what you did, findings, and any questions for the operator. Symphony posts
+    that block verbatim as the issue comment, so write it for a human reader
+    (markdown allowed). The legacy single-line `SYMPHONY_SUMMARY: <one sentence>`
+    form is still accepted as a fallback. The summary is the only per-run signal
+    on the issue for a clean run — the scheduler does NOT echo stdout or stderr
+    into the comment.
 16. If you exit 0 with no marker and no repo changes (a clean read-only check),
     the scheduler treats that as `done`. If you made repo changes, commit them
     yourself first. The scheduler will not perform git writes, cleanup, or other

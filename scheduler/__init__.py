@@ -78,6 +78,9 @@ from .markers import (
     _parse_run_metrics as _parse_run_metrics,
 )
 from .markers import (
+    _parse_schedule_marker as _parse_schedule_marker,
+)
+from .markers import (
     _parse_summary_block as _parse_summary_block,
 )
 from .markers import (

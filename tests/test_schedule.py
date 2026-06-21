@@ -30,6 +30,10 @@ from schedule import (  # noqa: E402  (sys.path manipulation above)
     normalize_comment_body,
     parse_schedule_comment,
 )
+from scheduler.markers import (  # noqa: E402  (sys.path manipulation above)
+    _parse_schedule_marker,
+    _parse_summary_block,
+)
 
 
 UTC = timezone.utc
@@ -234,6 +238,64 @@ def test_parse_next_window_inside_window_resolves_to_current_start():
 
     assert event is not None
     assert event.not_before == datetime(2026, 5, 4, 7, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Stdout schedule marker parser
+# ---------------------------------------------------------------------------
+
+
+def test_parse_schedule_marker_accepts_explicit_iso_and_offset():
+    parsed = _parse_schedule_marker(
+        'SYMPHONY_SCHEDULE: not_before=2026-05-08T22:00:00+02:00 reason="window"'
+    )
+
+    assert parsed == (datetime(2026, 5, 8, 20, 0, tzinfo=UTC), "window")
+
+
+def test_parse_schedule_marker_last_occurrence_wins_and_strips_ansi():
+    parsed = _parse_schedule_marker(
+        "\x1b[32mSYMPHONY_SCHEDULE:\x1b[0m "
+        'not_before=2026-05-08T20:00:00Z reason="old"\n'
+        'SYMPHONY_SCHEDULE: not_before=2026-05-09T20:00:00Z reason="new"'
+    )
+
+    assert parsed == (datetime(2026, 5, 9, 20, 0, tzinfo=UTC), "new")
+
+
+def test_parse_schedule_marker_next_window_resolves_with_timezone_aware_now():
+    parsed = _parse_schedule_marker(
+        'SYMPHONY_SCHEDULE: not_before=next_window reason="window"',
+        now=datetime(2026, 5, 4, 8, 0, tzinfo=UTC),
+    )
+
+    assert parsed == (datetime(2026, 5, 4, 7, 0, tzinfo=UTC), "window")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "SYMPHONY_SCHEDULE: reason=\"missing not_before\"",
+        "SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z",
+        "SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z reason=\"\"",
+        "SYMPHONY_SCHEDULE: not_before=tomorrow reason=\"natural language\"",
+        ' SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z reason="indented"',
+    ],
+)
+def test_parse_schedule_marker_rejects_malformed_or_non_column_zero_lines(line):
+    assert _parse_schedule_marker(line) is None
+
+
+def test_summary_block_strips_schedule_marker_line():
+    summary = _parse_summary_block(
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        "before\n"
+        'SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z reason="window"\n'
+        "after\n"
+        "SYMPHONY_SUMMARY_END"
+    )
+
+    assert summary == "before\n\nafter"
 
 
 # ---------------------------------------------------------------------------
