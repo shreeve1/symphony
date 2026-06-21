@@ -14,9 +14,7 @@ test("infra new-issue schedule uses atomic create payload", async ({
 	);
 
 	await page.getByTestId("new-issue-title").fill(title);
-	await page.getByTestId("new-issue-schedule-mode").selectOption("custom");
-	await page.getByTestId("new-issue-schedule-custom").fill("2031-02-03T04:05");
-	await page.getByTestId("new-issue-schedule-reason").fill("e2e custom window");
+	// Yes/No control defaults to "Yes" (next_window); nothing to type.
 
 	const requestPromise = page.waitForRequest(
 		(req) =>
@@ -28,10 +26,8 @@ test("infra new-issue schedule uses atomic create payload", async ({
 	const body = JSON.parse(request.postData() ?? "{}");
 
 	expect(body.scheduled_for).toBeUndefined();
-	expect(body.schedule.reason).toBe("e2e custom window");
-	expect(body.schedule.not_before).toMatch(
-		/^2031-02-03T04:05:00[+-]\d{2}:\d{2}$/,
-	);
+	expect(body.schedule.reason).toBe("operator scheduled via Podium");
+	expect(body.schedule.not_before).toBe("next_window");
 	await expect(page.getByTestId("new-issue-modal")).toBeHidden();
 	await expect(
 		page.getByTestId("issue-card").filter({ hasText: title }),
@@ -71,7 +67,7 @@ test("flyout schedules, unschedules, and the board card shows held todos", async
 	await page.goto(`/homelab?issue=${issueId}`);
 	await expect(page.getByTestId("issue-schedule")).toBeVisible();
 	await page.getByTestId("issue-schedule-mode").selectOption("next_window");
-	await page.getByTestId("issue-schedule-reason").fill("flyout e2e schedule");
+	// No reason field in the Yes/No control — the default reason is used.
 
 	const scheduleRequest = page.waitForRequest(
 		(req) =>
@@ -82,7 +78,7 @@ test("flyout schedules, unschedules, and the board card shows held todos", async
 	const scheduleBody = JSON.parse((await scheduleRequest).postData() ?? "{}");
 	expect(scheduleBody).toEqual({
 		not_before: "next_window",
-		reason: "flyout e2e schedule",
+		reason: "operator scheduled via Podium",
 	});
 	await expect(page.getByTestId("issue-schedule-current")).toBeVisible();
 
