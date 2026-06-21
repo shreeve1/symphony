@@ -25,4 +25,4 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Schedule marker handling is infra-only; malformed/past/reasonless markers block explicitly, while coding bindings ignore markers and continue normal terminal classification. Valid schedule markers finish Runs as `succeeded` with `verdict=None` to avoid introducing a new issue state.
 **Conventions established:** Schedule terminal handling order is comment → scheduled label → TODO; marker scheduling returns `agent-marker-scheduled` and logs `state_scheduled`.
 **Notes for next iteration:** Issue #98 can now rely on marker-scheduled issues being held by the existing scheduled gate and released by the existing due-schedule selector.
-**Verification:** `uv run pytest tests/test_scheduler.py -q` (170 passed); fresh review passed with minor notes; LSP diagnostics clean for touched Python files.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` (172 passed); actionable review fixed approval-gate precedence, malformed-marker coding ignore, mutation-order/run-record coverage, and added `action_reviewed`; LSP diagnostics clean for touched Python files.

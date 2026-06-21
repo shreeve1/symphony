@@ -4,6 +4,7 @@ title: Scheduler terminal handler — agent SYMPHONY_SCHEDULE → held + TODO
 status: done
 updated: 2026-06-21
 actor: ralph
+action_reviewed: 2026-06-21
 blocked_by: [93, 94]
 parent: null
 priority: 0
@@ -66,4 +67,4 @@ Behavior:
 - Added infra-only `SYMPHONY_SCHEDULE` terminal handling in `_classify_terminal` before blocked/review/done verdict handling.
 - Valid markers now append the canonical `Symphony-Schedule:` comment, apply the scheduled label, transition back to TODO, finish the Run as `succeeded` with `verdict=None`, and return `agent-marker-scheduled`.
 - Malformed, past, or reasonless schedule markers block with an explanatory comment; coding bindings ignore schedule markers and continue normal terminal classification.
-- Added scheduler tests for valid scheduling, blocked-verdict precedence, malformed/past markers, and coding-binding ignore behavior.
+- Added scheduler tests for valid scheduling, blocked-verdict precedence, approval-gate precedence, run-record semantics, mutation order, malformed/past markers, and coding-binding ignore behavior.

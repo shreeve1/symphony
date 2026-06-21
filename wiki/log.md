@@ -1230,7 +1230,7 @@ Append entries with this format:
 - Actor: agent (Ralph/Pi)
 - Inputs: `.kanban/issues/095-scheduler-terminal-schedule-handler.md`; implementation diff `git diff 6d8eefc6b6105068791719d83abf8dab749df429 HEAD`; `scheduler/__init__.py`; `tests/test_scheduler.py`; `.kanban/progress.md`; fresh review session.
 - Outputs: updated `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md`; updated `wiki/concepts/schedule-comment-grammar.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0295 added, C-0291/C-0294 refined); this log entry.
-- Notes: Captured Issue #95 landing: valid infra `SYMPHONY_SCHEDULE` markers become scheduled TODO issues via schedule comment → scheduled label → TODO, Run `succeeded`/`verdict=None`, `agent-marker-scheduled`; malformed/past/reasonless markers block; coding bindings ignore the marker. Verification: `uv run pytest tests/test_scheduler.py -q` passed (170 tests), touched-file LSP diagnostics clean, fresh review `PASS_WITH_NOTES` (only minor notes). No secrets, env files, service restarts, or live alert/paging notifications.
+- Notes: Captured Issue #95 landing: valid infra `SYMPHONY_SCHEDULE` markers become scheduled TODO issues via schedule comment → scheduled label → TODO, Run `succeeded`/`verdict=None`, `agent-marker-scheduled`; malformed/past/reasonless infra markers block; coding bindings ignore the marker. Actionable review fixed approval-gate precedence, malformed-marker coding ignore, run-record/order test coverage, and added `action_reviewed`. Verification: `uv run pytest tests/test_scheduler.py -q` passed (172 tests), touched-file LSP diagnostics clean. No secrets, env files, service restarts, or live alert/paging notifications.
 
 ---
 

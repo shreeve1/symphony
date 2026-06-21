@@ -51,6 +51,7 @@ class FakeTransport:
         # callback work without the (now removed) claim comment first
         # initializing the per-issue list.
         self.comments: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self.operations: list[tuple[str, str, dict[str, Any]]] = []
 
     async def get(self, path: str) -> dict[str, Any]:
         if "/comments" in path:
@@ -64,6 +65,7 @@ class FakeTransport:
         return {"results": list(self.issues.values())}
 
     async def post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.operations.append(("post", path, dict(body)))
         if "/comments" in path:
             issue_id = path.split("/issues/")[1].split("/comments")[0].strip("/")
             self.comments.setdefault(issue_id, []).append(body)
@@ -73,6 +75,7 @@ class FakeTransport:
         return self.issues[issue_id]
 
     async def patch(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.operations.append(("patch", path, dict(body)))
         issue_id = path.rsplit("/issues/", 1)[1].split("?", 1)[0].strip("/")
         self.issues[issue_id].update(body)
         return self.issues[issue_id]
@@ -2559,6 +2562,7 @@ async def test_schedule_marker_schedules_issue(tmp_path: Path) -> None:
     """Valid schedule marker posts comment, adds label, and returns scheduled."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
+    adapter = RunStoreAdapter(transport, tmp_path / "podium.db")
     agent_output = (
         "All good. Will do the restart during maintenance.\n"
         'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="upgrade window"\n'
@@ -2566,7 +2570,7 @@ async def test_schedule_marker_schedules_issue(tmp_path: Path) -> None:
 
     result = await run_tick(
         _config(tmp_path),
-        _adapter(transport),
+        adapter,
         agent_runner=lambda issue, prompt: AgentResult(
             0, 10, False, stdout=agent_output
         ),
@@ -2578,19 +2582,26 @@ async def test_schedule_marker_schedules_issue(tmp_path: Path) -> None:
 
     assert result.reason == "agent-marker-scheduled"
     assert result.issue_id == "issue-1"
-    # State stays TODO (not moved to blocked/in-review)
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
     )
-    # Comment posted with format_schedule_comment
     scheduled_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony-Schedule:" in scheduled_comment
     assert "not_before=2026-05-05T00:00:00+00:00" in scheduled_comment
     assert 'reason="upgrade window"' in scheduled_comment
-    # Label added
     scheduled_label_id = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
     assert scheduled_label_id in transport.issues["issue-1"]["labels"]
+    assert adapter.runs["run-1"]["state"] == "succeeded"
+    assert adapter.runs["run-1"]["verdict"] is None
+    assert [
+        (method, "comments" in path, body)
+        for method, path, body in transport.operations[-3:]
+    ] == [
+        ("post", True, {"comment_html": scheduled_comment}),
+        ("patch", False, {"labels": [scheduled_label_id]}),
+        ("patch", False, {"state": DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -2618,6 +2629,37 @@ async def test_schedule_marker_takes_precedence_over_blocked(tmp_path: Path) -> 
 
     assert result.reason == "agent-marker-scheduled"
     # State stays TODO (not blocked by SYMPHONY_RESULT: blocked)
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_schedule_marker_takes_precedence_over_approval_gate(
+    tmp_path: Path,
+) -> None:
+    """Schedule marker wins over approval-gate prose in the same output."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = (
+        "Cannot execute destructive prune without approval. Awaiting explicit approval.\n"
+        'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="approved window"\n'
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-marker-scheduled"
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
@@ -2687,14 +2729,20 @@ async def test_past_schedule_marker_blocks(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_coding_binding_ignores_schedule_marker(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "schedule_line",
+    [
+        'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="upgrade"',
+        "SYMPHONY_SCHEDULE: garbage that cannot be parsed",
+    ],
+)
+async def test_coding_binding_ignores_schedule_marker(
+    tmp_path: Path, schedule_line: str
+) -> None:
     """Coding binding ignores SYMPHONY_SCHEDULE marker and falls through."""
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
-    agent_output = (
-        'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="upgrade"\n'
-        "SYMPHONY_RESULT: done\n"
-    )
+    agent_output = f"{schedule_line}\nSYMPHONY_RESULT: done\n"
     cfg = _config(tmp_path)
     binding = replace(cfg.bindings[0], binding_type="coding")
     cfg = replace(cfg, bindings=(binding,))
@@ -2711,13 +2759,11 @@ async def test_coding_binding_ignores_schedule_marker(tmp_path: Path) -> None:
         now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
-    # Falls through to review/done handling
     assert result.reason == "agent-marker-review"
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
-    # No schedule comment or label
     scheduled_label_id = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
     assert scheduled_label_id not in transport.issues["issue-1"]["labels"]
 
