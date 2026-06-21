@@ -13,7 +13,7 @@ export interface ScheduleRequestBody {
 export const DEFAULT_SCHEDULE_REASON = "operator scheduled via Podium";
 
 export const defaultScheduleDraft = (): ScheduleDraft => ({
-	mode: "next_window",
+	mode: "none",
 	reason: DEFAULT_SCHEDULE_REASON,
 });
 

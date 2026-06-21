@@ -1,6 +1,37 @@
 import { expect, expectCleanConsole, seedIssue, test } from "./fixtures";
 
-test("infra new-issue schedule uses atomic create payload", async ({
+test("infra new-issue schedule defaults to no", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e unscheduled create ${Date.now()}`;
+
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	await expect(page.getByTestId("new-issue-schedule")).toBeVisible();
+	await expect(page.getByTestId("new-issue-schedule-mode")).toHaveValue("none");
+
+	await page.getByTestId("new-issue-title").fill(title);
+	const requestPromise = page.waitForRequest(
+		(req) =>
+			req.url().includes("/api/bindings/homelab/issues") &&
+			req.method() === "POST",
+	);
+	await page.getByTestId("new-issue-submit").click();
+	const request = await requestPromise;
+	const body = JSON.parse(request.postData() ?? "{}");
+
+	expect(body.scheduled_for).toBeUndefined();
+	expect(body.schedule).toBeUndefined();
+	await expect(page.getByTestId("new-issue-modal")).toBeHidden();
+	const card = page.getByTestId("issue-card").filter({ hasText: title });
+	await expect(card).toBeVisible();
+	await expect(card.getByTestId("scheduled-chip")).toHaveCount(0);
+
+	expectCleanConsole(problems);
+});
+
+test("infra new-issue schedule uses atomic create payload when selected", async ({
 	page,
 	problems,
 }) => {
@@ -8,13 +39,8 @@ test("infra new-issue schedule uses atomic create payload", async ({
 
 	await page.goto("/homelab");
 	await page.getByTestId("new-issue-button").click();
-	await expect(page.getByTestId("new-issue-schedule")).toBeVisible();
-	await expect(page.getByTestId("new-issue-schedule-mode")).toHaveValue(
-		"next_window",
-	);
-
+	await page.getByTestId("new-issue-schedule-mode").selectOption("next_window");
 	await page.getByTestId("new-issue-title").fill(title);
-	// Yes/No control defaults to "Yes" (next_window); nothing to type.
 
 	const requestPromise = page.waitForRequest(
 		(req) =>
