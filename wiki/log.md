@@ -1224,3 +1224,13 @@ Append entries with this format:
 - Inputs: `.kanban/issues/094-symphony-schedule-marker.md`; `scheduler/markers.py`; `scheduler/__init__.py`; `prompt_renderer.py`; `tests/test_schedule.py`; `tests/test_prompt_renderer.py`; implementation base `d3cb5d85598b3d02a629a87ca715c402af5e6524`.
 - Outputs: symphony commits `0b2ab00` (implementation), `45905a7` (review status), `459e0f2` (done/progress); updated `wiki/concepts/schedule-comment-grammar.md`; updated `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md`; updated `wiki/analyses/podium-046-unified-output-contract.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0291 qualified; C-0294 added); this log entry.
 - Notes: Captured the second ADR-0018 mechanism slice: `SYMPHONY_SCHEDULE` stdout marker parsing, schedule marker stripping from summary/question blocks, scheduler re-export, and output-contract/INFRA_PREAMBLE mechanism wording. Remaining ADR-0018 work is still unbuilt: scheduler terminal handling for valid/malformed schedule markers (#95), schedule-authorization policy, dedup-don't-clobber behavior, and the Podium UI Schedule control. Verification: `uv run pytest tests/test_schedule.py tests/test_prompt_renderer.py tests/test_prompt_renderer_podium.py -q` passed (90 tests); touched-file LSP diagnostics clean; fresh Ralph review PASS. No secrets, env files, service restarts, live alerts, or live DB mutations.
+
+## [2026-06-21] session-update | Issue #095 scheduler terminal schedule handler
+
+- Actor: agent (Ralph/Pi)
+- Inputs: `.kanban/issues/095-scheduler-terminal-schedule-handler.md`; implementation diff `git diff 6d8eefc6b6105068791719d83abf8dab749df429 HEAD`; `scheduler/__init__.py`; `tests/test_scheduler.py`; `.kanban/progress.md`; fresh review session.
+- Outputs: updated `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md`; updated `wiki/concepts/schedule-comment-grammar.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0295 added, C-0291/C-0294 refined); this log entry.
+- Notes: Captured Issue #95 landing: valid infra `SYMPHONY_SCHEDULE` markers become scheduled TODO issues via schedule comment → scheduled label → TODO, Run `succeeded`/`verdict=None`, `agent-marker-scheduled`; malformed/past/reasonless markers block; coding bindings ignore the marker. Verification: `uv run pytest tests/test_scheduler.py -q` passed (170 tests), touched-file LSP diagnostics clean, fresh review `PASS_WITH_NOTES` (only minor notes). No secrets, env files, service restarts, or live alert/paging notifications.
+
+---
+

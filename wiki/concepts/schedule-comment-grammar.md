@@ -88,6 +88,11 @@ Plane stores comments as rich text. The parser does **quote-aware** normalisatio
 
 `_parse_schedule_marker` strips ANSI, selects the last column-0 `SYMPHONY_SCHEDULE:` line, feeds its payload to `parse_schedule_comment`, and returns `(event.not_before, event.reason)` only when the result is timezone-aware and has a non-empty reason. Missing `not_before`, missing/empty `reason`, natural-language timestamps, and indented marker examples all return `None` rather than being accepted. `_MARKER_LINE_RE` includes `SCHEDULE`, so schedule markers are removed from `SYMPHONY_SUMMARY_BEGIN/END` and question blocks before human posting. [source: scheduler/markers.py#17-20] [source: scheduler/markers.py#37-40] [source: scheduler/markers.py#70-91] [source: tests/test_schedule.py#248-298]
 
+
+## Scheduler terminal handling
+
+`_classify_terminal` now interprets valid infra `SYMPHONY_SCHEDULE` stdout markers as a terminal scheduling outcome after hard-failure/approval gates and before blocked/review/done handling. The handler appends `format_schedule_comment(...)`, applies `TrackerRole.SCHEDULED`, transitions the issue back to TODO, finishes the Run as `succeeded` with `verdict=None`, logs `state_scheduled`, and returns `agent-marker-scheduled`. Past markers and marker-shaped parse failures block with `agent-scheduled-malformed`; coding bindings ignore schedule markers and fall through to normal terminal classification. [source: scheduler/__init__.py#1795-1861] [source: scheduler/__init__.py#1862-1888] [source: tests/test_scheduler.py#2557-2722]
+
 ## Podium single-blob control-line parsing
 
 `prefer_last` defaults to `False`, preserving Plane-era first-control-line behavior within one comment. Podium's single-blob comment projection needs the opposite: appending a cancellation or reschedule to `comments_md` must override the older line in the same blob. `_latest_schedule_event` enables `prefer_last` for the `PodiumTrackerAdapter` (and test adapters marked `single_blob_comments=True`), so schedule→cancel, schedule→reschedule, and schedule→cancel→reschedule blobs all choose the latest control line. [source: schedule.py#524-560] [source: schedule.py#773-816] [source: scheduler/__init__.py#2676-2697] [source: tests/test_scheduler.py#3169-3243]
