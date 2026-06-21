@@ -105,3 +105,53 @@ test("flyout schedules, unschedules, and the board card shows held todos", async
 
 	expectCleanConsole(problems);
 });
+
+test("a held (scheduled) issue accepts an append-only comment via /comment", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e held comment ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title);
+
+	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+
+	// Schedule it (Yes) → held in To Do.
+	const scheduled = page.waitForResponse(
+		(res) =>
+			res.url().endsWith(`/api/issues/${issueId}/schedule`) &&
+			res.request().method() === "POST" &&
+			res.ok(),
+	);
+	await page.getByTestId("issue-schedule-mode").selectOption("next_window");
+	await scheduled;
+
+	// The composer (comments tab is default) is now in comment mode: enabled even
+	// though the issue is todo, because it's held on a schedule.
+	const input = page.getByTestId("reply-input");
+	await expect(input).toBeEnabled();
+	await input.fill("Noting context while this waits for the window.");
+
+	// Sending hits the append-only /comment primitive — NOT /reply, which would
+	// reopen/re-dispatch the held issue.
+	const commented = page.waitForResponse(
+		(res) =>
+			/\/api\/issues\/\d+\/comment$/.test(res.url()) &&
+			res.request().method() === "POST" &&
+			res.ok(),
+	);
+	await page.getByTestId("reply-send").click();
+	await commented;
+
+	// onSent closes the flyout; the issue stays held in To Do (the comment did
+	// not re-dispatch it) and the scheduled chip persists on the card.
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+	const card = page
+		.getByTestId("column-todo")
+		.getByTestId("issue-card")
+		.filter({ hasText: title });
+	await expect(card).toBeVisible({ timeout: 4_500 });
+	await expect(card.getByTestId("scheduled-chip")).toBeVisible();
+
+	expectCleanConsole(problems);
+});
