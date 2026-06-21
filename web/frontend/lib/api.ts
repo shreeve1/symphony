@@ -362,6 +362,26 @@ export async function postReply(
 	return res.json() as Promise<IssueDetail>;
 }
 
+// Append-only comment (ADR-0017): adds to the thread without reopening or
+// re-dispatching. Use for held/scheduled issues where /reply would 409 (todo)
+// or wrongly trigger a run before the maintenance window.
+export async function postComment(
+	id: number,
+	body: string,
+): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/comment`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ body }),
+	});
+	if (!res.ok) {
+		throw new Error(
+			`POST /api/issues/${id}/comment -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}
+
 export async function postSteer(
 	id: number,
 	body: string,

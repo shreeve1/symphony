@@ -10,6 +10,7 @@ import {
 	fetchSkills,
 	patchIssue,
 	postAbort,
+	postComment,
 	postReply,
 	postSteer,
 	scheduleIssue,
@@ -542,8 +543,23 @@ function ReplyComposer({
 		el.style.height = `${el.scrollHeight}px`;
 	}, [draft]);
 
+	// Gate on run-state: a live or queued run can't honor a mid-run reply, and a
+	// todo issue is already queued. isActiveRunState mirrors the board gating.
+	const runningOrActive =
+		issue.state === "running" || isActiveRunState(issue.latest_run_state);
+	const isTodo = issue.state === "todo";
+	// A scheduled issue sits in todo until its maintenance window. /reply would
+	// re-dispatch it early (and 409 on todo), so post an append-only comment
+	// instead — the operator can annotate the held issue without disturbing it.
+	const commentMode = isTodo && issue.scheduled_for != null && !runningOrActive;
+	const replyDisabled = (runningOrActive || isTodo) && !commentMode;
+	const hint = runningOrActive
+		? "Agent is running — reply when it parks for review."
+		: "Already queued to run.";
+
 	const reply = useMutation({
-		mutationFn: (body: string) => postReply(issue.id, body),
+		mutationFn: (body: string) =>
+			commentMode ? postComment(issue.id, body) : postReply(issue.id, body),
 		onSuccess: () => {
 			setDraft("");
 			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
@@ -554,16 +570,6 @@ function ReplyComposer({
 		},
 	});
 
-	// Gate on run-state: a live or queued run can't honor a mid-run reply, and a
-	// todo issue is already queued. isActiveRunState mirrors the board gating.
-	const runningOrActive =
-		issue.state === "running" || isActiveRunState(issue.latest_run_state);
-	const isTodo = issue.state === "todo";
-	const replyDisabled = runningOrActive || isTodo;
-	const hint = runningOrActive
-		? "Agent is running — reply when it parks for review."
-		: "Already queued to run.";
-
 	return (
 		<div className="space-y-2" data-testid="reply-composer">
 			<textarea
@@ -571,7 +577,11 @@ function ReplyComposer({
 				data-testid="reply-input"
 				value={draft}
 				rows={1}
-				placeholder="Write a reply to the agent…"
+				placeholder={
+					commentMode
+						? "Add a comment (held until window — won't re-run the agent)…"
+						: "Write a reply to the agent…"
+				}
 				disabled={replyDisabled}
 				onChange={(e) => setDraft(e.target.value)}
 				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
