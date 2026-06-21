@@ -825,6 +825,43 @@ def test_drain_rpc_events_spools_assistant_deltas(tmp_path: Path) -> None:
     assert spool.read_text() == "Working on it"
 
 
+def test_drain_rpc_events_caps_spool_size(monkeypatch, tmp_path: Path) -> None:
+    """The spool stops growing past the cap (tmpfs safety) while the drain
+    result is unaffected (ADR-0019)."""
+    monkeypatch.setattr(agent_runner_module, "TAIL_SPOOL_MAX_BYTES", 10)
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "message_update", "delta": "x" * 50}) + "\n",
+            json.dumps({"type": "message_update", "delta": "after the cap"}) + "\n",
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+    read_line, close_reader = agent_runner_module._rpc_line_reader(process)
+    spool = tmp_path / "tail" / "77.log"
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        1_000_000.0,
+        "77",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=read_line,
+        close_reader=close_reader,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        source_env={},
+        spool_path=spool,
+    )
+
+    text = spool.read_text()
+    assert "x" * 50 in text  # the delta that crosses the cap is still written
+    assert "truncated" in text
+    assert "after the cap" not in text  # writes stop once capped
+    # Drain output is unaffected by the spool cap.
+    assert drain.event_exit_code == 0
+    assert "after the cap" in "".join(drain.assistant_parts)
+
+
 def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"

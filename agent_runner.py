@@ -43,6 +43,13 @@ PI_HELP_TIMEOUT_SECONDS = 30
 PI_PROBE_TIMEOUT_SECONDS = 30
 PI_RPC_PROBE_TIMEOUT_SECONDS = 20
 RPC_STEER_POLL_INTERVAL_SECONDS = 0.5
+# Cap the live-tail spool so a verbose/long remote run can't grow unbounded on
+# the tmpfs runtime dir (/run). Matches the run-log ceiling; the full output is
+# still captured in the (also-capped) run log at exit. ponytail: hard stop at
+# the cap rather than a ring buffer — the in-place truncate a ring buffer needs
+# would desync the byte-offset tailer; upgrade to rotation only if the frozen
+# tail past 1 MiB of prose ever matters.
+TAIL_SPOOL_MAX_BYTES = 1_048_576
 # Pidfile registry for live `pi --mode rpc` processes. Each dispatch writes
 # <runtime_dir>/rpc/<pid>.pid on launch and removes it on exit; for remote RPC
 # runs this is the local SSH client pid, not the remote pi pid. A boot sweep
@@ -1158,6 +1165,7 @@ def _drain_rpc_events(
     current_steer_offset = steer_offset
 
     spool = None
+    spool_written = 0
     if spool_path is not None:
         with suppress(OSError):
             spool_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1211,6 +1219,12 @@ def _drain_rpc_events(
                     with suppress(OSError):
                         spool.write(delta)
                         spool.flush()
+                        spool_written += len(delta)
+                        if spool_written >= TAIL_SPOOL_MAX_BYTES:
+                            spool.write("\n[tail truncated — see run log for full output]\n")
+                            spool.flush()
+                            spool.close()
+                            spool = None
 
             if event_type == "extension_error":
                 err = event.get("error")
