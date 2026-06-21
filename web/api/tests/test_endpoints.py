@@ -32,6 +32,9 @@ def test_read_endpoints_seed_temp_db(monkeypatch, tmp_path: Path) -> None:
         binding_names = {binding["name"] for binding in bindings}
         assert {"homelab", "symphony"}.issubset(binding_names)
         assert all(binding["pi_mode"] in {"one-shot", "rpc"} for binding in bindings)
+        assert all(
+            binding["binding_type"] in {"infra", "coding"} for binding in bindings
+        )
         assert all("claude_persist" in binding for binding in bindings)
         assert all(isinstance(binding["claude_persist"], bool) for binding in bindings)
 

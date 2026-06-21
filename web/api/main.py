@@ -85,11 +85,19 @@ write_steer_record = _steer_queue.write_steer_record
 
 try:
     _model_catalog = import_module("model_catalog")
+    _schedule = import_module("schedule")
 except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     _model_catalog = import_module("model_catalog")
+    _schedule = import_module("schedule")
+
+format_cancellation_comment = _schedule.format_cancellation_comment
+format_schedule_comment = _schedule.format_schedule_comment
+next_maintenance_window = _schedule.next_maintenance_window
+parse_schedule_comment = _schedule.parse_schedule_comment
+ScheduleParseError = _schedule.ScheduleParseError
 
 
 class WebSocketHub:
@@ -510,6 +518,22 @@ class IssuePatch(BaseModel):
     external_id: str | None = None
 
 
+class ScheduleRequest(BaseModel):
+    """Manual scheduling payload. `next_window` is resolved server-side; explicit
+    datetimes must be ISO 8601 with an offset, matching schedule.py's grammar."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    not_before: str
+    reason: str | None = None
+
+
+class UnscheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = None
+
+
 class IssueCreate(BaseModel):
     """New-issue payload (#014). state is exclusively server-set ('todo'), so
     it is not a field here — extra="forbid" rejects it (and any other unknown
@@ -532,6 +556,7 @@ class IssueCreate(BaseModel):
     approval_required: bool = False
     approved: bool = False
     scheduled_for: str | None = None
+    schedule: ScheduleRequest | None = None
     base_branch: str | None = None
     external_id: str | None = None
 
@@ -659,6 +684,7 @@ def list_bindings(
     result = [_row(row) for row in rows]
     for binding in result:
         name = str(binding["name"])
+        binding["binding_type"] = _binding_type_for(name)
         binding["pi_mode"] = _binding_pi_mode_for(name)
         binding["claude_persist"] = _binding_claude_persist_for(name)
         binding["is_remote"] = _is_remote_binding(name)
@@ -706,7 +732,7 @@ def list_binding_issues(
           latest_run_id, latest_verdict, latest_run_state, last_event_at,
           external_id
         FROM issue
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY updated_at DESC, id DESC
         """,
         tuple(params),
@@ -827,12 +853,22 @@ async def create_binding_issue(
     if issue.preferred_skill is not None:
         _require_known_skill(connection, issue.preferred_skill)
 
+    if issue.schedule is not None and _binding_type_for(name) != "infra":
+        raise HTTPException(status_code=400, detail="scheduling is infra-only")
+
     # Remote bindings (ADR-0012) defer worktrees: the agent runs directly in the
     # remote repo_path over SSH, so worktree_active is forced False at the source.
     if issue.worktree_active and _is_remote_binding(name):
         issue.worktree_active = False
 
-    now = datetime.now(UTC).isoformat()
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
+    comments_md = ""
+    scheduled_for = issue.scheduled_for
+    if issue.schedule is not None:
+        not_before, reason = _resolve_schedule_request(issue.schedule, now_dt)
+        comments_md = format_schedule_comment(not_before=not_before, reason=reason)
+        scheduled_for = now
     try:
         cursor = connection.execute(
             """
@@ -841,7 +877,7 @@ async def create_binding_issue(
               preferred_model, preferred_skill, reasoning_effort, worktree_active,
               approval_required, approved, scheduled_for, base_branch, comments_md,
               context_md, external_id, created_at, updated_at
-            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?)
+            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
             """,
             (
                 name,
@@ -855,8 +891,9 @@ async def create_binding_issue(
                 issue.worktree_active,
                 issue.approval_required,
                 issue.approved,
-                issue.scheduled_for,
+                scheduled_for,
                 issue.base_branch or _base_branch_for(name),
+                comments_md,
                 issue.external_id,
                 now,
                 now,
@@ -888,6 +925,54 @@ def _binding_type_for(name: str) -> str:
             binding_type = str(binding.get("type") or "infra")
             return binding_type if binding_type in {"infra", "coding"} else "infra"
     return "infra"
+
+
+def _resolve_schedule_request(
+    schedule: ScheduleRequest,
+    now: datetime,
+    *,
+    default_reason: str = "operator scheduled via Podium",
+) -> tuple[datetime, str]:
+    reason = schedule.reason if schedule.reason is not None else default_reason
+    raw_not_before = schedule.not_before.strip()
+    if raw_not_before == "next_window":
+        not_before, _ = next_maintenance_window(now)
+    else:
+        try:
+            event = parse_schedule_comment(
+                f'Symphony-Schedule: not_before={raw_not_before} reason="operator"',
+                now=now,
+            )
+        except ScheduleParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        not_before = event.not_before
+        if not_before is None:
+            raise HTTPException(status_code=422, detail="not_before is required")
+        if not_before < now:
+            raise HTTPException(status_code=422, detail="not_before is in the past")
+    try:
+        format_schedule_comment(not_before=not_before, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return not_before, reason
+
+
+def _validate_schedule_payload(body: dict[str, Any]) -> ScheduleRequest:
+    try:
+        return ScheduleRequest.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+
+def _validate_unschedule_payload(body: dict[str, Any] | None) -> UnscheduleRequest:
+    try:
+        return UnscheduleRequest.model_validate(body or {})
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
 
 
 def _binding_pi_mode_for(name: str) -> str:
@@ -1057,6 +1142,98 @@ async def patch_issue(
     ):
         result = await _maybe_archive_worktree(issue_id, current, connection)
 
+    return result
+
+
+@app.post("/api/issues/{issue_id}/schedule")
+async def schedule_issue(
+    issue_id: int,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
+    schedule = _validate_schedule_payload(body)
+
+    if _binding_type_for(str(current["binding_name"])) != "infra":
+        raise HTTPException(status_code=400, detail="scheduling is infra-only")
+    if current["state"] == "archived":
+        raise HTTPException(status_code=409, detail="cannot schedule archived issue")
+    if current.get("latest_run_state") in ACTIVE_RUN_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"schedule not allowed during run {current['latest_run_state']}",
+        )
+
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
+    not_before, reason = _resolve_schedule_request(schedule, now_dt)
+    appended = "\n\n" + format_schedule_comment(not_before=not_before, reason=reason)
+    connection.execute(
+        """
+        UPDATE issue
+           SET comments_md = COALESCE(comments_md, '') || ?,
+               scheduled_for = ?,
+               state = 'todo',
+               updated_at = ?
+         WHERE id = ?
+        """,
+        (appended, now, now, issue_id),
+    )
+    connection.commit()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    touch_wake_sentinel()
+    return result
+
+
+@app.delete("/api/issues/{issue_id}/schedule")
+async def unschedule_issue(
+    issue_id: int,
+    body: dict[str, Any] | None = None,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    stored = connection.execute(
+        "SELECT * FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if stored is None:
+        raise HTTPException(status_code=404, detail="issue not found")
+    current = _row(stored)
+    unschedule = _validate_unschedule_payload(body)
+
+    if _binding_type_for(str(current["binding_name"])) != "infra":
+        raise HTTPException(status_code=400, detail="scheduling is infra-only")
+
+    now = datetime.now(UTC).isoformat()
+    reason = unschedule.reason or "operator unscheduled via Podium"
+    try:
+        cancellation = format_cancellation_comment(reason=reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    connection.execute(
+        """
+        UPDATE issue
+           SET comments_md = COALESCE(comments_md, '') || ?,
+               scheduled_for = NULL,
+               updated_at = ?
+         WHERE id = ?
+        """,
+        ("\n\n" + cancellation, now, issue_id),
+    )
+    connection.commit()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _row(row)
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    touch_wake_sentinel()
     return result
 
 
@@ -1433,9 +1610,7 @@ async def _maybe_merge_worktree(
                 f"Branch {branch_name(binding_name, issue_str)} is unmerged and "
                 f"the worktree is intact for manual handling."
             )
-            return await _append_blocked_and_publish(
-                connection, issue_id, current, msg
-            )
+            return await _append_blocked_and_publish(connection, issue_id, current, msg)
         return await _redispatch_to_commit(
             connection, issue_id, current, repo_path, binding_name, issue_str
         )
@@ -1682,9 +1857,7 @@ async def _redispatch_to_commit(
     connection.commit()
     assert cursor.rowcount == 1
 
-    row = connection.execute(
-        "SELECT * FROM issue WHERE id = ?", (issue_id,)
-    ).fetchone()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     result = _row(row)
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}

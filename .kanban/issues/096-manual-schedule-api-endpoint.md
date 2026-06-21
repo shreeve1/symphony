@@ -1,11 +1,12 @@
 ---
 id: 96
 title: Manual schedule API — POST/DELETE /api/issues/{id}/schedule + binding_type + atomic create
-status: pending
+status: in-progress
 blocked_by: [93]
 parent: null
 priority: 0
 created: 2026-06-21
+updated: 2026-06-21
 ---
 
 ## What to build
