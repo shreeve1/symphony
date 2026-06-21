@@ -5,12 +5,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
 	createIssue,
+	fetchBindings,
 	fetchIssueOptions,
 	fetchSkills,
 	type Issue,
 	type IssueCreate,
 	type ModelOption,
 } from "@/lib/api";
+import {
+	ScheduleControl,
+	defaultScheduleDraft,
+	schedulePayloadFromDraft,
+	type ScheduleDraft,
+} from "@/components/ScheduleControl";
 
 // Fallback effort list for models that don't declare an `efforts` set in the
 // catalog. Models that do (e.g. gpt-5.5) drive the dropdown from their own set
@@ -22,7 +29,7 @@ const DEFAULT_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 // refetch once the write settles. The canonical row is the full detail shape
 // (a superset of Issue), so the list cache transiently holds one wider row
 // until the settle-refetch trims it — harmless, extra fields are ignored.
-function useCreateIssue(binding: string) {
+function useCreateIssue(binding: string, bindingType: Issue["binding_type"]) {
 	const queryClient = useQueryClient();
 	const key = ["issues", binding];
 	return useMutation({
@@ -34,7 +41,7 @@ function useCreateIssue(binding: string) {
 			const temp: Issue = {
 				id: tempId,
 				binding_name: binding,
-				binding_type: binding === "trading" ? "coding" : "infra",
+				binding_type: bindingType,
 				title: body.title,
 				description: body.description ?? null,
 				state: "todo",
@@ -46,7 +53,7 @@ function useCreateIssue(binding: string) {
 				worktree_active: body.worktree_active ?? false,
 				approval_required: body.approval_required ?? false,
 				approved: body.approved ?? false,
-				scheduled_for: body.scheduled_for ?? null,
+				scheduled_for: body.schedule ? new Date().toISOString() : null,
 				worktree_path: "",
 				worktree_branch: "",
 				base_branch: body.base_branch ?? null,
@@ -282,9 +289,15 @@ function NewIssueModal({
 	const [effort, setEffort] = useState("");
 	const [worktree, setWorktree] = useState(false);
 	const [base, setBase] = useState("");
+	const [scheduleDraft, setScheduleDraft] =
+		useState<ScheduleDraft>(defaultScheduleDraft);
 	const titleRef = useRef<HTMLInputElement | null>(null);
 
-	const create = useCreateIssue(binding);
+	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
+	const bindingType =
+		bindings.data?.find((item) => item.name === binding)?.binding_type ?? "coding";
+	const isInfra = bindingType === "infra";
+	const create = useCreateIssue(binding, bindingType);
 	// Same catalog feed as the flyout chip: free-text skill would 422 on the FK.
 	const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
 	// Agent/model/branch dropdown choices (branches read live from the repo).
@@ -347,6 +360,7 @@ function NewIssueModal({
 		// still-open modal (typed values intact + error line) is the only place
 		// the operator learns the create didn't land.
 		// Only send what the operator set; omitted keys take server defaults.
+		const schedule = isInfra ? schedulePayloadFromDraft(scheduleDraft) : null;
 		create.mutate(
 			{
 				title: trimmed,
@@ -356,6 +370,7 @@ function NewIssueModal({
 				...(model.trim() && { preferred_model: model.trim() }),
 				...(effort && { reasoning_effort: effort }),
 				...(worktree && { worktree_active: true }),
+				...(schedule && { schedule }),
 				...(base.trim() && { base_branch: base.trim() }),
 			},
 			{ onSuccess: onClose },
@@ -477,6 +492,14 @@ function NewIssueModal({
 							</span>
 						</label>
 					</div>
+
+					{isInfra && (
+						<ScheduleControl
+							testid="new-issue-schedule"
+							draft={scheduleDraft}
+							onChange={setScheduleDraft}
+						/>
+					)}
 
 					{create.isError && (
 						<p data-testid="new-issue-error" className="text-xs text-red-500">

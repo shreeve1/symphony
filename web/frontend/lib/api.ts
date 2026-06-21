@@ -7,6 +7,7 @@ export interface Binding {
 	color: string;
 	sort_order: number;
 	archived: boolean;
+	binding_type: "infra" | "coding";
 	pi_mode: "one-shot" | "rpc";
 	claude_persist?: boolean;
 	is_remote: boolean;
@@ -127,6 +128,11 @@ export interface IssuePatch {
 	context_md?: string;
 }
 
+export interface ScheduleRequest {
+	not_before: string;
+	reason?: string;
+}
+
 // New-issue payload (#014). state is server-set ('todo'); sending it gets a
 // 400. Omitted reasoning_effort/worktree_active/base_branch fall back to
 // server defaults (high / false / bindings.yml).
@@ -141,7 +147,7 @@ export interface IssueCreate {
 	worktree_active?: boolean;
 	approval_required?: boolean;
 	approved?: boolean;
-	scheduled_for?: string;
+	schedule?: ScheduleRequest;
 	base_branch?: string;
 }
 
@@ -307,6 +313,33 @@ export async function patchIssue(
 	if (!res.ok) {
 		throw new Error(
 			`PATCH /api/issues/${id} -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}
+
+export async function scheduleIssue(
+	id: number,
+	body: ScheduleRequest,
+): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/schedule`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		throw new Error(
+			`POST /api/issues/${id}/schedule -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<IssueDetail>;
+}
+
+export async function unscheduleIssue(id: number): Promise<IssueDetail> {
+	const res = await fetch(`/api/issues/${id}/schedule`, { method: "DELETE" });
+	if (!res.ok) {
+		throw new Error(
+			`DELETE /api/issues/${id}/schedule -> ${res.status} ${res.statusText}`,
 		);
 	}
 	return res.json() as Promise<IssueDetail>;

@@ -12,9 +12,12 @@ import {
 	postAbort,
 	postReply,
 	postSteer,
+	scheduleIssue,
+	unscheduleIssue,
 	type IssueDetail,
 	type IssuePatch,
 	type Run,
+	type ScheduleRequest,
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
 import {
@@ -25,6 +28,13 @@ import {
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
+import {
+	ScheduleControl,
+	defaultScheduleDraft,
+	latestScheduleNotBefore,
+	schedulePayloadFromDraft,
+	type ScheduleDraft,
+} from "@/components/ScheduleControl";
 import { RunHistoryList } from "@/components/RunHistoryList";
 import { SessionTailPanel } from "@/components/SessionTailPanel";
 import { useAppendTailEvent } from "@/components/QueryProvider";
@@ -132,6 +142,87 @@ function usePatchIssue() {
 			queryClient.invalidateQueries({
 				queryKey: ["issues", issue.binding_name],
 			});
+		},
+	});
+}
+
+interface ScheduleVariables {
+	issue: IssueDetail;
+	body: ScheduleRequest;
+}
+
+function useScheduleIssueMutation() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({ issue, body }: ScheduleVariables) =>
+			scheduleIssue(issue.id, body),
+		onMutate: async ({ issue }) => {
+			const detailKey = ["issue", issue.id];
+			const listKey = ["issues", issue.binding_name];
+			await queryClient.cancelQueries({ queryKey: detailKey });
+			await queryClient.cancelQueries({ queryKey: listKey });
+			const previousDetail = queryClient.getQueryData<IssueDetail>(detailKey);
+			const previousList = queryClient.getQueryData<IssueDetail[]>(listKey);
+			const scheduledFor = new Date().toISOString();
+			queryClient.setQueryData<IssueDetail>(
+				detailKey,
+				(old) => old && { ...old, scheduled_for: scheduledFor },
+			);
+			queryClient.setQueryData<IssueDetail[]>(listKey, (old) =>
+				old?.map((item) =>
+					item.id === issue.id ? { ...item, scheduled_for: scheduledFor } : item,
+				),
+			);
+			return { previousDetail, previousList };
+		},
+		onError: (_error, { issue }, context) => {
+			if (context?.previousDetail) {
+				queryClient.setQueryData(["issue", issue.id], context.previousDetail);
+			}
+			if (context?.previousList) {
+				queryClient.setQueryData(["issues", issue.binding_name], context.previousList);
+			}
+		},
+		onSettled: (_data, _error, { issue }) => {
+			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+			queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
+		},
+	});
+}
+
+function useUnscheduleIssueMutation() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (issue: IssueDetail) => unscheduleIssue(issue.id),
+		onMutate: async (issue) => {
+			const detailKey = ["issue", issue.id];
+			const listKey = ["issues", issue.binding_name];
+			await queryClient.cancelQueries({ queryKey: detailKey });
+			await queryClient.cancelQueries({ queryKey: listKey });
+			const previousDetail = queryClient.getQueryData<IssueDetail>(detailKey);
+			const previousList = queryClient.getQueryData<IssueDetail[]>(listKey);
+			queryClient.setQueryData<IssueDetail>(
+				detailKey,
+				(old) => old && { ...old, scheduled_for: null },
+			);
+			queryClient.setQueryData<IssueDetail[]>(listKey, (old) =>
+				old?.map((item) =>
+					item.id === issue.id ? { ...item, scheduled_for: null } : item,
+				),
+			);
+			return { previousDetail, previousList };
+		},
+		onError: (_error, issue, context) => {
+			if (context?.previousDetail) {
+				queryClient.setQueryData(["issue", issue.id], context.previousDetail);
+			}
+			if (context?.previousList) {
+				queryClient.setQueryData(["issues", issue.binding_name], context.previousList);
+			}
+		},
+		onSettled: (_data, _error, issue) => {
+			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+			queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
 		},
 	});
 }
@@ -277,12 +368,27 @@ function MetadataChips({
 	skillNames,
 	showEmptySkillHint,
 	onPatch,
+	onSchedule,
+	onUnschedule,
+	schedulePending,
 }: {
 	issue: IssueDetail;
 	skillNames: readonly string[];
 	showEmptySkillHint: boolean;
 	onPatch: OnPatch;
+	onSchedule: (body: ScheduleRequest) => void;
+	onUnschedule: () => void;
+	schedulePending: boolean;
 }) {
+	const [scheduleDraft, setScheduleDraft] =
+		useState<ScheduleDraft>(defaultScheduleDraft);
+	useEffect(() => {
+		setScheduleDraft(defaultScheduleDraft());
+	}, [issue.id]);
+	const schedulePayload = schedulePayloadFromDraft(scheduleDraft);
+	const currentNotBefore = issue.scheduled_for
+		? (latestScheduleNotBefore(issue.comments_md) ?? issue.scheduled_for)
+		: null;
 	return (
 		<div className="space-y-1.5">
 			<div className="flex flex-wrap gap-1.5" data-testid="metadata-chips">
@@ -340,12 +446,6 @@ function MetadataChips({
 							value={issue.approved}
 							onPatch={onPatch}
 						/>
-						<ChipText
-							label="scheduled"
-							field="scheduled_for"
-							value={issue.scheduled_for}
-							onPatch={onPatch}
-						/>
 					</>
 				)}
 				<ChipText
@@ -355,6 +455,41 @@ function MetadataChips({
 					onPatch={onPatch}
 				/>
 			</div>
+			{issue.binding_type === "infra" && (
+				<div className="space-y-2" data-testid="issue-schedule-section">
+					<ScheduleControl
+						testid="issue-schedule"
+						draft={scheduleDraft}
+						onChange={setScheduleDraft}
+						currentNotBefore={currentNotBefore}
+						disabled={schedulePending}
+					/>
+					<div className="flex justify-end gap-2">
+						{issue.scheduled_for && (
+							<button
+								type="button"
+								data-testid="issue-schedule-clear"
+								disabled={schedulePending}
+								onClick={onUnschedule}
+								className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
+							>
+								Unschedule
+							</button>
+						)}
+						<button
+							type="button"
+							data-testid="issue-schedule-apply"
+							disabled={
+								schedulePending || scheduleDraft.mode === "none" || !schedulePayload
+							}
+							onClick={() => schedulePayload && onSchedule(schedulePayload)}
+							className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
+						>
+							Apply schedule
+						</button>
+					</div>
+				</div>
+			)}
 			{issue.worktree_active &&
 				issue.state !== "done" &&
 				issue.worktree_path &&
@@ -767,6 +902,8 @@ export function IssueFlyout({
 			issueDetailRefetchIntervalMs(detail.data),
 	});
 	const patch = usePatchIssue();
+	const schedule = useScheduleIssueMutation();
+	const unschedule = useUnscheduleIssueMutation();
 	const onPatch: OnPatch = (issuePatch) => {
 		if (!detail.data) return;
 		patch.mutate(
@@ -903,6 +1040,9 @@ export function IssueFlyout({
 								skillNames={skillNames}
 								showEmptySkillHint={showEmptySkillHint}
 								onPatch={onPatch}
+								onSchedule={(body) => schedule.mutate({ issue, body })}
+								onUnschedule={() => unschedule.mutate(issue)}
+								schedulePending={schedule.isPending || unschedule.isPending}
 							/>
 
 							<div>

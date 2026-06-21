@@ -1,11 +1,13 @@
 ---
 id: 97
 title: Frontend Schedule control (infra-only) — new-issue modal + flyout
-status: pending
+status: in-progress
 blocked_by: [96]
 parent: null
 priority: 0
 created: 2026-06-21
+updated: 2026-06-21
+actor: ralph
 ---
 
 ## What to build

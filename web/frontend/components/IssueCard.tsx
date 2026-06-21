@@ -22,6 +22,19 @@ const AGENT_LABEL: Record<string, string> = {
 
 // Agent + model quick-view. Shows the issue's preferred agent (colour-coded)
 // and model; renders "default" when neither is pinned on the issue.
+function ScheduledTag({ scheduledFor }: { scheduledFor: string | null }) {
+  if (!scheduledFor) return null;
+  return (
+    <span
+      data-testid="scheduled-chip"
+      title={`Scheduled: ${scheduledFor}`}
+      className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700"
+    >
+      Scheduled
+    </span>
+  );
+}
+
 function AgentTag({
   agent,
   model,
@@ -93,6 +106,7 @@ export function IssueCard({
           {formatAge(issue.last_event_at)}
         </span>
       </div>
+      <ScheduledTag scheduledFor={issue.scheduled_for} />
     </button>
   );
 }
