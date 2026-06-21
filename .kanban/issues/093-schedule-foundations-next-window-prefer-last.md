@@ -1,11 +1,14 @@
 ---
 id: 93
 title: Schedule foundations — next_maintenance_window helper + Podium prefer_last latest-control-line
-status: pending
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-21
+updated: 2026-06-21
+actor: ralph
+action_reviewed: 2026-06-21
 ---
 
 ## What to build
@@ -41,12 +44,12 @@ scheduling engine. Two pieces, both pure backend logic:
 
 ## Acceptance criteria
 
-- [ ] `next_maintenance_window(now)` exists in a module importable by both `scheduler` and `web/api/main.py`, returns window start AND advisory end, and `_default_scheduled_label_event` delegates to it with unchanged behavior.
-- [ ] The symbolic value `next_window` resolves to the next/current window start via the helper; resolving inside the window yields a start that is not flagged as past.
-- [ ] `parse_schedule_comment(..., prefer_last=True)` returns the LAST control line in a multi-control-line body; `prefer_last=False` (default) preserves the existing first-match behavior.
-- [ ] `latest_event(..., prefer_last=...)` exists and `_latest_schedule_event` passes `prefer_last=True` for Podium single-blob comments.
-- [ ] On a Podium `comments_md` blob with schedule→cancel: cancellation wins. With schedule→reschedule: the latest `not_before` wins. With schedule→cancel→reschedule: the reschedule wins.
-- [ ] All existing `tests/test_schedule.py` and `tests/test_scheduler.py` cases still pass (no Plane regression).
+- [x] `next_maintenance_window(now)` exists in a module importable by both `scheduler` and `web/api/main.py`, returns window start AND advisory end, and `_default_scheduled_label_event` delegates to it with unchanged behavior.
+- [x] The symbolic value `next_window` resolves to the next/current window start via the helper; resolving inside the window yields a start that is not flagged as past.
+- [x] `parse_schedule_comment(..., prefer_last=True)` returns the LAST control line in a multi-control-line body; `prefer_last=False` (default) preserves the existing first-match behavior.
+- [x] `latest_event(..., prefer_last=...)` exists and `_latest_schedule_event` passes `prefer_last=True` for Podium single-blob comments.
+- [x] On a Podium `comments_md` blob with schedule→cancel: cancellation wins. With schedule→reschedule: the latest `not_before` wins. With schedule→cancel→reschedule: the reschedule wins.
+- [x] All existing `tests/test_schedule.py` and `tests/test_scheduler.py` cases still pass (no Plane regression).
 
 ## Verification
 
@@ -55,3 +58,10 @@ scheduling engine. Two pieces, both pure backend logic:
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+- Added `schedule.next_maintenance_window(now)` with shared window constants and made the scheduler's label-only default schedule path delegate to it.
+- Added `not_before=next_window` resolution through the schedule parser.
+- Added `prefer_last` threading from `_latest_schedule_event` → `latest_event` → `parse_schedule_comment`, enabled for Podium single-blob comments while preserving Plane/default first-match behavior.
+- Verified with `uv run pytest tests/test_schedule.py tests/test_scheduler.py -q` and LSP diagnostics on touched files.

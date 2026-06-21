@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
-from zoneinfo import ZoneInfo
 
 from agent_runner import AgentAdapter, AgentResult
 from blocked_reconciler import reconcile_blocked
@@ -34,7 +33,11 @@ from schedule import (
     ScheduleEvent,
     ScheduleEventType,
     ScheduleParseError,
+    SCHEDULED_LABEL_WINDOW_END_HOUR as _SCHEDULED_LABEL_WINDOW_END_HOUR,
+    SCHEDULED_LABEL_WINDOW_START_HOUR as _SCHEDULED_LABEL_WINDOW_START_HOUR,
+    SCHEDULED_LABEL_WINDOW_TZ as _SCHEDULED_LABEL_WINDOW_TZ,
     latest_event,
+    next_maintenance_window,
 )
 from session_continuity import (
     ACTION_RESUME,
@@ -140,9 +143,9 @@ RATE_LIMIT_JITTER_FRACTION = 0.2
 LOG_RETENTION_INTERVAL = timedelta(hours=24)
 WAKE_SENTINEL_CHECK_INTERVAL_S = 1.0
 
-SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
-SCHEDULED_LABEL_WINDOW_START_HOUR = 0
-SCHEDULED_LABEL_WINDOW_END_HOUR = 6
+SCHEDULED_LABEL_WINDOW_TZ = _SCHEDULED_LABEL_WINDOW_TZ
+SCHEDULED_LABEL_WINDOW_START_HOUR = _SCHEDULED_LABEL_WINDOW_START_HOUR
+SCHEDULED_LABEL_WINDOW_END_HOUR = _SCHEDULED_LABEL_WINDOW_END_HOUR
 SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
 _REDACTED = "***REDACTED***"
@@ -2649,32 +2652,12 @@ def _with_schedule_context(
 
 
 def _default_scheduled_label_event(now_dt: datetime) -> ScheduleEvent:
-    local_now = now_dt.astimezone(SCHEDULED_LABEL_WINDOW_TZ)
-    if (
-        SCHEDULED_LABEL_WINDOW_START_HOUR
-        <= local_now.hour
-        < SCHEDULED_LABEL_WINDOW_END_HOUR
-    ):
-        window_start = local_now.replace(
-            hour=SCHEDULED_LABEL_WINDOW_START_HOUR,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-    else:
-        next_day = local_now + timedelta(days=1)
-        window_start = next_day.replace(
-            hour=SCHEDULED_LABEL_WINDOW_START_HOUR,
-            minute=0,
-            second=0,
-            microsecond=0,
-        )
-    window_end = window_start.replace(hour=SCHEDULED_LABEL_WINDOW_END_HOUR)
+    window_start, window_end = next_maintenance_window(now_dt)
     return ScheduleEvent(
         ScheduleEventType.SCHEDULE,
         SCHEDULED_LABEL_DEFAULT_REASON,
-        not_before=window_start.astimezone(UTC),
-        not_after=window_end.astimezone(UTC),
+        not_before=window_start,
+        not_after=window_end,
         raw_comment=SCHEDULED_LABEL_DEFAULT_SOURCE,
     )
 
@@ -2688,6 +2671,13 @@ def _response_items(
     if isinstance(results, list):
         return results
     return []
+
+
+def _prefers_latest_control_line(adapter: TrackerAdapter) -> bool:
+    return bool(getattr(adapter, "single_blob_comments", False)) or (
+        adapter.__class__.__module__ == "tracker_podium"
+        and adapter.__class__.__name__ == "PodiumTrackerAdapter"
+    )
 
 
 async def _latest_schedule_event(
@@ -2704,7 +2694,7 @@ async def _latest_schedule_event(
                 api_order=idx,
             )
         )
-    return latest_event(comments)
+    return latest_event(comments, prefer_last=_prefers_latest_control_line(adapter))
 
 
 def _parse_optional_datetime(value: object) -> datetime | None:

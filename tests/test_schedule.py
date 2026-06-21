@@ -26,6 +26,7 @@ from schedule import (  # noqa: E402  (sys.path manipulation above)
     format_cancellation_comment,
     format_schedule_comment,
     latest_event,
+    next_maintenance_window,
     normalize_comment_body,
     parse_schedule_comment,
 )
@@ -200,6 +201,41 @@ def test_multiline_comment_finds_first_control_plane_line():
     assert event.is_schedule
 
 
+def test_parse_schedule_comment_prefer_last_keeps_latest_control_line():
+    body = "\n".join(
+        [
+            'Symphony-Schedule: not_before=2026-05-08T20:00:00Z reason="old"',
+            'Symphony-Schedule-Cancelled: reason="new"',
+        ]
+    )
+
+    first = parse_schedule_comment(body)
+    last = parse_schedule_comment(body, prefer_last=True)
+
+    assert first is not None
+    assert first.is_schedule
+    assert last is not None
+    assert last.is_cancellation
+    assert last.reason == "new"
+
+
+def test_next_maintenance_window_returns_start_and_end():
+    start, end = next_maintenance_window(datetime(2026, 5, 4, 8, 0, tzinfo=UTC))
+
+    assert start == datetime(2026, 5, 4, 7, 0, tzinfo=UTC)
+    assert end == datetime(2026, 5, 4, 13, 0, tzinfo=UTC)
+
+
+def test_parse_next_window_inside_window_resolves_to_current_start():
+    event = parse_schedule_comment(
+        'Symphony-Schedule: not_before=next_window reason="window"',
+        now=datetime(2026, 5, 4, 8, 0, tzinfo=UTC),
+    )
+
+    assert event is not None
+    assert event.not_before == datetime(2026, 5, 4, 7, 0, tzinfo=UTC)
+
+
 # ---------------------------------------------------------------------------
 # HTML / entity round-trip
 # ---------------------------------------------------------------------------
@@ -319,6 +355,23 @@ def test_latest_event_returns_none_when_no_control_plane_comments():
         CandidateComment(body="world", created_at=datetime(2026, 5, 8, 20, 0, tzinfo=UTC)),
     ]
     assert latest_event(comments) is None
+
+
+def test_latest_event_passes_prefer_last_to_parser():
+    body = "\n".join(
+        [
+            _schedule_body("2026-05-08T20:00:00Z", "old"),
+            _schedule_body("2026-05-08T21:00:00Z", "new"),
+        ]
+    )
+
+    first = latest_event([CandidateComment(body=body)])
+    last = latest_event([CandidateComment(body=body)], prefer_last=True)
+
+    assert first is not None
+    assert first.not_before == datetime(2026, 5, 8, 20, 0, tzinfo=UTC)
+    assert last is not None
+    assert last.not_before == datetime(2026, 5, 8, 21, 0, tzinfo=UTC)
 
 
 def test_latest_schedule_wins_over_older_schedule():

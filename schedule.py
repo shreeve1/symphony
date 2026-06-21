@@ -29,9 +29,10 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Iterable, Optional, Sequence
+from collections.abc import Iterable, Sequence
+from zoneinfo import ZoneInfo
 
 
 # ---------------------------------------------------------------------------
@@ -78,11 +79,11 @@ class ScheduleEvent:
 
     event_type: ScheduleEventType
     reason: str
-    not_before: Optional[datetime] = None
-    not_after: Optional[datetime] = None
-    comment_id: Optional[str] = None
-    comment_created_at: Optional[datetime] = None
-    raw_comment: Optional[str] = None
+    not_before: datetime | None = None
+    not_after: datetime | None = None
+    comment_id: str | None = None
+    comment_created_at: datetime | None = None
+    raw_comment: str | None = None
 
     @property
     def is_schedule(self) -> bool:
@@ -122,6 +123,10 @@ _TOKEN_RE = re.compile(
     """,
     re.VERBOSE,
 )
+
+SCHEDULED_LABEL_WINDOW_TZ = ZoneInfo("America/Los_Angeles")
+SCHEDULED_LABEL_WINDOW_START_HOUR = 0
+SCHEDULED_LABEL_WINDOW_END_HOUR = 6
 
 
 # ---------------------------------------------------------------------------
@@ -406,19 +411,39 @@ _ISO_8601_STRICT_RE = re.compile(
 )
 
 
-def _parse_iso_utc(value: str, *, field: str) -> datetime:
+def next_maintenance_window(now: datetime) -> tuple[datetime, datetime]:
+    """Return the current/next maintenance window as UTC start/end instants."""
+    if now.tzinfo is None or now.tzinfo.utcoffset(now) is None:
+        raise ValueError("now must be timezone-aware")
+    local_now = now.astimezone(SCHEDULED_LABEL_WINDOW_TZ)
+    today_start = local_now.replace(
+        hour=SCHEDULED_LABEL_WINDOW_START_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    today_end = today_start.replace(hour=SCHEDULED_LABEL_WINDOW_END_HOUR)
+    if local_now < today_start or local_now < today_end:
+        window_start = today_start
+    else:
+        window_start = today_start + timedelta(days=1)
+    window_end = window_start.replace(hour=SCHEDULED_LABEL_WINDOW_END_HOUR)
+    return window_start.astimezone(timezone.utc), window_end.astimezone(timezone.utc)
+
+
+def _parse_iso_utc(value: str, *, field: str, now: datetime | None = None) -> datetime:
     """Parse an ISO 8601 string requiring an explicit UTC offset or ``Z``.
 
-    Gated by a strict ISO 8601 regex so that ``datetime.fromisoformat``'s
-    permissive behaviour (e.g. accepting non-ISO separators in some Python
-    builds) cannot leak through.  Returns a timezone-aware UTC datetime.
-    Naive datetimes (no offset) and natural-language strings are rejected
-    with ScheduleParseError.
+    ``not_before=next_window`` is the one symbolic exception; it resolves to
+    the current/next maintenance window start.
     """
     # Do NOT strip: surrounding whitespace inside a quoted datetime value
     # ("\\ 2026-...Z \\") means the supplied value is not ISO 8601 and must be
     # rejected.  Quoted token values are returned verbatim by the tokeniser.
     raw = value
+    if raw == "next_window" and field == "not_before":
+        start, _ = next_maintenance_window(now or datetime.now(timezone.utc))
+        return start
     if not raw:
         raise ScheduleParseError(f"{field} is empty")
     if not _ISO_8601_STRICT_RE.match(raw):
@@ -499,9 +524,11 @@ def _tokenise(payload: str) -> dict[str, str]:
 def parse_schedule_comment(
     body: object,
     *,
-    comment_id: Optional[str] = None,
-    comment_created_at: Optional[datetime] = None,
-) -> Optional[ScheduleEvent]:
+    comment_id: str | None = None,
+    comment_created_at: datetime | None = None,
+    prefer_last: bool = False,
+    now: datetime | None = None,
+) -> ScheduleEvent | None:
     """Parse a single comment body, returning ``ScheduleEvent`` or ``None``.
 
     Returns ``None`` when the comment is not a schedule control-plane comment
@@ -517,18 +544,20 @@ def parse_schedule_comment(
     # The control-plane comment is single-line by convention.  We scan lines
     # for the first one starting with a known prefix, so trailing operator
     # commentary on subsequent lines is tolerated and ignored.
-    line: Optional[str] = None
-    prefix: Optional[str] = None
+    line: str | None = None
+    prefix: str | None = None
     for candidate in text.splitlines():
         stripped = candidate.lstrip()
         if stripped.startswith(SCHEDULE_PREFIX):
             line = stripped
             prefix = SCHEDULE_PREFIX
-            break
+            if not prefer_last:
+                break
         if stripped.startswith(CANCELLATION_PREFIX):
             line = stripped
             prefix = CANCELLATION_PREFIX
-            break
+            if not prefer_last:
+                break
     if line is None or prefix is None:
         return None
 
@@ -541,6 +570,7 @@ def parse_schedule_comment(
             comment_id=comment_id,
             comment_created_at=comment_created_at,
             raw_comment=str(body) if body is not None else None,
+            now=now,
         )
     return _build_cancellation_event(
         tokens,
@@ -553,9 +583,10 @@ def parse_schedule_comment(
 def _build_schedule_event(
     tokens: dict[str, str],
     *,
-    comment_id: Optional[str],
-    comment_created_at: Optional[datetime],
-    raw_comment: Optional[str],
+    comment_id: str | None,
+    comment_created_at: datetime | None,
+    raw_comment: str | None,
+    now: datetime | None,
 ) -> ScheduleEvent:
     extras = set(tokens) - _VALID_SCHEDULE_KEYS
     if extras:
@@ -574,10 +605,10 @@ def _build_schedule_event(
     if not reason.strip():
         raise ScheduleParseError("Symphony-Schedule reason must be non-empty")
 
-    not_before = _parse_iso_utc(tokens["not_before"], field="not_before")
-    not_after: Optional[datetime] = None
+    not_before = _parse_iso_utc(tokens["not_before"], field="not_before", now=now)
+    not_after: datetime | None = None
     if "not_after" in tokens:
-        not_after = _parse_iso_utc(tokens["not_after"], field="not_after")
+        not_after = _parse_iso_utc(tokens["not_after"], field="not_after", now=now)
         if not_after < not_before:
             raise ScheduleParseError(
                 "Symphony-Schedule not_after must be >= not_before"
@@ -597,9 +628,9 @@ def _build_schedule_event(
 def _build_cancellation_event(
     tokens: dict[str, str],
     *,
-    comment_id: Optional[str],
-    comment_created_at: Optional[datetime],
-    raw_comment: Optional[str],
+    comment_id: str | None,
+    comment_created_at: datetime | None,
+    raw_comment: str | None,
 ) -> ScheduleEvent:
     extras = set(tokens) - _VALID_CANCELLATION_KEYS
     if extras:
@@ -662,7 +693,7 @@ def format_schedule_comment(
     *,
     not_before: datetime,
     reason: str,
-    not_after: Optional[datetime] = None,
+    not_after: datetime | None = None,
 ) -> str:
     """Render the canonical ``Symphony-Schedule:`` comment body.
 
@@ -705,9 +736,9 @@ class CandidateComment:
     """
 
     body: object
-    comment_id: Optional[str] = None
-    created_at: Optional[datetime] = None
-    api_order: Optional[int] = None
+    comment_id: str | None = None
+    created_at: datetime | None = None
+    api_order: int | None = None
 
 
 def _make_sort_key(use_api_order: bool):
@@ -741,7 +772,10 @@ def _make_sort_key(use_api_order: bool):
 
 def latest_event(
     comments: Sequence[CandidateComment] | Iterable[CandidateComment],
-) -> Optional[ScheduleEvent]:
+    *,
+    prefer_last: bool = False,
+    now: datetime | None = None,
+) -> ScheduleEvent | None:
     """Return the latest schedule control-plane event, or ``None``.
 
     Behavior:
@@ -777,6 +811,8 @@ def latest_event(
         latest.body,
         comment_id=latest.comment_id,
         comment_created_at=latest.created_at,
+        prefer_last=prefer_last,
+        now=now,
     )
 
 
@@ -787,9 +823,13 @@ __all__ = [
     "ScheduleEventType",
     "ScheduleParseError",
     "SCHEDULE_PREFIX",
+    "SCHEDULED_LABEL_WINDOW_END_HOUR",
+    "SCHEDULED_LABEL_WINDOW_START_HOUR",
+    "SCHEDULED_LABEL_WINDOW_TZ",
     "format_cancellation_comment",
     "format_schedule_comment",
     "latest_event",
+    "next_maintenance_window",
     "normalize_comment_body",
     "parse_schedule_comment",
 ]

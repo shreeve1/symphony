@@ -3166,6 +3166,83 @@ async def test_scheduled_ticket_with_malformed_latest_event_blocks(
     )
 
 
+class SingleBlobScheduleAdapter:
+    single_blob_comments = True
+
+    def __init__(self, body: str) -> None:
+        self.body = body
+
+    async def list_comments(self, issue_id: str) -> list[dict[str, str]]:
+        return [
+            {
+                "id": f"podium-comments-{issue_id}",
+                "created_at": "2026-05-04T00:00:00+00:00",
+                "body": self.body,
+                "comment_html": self.body,
+            }
+        ]
+
+
+def _single_blob_adapter(body: str) -> TrackerAdapter:
+    return cast(TrackerAdapter, SingleBlobScheduleAdapter(body))
+
+
+@pytest.mark.asyncio
+async def test_latest_schedule_event_podium_blob_schedule_then_cancel_wins() -> None:
+    body = "\n".join(
+        [
+            format_schedule_comment(
+                not_before=datetime(2026, 5, 4, 7, 0, tzinfo=UTC), reason="old"
+            ),
+            format_cancellation_comment(reason="stop"),
+        ]
+    )
+
+    event = await scheduler._latest_schedule_event(_single_blob_adapter(body), "1")
+
+    assert event is not None
+    assert event.is_cancellation
+
+
+@pytest.mark.asyncio
+async def test_latest_schedule_event_podium_blob_reschedule_wins() -> None:
+    body = "\n".join(
+        [
+            format_schedule_comment(
+                not_before=datetime(2026, 5, 4, 7, 0, tzinfo=UTC), reason="old"
+            ),
+            format_schedule_comment(
+                not_before=datetime(2026, 5, 5, 7, 0, tzinfo=UTC), reason="new"
+            ),
+        ]
+    )
+
+    event = await scheduler._latest_schedule_event(_single_blob_adapter(body), "1")
+
+    assert event is not None
+    assert event.not_before == datetime(2026, 5, 5, 7, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_latest_schedule_event_podium_blob_cancel_then_reschedule_wins() -> None:
+    body = "\n".join(
+        [
+            format_schedule_comment(
+                not_before=datetime(2026, 5, 4, 7, 0, tzinfo=UTC), reason="old"
+            ),
+            format_cancellation_comment(reason="stop"),
+            format_schedule_comment(
+                not_before=datetime(2026, 5, 6, 7, 0, tzinfo=UTC), reason="new"
+            ),
+        ]
+    )
+
+    event = await scheduler._latest_schedule_event(_single_blob_adapter(body), "1")
+
+    assert event is not None
+    assert event.not_before == datetime(2026, 5, 6, 7, 0, tzinfo=UTC)
+
+
 @pytest.mark.asyncio
 async def test_cancelled_schedule_repairs_stale_scheduled_label(tmp_path: Path) -> None:
     transport = FakeTransport()
