@@ -1,7 +1,9 @@
 ---
 id: 95
 title: Scheduler terminal handler — agent SYMPHONY_SCHEDULE → held + TODO
-status: review
+status: done
+updated: 2026-06-21
+actor: ralph
 blocked_by: [93, 94]
 parent: null
 priority: 0
@@ -44,12 +46,12 @@ Behavior:
 
 ## Acceptance criteria
 
-- [ ] A clean infra run emitting a valid `SYMPHONY_SCHEDULE` marker calls `add_comment(format_schedule_comment(...))`, then `add_labels([SCHEDULED])`, then `transition_state(TODO)`, in that order.
-- [ ] The run record is finished `succeeded` with `verdict=None`; the issue ends in TODO.
-- [ ] Returns reason code `agent-marker-scheduled`; the marker takes precedence over a co-emitted `SYMPHONY_RESULT: blocked` and over an approval-gate false positive.
-- [ ] A malformed/past/reasonless marker blocks the issue with an explanatory comment (no silent drop).
-- [ ] A coding binding ignores the marker (no comment/label/transition).
-- [ ] A marker-scheduled issue is held by `_gate_run_tick_candidate` (`scheduled-held`) before `not_before` and released by `_select_scheduled_candidate` once `now >= not_before` (use a controllable `now`).
+- [x] A clean infra run emitting a valid `SYMPHONY_SCHEDULE` marker calls `add_comment(format_schedule_comment(...))`, then `add_labels([SCHEDULED])`, then `transition_state(TODO)`, in that order.
+- [x] The run record is finished `succeeded` with `verdict=None`; the issue ends in TODO.
+- [x] Returns reason code `agent-marker-scheduled`; the marker takes precedence over a co-emitted `SYMPHONY_RESULT: blocked` and over an approval-gate false positive.
+- [x] A malformed/past/reasonless marker blocks the issue with an explanatory comment (no silent drop).
+- [x] A coding binding ignores the marker (no comment/label/transition).
+- [x] A marker-scheduled issue is held by `_gate_run_tick_candidate` (`scheduled-held`) before `not_before` and released by `_select_scheduled_candidate` once `now >= not_before` (use a controllable `now`).
 
 ## Verification
 
@@ -58,3 +60,10 @@ Behavior:
 ## Blocked by
 
 - Blocked by #93 (next_window helper) and #94 (`_parse_schedule_marker`).
+
+## Implementation Notes
+
+- Added infra-only `SYMPHONY_SCHEDULE` terminal handling in `_classify_terminal` before blocked/review/done verdict handling.
+- Valid markers now append the canonical `Symphony-Schedule:` comment, apply the scheduled label, transition back to TODO, finish the Run as `succeeded` with `verdict=None`, and return `agent-marker-scheduled`.
+- Malformed, past, or reasonless schedule markers block with an explanatory comment; coding bindings ignore schedule markers and continue normal terminal classification.
+- Added scheduler tests for valid scheduling, blocked-verdict precedence, malformed/past markers, and coding-binding ignore behavior.

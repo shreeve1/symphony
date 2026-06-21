@@ -17,3 +17,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Schedule terminal outcomes use a column-0 `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."` line plus a summary block.
 **Notes for next iteration:** Issue #95 wires this parser into terminal classification and must decide malformed-marker blocking behavior from a present-but-unparseable marker.
 **Verification:** `uv run pytest tests/test_schedule.py tests/test_prompt_renderer.py tests/test_prompt_renderer_podium.py -q` (90 passed); fresh review passed; LSP diagnostics clean for touched Python files.
+
+## #95 Scheduler terminal schedule handler — 2026-06-21
+
+**What changed:** Wired `SYMPHONY_SCHEDULE` stdout markers into `_classify_terminal` so infra agents can defer issues into the maintenance window by posting the canonical schedule comment, adding the scheduled label, and returning the issue to TODO.
+**Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `.kanban/issues/095-scheduler-terminal-schedule-handler.md`
+**Decisions:** Schedule marker handling is infra-only; malformed/past/reasonless markers block explicitly, while coding bindings ignore markers and continue normal terminal classification. Valid schedule markers finish Runs as `succeeded` with `verdict=None` to avoid introducing a new issue state.
+**Conventions established:** Schedule terminal handling order is comment → scheduled label → TODO; marker scheduling returns `agent-marker-scheduled` and logs `state_scheduled`.
+**Notes for next iteration:** Issue #98 can now rely on marker-scheduled issues being held by the existing scheduled gate and released by the existing due-schedule selector.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` (170 passed); fresh review passed with minor notes; LSP diagnostics clean for touched Python files.
