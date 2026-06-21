@@ -1234,3 +1234,10 @@ Append entries with this format:
 
 ---
 
+
+## [2026-06-21] session-update | Issue #096 manual schedule API
+
+- Actor: agent (Ralph)
+- Inputs: `.kanban/issues/096-manual-schedule-api-endpoint.md`; `web/api/main.py`; `web/api/tests/test_schedule_endpoint.py`; `web/api/tests/test_endpoints.py`; `.kanban/progress.md`; fresh review diff `git diff 6a10ced23e07f59faf0ec130712aa16141402ec3 HEAD`.
+- Outputs: updated `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0291 refined, C-0296 added); updated `wiki/log.md`.
+- Notes: Captured Issue #096 landing the backend manual schedule API: infra-only `POST`/`DELETE /api/issues/{id}/schedule`, `/api/bindings` `binding_type`, and `IssueCreate.schedule` for atomic create-time holds. Verification: exact issue command passed (`uv run pytest web/api/tests/test_schedule_endpoint.py web/api/tests/test_endpoints.py -q` = 9 passed), ruff passed for touched Python files, touched-file LSP diagnostics clean, fresh Ralph review `RALPH_REVIEW: PASS`. No env files or live secrets read.

@@ -4,7 +4,7 @@ type: analysis
 status: promoted
 created: 2026-06-20
 updated: 2026-06-21
-last_event: 2026-06-21 #95 scheduler terminal schedule handler landed
+last_event: 2026-06-21 #96 manual schedule API landed
 sources:
   - docs/adr/0018-patrol-medium-risk-window-scheduling.md
   - wiki/raw/sessions/2026-06-20-patrol-window-scheduling-grill.md
@@ -19,14 +19,15 @@ sources:
   - .kanban/issues/093-schedule-foundations-next-window-prefer-last.md
   - .kanban/issues/094-symphony-schedule-marker.md
   - .kanban/issues/095-scheduler-terminal-schedule-handler.md
+  - .kanban/issues/096-manual-schedule-api-endpoint.md
 confidence: high
-tags: [adr, patrol, podium, scheduling, maintenance-window, symphony-schedule, output-contract, infra-preamble, blast-radius, temporal, homelab, cross-repo, proposed]
+tags: [adr, patrol, podium, scheduling, maintenance-window, symphony-schedule, output-contract, infra-preamble, blast-radius, temporal, homelab, cross-repo, api, proposed]
 ---
 
 # ADR-0018 — Patrol medium-risk updates self-schedule into the maintenance window
 
 `proposed` 2026-06-20. Outcome of a `/grill-me` review of what's outstanding
-between Temporal patrols and Podium after the ADR-0015 cutover. **Partially built:** #93 landed the shared maintenance-window helper, `next_window` parser resolution, and Podium latest-control-line selection; #94 landed the `SYMPHONY_SCHEDULE` stdout parser plus output-contract/INFRA_PREAMBLE mechanism wording; #95 landed scheduler terminal handling for valid/malformed markers. Schedule-authorization policy, dedup guard, and UI control remain unbuilt. Cross-repo (symphony + homelab). [source: .kanban/issues/093-schedule-foundations-next-window-prefer-last.md] [source: .kanban/issues/094-symphony-schedule-marker.md] [source: .kanban/issues/095-scheduler-terminal-schedule-handler.md] [source: schedule.py#414-446] [source: scheduler/markers.py#70-91] [source: scheduler/__init__.py#1795-1861]
+between Temporal patrols and Podium after the ADR-0015 cutover. **Partially built:** #93 landed the shared maintenance-window helper, `next_window` parser resolution, and Podium latest-control-line selection; #94 landed the `SYMPHONY_SCHEDULE` stdout parser plus output-contract/INFRA_PREAMBLE mechanism wording; #95 landed scheduler terminal handling for valid/malformed markers; #96 landed the backend manual schedule API and atomic create-and-schedule path. Schedule-authorization policy, dedup guard, and frontend UI control remain unbuilt. Cross-repo (symphony + homelab). [source: .kanban/issues/093-schedule-foundations-next-window-prefer-last.md] [source: .kanban/issues/094-symphony-schedule-marker.md] [source: .kanban/issues/095-scheduler-terminal-schedule-handler.md] [source: .kanban/issues/096-manual-schedule-api-endpoint.md] [source: schedule.py#414-446] [source: scheduler/markers.py#70-91] [source: scheduler/__init__.py#1795-1861] [source: web/api/main.py#L1148-L1235]
 
 ## Problem
 
@@ -74,7 +75,11 @@ reversing the agents' current correct-blocking behavior. Five parts:
 5. **First-class Schedule control in Podium UI** (infra bindings only; new-issue
    modal + flyout). *Next maintenance window* (default) / *Custom date-time* /
    *None*; writes `scheduled_for` AND posts the `Symphony-Schedule:` comment via
-   the existing API (satisfying the mandatory grammar gate).
+   the schedule API (satisfying the mandatory grammar gate). #96 landed that
+   backend API: `POST /api/issues/{id}/schedule`, `DELETE /api/issues/{id}/schedule`,
+   `/api/bindings` `binding_type`, and `IssueCreate.schedule` for atomic create-time
+   holds. [source: web/api/main.py#L521-L559] [source: web/api/main.py#L684-L693]
+   [source: web/api/main.py#L856-L915] [source: web/api/main.py#L1148-L1235]
 
 Maintenance window = one backend config constant, `00:00–06:00
 America/Los_Angeles`, DST-aware (`zoneinfo`), single-sourced for both the agent's
@@ -108,7 +113,7 @@ by a backend helper). Advisory `not_after` = 06:00 LA. #93 moved the constants a
 
 ## Status
 
-`proposed` — ADR written + wiki captured 2026-06-20. **Partially built 2026-06-21 by #93, #94, and #95:** schedule foundations landed (`next_maintenance_window`, `next_window`, Podium `prefer_last`), the stdout marker parser/output-contract mechanism landed, and scheduler terminal handling now converts valid infra markers into scheduled TODO issues while blocking malformed/past/reasonless markers. Still unbuilt: INFRA_PREAMBLE schedule-authorization policy, dedup-don't-clobber behavior, and the Podium UI Schedule control. Claims C-0289 (machinery exists, gate requires comment), C-0290 (cron never in window), C-0291 (ADR route), C-0292/C-0293 (#93 foundations), C-0294 (#94 marker mechanism), C-0295 (#95 terminal handling).
+`proposed` — ADR written + wiki captured 2026-06-20. **Partially built 2026-06-21 by #93, #94, #95, and #96:** schedule foundations landed (`next_maintenance_window`, `next_window`, Podium `prefer_last`), the stdout marker parser/output-contract mechanism landed, scheduler terminal handling now converts valid infra markers into scheduled TODO issues while blocking malformed/past/reasonless markers, and backend manual scheduling landed (`POST`/`DELETE /schedule`, `/api/bindings.binding_type`, `IssueCreate.schedule`). Still unbuilt: INFRA_PREAMBLE schedule-authorization policy, dedup-don't-clobber behavior, and the frontend Podium UI Schedule control. Claims C-0289 (machinery exists, gate requires comment), C-0290 (cron never in window), C-0291 (ADR route), C-0292/C-0293 (#93 foundations), C-0294 (#94 marker mechanism), C-0295 (#95 terminal handling), C-0296 (#96 manual schedule API).
 
 ## Related
 
