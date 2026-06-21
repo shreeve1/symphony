@@ -1,7 +1,7 @@
 ---
 id: 97
 title: Frontend Schedule control (infra-only) — new-issue modal + flyout
-status: in-progress
+status: review
 blocked_by: [96]
 parent: null
 priority: 0
