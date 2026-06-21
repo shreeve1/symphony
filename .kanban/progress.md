@@ -44,3 +44,10 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Frontend manual scheduling uses the schedule endpoints only; `IssuePatch.scheduled_for` is not used as the UI scheduling path.
 **Notes for next iteration:** Issue #98 is still the manual/cross-repo homelab policy/dedup slice; this Ralph run did not touch it.
 **Verification:** `cd web/frontend && pnpm test:e2e schedule.spec.ts && pnpm build` (3 Playwright tests passed; Next build passed); fresh review passed with a note that `web/frontend/pnpm-workspace.yaml` is a build prerequisite for approved `sharp` builds; LSP diagnostics had only pre-existing non-critical client-component/FormEvent warnings.
+
+## #98 MANUAL homelab schedule policy — 2026-06-21
+
+**What changed:** No code changed; Ralph parked the issue because its own scope is manual/cross-repo and must be completed from `/home/james/homelab` rather than the Symphony Ralph worktree.
+**Files:** `.kanban/issues/098-MANUAL-homelab-block-to-schedule-policy-and-dedup.md`
+**Decisions:** Symphony Ralph should not mark #98 done or edit homelab for this invocation; the homelab commit plus `uv run pytest` verification must be performed by a manual homelab run.
+**Notes for next iteration:** Run the issue from `/home/james/homelab/automation/homelab-stack`, then update the Symphony board by hand after verification.

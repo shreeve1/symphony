@@ -1,11 +1,13 @@
 ---
 id: 98
 title: MANUAL — homelab block→schedule policy + dedup-don't-clobber (cross-repo)
-status: pending
+status: blocked
 blocked_by: [94, 95]
 parent: null
 priority: 0
 created: 2026-06-21
+updated: 2026-06-21
+actor: ralph
 ---
 
 ## What to build
@@ -69,3 +71,7 @@ this issue — mark done by hand after the homelab commit + verification.
 ## Blocked by
 
 - Blocked by #94 (the `SYMPHONY_SCHEDULE` marker must exist) and #95 (the scheduler handler must process it).
+
+## Blocker
+
+Ralph selected this issue after #94 and #95 were done, but the issue is explicitly MANUAL/cross-repo: implementation and verification live in `/home/james/homelab/automation/homelab-stack`, while this invocation is scoped to the Symphony repository and the required review diff base is the Symphony commit `8465f9a77972db42b97bead005ff9d7547c45670`. Complete it from the homelab repo and mark done by hand after the homelab commit plus verification.
