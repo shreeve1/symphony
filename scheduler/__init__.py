@@ -36,6 +36,7 @@ from schedule import (
     SCHEDULED_LABEL_WINDOW_END_HOUR as _SCHEDULED_LABEL_WINDOW_END_HOUR,
     SCHEDULED_LABEL_WINDOW_START_HOUR as _SCHEDULED_LABEL_WINDOW_START_HOUR,
     SCHEDULED_LABEL_WINDOW_TZ as _SCHEDULED_LABEL_WINDOW_TZ,
+    format_schedule_comment,
     latest_event,
     next_maintenance_window,
 )
@@ -85,6 +86,9 @@ from .markers import (
 )
 from .markers import (
     _parse_summary_marker as _parse_summary_marker,
+)
+from .markers import (
+    _SCHEDULE_MARKER_RE as _SCHEDULE_MARKER_RE,
 )
 from .sanitize import (
     _collect_secrets as _collect_secrets,
@@ -1310,7 +1314,9 @@ async def _gate_run_tick_candidate(
             skill_forces_build = (
                 mode_for_skill(getattr(candidate, "preferred_skill", None)) == "build"
             )
-            prior_return_to_plan = candidate.comments_md.count(_BUILD_PLAN_RETURN_MARKER)
+            prior_return_to_plan = candidate.comments_md.count(
+                _BUILD_PLAN_RETURN_MARKER
+            )
             if (
                 skill_forces_build
                 and prior_return_to_plan >= BUILD_PLAN_MISSING_GRACE_ATTEMPTS
@@ -1754,7 +1760,11 @@ async def _classify_terminal(
         )
         return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
-    if verdict is None and question is None and _hit_approval_gate(class_stdout, class_stderr):
+    if (
+        verdict is None
+        and question is None
+        and _hit_approval_gate(class_stdout, class_stderr)
+    ):
         msg = "Agent could not complete because operator approval is required."
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
@@ -1781,6 +1791,107 @@ async def _classify_terminal(
             dashboard_url=_du,
         )
         return TickResult(True, "approval-gate", candidate.id, mode=mode)
+
+    # Schedule marker: infra agents can emit SYMPHONY_SCHEDULE: to defer
+    # an issue into a maintenance window. Takes precedence over stray
+    # SYMPHONY_RESULT and approval-gate false positives.
+    schedule_marker = _parse_schedule_marker(class_stdout, now=now())
+    if schedule_marker is not None:
+        not_before, reason = schedule_marker
+        now_dt = now()
+        if not_before < now_dt:
+            msg = (
+                f"Agent requested schedule but not_before={not_before.isoformat()} "
+                f"is in the past. Cannot schedule into the past."
+            )
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                secrets=secrets,
+                state="failed",
+                verdict="blocked",
+                summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
+                or msg,
+                ended_at=now_dt.isoformat(),
+            )
+            _iu, _du = _build_urls(config, candidate.id)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                msg,
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(
+                True, "agent-scheduled-malformed", candidate.id, mode=mode
+            )
+
+        if not is_coding:
+            schedule_comment = format_schedule_comment(
+                not_before=not_before, reason=reason
+            )
+            await adapter.add_comment(
+                candidate.id, CommentPayload(body=schedule_comment)
+            )
+            await adapter.add_labels(candidate.id, [TrackerRole.SCHEDULED])
+            await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+            summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                secrets=secrets,
+                state="succeeded",
+                verdict=None,
+                summary=summary,
+                ended_at=now_dt.isoformat(),
+            )
+            LOGGER.info(
+                "state_scheduled issue_id=%s not_before=%s reason=%s",
+                candidate.id,
+                not_before.isoformat(),
+                reason,
+            )
+            return TickResult(True, "agent-marker-scheduled", candidate.id, mode=mode)
+    else:
+        # Marker line exists but parse failed — malformed/past/reasonless
+        if _SCHEDULE_MARKER_RE.search(class_stdout):
+            msg = (
+                "Agent emitted a malformed SYMPHONY_SCHEDULE marker: "
+                "could not parse not_before or reason is empty."
+            )
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                secrets=secrets,
+                state="failed",
+                verdict="blocked",
+                summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
+                or msg,
+                ended_at=now().isoformat(),
+            )
+            _iu, _du = _build_urls(config, candidate.id)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                msg,
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return TickResult(
+                True, "agent-scheduled-malformed", candidate.id, mode=mode
+            )
 
     if verdict == "blocked":
         if summary:

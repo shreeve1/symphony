@@ -1,7 +1,7 @@
 ---
 id: 95
 title: Scheduler terminal handler — agent SYMPHONY_SCHEDULE → held + TODO
-status: pending
+status: in-progress
 blocked_by: [93, 94]
 parent: null
 priority: 0

@@ -2555,6 +2555,174 @@ async def test_marker_case_insensitive(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_schedule_marker_schedules_issue(tmp_path: Path) -> None:
+    """Valid schedule marker posts comment, adds label, and returns scheduled."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = (
+        "All good. Will do the restart during maintenance.\n"
+        'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="upgrade window"\n'
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-marker-scheduled"
+    assert result.issue_id == "issue-1"
+    # State stays TODO (not moved to blocked/in-review)
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    # Comment posted with format_schedule_comment
+    scheduled_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert "Symphony-Schedule:" in scheduled_comment
+    assert "not_before=2026-05-05T00:00:00+00:00" in scheduled_comment
+    assert 'reason="upgrade window"' in scheduled_comment
+    # Label added
+    scheduled_label_id = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    assert scheduled_label_id in transport.issues["issue-1"]["labels"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_marker_takes_precedence_over_blocked(tmp_path: Path) -> None:
+    """Schedule marker wins over a co-emitted SYMPHONY_RESULT: blocked."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = (
+        "Cannot proceed but will retry later.\n"
+        'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="retry window"\n'
+        "SYMPHONY_RESULT: blocked\n"
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-marker-scheduled"
+    # State stays TODO (not blocked by SYMPHONY_RESULT: blocked)
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_malformed_schedule_marker_blocks(tmp_path: Path) -> None:
+    """Malformed SYMPHONY_SCHEDULE marker blocks the issue."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = "SYMPHONY_SCHEDULE: garbage that cannot be parsed\n"
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-scheduled-malformed"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert (
+        "malformed" in blocked_comment.lower()
+        or "could not parse" in blocked_comment.lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_past_schedule_marker_blocks(tmp_path: Path) -> None:
+    """Schedule marker with past not_before blocks the issue."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = 'SYMPHONY_SCHEDULE: not_before=2020-01-01T00:00:00+00:00 reason="already happened"\n'
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    assert result.reason == "agent-scheduled-malformed"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert "in the past" in (
+        transport.comments["issue-1"][0].get(
+            "comment_html", transport.comments["issue-1"][0].get("body", "")
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_coding_binding_ignores_schedule_marker(tmp_path: Path) -> None:
+    """Coding binding ignores SYMPHONY_SCHEDULE marker and falls through."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    agent_output = (
+        'SYMPHONY_SCHEDULE: not_before=2026-05-05T00:00:00+00:00 reason="upgrade"\n'
+        "SYMPHONY_RESULT: done\n"
+    )
+    cfg = _config(tmp_path)
+    binding = replace(cfg.bindings[0], binding_type="coding")
+    cfg = replace(cfg, bindings=(binding,))
+
+    result = await run_tick(
+        cfg,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout=agent_output
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+    )
+
+    # Falls through to review/done handling
+    assert result.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+    # No schedule comment or label
+    scheduled_label_id = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
+    assert scheduled_label_id not in transport.issues["issue-1"]["labels"]
+
+
+@pytest.mark.asyncio
 async def test_marker_done_with_dirty_repo_moves_to_review(tmp_path: Path) -> None:
     """Dirty repo + marker done: scheduler moves to review without auto-commit."""
     transport = FakeTransport()
