@@ -32,6 +32,7 @@ from proc_runtime import (
     RPC_RUNTIME_DIR_ENV,
     pid_alive,
     pid_start_time,
+    tail_spool_path,
 )
 from session_continuity import derive_session_id
 
@@ -677,6 +678,7 @@ def run_remote_agent(
             kill_process_group=kill_process_group,
             clock=clock,
             source_env=source_env,
+            spool_path=tail_spool_path(run_id, source_env) if run_id else None,
         )
         if drain.timed_out:
             duration_ms = int((clock() - started) * 1000)
@@ -747,6 +749,9 @@ def run_remote_agent(
         if pidfile is not None:
             with suppress(OSError):
                 pidfile.unlink(missing_ok=True)
+        if run_id:
+            with suppress(OSError):
+                tail_spool_path(run_id, source_env).unlink(missing_ok=True)
         # Best-effort remote cleanup; the SSH channel close already SIGHUPs pi.
         _cleanup_remote_tmp(remote, remote_tmp, run_func=run_func)
 
@@ -1136,18 +1141,27 @@ def _drain_rpc_events(
     kill_process_group: Callable[[int, int], object],
     clock: Callable[[], float],
     source_env: Mapping[str, str],
+    spool_path: Path | None = None,
 ) -> _DrainResult:
     """Drain pi RPC JSONL events until timeout, agent_end, or error.
 
     Reads the event stream via the line reader, forwards steer records,
     and detects completion from ``agent_end`` events. The caller owns
-    process termination for the non-timeout path.
+    process termination for the non-timeout path. When ``spool_path`` is
+    set, assistant deltas are mirrored to that local file so the web tailer
+    can stream the run (used for remote dispatch — ADR-0019).
     """
     assistant_parts: list[str] = []
     stderr_parts: list[str] = []
     error_seen = False
     event_exit_code: int | None = None
     current_steer_offset = steer_offset
+
+    spool = None
+    if spool_path is not None:
+        with suppress(OSError):
+            spool_path.parent.mkdir(parents=True, exist_ok=True)
+            spool = spool_path.open("a", encoding="utf-8")
 
     try:
         while True:
@@ -1193,6 +1207,10 @@ def _drain_rpc_events(
             delta = _assistant_delta(event)
             if delta:
                 assistant_parts.append(delta)
+                if spool is not None:
+                    with suppress(OSError):
+                        spool.write(delta)
+                        spool.flush()
 
             if event_type == "extension_error":
                 err = event.get("error")
@@ -1226,6 +1244,9 @@ def _drain_rpc_events(
                 break
     finally:
         close_reader()
+        if spool is not None:
+            with suppress(OSError):
+                spool.close()
 
     return _DrainResult(
         assistant_parts=assistant_parts,

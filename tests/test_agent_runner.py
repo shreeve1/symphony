@@ -794,6 +794,37 @@ def test_run_pi_rpc_agent_forwards_queued_abort(tmp_path: Path) -> None:
     assert {"type": "abort"} in commands
 
 
+def test_drain_rpc_events_spools_assistant_deltas(tmp_path: Path) -> None:
+    """With a spool path, the drain loop mirrors assistant deltas to a local
+    file so the web tailer can stream remote runs (ADR-0019)."""
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "message_update", "delta": "Working"}) + "\n",
+            json.dumps({"type": "message_update", "delta": " on it"}) + "\n",
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+    read_line, close_reader = agent_runner_module._rpc_line_reader(process)
+    spool = tmp_path / "tail" / "55.log"
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        1_000_000.0,
+        "55",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=read_line,
+        close_reader=close_reader,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        source_env={},
+        spool_path=spool,
+    )
+
+    assert drain.event_exit_code == 0
+    assert spool.read_text() == "Working on it"
+
+
 def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"

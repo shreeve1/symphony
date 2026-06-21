@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 RPC_RUNTIME_DIR_ENV = "SYMPHONY_RUNTIME_DIR"
 DEFAULT_RUNTIME_DIR = Path("/tmp/symphony")
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def tail_spool_path(run_id: object, environ: Mapping[str, str] | None = None) -> Path:
+    """Local file the scheduler spools a run's live agent output to.
+
+    Remote agents write their session transcript on the remote host, so the
+    web tailer can't read it directly. But the scheduler already receives the
+    pi RPC event stream over the SSH pipe — spooling it here lets the tailer
+    stream remote runs from a local file, no second SSH connection (ADR-0019).
+    """
+    source = os.environ if environ is None else environ
+    runtime_dir = Path(source.get(RPC_RUNTIME_DIR_ENV, str(DEFAULT_RUNTIME_DIR)))
+    return runtime_dir / "tail" / f"{run_id}.log"
 
 
 def pid_alive(pid: int) -> bool:

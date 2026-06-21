@@ -136,6 +136,61 @@ def test_tailer_reads_new_lines(monkeypatch, tmp_path: Path) -> None:
     assert "world" in msg["lines"][1]
 
 
+def test_tailer_reads_spool_for_remote_binding(monkeypatch, tmp_path: Path) -> None:
+    """Remote bindings tail a local spool file (written by the scheduler from
+    the SSH RPC stream), not a remote session transcript (ADR-0019)."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setenv("SYMPHONY_RUNTIME_DIR", str(tmp_path / "runtime"))
+    _restart_tailer()
+
+    monkeypatch.setattr(main, "_is_remote_binding", lambda name: True)
+
+    with TestClient(app) as client:
+        login(client)
+        issues = client.get("/api/bindings/symphony/issues").json()
+        issue_id = issues[0]["id"]
+
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'running', "
+                "latest_run_state = 'running' WHERE id = ?",
+                (issue_id,),
+            )
+            connection.execute(
+                "UPDATE run SET state = 'running', agent = 'pi' WHERE issue_id = ?",
+                (issue_id,),
+            )
+            connection.commit()
+            run_id = connection.execute(
+                "SELECT id FROM run WHERE issue_id = ?", (issue_id,)
+            ).fetchone()[0]
+
+    from proc_runtime import tail_spool_path
+
+    spool = tail_spool_path(str(run_id))
+    spool.parent.mkdir(parents=True, exist_ok=True)
+    spool.write_text("agent is working\non the remote host\n")
+
+    poll_results: list[dict[str, Any]] = []
+
+    async def record(message: dict[str, Any]) -> None:
+        poll_results.append(message)
+
+    monkeypatch.setattr(main.websocket_hub, "publish", record)
+
+    import asyncio
+
+    asyncio.run(main._session_tailer._poll_running())
+
+    assert len(poll_results) == 1
+    msg = poll_results[0]
+    assert msg["type"] == "run.tail"
+    assert msg["issue_id"] == issue_id
+    assert "agent is working" in msg["lines"][0]
+    assert "on the remote host" in msg["lines"][1]
+
+
 def test_tailer_only_returns_new_lines_on_subsequent_polls(
     monkeypatch, tmp_path: Path
 ) -> None:

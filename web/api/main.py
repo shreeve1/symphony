@@ -25,11 +25,13 @@ from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
 try:
+    from proc_runtime import tail_spool_path
     from session_continuity import derive_session_id, session_file_path
 except ModuleNotFoundError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from proc_runtime import tail_spool_path  # type: ignore[no-redef]
     from session_continuity import derive_session_id, session_file_path  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
@@ -190,7 +192,7 @@ class _SessionTailer:
         try:
             rows = connection.execute(
                 """
-                SELECT i.id, i.binding_name, r.agent
+                SELECT i.id, i.binding_name, r.agent, r.id AS run_id
                 FROM issue i
                 INNER JOIN run r ON r.id = i.latest_run_id
                 WHERE i.latest_run_state = 'running'
@@ -208,15 +210,24 @@ class _SessionTailer:
                 continue
             current_ids.add(issue_id)
 
-            repo_path = _repo_path_for_binding(binding_name)
-            if not repo_path:
-                continue
+            if _is_remote_binding(binding_name):
+                # Remote agents write their transcript on the remote host; the
+                # scheduler spools the RPC stream to a local file instead so we
+                # can tail it without reaching the remote FS (ADR-0019).
+                run_id = row["run_id"]
+                if run_id is None:
+                    continue
+                s_path = tail_spool_path(str(run_id))
+            else:
+                repo_path = _repo_path_for_binding(binding_name)
+                if not repo_path:
+                    continue
 
-            session_id = derive_session_id(issue_id)
-            try:
-                s_path = session_file_path(agent, repo_path, session_id)
-            except (ValueError, OSError):
-                continue
+                session_id = derive_session_id(issue_id)
+                try:
+                    s_path = session_file_path(agent, repo_path, session_id)
+                except (ValueError, OSError):
+                    continue
 
             lines = self._read_new_lines(issue_id, s_path)
             if lines:
@@ -687,6 +698,7 @@ def list_bindings(
         binding["binding_type"] = _binding_type_for(name)
         binding["pi_mode"] = _binding_pi_mode_for(name)
         binding["claude_persist"] = _binding_claude_persist_for(name)
+        binding["approval_enabled"] = _binding_approval_enabled_for(name)
         binding["is_remote"] = _is_remote_binding(name)
         repo_path = _repo_path_for_binding(name)
         binding["repo_name"] = repo_path.name if repo_path is not None else None
@@ -985,6 +997,18 @@ def _binding_pi_mode_for(name: str) -> str:
             mode = str(binding.get("pi_mode") or "one-shot")
             return mode if mode in {"one-shot", "rpc"} else "one-shot"
     return "one-shot"
+
+
+def _binding_approval_enabled_for(name: str) -> bool:
+    try:
+        bindings = _load_bindings(BINDINGS_PATH)
+    except (OSError, yaml.YAMLError):
+        return False
+    for binding in bindings:
+        if binding.get("name") == name:
+            approval = binding.get("approval")
+            return isinstance(approval, dict) and approval.get("enabled") is True
+    return False
 
 
 def _binding_claude_persist_for(name: str) -> bool:
