@@ -65,22 +65,23 @@ test("flyout schedules, unschedules, and the board card shows held todos", async
 	const { issueId } = seedIssue("homelab", title);
 
 	await page.goto(`/homelab?issue=${issueId}`);
-	await expect(page.getByTestId("issue-schedule")).toBeVisible();
-	await page.getByTestId("issue-schedule-mode").selectOption("next_window");
-	// No reason field in the Yes/No control — the default reason is used.
+	await expect(page.getByTestId("issue-schedule-mode")).toBeVisible();
 
+	// Selecting "Yes" applies immediately (no Apply button) and the default
+	// reason is used — there is nothing to type.
 	const scheduleRequest = page.waitForRequest(
 		(req) =>
 			req.url().endsWith(`/api/issues/${issueId}/schedule`) &&
 			req.method() === "POST",
 	);
-	await page.getByTestId("issue-schedule-apply").click();
+	await page.getByTestId("issue-schedule-mode").selectOption("next_window");
 	const scheduleBody = JSON.parse((await scheduleRequest).postData() ?? "{}");
 	expect(scheduleBody).toEqual({
 		not_before: "next_window",
 		reason: "operator scheduled via Podium",
 	});
-	await expect(page.getByTestId("issue-schedule-current")).toBeVisible();
+	// Scheduling forces the issue into To Do (the /schedule endpoint sets it).
+	await expect(page.getByTestId("edit-state")).toHaveValue("todo");
 
 	await page.getByTestId("close-issue-flyout").click();
 	const card = page.getByTestId("issue-card").filter({ hasText: title });
@@ -96,7 +97,8 @@ test("flyout schedules, unschedules, and the board card shows held todos", async
 			req.url().endsWith(`/api/issues/${issueId}/schedule`) &&
 			req.method() === "DELETE",
 	);
-	await page.getByTestId("issue-schedule-clear").click();
+	// Selecting "No" unschedules immediately.
+	await page.getByTestId("issue-schedule-mode").selectOption("none");
 	await unscheduleRequest;
 	await page.getByTestId("close-issue-flyout").click();
 	await expect(card.getByTestId("scheduled-chip")).toHaveCount(0);

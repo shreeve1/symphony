@@ -29,11 +29,8 @@ import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
 import {
-	ScheduleControl,
-	defaultScheduleDraft,
+	DEFAULT_SCHEDULE_REASON,
 	latestScheduleNotBefore,
-	schedulePayloadFromDraft,
-	type ScheduleDraft,
 } from "@/components/ScheduleControl";
 import { RunHistoryList } from "@/components/RunHistoryList";
 import { SessionTailPanel } from "@/components/SessionTailPanel";
@@ -164,13 +161,17 @@ function useScheduleIssueMutation() {
 			const previousDetail = queryClient.getQueryData<IssueDetail>(detailKey);
 			const previousList = queryClient.getQueryData<IssueDetail[]>(listKey);
 			const scheduledFor = new Date().toISOString();
+			// The /schedule endpoint forces state='todo'; mirror that optimistically
+			// so the card moves to the To Do column immediately, not on refetch.
 			queryClient.setQueryData<IssueDetail>(
 				detailKey,
-				(old) => old && { ...old, scheduled_for: scheduledFor },
+				(old) => old && { ...old, scheduled_for: scheduledFor, state: "todo" },
 			);
 			queryClient.setQueryData<IssueDetail[]>(listKey, (old) =>
 				old?.map((item) =>
-					item.id === issue.id ? { ...item, scheduled_for: scheduledFor } : item,
+					item.id === issue.id
+						? { ...item, scheduled_for: scheduledFor, state: "todo" }
+						: item,
 				),
 			);
 			return { previousDetail, previousList };
@@ -357,6 +358,47 @@ function ChipToggle({
 	);
 }
 
+// Schedule is not a PATCH field — "Yes" POSTs a next-window schedule and "No"
+// DELETEs it — but it applies immediately on change like the toggles beside it,
+// so it lives in the chip row instead of a full-width card.
+function ScheduleChip({
+	issue,
+	onSchedule,
+	onUnschedule,
+	disabled,
+}: {
+	issue: IssueDetail;
+	onSchedule: (body: ScheduleRequest) => void;
+	onUnschedule: () => void;
+	disabled: boolean;
+}) {
+	const currentNotBefore = issue.scheduled_for
+		? (latestScheduleNotBefore(issue.comments_md) ?? issue.scheduled_for)
+		: null;
+	return (
+		<ChipShell label="schedule">
+			<select
+				data-testid="issue-schedule-mode"
+				value={currentNotBefore ? "next_window" : "none"}
+				disabled={disabled}
+				title={currentNotBefore ? `Scheduled for ${currentNotBefore}` : undefined}
+				onChange={(e) =>
+					e.target.value === "next_window"
+						? onSchedule({
+								not_before: "next_window",
+								reason: DEFAULT_SCHEDULE_REASON,
+							})
+						: onUnschedule()
+				}
+				className="cursor-pointer bg-transparent font-medium outline-none disabled:opacity-50"
+			>
+				<option value="none">No</option>
+				<option value="next_window">Yes</option>
+			</select>
+		</ChipShell>
+	);
+}
+
 // Union of effort tokens across models; the model chip here is free-text (no
 // per-model catalog lookup), so the dispatch gate is the enforcement point for
 // an effort a given model doesn't support.
@@ -380,15 +422,6 @@ function MetadataChips({
 	onUnschedule: () => void;
 	schedulePending: boolean;
 }) {
-	const [scheduleDraft, setScheduleDraft] =
-		useState<ScheduleDraft>(defaultScheduleDraft);
-	useEffect(() => {
-		setScheduleDraft(defaultScheduleDraft());
-	}, [issue.id]);
-	const schedulePayload = schedulePayloadFromDraft(scheduleDraft);
-	const currentNotBefore = issue.scheduled_for
-		? (latestScheduleNotBefore(issue.comments_md) ?? issue.scheduled_for)
-		: null;
 	return (
 		<div className="space-y-1.5">
 			<div className="flex flex-wrap gap-1.5" data-testid="metadata-chips">
@@ -446,6 +479,12 @@ function MetadataChips({
 							value={issue.approved}
 							onPatch={onPatch}
 						/>
+						<ScheduleChip
+							issue={issue}
+							onSchedule={onSchedule}
+							onUnschedule={onUnschedule}
+							disabled={schedulePending}
+						/>
 					</>
 				)}
 				<ChipText
@@ -455,41 +494,6 @@ function MetadataChips({
 					onPatch={onPatch}
 				/>
 			</div>
-			{issue.binding_type === "infra" && (
-				<div className="space-y-2" data-testid="issue-schedule-section">
-					<ScheduleControl
-						testid="issue-schedule"
-						draft={scheduleDraft}
-						onChange={setScheduleDraft}
-						currentNotBefore={currentNotBefore}
-						disabled={schedulePending}
-					/>
-					<div className="flex justify-end gap-2">
-						{issue.scheduled_for && (
-							<button
-								type="button"
-								data-testid="issue-schedule-clear"
-								disabled={schedulePending}
-								onClick={onUnschedule}
-								className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
-							>
-								Unschedule
-							</button>
-						)}
-						<button
-							type="button"
-							data-testid="issue-schedule-apply"
-							disabled={
-								schedulePending || scheduleDraft.mode === "none" || !schedulePayload
-							}
-							onClick={() => schedulePayload && onSchedule(schedulePayload)}
-							className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
-						>
-							Apply schedule
-						</button>
-					</div>
-				</div>
-			)}
 			{issue.worktree_active &&
 				issue.state !== "done" &&
 				issue.worktree_path &&
