@@ -26,3 +26,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Schedule terminal handling order is comment → scheduled label → TODO; marker scheduling returns `agent-marker-scheduled` and logs `state_scheduled`.
 **Notes for next iteration:** Issue #98 can now rely on marker-scheduled issues being held by the existing scheduled gate and released by the existing due-schedule selector.
 **Verification:** `uv run pytest tests/test_scheduler.py -q` (172 passed); actionable review fixed approval-gate precedence, malformed-marker coding ignore, mutation-order/run-record coverage, and added `action_reviewed`; LSP diagnostics clean for touched Python files.
+
+## #96 Manual schedule API — 2026-06-21
+
+**What changed:** Added infra-only manual schedule/unschedule endpoints, exposed `binding_type` on `/api/bindings`, and added atomic create-and-schedule support.
+**Files:** `web/api/main.py`, `web/api/tests/test_schedule_endpoint.py`, `web/api/tests/test_endpoints.py`, `.kanban/issues/096-manual-schedule-api-endpoint.md`
+**Decisions:** Manual scheduling stores `scheduled_for=now` as the hold flag while the canonical `Symphony-Schedule:` comment carries the actual not-before time; explicit past timestamps are rejected, but `next_window` is accepted even when it resolves to the current window start.
+**Conventions established:** Schedule API is infra-only and uses the same label/comment rails as agent-emitted schedule markers; `IssueCreate.schedule` is the only race-free create-time scheduling path.
+**Notes for next iteration:** Issue #97 can rely on `/api/bindings` `binding_type`, `POST`/`DELETE /schedule`, and `IssueCreate.schedule` for the frontend control.
+**Verification:** `uv run pytest web/api/tests/test_schedule_endpoint.py web/api/tests/test_endpoints.py -q` (9 passed); fresh review passed; LSP diagnostics clean for touched Python files.

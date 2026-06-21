@@ -1,12 +1,13 @@
 ---
 id: 96
 title: Manual schedule API — POST/DELETE /api/issues/{id}/schedule + binding_type + atomic create
-status: review
+status: done
 blocked_by: [93]
 parent: null
 priority: 0
 created: 2026-06-21
 updated: 2026-06-21
+actor: ralph
 ---
 
 ## What to build
@@ -45,15 +46,19 @@ label+comment rails the agent handler uses. Backend-only; UI is issue 97.
 
 ## Acceptance criteria
 
-- [ ] `POST /schedule` with `{not_before:"next_window"}` sets `scheduled_for=now` + `state='todo'` + a `Symphony-Schedule:` comment; the issue is held next tick.
-- [ ] `POST /schedule` defaults a missing `reason`; non-infra binding → 400; queued OR running active run → 409; explicit past `not_before` → 422; `next_window` resolving inside the window is accepted.
-- [ ] `DELETE /schedule` clears the schedule and appends a `Symphony-Schedule-Cancelled:` comment; the issue becomes dispatchable again (parser selects the cancellation via prefer_last).
-- [ ] `/api/bindings` rows include `binding_type`.
-- [ ] Atomic create-and-schedule writes row + comment + `scheduled_for=now` + `state='todo'` together; the new issue is held with no dispatch-race window.
+- [x] `POST /schedule` with `{not_before:"next_window"}` sets `scheduled_for=now` + `state='todo'` + a `Symphony-Schedule:` comment; the issue is held next tick.
+- [x] `POST /schedule` defaults a missing `reason`; non-infra binding → 400; queued OR running active run → 409; explicit past `not_before` → 422; `next_window` resolving inside the window is accepted.
+- [x] `DELETE /schedule` clears the schedule and appends a `Symphony-Schedule-Cancelled:` comment; the issue becomes dispatchable again (parser selects the cancellation via prefer_last).
+- [x] `/api/bindings` rows include `binding_type`.
+- [x] Atomic create-and-schedule writes row + comment + `scheduled_for=now` + `state='todo'` together; the new issue is held with no dispatch-race window.
 
 ## Verification
 
 `uv run pytest web/api/tests/test_schedule_endpoint.py web/api/tests/test_endpoints.py -q`
+
+## Implementation Notes
+
+Added infra-only `POST`/`DELETE /api/issues/{id}/schedule` endpoints, exposed `binding_type` on `/api/bindings`, and added atomic create-and-schedule support via `IssueCreate.schedule`. Backfilled API regression tests for scheduling, unscheduling, active-run/past/non-infra rejects, binding type, and create-time scheduling.
 
 ## Blocked by
 
