@@ -7,15 +7,18 @@ updated: 2026-06-21
 sources:
   - schedule.py
   - scheduler/__init__.py
+  - scheduler/markers.py
   - tests/test_schedule.py
   - tests/test_scheduler.py
 confidence: high
-tags: [scheduling, parser, plane-comment, iso8601, html-normalisation]
+tags: [scheduling, parser, plane-comment, iso8601, html-normalisation, output-marker]
 ---
 
 # Schedule comment grammar
 
 The Symphony ticket-scheduling control plane lives as two append-only structured comment shapes plus the `scheduled` label/flag. Source of truth: `schedule.py` (pure parser — no I/O). Plane uses separate comments; Podium projects its whole `comments_md` thread as one synthetic comment, so callers can opt into latest-control-line parsing inside that blob. [source: schedule.py#524-560] [source: scheduler/__init__.py#2676-2697]
+
+ADR-0018 also adds an agent stdout marker, `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."`, parsed by `scheduler/markers.py` and deliberately reusing the same schedule-comment parser so stdout markers and tracker comments share the `next_window`, ISO-with-offset, and non-empty-reason rules. [source: scheduler/markers.py#17-20] [source: scheduler/markers.py#70-91]
 
 ## Two comment shapes
 
@@ -71,14 +74,19 @@ Plane stores comments as rich text. The parser does **quote-aware** normalisatio
 | `CandidateComment` | input dataclass: body, comment_id, created_at, api_order |
 | `latest_event(comments, *, prefer_last=False, now=None)` | sort + pick winner; isolates control-plane candidates first so unrelated chatter cannot perturb the winner (round-4 audit finding 3), then passes `prefer_last`/`now` to the parser |
 | `next_maintenance_window(now)` | returns the current/next 00:00–06:00 America/Los_Angeles maintenance window as UTC `(start, end)` instants |
+| `_parse_schedule_marker(stdout, *, now=None)` | parse the last column-0 `SYMPHONY_SCHEDULE:` stdout marker into `(not_before, reason)` or `None`, after ANSI stripping and schedule-comment validation |
 
-[source: schedule.py#42-94, 414-446, 524-580, 773-816]
+[source: schedule.py#42-94, 414-446, 524-580, 773-816] [source: scheduler/markers.py#70-91]
 
 ## Maintenance-window helper and `next_window`
 
 `SCHEDULED_LABEL_WINDOW_TZ`, `SCHEDULED_LABEL_WINDOW_START_HOUR`, and `SCHEDULED_LABEL_WINDOW_END_HOUR` now live in `schedule.py`; `scheduler/__init__.py` keeps compatibility aliases but delegates label-only fallback scheduling to `next_maintenance_window(now)`. The helper returns both the dispatch start and advisory end, preserving `not_after`/late-marking semantics. [source: schedule.py#127-129] [source: schedule.py#414-431] [source: scheduler/__init__.py#146-150] [source: scheduler/__init__.py#2654-2662]
 
 `not_before=next_window` is a parser-recognized symbolic value for schedule comments. When resolved while already inside the 00:00–06:00 LA window, it resolves to that day's 00:00 LA start, so the scheduler's `event.not_before > now` gate treats it as due/current rather than as an invalid past schedule. [source: schedule.py#434-446] [source: tests/test_schedule.py#222-235]
+
+## Agent stdout marker
+
+`_parse_schedule_marker` strips ANSI, selects the last column-0 `SYMPHONY_SCHEDULE:` line, feeds its payload to `parse_schedule_comment`, and returns `(event.not_before, event.reason)` only when the result is timezone-aware and has a non-empty reason. Missing `not_before`, missing/empty `reason`, natural-language timestamps, and indented marker examples all return `None` rather than being accepted. `_MARKER_LINE_RE` includes `SCHEDULE`, so schedule markers are removed from `SYMPHONY_SUMMARY_BEGIN/END` and question blocks before human posting. [source: scheduler/markers.py#17-20] [source: scheduler/markers.py#37-40] [source: scheduler/markers.py#70-91] [source: tests/test_schedule.py#248-298]
 
 ## Podium single-blob control-line parsing
 
