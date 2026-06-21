@@ -1,7 +1,7 @@
 ---
 id: 96
 title: Manual schedule API — POST/DELETE /api/issues/{id}/schedule + binding_type + atomic create
-status: in-progress
+status: review
 blocked_by: [93]
 parent: null
 priority: 0
