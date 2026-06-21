@@ -1,12 +1,15 @@
 ---
 id: 088
 title: "Renderer: infra prompt from INFRA_PREAMBLE constant (ADR-0016)"
-status: pending
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-20
+updated: 2026-06-21
 ---
+
+> **Closed 2026-06-21:** already implemented in a prior session — commit `7e71b10` ("ADR-0016: ship infra prompt as INFRA_PREAMBLE constant; stop reading WORKFLOW.md"). Verified against acceptance criteria: `INFRA_PREAMBLE` in `prompt_renderer.py`; `load_workflow`/`WorkflowConfig`/`_parse_frontmatter` removed; narrowed rule 11 present, old wording absent.
 
 ## What to build
 

@@ -1203,3 +1203,10 @@ Append entries with this format:
 - Outputs: ADR `docs/adr/0018-patrol-medium-risk-window-scheduling.md` (`proposed`); raw session `wiki/raw/sessions/2026-06-20-patrol-window-scheduling-grill.md`; analysis `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md` (promoted); CLAIMS C-0289/C-0290/C-0291; index.md + ROUTING.md (Scheduling + Decisions) rows added.
 - Unresolved: no code yet — implementation plan/issues to follow (symphony: `SYMPHONY_SCHEDULE` marker + scheduler handling + UI + window constant + dedup-don't-clobber guard; homelab: INFRA_PREAMBLE block→schedule rule). Recommend verifying the apply path on one real finding before flipping INFRA_PREAMBLE.
 - Notes: no secrets read/written; live board observed, not mutated. Carried-over chores (stale `test_default_workflow_documents_medium_risk_autonomy`, ponytail pi-extension ESM bug, homelab Plane-CLI doc debt) noted, not addressed.
+
+## 2026-06-21 — Close out ADR-0016 kanban issues 088–092 (board reconciliation)
+- Actor: agent (Claude Code), "review .kanban/issues — may have been built in other sessions".
+- Inputs: `.kanban/issues/088–092`, `prompt_renderer.py`, `project_scaffold.py`, git log (`7e71b10`), `~/homelab/{CLAUDE.md,WORKFLOW.md}`, patrol-router `prompt_renderer.py`, ADR-0016, CLAIMS C-0276/C-0277/C-0278.
+- Finding: all five ADR-0016 issues were already implemented in prior sessions (symphony `7e71b10`, homelab `2458429`; `~/homelab/WORKFLOW.md` deleted; restart-deployed) but the board still marked them `pending`. Only residual gap: 092 acceptance — `wiki/entities/workflow-homelab.md` still read "decision only, NOT yet implemented / file still exists".
+- Outputs: fixed `wiki/entities/workflow-homelab.md` (file now described as deleted; prompt renders from `INFRA_PREAMBLE`; `updated: 2026-06-20`); flipped issues 088–092 to `status: done` and archived to `.kanban/archive/2026-06-21/`. No new claims (C-0276/0277/0278 already implemented-marked).
+- Notes: no code changed; no secrets touched. Verified against each issue's own acceptance criteria before closing.

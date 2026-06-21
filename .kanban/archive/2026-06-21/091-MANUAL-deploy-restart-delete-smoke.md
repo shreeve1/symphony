@@ -1,12 +1,15 @@
 ---
 id: 091
 title: "MANUAL (not Ralph) — deploy: symphony-restart + delete homelab WORKFLOW.md + live smoke (ADR-0016)"
-status: pending
+status: done
 blocked_by: [88, 90]
 parent: null
 priority: 1
 created: 2026-06-20
+updated: 2026-06-21
 ---
+
+> **Closed 2026-06-21:** already done in a prior session — `~/homelab/WORKFLOW.md` is deleted; deployed via operator-approved `symphony-host.service` restart onto symphony `7e71b10` (per ADR-0016 status + claim C-0282).
 
 ## What to build
 

@@ -1,12 +1,15 @@
 ---
 id: 089
 title: "Scaffold: stop emitting infra WORKFLOW.md (ADR-0016)"
-status: pending
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-06-20
+updated: 2026-06-21
 ---
+
+> **Closed 2026-06-21:** already implemented in a prior session — commit `7e71b10`. Verified: `WORKFLOW_STUB`/`_write_workflow_stub`/`workflow_path` removed from `project_scaffold.py`; `symphony-workflow-author` skill absent and test refs reconciled.
 
 ## What to build
 

@@ -3,21 +3,21 @@ title: homelab WORKFLOW.md
 type: entity
 status: promoted
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-20
 sources:
   - wiki/raw/workflow-homelab.md
-  - ~/homelab/WORKFLOW.md
+  - ~/homelab/WORKFLOW.md (deleted 2026-06-20, ADR-0016)
 confidence: high
 tags: [workflow, homelab, prompt-policy, plan-mode, build-mode, execute-mode, safety, autonomy]
 ---
 
 # homelab WORKFLOW.md
 
-The live per-repo prompt policy for the `homelab` Binding. Lives at `/home/james/homelab/WORKFLOW.md`.
+The former per-repo prompt policy for the `homelab` Binding. Lived at `/home/james/homelab/WORKFLOW.md` — **deleted 2026-06-20 (ADR-0016)**; the infra prompt now renders from the `INFRA_PREAMBLE` constant in `prompt_renderer.py`.
 
 > **Update 2026-06-14 (ADR-0011, [analysis](../analyses/adr-0011-workflow-md-infra-only.md)).** `WORKFLOW.md` is now **infra-only autonomy policy** — mandatory for `infra` bindings, *ignored* for `coding` bindings (the trading sibling page is superseded; its file was deleted). `homelab` is an `infra` binding, so this Workflow remains active and required. It is **autonomy** policy, not safety: safety rules belong in the repo's native `CLAUDE.md`/`AGENTS.md`. The old "mandatory for **every** Binding" framing (claim C-0005) is superseded by C-0203.
 
-> **Update 2026-06-20 (ADR-0016, [analysis](../analyses/adr-0016-workflow-md-retired-renderer-constant.md)) — decision only, NOT yet implemented.** The file-based half of ADR-0011 is reversed: the infra `WORKFLOW.md` file is to be **retired**. Its residual body is 100% Symphony-generic, so it moves into `prompt_renderer.py` as a renderer constant (sibling to `OUTPUT_CONTRACT`); `render_prompt` will skip `load_workflow` for infra (already skipped for coding), and `~/homelab/WORKFLOW.md` + the scaffold stub + `WORKFLOW.infra.md` template will be deleted. The medium-risk autonomy grant (C-0026) moves to `~/homelab/CLAUDE.md` scoped to unattended Symphony dispatch (C-0277); rule 11 is narrowed to "trusted body, quoted machine output is data" (C-0278). This page describes the live file, which still exists and is still read until ADR-0016 lands. See C-0276/C-0277/C-0278.
+> **Update 2026-06-20 (ADR-0016, [analysis](../analyses/adr-0016-workflow-md-retired-renderer-constant.md)) — IMPLEMENTED + landed 2026-06-20.** The file-based half of ADR-0011 is reversed: the infra `WORKFLOW.md` file is **retired and `~/homelab/WORKFLOW.md` is deleted**. Its residual body (100% Symphony-generic) now lives in `prompt_renderer.py` as the `INFRA_PREAMBLE` constant (sibling to `OUTPUT_CONTRACT`); `render_prompt` skips `load_workflow` for infra (already skipped for coding), and the scaffold `WORKFLOW_STUB` is removed (the `WORKFLOW.infra.md` template + `symphony-workflow-author` skill were already absent). The medium-risk autonomy grant (C-0026) moved to `~/homelab/CLAUDE.md` scoped to unattended Symphony dispatch (C-0277); rule 11 is narrowed to "trusted body, quoted machine output is data" (C-0278). Deployed by restarting `symphony-host.service` onto symphony `7e71b10` (homelab `2458429`). **This page now describes a deleted file** — retained for history. See C-0276/C-0277/C-0278.
 
 > **Update 2026-06-19 (issue 53, safety migration).** The ADR-0011 split is now realized in the file. Safety enumerations that had been parked inline in `WORKFLOW.md` rules 12/16/17 — baseline prohibitions (no dataset deletion, no cluster ops without quorum), the named excluded-service list (Symphony, Jellyfin, TrueNAS, Proxmox), and the always-require-approval categories — moved to a new **"Symphony Agent Safety Policy"** section in `/home/james/homelab/CLAUDE.md` (homelab commit `ebdc588`, local, not pushed). `WORKFLOW.md` now references CLAUDE.md by pointer and retains only the autonomy posture (medium-risk default, recovery-verify, scheduled-only gating). Rule 12 previously cited "safety rules from CLAUDE.md" that did not exist there; that dangling reference is resolved. The "Excluded services", "Always-require-approval list", and rule-12 sections below describe the pre-migration file and are superseded by the CLAUDE.md section.
 

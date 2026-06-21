@@ -1,12 +1,15 @@
 ---
 id: 090
 title: "MANUAL (not Ralph) — homelab CLAUDE.md safety+autonomy migration + patrol-router repoint (ADR-0016)"
-status: pending
+status: done
 blocked_by: [88]
 parent: null
 priority: 1
 created: 2026-06-20
+updated: 2026-06-21
 ---
+
+> **Closed 2026-06-21:** already done in a prior session — homelab commit `2458429`. Verified: patrol-router renderer reads `default_workflow.md` (no longer the root file); `~/homelab/CLAUDE.md` has "Symphony Agent Safety Policy" + the "unattended under Symphony dispatch" autonomy grant.
 
 ## What to build
 

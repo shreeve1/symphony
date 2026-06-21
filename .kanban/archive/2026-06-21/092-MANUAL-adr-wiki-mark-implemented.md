@@ -1,12 +1,15 @@
 ---
 id: 092
 title: "MANUAL (not Ralph) — ADR-0016 + wiki: mark implemented (ADR-0016)"
-status: pending
+status: done
 blocked_by: [91]
 parent: null
 priority: 2
 created: 2026-06-20
+updated: 2026-06-21
 ---
+
+> **Closed 2026-06-21:** mostly done in a prior session (ADR-0016 status flipped to "landed"; CLAIMS C-0276/0277/0278 marked implemented; `wiki/log.md` entry present). Final straggler closed this session: `wiki/entities/workflow-homelab.md` was still marked "decision only, NOT yet implemented" — updated to reflect the file is deleted and the prompt renders from `INFRA_PREAMBLE`.
 
 ## What to build
 
