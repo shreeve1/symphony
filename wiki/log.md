@@ -1210,3 +1210,10 @@ Append entries with this format:
 - Finding: all five ADR-0016 issues were already implemented in prior sessions (symphony `7e71b10`, homelab `2458429`; `~/homelab/WORKFLOW.md` deleted; restart-deployed) but the board still marked them `pending`. Only residual gap: 092 acceptance — `wiki/entities/workflow-homelab.md` still read "decision only, NOT yet implemented / file still exists".
 - Outputs: fixed `wiki/entities/workflow-homelab.md` (file now described as deleted; prompt renders from `INFRA_PREAMBLE`; `updated: 2026-06-20`); flipped issues 088–092 to `status: done` and archived to `.kanban/archive/2026-06-21/`. No new claims (C-0276/0277/0278 already implemented-marked).
 - Notes: no code changed; no secrets touched. Verified against each issue's own acceptance criteria before closing.
+
+## [2026-06-21] session-update | Issue #93 schedule foundations landed
+
+- Actor: agent (Ralph actionable review loop)
+- Inputs: `.kanban/issues/093-schedule-foundations-next-window-prefer-last.md`; `schedule.py`; `scheduler/__init__.py`; `tests/test_schedule.py`; `tests/test_scheduler.py`; diff from base `9ca6989c8820e31211e15c2ff4f13c080614d7ce` to `HEAD`.
+- Outputs: symphony commit `14d2e41` (`next_maintenance_window`, `not_before=next_window`, Podium `prefer_last` latest-control-line handling); updated `wiki/concepts/schedule-comment-grammar.md`; updated `wiki/analyses/adr-0018-patrol-medium-risk-window-scheduling.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0291 qualified; C-0292/C-0293 added); this log entry.
+- Notes: Captured the first ADR-0018 backend foundation slice. Remaining ADR-0018 work is still unbuilt: `SYMPHONY_SCHEDULE` marker handling, INFRA_PREAMBLE schedule authorization, dedup-don't-clobber behavior, and the Podium UI Schedule control. Verification: `uv run pytest tests/test_schedule.py tests/test_scheduler.py -q` passed (226 tests); touched-file LSP diagnostics clean. No secrets, env files, service restarts, live alerts, or live DB mutations.

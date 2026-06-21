@@ -3,8 +3,8 @@ title: ADR-0018 — Patrol medium-risk updates self-schedule into the maintenanc
 type: analysis
 status: promoted
 created: 2026-06-20
-updated: 2026-06-20
-last_event: 2026-06-20 ADR-0018 proposed via /grill-me (hands-off self-schedule decision)
+updated: 2026-06-21
+last_event: 2026-06-21 #93 schedule foundations landed (window helper + Podium prefer_last)
 sources:
   - docs/adr/0018-patrol-medium-risk-window-scheduling.md
   - wiki/raw/sessions/2026-06-20-patrol-window-scheduling-grill.md
@@ -22,8 +22,7 @@ tags: [adr, patrol, podium, scheduling, maintenance-window, symphony-schedule, o
 # ADR-0018 — Patrol medium-risk updates self-schedule into the maintenance window
 
 `proposed` 2026-06-20. Outcome of a `/grill-me` review of what's outstanding
-between Temporal patrols and Podium after the ADR-0015 cutover. **No code exists
-yet — decision + design only.** Cross-repo (symphony + homelab).
+between Temporal patrols and Podium after the ADR-0015 cutover. **Partially built:** #93 landed the shared maintenance-window helper, `next_window` parser resolution, and Podium latest-control-line selection; the output-contract marker, INFRA_PREAMBLE rule, dedup guard, and UI control remain unbuilt. Cross-repo (symphony + homelab). [source: .kanban/issues/093-schedule-foundations-next-window-prefer-last.md] [source: schedule.py#414-446] [source: scheduler/__init__.py#2676-2697]
 
 ## Problem
 
@@ -76,7 +75,7 @@ reversing the agents' current correct-blocking behavior. Five parts:
 Maintenance window = one backend config constant, `00:00–06:00
 America/Los_Angeles`, DST-aware (`zoneinfo`), single-sourced for both the agent's
 "next window" computation and the UI "Next maintenance window" default (computed
-by a backend helper). Advisory `not_after` = 06:00 LA.
+by a backend helper). Advisory `not_after` = 06:00 LA. #93 moved the constants and helper into `schedule.py`; the scheduler's label-only fallback now delegates to it while preserving the `(not_before, not_after)` pair. [source: schedule.py#127-129] [source: schedule.py#414-431] [source: scheduler/__init__.py#2654-2662]
 
 ## Rejected alternatives
 
@@ -105,10 +104,7 @@ by a backend helper). Advisory `not_after` = 06:00 LA.
 
 ## Status
 
-`proposed` — ADR written + wiki captured 2026-06-20. **Unbuilt.** Next:
-implementation plan / issues. Claims C-0289 (machinery exists, gate requires
-comment), C-0290 (cron never in window), C-0291 (the ADR-0018 route + marker +
-dedup-don't-clobber + UI control).
+`proposed` — ADR written + wiki captured 2026-06-20. **Partially built 2026-06-21 by #93:** schedule foundations landed (`next_maintenance_window`, `next_window`, Podium `prefer_last`). Still unbuilt: `SYMPHONY_SCHEDULE` marker handling, INFRA_PREAMBLE schedule authorization, dedup-don't-clobber behavior, and the Podium UI Schedule control. Claims C-0289 (machinery exists, gate requires comment), C-0290 (cron never in window), C-0291 (ADR route), C-0292/C-0293 (#93 foundations).
 
 ## Related
 
