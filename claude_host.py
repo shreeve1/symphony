@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
@@ -93,7 +94,11 @@ class LocalClaudeHost:
         return False
 
     def rmtree(self, path: Path) -> None:
-        shutil.rmtree(path, ignore_errors=True)
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+            return
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
 
 
 class SshClaudeHost:

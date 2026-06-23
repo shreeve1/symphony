@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from agent_runner import AgentRunnerError
-from config import SymphonyConfig
+from claude_host import SshClaudeHost
+from config import RemotePolicy, SymphonyConfig
 from plane_poller import CandidateIssue
 
 claude_runner = importlib.import_module("claude_runner")
@@ -387,6 +388,7 @@ def test_register_claude_run_writes_server_pid_and_start_time(
         return Completed(stdout="4242\n")
 
     pidfile = claude_runner._register_claude_run(
+        claude_runner.LocalClaudeHost(),
         Path("/tmp/symphony-claude-1-a.sock"),
         "symphony-claude-1-a",
         run_func=fake_run,
@@ -403,6 +405,7 @@ def test_register_claude_run_skips_when_server_pid_unavailable(
     pid_dir = tmp_path / "claude"
 
     pidfile = claude_runner._register_claude_run(
+        claude_runner.LocalClaudeHost(),
         Path("/tmp/symphony-claude-1-a.sock"),
         "symphony-claude-1-a",
         run_func=lambda command, **kwargs: Completed(stdout=""),
@@ -418,6 +421,7 @@ def test_claude_cleanup_removes_pidfile(tmp_path: Path) -> None:
     pidfile.write_text("4242 778899", encoding="utf-8")
 
     cleanup = ClaudeRunCleanup(
+        claude_runner.LocalClaudeHost(),
         tmp_path / "missing.sock",
         "missing-session",
         tmp_path / "missing-dir",
@@ -427,6 +431,66 @@ def test_claude_cleanup_removes_pidfile(tmp_path: Path) -> None:
     cleanup.cleanup()
 
     assert not pidfile.exists()
+
+
+def test_remote_host_tmux_wrappers_use_ssh_tmux_argv(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def record(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "pane", "")
+
+    host = SshClaudeHost(
+        RemotePolicy(host="n8n", user="symphony"),
+        run_func=record,
+        control_path=tmp_path / "ctl",
+    )
+
+    assert claude_runner._session_alive(
+        host, Path("/tmp/s.sock"), "sess", run_func=record
+    )
+    assert (
+        claude_runner._capture_pane_full(
+            host, Path("/tmp/s.sock"), "sess", run_func=record
+        )
+        == "pane"
+    )
+
+    tails = [call[call.index("symphony@n8n") + 1 :] for call in calls]
+    assert tails == [
+        ["tmux", "-S", "/tmp/s.sock", "has-session", "-t", "sess"],
+        ["tmux", "-S", "/tmp/s.sock", "capture-pane", "-pt", "sess"],
+    ]
+
+
+def test_cleanup_uses_remote_host_for_kill_and_rmtree(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def record(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    host = SshClaudeHost(
+        RemotePolicy(host="n8n", user="symphony"),
+        run_func=record,
+        control_path=tmp_path / "ctl",
+    )
+    cleanup = ClaudeRunCleanup(
+        host,
+        Path("/tmp/s.sock"),
+        "sess",
+        Path("/tmp/run"),
+        run_func=record,
+    )
+
+    cleanup.cleanup()
+
+    tails = [call[call.index("symphony@n8n") + 1 :] for call in calls]
+    assert tails == [
+        ["tmux", "-S", "/tmp/s.sock", "kill-session", "-t", "sess"],
+        ["rm -rf /tmp/s.sock"],
+        ["rm -rf /tmp/run"],
+    ]
 
 
 def test_claude_success_uses_result_file_stdout_and_pane_stderr(tmp_path: Path) -> None:
@@ -496,6 +560,7 @@ def test_wait_until_ready_drives_first_run_bypass_consent_modal() -> None:
         return Completed()
 
     ready = claude_runner._wait_until_ready(
+        claude_runner.LocalClaudeHost(),
         Path("/tmp/s.sock"),
         "sess",
         run_func=run_func,
@@ -898,6 +963,7 @@ def test_claude_cleanup_runs_on_exception_and_is_idempotent(tmp_path: Path) -> N
     assert removed == [str(tmp_path / "run")]
 
     cleanup = ClaudeRunCleanup(
+        claude_runner.LocalClaudeHost(),
         tmp_path / "missing.sock",
         "missing-session",
         tmp_path / "missing-dir",

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 import logging
+import os
 from itertools import chain, repeat
 from pathlib import Path
 
+import claude_runner
 from config import SymphonyConfig
 from plane_poller import CandidateIssue
-
-import claude_runner
 from claude_runner import (
     ClaudeRunCleanup,
     issue_id_from_persistent_socket,
@@ -312,6 +311,7 @@ def test_cleanup_run_and_session_are_split_and_idempotent(tmp_path: Path) -> Non
     calls: list[list[str]] = []
 
     cleanup = ClaudeRunCleanup(
+        claude_runner.LocalClaudeHost(),
         socket,
         socket.stem,
         temp_dir,
@@ -625,7 +625,7 @@ def _patch_sweep_io(
     )
     monkeypatch.setattr(claude_runner, "_session_alive", lambda *args, **kwargs: True)
 
-    def cleanup(socket_path, session_name, **kwargs):
+    def cleanup(host, socket_path, session_name, **kwargs):
         reaped.append(socket_path.stem)
         socket_path.unlink(missing_ok=True)
         pidfile = kwargs.get("pidfile_path")

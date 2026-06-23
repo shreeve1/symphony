@@ -1,11 +1,13 @@
 ---
 id: 100
 title: Route runner tmux funnel + session cleanup through the host
-status: pending
+status: in-progress
 blocked_by: [99]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: ralph
 ---
 
 ## What to build
