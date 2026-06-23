@@ -851,6 +851,114 @@ def test_claude_preamble_omits_skill_directive_when_absent(tmp_path: Path) -> No
     assert "Invoke the `" not in fake.prompt_path.read_text(encoding="utf-8")
 
 
+class _RemoteClaudeHostFake:
+    is_remote = True
+
+    def __init__(self) -> None:
+        self.files: dict[Path, str] = {}
+        self.removed: list[Path] = []
+
+    def write_text(self, path: Path, text: str) -> None:
+        self.files[path] = text
+
+    def read_text(self, path: Path) -> str:
+        return self.files.get(path, "")
+
+    def exists(self, path: Path) -> bool:
+        return path in self.files
+
+    def mkdtemp(self, *, prefix: str) -> Path:
+        return Path("/remote/tmp/run")
+
+    def tmux_argv(self, socket_path: Path, *args: str) -> list[str]:
+        return ["ssh", "remote", "tmux", "-S", str(socket_path), *args]
+
+    def rmtree(self, path: Path) -> None:
+        self.removed.append(path)
+
+
+class _RemoteClaudeRunFake:
+    def __init__(self, host: _RemoteClaudeHostFake) -> None:
+        self.host = host
+        self.calls: list[tuple[list[str], dict]] = []
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+
+    def __call__(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        if "new-session" in command:
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout="bypass permissions on")
+        if "load-buffer" in command:
+            prompt = self.host.files[Path(command[-1])]
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            return Completed()
+        if "send-keys" in command:
+            assert self.result_file is not None
+            assert self.done_file is not None
+            self.host.files[self.result_file] = "SYMPHONY_RESULT: done"
+            self.host.files[self.done_file] = ""
+            return Completed()
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
+def test_remote_claude_launch_uses_tmux_cwd_env_and_skips_pidfile(
+    tmp_path: Path,
+) -> None:
+    host = _RemoteClaudeHostFake()
+    fake = _RemoteClaudeRunFake(host)
+    pid_dir = tmp_path / "runtime" / "claude"
+
+    result = run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        host=host,
+        remote_start_dir=Path("/srv/checkout"),
+        pidfile_dir=pid_dir,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    assert result.exit_code == 0
+    launch = next(call for call in fake.calls if "new-session" in call[0])
+    command, kwargs = launch
+    assert command == [
+        "ssh",
+        "remote",
+        "tmux",
+        "-S",
+        "/tmp/symphony-claude-42-abc.sock",
+        "new-session",
+        "-d",
+        "-s",
+        "symphony-claude-42-abc",
+        "-c",
+        "/srv/checkout",
+        "-e",
+        "SYMPHONY_ISSUE_ID=42",
+        "claude",
+        "--permission-mode",
+        "bypassPermissions",
+        "--model",
+        "claude-opus-4-8",
+        "--session-id",
+        issue_session_id("42"),
+    ]
+    assert "cwd" not in kwargs
+    assert "env" not in kwargs
+    assert not list(pid_dir.glob("*.pid"))
+    assert not Path("/remote/tmp/run").exists()
+    assert Path("/remote/tmp/run") in host.removed
+    assert Path("/tmp/symphony-claude-42-abc.sock") in host.removed
+
+
 def test_claude_env_allowlist_and_launch_argv_cwd(tmp_path: Path) -> None:
     fake = TmuxFake(result_text="SYMPHONY_RESULT: done")
     environ = {

@@ -761,6 +761,8 @@ def run_claude_agent(
     pidfile_dir: Path | None = None,
     session_file: Path | None = None,
     persist: bool = False,
+    host: ClaudeHost | None = None,
+    remote_start_dir: Path | None = None,
 ) -> AgentResult:
     """Run Claude for an issue using tmux send-keys and file completion."""
 
@@ -771,7 +773,9 @@ def run_claude_agent(
     started = clock()
     nonce = (nonce_factory or (lambda: uuid.uuid4().hex[:12]))()
     binding_name = _issue_binding_name(config, issue)
-    host: ClaudeHost = _InjectedRmtreeLocalClaudeHost(mkdtemp, remove_tree)
+    host = host or _InjectedRmtreeLocalClaudeHost(mkdtemp, remove_tree)
+    if host.is_remote and remote_start_dir is None:
+        raise AgentRunnerError("Remote Claude dispatch requires remote_start_dir")
     if persist:
         socket_path = persistent_socket_path(binding_name, issue.id)
         namespace = socket_path.stem
@@ -790,8 +794,10 @@ def run_claude_agent(
     source_env = dict(os.environ) if environ is None else environ
 
     try:
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        if not host.is_remote:
+            temp_dir.mkdir(parents=True, exist_ok=True)
         cwd = _resolve_cwd(config, issue, create_worktree_func=create_worktree_func)
+        launch_cwd = remote_start_dir if host.is_remote else cwd
         env = _claude_env(issue, source_env)
         session_id = getattr(issue, "agent_session_id", "") or derive_session_id(
             issue.id
@@ -838,13 +844,14 @@ def run_claude_agent(
                 session_file=transcript_file,
                 session_name=session_name,
             )
-            cleanup.pidfile_path = _register_claude_run(
-                host,
-                socket_path,
-                session_name,
-                run_func=run_func,
-                pidfile_dir=metadata_dir,
-            )
+            if not host.is_remote:
+                cleanup.pidfile_path = _register_claude_run(
+                    host,
+                    socket_path,
+                    session_name,
+                    run_func=run_func,
+                    pidfile_dir=metadata_dir,
+                )
             reattached = _paste_and_submit(
                 host, run_func, socket_path, session_name, prompt_file, sleep=sleep
             )
@@ -882,39 +889,52 @@ def run_claude_agent(
                 session_file=transcript_file,
                 session_name=session_name,
             )
+            launch_args = [
+                "new-session",
+                "-d",
+                "-s",
+                session_name,
+            ]
+            if host.is_remote:
+                launch_args += [
+                    "-c",
+                    str(launch_cwd),
+                    "-e",
+                    f"SYMPHONY_ISSUE_ID={issue.id}",
+                ]
+            launch_args += [
+                "claude",
+                "--permission-mode",
+                "bypassPermissions",
+                "--model",
+                model,
+                session_arg,
+                session_id,
+            ]
+            launch_kwargs: dict[str, Any] = {
+                "capture_output": True,
+                "text": True,
+                "check": False,
+            }
+            if not host.is_remote:
+                launch_kwargs.update(cwd=str(cwd), env=env)
             launch = run_func(
-                host.tmux_argv(
-                    socket_path,
-                    "new-session",
-                    "-d",
-                    "-s",
-                    session_name,
-                    "claude",
-                    "--permission-mode",
-                    "bypassPermissions",
-                    "--model",
-                    model,
-                    session_arg,
-                    session_id,
-                ),
-                capture_output=True,
-                text=True,
-                check=False,
-                cwd=str(cwd),
-                env=env,
+                host.tmux_argv(socket_path, *launch_args),
+                **launch_kwargs,
             )
             if int(launch.returncode) != 0:
                 duration_ms = int((clock() - started) * 1000)
                 stderr = strip_ansi(f"{launch.stdout}\n{launch.stderr}".strip())
                 return _logged_result(issue, 1, duration_ms, False, "", stderr)
 
-            cleanup.pidfile_path = _register_claude_run(
-                host,
-                socket_path,
-                session_name,
-                run_func=run_func,
-                pidfile_dir=metadata_dir,
-            )
+            if not host.is_remote:
+                cleanup.pidfile_path = _register_claude_run(
+                    host,
+                    socket_path,
+                    session_name,
+                    run_func=run_func,
+                    pidfile_dir=metadata_dir,
+                )
 
             ready = _wait_until_ready(
                 host,
