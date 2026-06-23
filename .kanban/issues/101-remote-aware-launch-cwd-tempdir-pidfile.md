@@ -1,11 +1,14 @@
 ---
 id: 101
 title: Remote-aware Claude launch (cwd / temp-dir / pidfile)
-status: review
+status: done
 blocked_by: [100]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: ralph
+action_reviewed: 2026-06-23
 ---
 
 ## What to build
@@ -30,12 +33,12 @@ drop the allowlist and risk leaking local secrets into the remote tmux server en
 
 ## Acceptance criteria
 
-- [ ] Local launch argv + `env=_claude_env` allowlist + subprocess `cwd=` are unchanged
+- [x] Local launch argv + `env=_claude_env` allowlist + subprocess `cwd=` are unchanged
       (existing tests pass).
-- [ ] Remote launch argv is ssh-wrapped and uses `new-session -c <remote-dir> -e
+- [x] Remote launch argv is ssh-wrapped and uses `new-session -c <remote-dir> -e
       SYMPHONY_ISSUE_ID=<id>`, with no subprocess `cwd=`/`env=` and no local secrets.
-- [ ] No `/proc` pidfile is created on the remote path.
-- [ ] Remote temp dir is created/removed via the host, not local `mkdir`/`shutil.rmtree`.
+- [x] No `/proc` pidfile is created on the remote path.
+- [x] Remote temp dir is created/removed via the host, not local `mkdir`/`shutil.rmtree`.
 
 ## Verification
 
@@ -44,3 +47,11 @@ drop the allowlist and risk leaking local secrets into the remote tmux server en
 ## Blocked by
 
 - Blocked by #100
+
+## Implementation Notes
+
+- Added optional host injection and remote start-directory support to `run_claude_agent` while preserving the local `cwd=` + `_claude_env` launch path.
+- Remote launches now use host-mediated tmux `new-session -c <remote-dir> -e SYMPHONY_ISSUE_ID=<id>` and skip local temp-dir mkdir and pidfile registration.
+- Added a remote-host runner test covering launch argv, kwargs, pidfile absence, and host cleanup.
+- Verification passed: `.venv/bin/python -m pytest tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_runner.py`.
+- Fresh review passed against `git diff 57871fe09944748ca240de99d55e2a542af4106b HEAD`.

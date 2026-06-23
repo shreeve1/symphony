@@ -19,3 +19,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Host-aware Claude runner helpers take `host` as a required positional argument, never a defaulted local host.
 **Notes for next iteration:** #101 can add the remote launch path on top of this seam; persistent PID sidecars still describe local process ownership only.
 **Actionable review:** Fresh reviewer inspected `git diff b76db6cef32e4504cc9eb32d939f5b56d4702ad7 HEAD`, read changed files, reran the issue verification command, and returned `RALPH_REVIEW: PASS`.
+
+## #101 Remote-aware Claude launch (cwd / temp-dir / pidfile) — 2026-06-23
+
+**What changed:** Added host-injected remote launch support to `run_claude_agent` while preserving the local launch path.
+**Files:** `claude_runner.py`, `tests/test_claude_runner.py`, `.kanban/issues/101-remote-aware-launch-cwd-tempdir-pidfile.md`
+**Decisions:** Remote Claude launch sets cwd/env through tmux `new-session -c/-e` and forwards only `SYMPHONY_ISSUE_ID`; local launch keeps subprocess `cwd=` and `_claude_env`.
+**Conventions established:** Remote Claude runs skip local temp-dir mkdir and pidfile registration; host cleanup owns remote temp/socket removal.
+**Notes for next iteration:** #102 can build remote modal/session/steer behavior on this launch path; remote native resume is still deferred.
+**Actionable review:** Fresh reviewer inspected `git diff 57871fe09944748ca240de99d55e2a542af4106b HEAD`, read changed files, reran the issue verification command, and returned `RALPH_REVIEW: PASS`.
