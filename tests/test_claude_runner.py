@@ -906,6 +906,42 @@ class _RemoteClaudeRunFake:
         return Completed()
 
 
+class _RemotePermissionModalRunFake:
+    def __init__(self, host: _RemoteClaudeHostFake) -> None:
+        self.host = host
+        self.calls: list[tuple[list[str], dict]] = []
+        self.result_file: Path | None = None
+        self.done_file: Path | None = None
+        self.submit_enters = 0
+        self.approval_enters = 0
+        self.recovered = False
+
+    def __call__(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        if "new-session" in command:
+            return Completed()
+        if "capture-pane" in command:
+            return Completed(stdout="working" if self.recovered else _PERMISSION_MODAL)
+        if "load-buffer" in command:
+            prompt = self.host.files[Path(command[-1])]
+            self.result_file = _path_after(prompt, "literal result file path:")
+            self.done_file = _path_after(prompt, "literal done file path:")
+            return Completed()
+        if "send-keys" in command and "Enter" in command:
+            self.submit_enters += 1
+            if self.submit_enters >= 2:
+                self.approval_enters += 1
+                assert self.result_file is not None
+                assert self.done_file is not None
+                self.host.files[self.result_file] = "SYMPHONY_RESULT: done"
+                self.host.files[self.done_file] = ""
+                self.recovered = True
+            return Completed()
+        if "has-session" in command:
+            return Completed(returncode=0)
+        return Completed()
+
+
 def test_remote_claude_launch_uses_tmux_cwd_env_and_skips_pidfile(
     tmp_path: Path,
 ) -> None:
@@ -957,6 +993,84 @@ def test_remote_claude_launch_uses_tmux_cwd_env_and_skips_pidfile(
     assert not Path("/remote/tmp/run").exists()
     assert Path("/remote/tmp/run") in host.removed
     assert Path("/tmp/symphony-claude-42-abc.sock") in host.removed
+
+
+def test_remote_claude_launch_uses_fresh_session_id_even_if_transcript_exists(
+    tmp_path: Path,
+) -> None:
+    host = _RemoteClaudeHostFake()
+    fake = _RemoteClaudeRunFake(host)
+    transcript = Path("/remote/session.jsonl")
+    host.files[transcript] = "{}\n"
+    session_id = issue_session_id("42")
+
+    run_claude_agent(
+        _config(tmp_path),
+        _issue(agent_session_id=session_id, resumed=True),
+        "prompt",
+        run_func=fake,
+        host=host,
+        remote_start_dir=Path("/srv/checkout"),
+        session_file=transcript,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    command = next(call[0] for call in fake.calls if "new-session" in call[0])
+    assert "--session-id" in command
+    assert command[command.index("--session-id") + 1] == session_id
+    assert "--resume" not in command
+
+
+def test_remote_permission_modal_is_handled_without_idle_threshold(tmp_path: Path) -> None:
+    host = _RemoteClaudeHostFake()
+    fake = _RemotePermissionModalRunFake(host)
+    now = 0.0
+
+    def clock() -> float:
+        nonlocal now
+        now += 0.01
+        return now
+
+    result = run_claude_agent(
+        _config(tmp_path, timeout_ms=10_000),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        host=host,
+        remote_start_dir=Path("/srv/checkout"),
+        nonce_factory=lambda: "abc",
+        clock=clock,
+        sleep=lambda _: None,
+    )
+
+    assert fake.approval_enters == 1
+    assert result.exit_code == 0
+    assert result.stdout == "SYMPHONY_RESULT: done"
+
+
+def test_remote_steer_records_are_ignored() -> None:
+    host = _RemoteClaudeHostFake()
+    calls: list[list[str]] = []
+
+    generation, active_result, active_done, delivered = claude_runner._deliver_steer_records(
+        host,
+        _issue(),
+        [{"kind": "steer", "message": "adjust"}],
+        0,
+        Path("/remote/run/prompt.txt"),
+        Path("/tmp/symphony-claude-42.sock"),
+        "symphony-claude-42",
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        sleep=lambda _: None,
+    )
+
+    assert generation == 0
+    assert active_result == Path("/remote/run/result.0.txt")
+    assert active_done == Path("/remote/run/done.0")
+    assert delivered is False
+    assert calls == []
 
 
 def test_claude_env_allowlist_and_launch_argv_cwd(tmp_path: Path) -> None:
@@ -1331,6 +1445,7 @@ class _PermissionModalThenApprovesTmux:
         self.result_file: Path | None = None
         self.done_file: Path | None = None
         self.modal_captures = 0
+        self.submit_enters = 0
         self.recovered = False
 
     def __call__(self, command, **kwargs):
@@ -1345,11 +1460,11 @@ class _PermissionModalThenApprovesTmux:
                 self.nudge_count += 1
             return Completed()
         if "send-keys" in command and "Enter" in command:
-            # The idle handler's approval Enter lands only after the loop has
-            # idled on the modal; the startup submit Enter comes far earlier.
+            self.submit_enters += 1
+            # The startup submit Enter is first; the modal approval Enter is second.
             if (
                 not self.recovered
-                and self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE
+                and self.submit_enters >= 2
                 and self.result_file is not None
                 and self.done_file is not None
             ):
@@ -1417,7 +1532,7 @@ class _PermissionModalPersistsTmux:
                 self.nudge_count += 1
             return Completed()
         if "send-keys" in command and "Enter" in command:
-            if self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE:
+            if self.modal_captures > 1:
                 self.approval_enters += 1
             return Completed()
         if "capture-pane" in command:
@@ -1551,7 +1666,7 @@ class _DriftingPermissionModalTmux:
                 self.nudge_count += 1
             return Completed()
         if "send-keys" in command and "Enter" in command:
-            if self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE:
+            if self.modal_captures > 1:
                 self.approval_enters += 1
                 self.revision += 1  # pane drifts -> stuck_count will reset
             return Completed()
