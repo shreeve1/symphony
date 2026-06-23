@@ -16,7 +16,7 @@ Append entries with this format:
 
 - Actor: agent (Pi), Ralph implementation + fresh review
 - Inputs: `.kanban/issues/100-route-runner-tmux-cleanup-through-host.md`; `git diff b76db6cef32e4504cc9eb32d939f5b56d4702ad7 HEAD`; `claude_runner.py`; `claude_host.py`; `tests/test_claude_runner.py`; `tests/test_claude_persist.py`; `tests/test_claude_host.py`; issue verification command.
-- Outputs: updated `.kanban/issues/100-route-runner-tmux-cleanup-through-host.md`; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; this log entry.
+- Outputs: updated `.kanban/issues/100-route-runner-tmux-cleanup-through-host.md`; updated `.kanban/progress.md`; updated `docs/adr/0012-remote-binding-ssh-exec.md`; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; this log entry.
 - Notes: #100 routes Claude tmux helpers, persistent-session liveness, and cleanup through explicit `ClaudeHost` arguments. Remote fake `SshClaudeHost` tests assert `has-session`, pane capture, `kill-session`, and cleanup use SSH-wrapped tmux/rm commands. Verification passed exactly as issue-specified (82 pytest tests; ruff clean), touched-file LSP diagnostics were clean, and fresh review returned `RALPH_REVIEW: PASS`. Claim row was not added because `wiki/CLAIMS.md` is already over budget; the promoted ADR analysis carries the durable fact.
 
 
