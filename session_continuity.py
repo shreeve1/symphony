@@ -105,7 +105,12 @@ def _resolve_cwd(cwd: Path | str) -> Path:
 def _cwd_stable(previous_cwd: Path | str, current_cwd: Path | str) -> bool:
     resolved_previous = _resolve_cwd(previous_cwd)
     resolved_current = _resolve_cwd(current_cwd)
-    return resolved_current.exists() and resolved_previous == resolved_current
+    # ponytail: .exists() raises OSError when cwd is a remote path whose parent
+    # dir is unreadable locally (e.g. /home/itadmin/ 700). Treat as not-stable.
+    try:
+        return resolved_current.exists() and resolved_previous == resolved_current
+    except OSError:
+        return False
 
 
 def _session_file_exists(agent_kind: str, session_file: Path, session_id: str) -> bool:
