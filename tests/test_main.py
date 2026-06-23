@@ -667,6 +667,45 @@ def test_probe_binding_remote_skips_local_pi_probe(monkeypatch, tmp_path):
     assert isinstance(runtime.agent_adapter.remote_adapter, RemoteAgentAdapter)
 
 
+def test_build_binding_runtime_wires_remote_claude_adapter(tmp_path):
+    from config import RemotePolicy
+
+    config = main.SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.test",
+            "PLANE_API_KEY": "key",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PLANE_PROJECT_ID": "project",
+            "HOMELAB_REPO_PATH": str(tmp_path),
+            "PI_BIN": "pi",
+            "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
+        }
+    )
+    base = config.bindings[0]
+    remote = RemotePolicy(host="100.95.224.218", user="itadmin")
+    binding = type(base)(
+        name="n8n",
+        plane_project_id="n8n",
+        repo_path=Path("/home/itadmin/repo"),
+        base_branch=base.base_branch,
+        tracker_contract=base.tracker_contract,
+        binding_type="coding",
+        default_agent="claude",
+        tracker="podium",
+        approval_policy=base.approval_policy,
+        landing_policy=base.landing_policy,
+        remote=remote,
+    )
+
+    runtime = main.build_binding_runtime(config, binding)
+
+    assert isinstance(runtime.agent_adapter, RoutingAgentAdapter)
+    adapter = runtime.agent_adapter.claude_adapter
+    assert isinstance(adapter, main.ClaudeAgentAdapter)
+    assert adapter.remote is remote
+    assert adapter.remote_repo_path == Path("/home/itadmin/repo")
+
+
 def test_probe_binding_remote_reachability_never_raises(monkeypatch, tmp_path):
     # ADR-0012 task 10.1: the remote branch logs a reachability result via
     # repo_host_for(binding).code_sha() and must never raise — a "unknown" sha

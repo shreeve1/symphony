@@ -34,7 +34,7 @@ class Completed:
 
 
 class FakeRpcProcess:
-    def __init__(self, lines: list[str] | None = None, returncode: int = 0):
+    def __init__(self, lines: list[str] | None = None, returncode: int | None = 0):
         self.pid = 4242
         self.returncode = returncode
         self.stdin = io.StringIO()
@@ -52,7 +52,7 @@ class FakeRpcProcess:
 
     def wait(self, timeout: float | None = None) -> int:
         self.wait_calls.append(timeout)
-        return self.returncode
+        return self.returncode or 0
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]:
         self.communicate_calls.append(timeout)
@@ -460,7 +460,8 @@ def test_routing_remote_pi_uses_remote_adapter() -> None:
     assert calls == ["remote"]
 
 
-def test_routing_remote_claude_rejected() -> None:
+def test_routing_remote_claude_uses_claude_adapter() -> None:
+    calls: list[str] = []
     binding = ProjectBinding(
         name="n8n",
         plane_project_id="n8n",
@@ -474,11 +475,13 @@ def test_routing_remote_claude_rejected() -> None:
     router = RoutingAgentAdapter(
         binding=binding,
         pi_adapter=lambda i, p: AgentResult(0, 1, False),
-        claude_adapter=lambda i, p: AgentResult(0, 1, False),
-        remote_adapter=lambda i, p: AgentResult(0, 1, False),
+        claude_adapter=lambda i, p: calls.append("claude") or AgentResult(0, 1, False),
+        remote_adapter=lambda i, p: calls.append("remote") or AgentResult(0, 1, False),
     )
-    with pytest.raises(AgentRunnerError, match="only pi dispatch"):
-        router(_issue(), "go")
+
+    router(_issue(), "go")
+
+    assert calls == ["claude"]
 
 
 def test_routing_remote_without_adapter_raises() -> None:

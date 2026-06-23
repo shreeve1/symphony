@@ -62,6 +62,32 @@ def reset_claude_probe_state():
     set_claude_probe_failure_reason(None)
 
 
+def test_claude_agent_adapter_wires_remote_host(monkeypatch, tmp_path: Path) -> None:
+    calls = {}
+    remote = RemotePolicy(host="100.95.224.218", user="itadmin")
+    remote_repo = Path("/home/itadmin/repo")
+
+    class FakeSshHost:
+        def __init__(self, remote_policy):
+            calls["remote_policy"] = remote_policy
+
+    def fake_run_claude_agent(config, issue, prompt, **kwargs):
+        calls["run"] = (config, issue, prompt, kwargs)
+        return "result"
+
+    monkeypatch.setattr(claude_runner, "SshClaudeHost", FakeSshHost)
+    monkeypatch.setattr(claude_runner, "run_claude_agent", fake_run_claude_agent)
+
+    result = claude_runner.ClaudeAgentAdapter(
+        _config(tmp_path), remote=remote, remote_repo_path=remote_repo
+    )(_issue(), "prompt")
+
+    assert result == "result"
+    assert calls["remote_policy"] is remote
+    assert calls["run"][3]["host"].__class__ is FakeSshHost
+    assert calls["run"][3]["remote_start_dir"] == remote_repo
+
+
 class TmuxFake:
     def __init__(self, *, pane: str = "bypass permissions on", result_text: str = ""):
         self.calls: list[tuple[list[str], dict]] = []
@@ -1023,7 +1049,9 @@ def test_remote_claude_launch_uses_fresh_session_id_even_if_transcript_exists(
     assert "--resume" not in command
 
 
-def test_remote_permission_modal_is_handled_without_idle_threshold(tmp_path: Path) -> None:
+def test_remote_permission_modal_is_handled_without_idle_threshold(
+    tmp_path: Path,
+) -> None:
     host = _RemoteClaudeHostFake()
     fake = _RemotePermissionModalRunFake(host)
     now = 0.0
@@ -1054,16 +1082,18 @@ def test_remote_steer_records_are_ignored() -> None:
     host = _RemoteClaudeHostFake()
     calls: list[list[str]] = []
 
-    generation, active_result, active_done, delivered = claude_runner._deliver_steer_records(
-        host,
-        _issue(),
-        [{"kind": "steer", "message": "adjust"}],
-        0,
-        Path("/remote/run/prompt.txt"),
-        Path("/tmp/symphony-claude-42.sock"),
-        "symphony-claude-42",
-        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
-        sleep=lambda _: None,
+    generation, active_result, active_done, delivered = (
+        claude_runner._deliver_steer_records(
+            host,
+            _issue(),
+            [{"kind": "steer", "message": "adjust"}],
+            0,
+            Path("/remote/run/prompt.txt"),
+            Path("/tmp/symphony-claude-42.sock"),
+            "symphony-claude-42",
+            run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+            sleep=lambda _: None,
+        )
     )
 
     assert generation == 0

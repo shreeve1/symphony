@@ -472,6 +472,7 @@ async def _prepare_resume_candidate(
     if (
         binding is None
         or not supports_resume
+        or (binding.is_remote and agent == "claude")
         or not getattr(adapter, "stores_context", False)
     ):
         return base_candidate, None
@@ -548,11 +549,6 @@ def _apply_dispatch_gate(
     defaults silently.
     """
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
-    if binding is not None and binding.is_remote and agent != "pi":
-        return candidate, (
-            "Dispatch blocked: remote bindings support only pi in v1 "
-            "(ADR-0012); clear the agent:claude label / preferred_agent."
-        )
     try:
         entry = resolve_model(
             getattr(candidate, "preferred_model", None), load_models(), agent=agent
@@ -565,7 +561,11 @@ def _apply_dispatch_gate(
             f"`{entry['agent']}` but the issue resolves to agent `{agent}`; "
             "pick a matching model or change preferred_agent."
         )
-    if agent == "claude" and (probe_failure := claude_probe_failure_reason()):
+    if (
+        agent == "claude"
+        and not (binding is not None and binding.is_remote)
+        and (probe_failure := claude_probe_failure_reason())
+    ):
         return candidate, (
             "Dispatch blocked: claude engine probe failed at startup: "
             f"{probe_failure}. Fix the install and restart."
@@ -1781,7 +1781,9 @@ async def _classify_terminal(
                     secrets=secrets,
                     state="failed",
                     verdict="blocked",
-                    summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
+                    summary=_extract_summary(
+                        result, secrets, include_stderr=parse_stderr
+                    )
                     or msg,
                     ended_at=now_dt.isoformat(),
                 )
@@ -1803,7 +1805,9 @@ async def _classify_terminal(
             schedule_comment = format_schedule_comment(
                 not_before=not_before, reason=reason
             )
-            await adapter.add_comment(candidate.id, CommentPayload(body=schedule_comment))
+            await adapter.add_comment(
+                candidate.id, CommentPayload(body=schedule_comment)
+            )
             await adapter.add_labels(candidate.id, [TrackerRole.SCHEDULED])
             await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
             summary = _extract_summary(result, secrets, include_stderr=parse_stderr)

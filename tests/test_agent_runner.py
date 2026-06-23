@@ -22,7 +22,7 @@ from agent_runner import (
     verify_pi_rpc_support,
     verify_pi_support,
 )
-from config import ProjectBinding, SymphonyConfig
+from config import ProjectBinding, RemotePolicy, SymphonyConfig
 from plane_poller import CandidateIssue
 
 steer_queue = import_module("web.api.steer_queue")
@@ -386,6 +386,35 @@ def test_routing_agent_adapter_routes_by_resolved_agent(tmp_path: Path) -> None:
     )
 
     assert seen == ["pi", "claude"]
+
+
+def test_routing_agent_adapter_routes_remote_claude_to_claude_adapter(
+    tmp_path: Path,
+) -> None:
+    seen: list[str] = []
+    binding = ProjectBinding(
+        name="remote",
+        plane_project_id="project",
+        repo_path=tmp_path,
+        base_branch="main",
+        tracker_contract=_config(tmp_path).bindings[0].tracker_contract,
+        default_agent="claude",
+        remote=RemotePolicy(host="host", user="user"),
+    )
+    router = RoutingAgentAdapter(
+        binding,
+        pi_adapter=lambda issue, prompt: seen.append("pi") or AgentResult(0, 1, False),
+        claude_adapter=lambda issue, prompt: (
+            seen.append("claude") or AgentResult(0, 1, False)
+        ),
+        remote_adapter=lambda issue, prompt: (
+            seen.append("remote") or AgentResult(0, 1, False)
+        ),
+    )
+
+    router(_issue(), "prompt")
+
+    assert seen == ["claude"]
 
 
 def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> None:

@@ -5015,6 +5015,43 @@ async def test_prepare_resume_candidate_remote_uses_seam_no_fs(
     assert decision is None
 
 
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_remote_claude_is_cold_refeed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = replace(_remote_binding(config), default_agent="claude")
+    candidate = _candidate("issue-1")
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    adapter = RunStoreAdapter(transport, tmp_path / "podium.db")
+    adapter.runs["run-1"] = {
+        "id": "run-1",
+        "agent": "claude",
+        "agent_session_sha": "remote99",
+        "worktree_path": str(tmp_path),
+    }
+    monkeypatch.setattr(
+        scheduler,
+        "evaluate_resume_eligibility",
+        lambda *a, **k: pytest.fail("remote claude must skip local resume check"),
+    )
+    monkeypatch.setattr(
+        scheduler, "repo_host_for", lambda *a, **k: _RecordingRepoHost("remote99")
+    )
+
+    result, decision = await scheduler._prepare_resume_candidate(
+        cast(TrackerAdapter, adapter),
+        config,
+        candidate,
+        {"latest_run_id": "run-1"},
+        binding=binding,
+    )
+
+    assert result.resumed is False
+    assert decision is None
+
+
 # T.6.2
 def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
     config = _config(tmp_path)
@@ -5087,13 +5124,20 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
 
 
 # T.8.1
-def test_dispatch_gate_blocks_remote_claude(tmp_path: Path) -> None:
+def test_dispatch_gate_allows_remote_claude_and_skips_local_probe(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = _config(tmp_path)
     binding = _remote_binding(config)
     candidate = _candidate("issue-1", labels=("agent:claude",))
-    _, error = scheduler._apply_dispatch_gate(candidate, binding)
-    assert error is not None
-    assert "remote bindings support only pi" in error
+    monkeypatch.setattr(
+        scheduler, "claude_probe_failure_reason", lambda: "local claude broken"
+    )
+
+    result, error = scheduler._apply_dispatch_gate(candidate, binding)
+
+    assert error is None
+    assert result.resolved_model
 
 
 # T.8.2
@@ -5170,8 +5214,7 @@ async def test_verified_done_closes_issue_on_auto_close_binding(tmp_path: Path) 
         == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
     )
     assert any(
-        "Symphony closed:" in c["comment_html"]
-        for c in transport.comments["issue-1"]
+        "Symphony closed:" in c["comment_html"] for c in transport.comments["issue-1"]
     )
 
 
@@ -5213,7 +5256,9 @@ async def test_done_verdict_parks_in_review_without_auto_close_flag(
     binding = replace(config.bindings[0], auto_close_on_verified=False)
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
-    stdout = "SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY_BEGIN\nDone.\nSYMPHONY_SUMMARY_END"
+    stdout = (
+        "SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY_BEGIN\nDone.\nSYMPHONY_SUMMARY_END"
+    )
 
     result = await run_tick(
         config,

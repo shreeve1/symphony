@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-23] session-update | Issue #103 remote Claude scheduler/config/routing wiring
+
+- Actor: agent (Pi), via `dev-build` workflow.
+- Inputs: `.kanban/issues/103-scheduler-config-routing-wiring.md`; `plans/feature-remote-claude-dispatch.md` Group 5; `scheduler/__init__.py`; `config.py`; `agent_runner.py`; `claude_runner.py`; `main.py`; targeted pytest/ruff/py_compile verification; pi wave-audit attempt.
+- Outputs: implemented remote+Claude dispatch gate/config/routing/adapter wiring; marked `.kanban/issues/103-scheduler-config-routing-wiring.md` done; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0312); updated `wiki/eval/model-catalog.eval`; this log entry.
+- Notes: Remote bindings can now use `default_agent: claude`: scheduler permits remote+Claude and skips the local Claude probe, resume prep cold-refeeds remote Claude before local transcript checks, config allows remote Claude while preserving `claude_persist`/coding guards, routing sends remote Claude to `ClaudeAgentAdapter`, and `main.build_binding_runtime` supplies `remote`/`remote_repo_path` so the adapter constructs `SshClaudeHost`. Verification passed (`291 passed, 1 skipped` for issue command; `361 passed, 1 skipped` for affected runner suite; ruff/py_compile clean). Pi wave audit retried after an initial timeout and passed with 0 critical / 0 warning / 1 note; the note was addressed with explicit remote+Claude config guard tests; logged in ignored state file `plans/.feature-remote-claude-dispatch.state.yml`. No secrets/env files read; live calibration remains #104.
+
 ## [2026-06-23] session-update | Issue 112 duplicate model-id block
 
 - Actor: agent (Pi), via `diagnose` workflow + `symphony-restart` restart ritual.

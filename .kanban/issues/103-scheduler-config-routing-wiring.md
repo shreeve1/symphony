@@ -1,11 +1,13 @@
 ---
 id: 103
 title: Relax scheduler gate + resume, config, routing; wire the adapter
-status: pending
+status: done
 blocked_by: [102]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: pi
 ---
 
 ## What to build
@@ -35,16 +37,16 @@ the now-remote-aware Claude runner. Source of truth:
 
 ## Acceptance criteria
 
-- [ ] Remote+claude passes `_apply_dispatch_gate`; remote+claude with a local
+- [x] Remote+claude passes `_apply_dispatch_gate`; remote+claude with a local
       claude-probe failure still passes (probe skipped for remote); prior remote-only-pi
       assertions updated.
-- [ ] `_prepare_resume_candidate` returns a cold (`resumed=False`) candidate for a
+- [x] `_prepare_resume_candidate` returns a cold (`resumed=False`) candidate for a
       remote+claude binding even when a same-named local Claude transcript exists.
-- [ ] Remote coding binding with `default_agent: claude` parses; remote+claude+
+- [x] Remote coding binding with `default_agent: claude` parses; remote+claude+
       `claude_persist` raises; remote+claude with `type != coding` raises.
-- [ ] `RoutingAgentAdapter` routes remote+claude → claude adapter; remote+pi → remote-pi
+- [x] `RoutingAgentAdapter` routes remote+claude → claude adapter; remote+pi → remote-pi
       adapter.
-- [ ] `main.py` `_build_binding_runtime` builds a `ClaudeAgentAdapter` with the remote
+- [x] `main.py` `_build_binding_runtime` builds a `ClaudeAgentAdapter` with the remote
       fields for a remote+claude binding (asserted in `tests/test_main.py`).
 
 ## Verification
@@ -54,3 +56,13 @@ the now-remote-aware Claude runner. Source of truth:
 ## Blocked by
 
 - Blocked by #102
+
+## Implementation Notes
+
+- Relaxed the remote scheduler dispatch gate for Claude and skipped the local Claude startup probe for remote+Claude.
+- Kept remote+Claude on cold refeed by bypassing Session Resume eligibility before local transcript checks.
+- Relaxed remote config invariants to allow `default_agent: claude`, while keeping remote `claude_persist` and non-coding rejections; remote Pi still requires `pi_mode: rpc`.
+- Routed remote+Claude through the Claude adapter; wired `ClaudeAgentAdapter` to construct `SshClaudeHost` and pass `remote_start_dir`.
+- Verification passed: `.venv/bin/python -m pytest tests/test_scheduler.py tests/test_config.py tests/test_agent_runner.py tests/test_main.py -q && /usr/local/bin/ruff check scheduler/__init__.py config.py agent_runner.py main.py`.
+- Extra coverage passed: `tests/test_remote_agent.py tests/test_claude_runner.py` and ruff on touched tests/files.
+- Wave audit retried with pi after an initial timeout; retry passed with 0 critical / 0 warning / 1 note, then the note was addressed with explicit remote+Claude config guard tests. Logged in `plans/.feature-remote-claude-dispatch.state.yml`.

@@ -625,14 +625,34 @@ def test_remote_binding_with_infra_type_rejected(tmp_path: Path):
 def test_remote_binding_with_oneshot_pi_mode_rejected(tmp_path: Path):
     bindings_path = tmp_path / "bindings.yml"
     _write_remote_binding(bindings_path, pi_mode="one-shot")
-    with pytest.raises(ConfigError, match="remote bindings require 'rpc'"):
+    with pytest.raises(ConfigError, match="remote pi bindings require 'rpc'"):
         _load_remote_binding(bindings_path)
 
 
-def test_remote_binding_with_claude_default_agent_rejected(tmp_path: Path):
+def test_remote_binding_with_claude_default_agent_parses(tmp_path: Path):
     bindings_path = tmp_path / "bindings.yml"
-    _write_remote_binding(bindings_path, default_agent="claude")
-    with pytest.raises(ConfigError, match="remote bindings require 'pi'"):
+    _write_remote_binding(bindings_path, default_agent="claude", pi_mode="one-shot")
+    binding = _load_remote_binding(bindings_path).bindings[0]
+    assert binding.is_remote
+    assert binding.default_agent == "claude"
+    assert binding.pi_mode == "one-shot"
+
+
+def test_remote_claude_binding_with_infra_type_rejected(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(
+        bindings_path, binding_type="infra", default_agent="claude", pi_mode="one-shot"
+    )
+    with pytest.raises(ConfigError, match="remote bindings require 'coding'"):
+        _load_remote_binding(bindings_path)
+
+
+def test_remote_claude_binding_rejects_claude_persist(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    _write_remote_binding(
+        bindings_path, default_agent="claude", pi_mode="one-shot", claude_persist="true"
+    )
+    with pytest.raises(ConfigError, match=r"claude_persist"):
         _load_remote_binding(bindings_path)
 
 

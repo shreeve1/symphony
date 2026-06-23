@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner import AgentResult, AgentRunnerError, CompletedLike
-from claude_host import ClaudeHost, LocalClaudeHost
-from config import SymphonyConfig
+from claude_host import ClaudeHost, LocalClaudeHost, SshClaudeHost
+from config import RemotePolicy, SymphonyConfig
 from proc_runtime import (
     DEFAULT_RUNTIME_DIR,
     RPC_RUNTIME_DIR_ENV,
@@ -602,7 +602,7 @@ def sweep_persistent_claude_sessions(
         to_reap = sorted(parked, key=lambda item: item[0])[: len(parked) - live_cap]
         for (
             _mtime,
-            issue_id,
+            _issue_id,
             socket_path,
             session_name,
             pidfile_path,
@@ -737,10 +737,18 @@ class ClaudeAgentAdapter:
 
     config: SymphonyConfig
     persist: bool = False
+    remote: RemotePolicy | None = None
+    remote_repo_path: Path | None = None
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
+        host = SshClaudeHost(self.remote) if self.remote is not None else None
         return run_claude_agent(
-            self.config, issue, rendered_prompt, persist=self.persist
+            self.config,
+            issue,
+            rendered_prompt,
+            persist=self.persist,
+            host=host,
+            remote_start_dir=self.remote_repo_path,
         )
 
 
@@ -1057,13 +1065,17 @@ def _poll_claude_until_done(
             stdout = _read_result_with_grace(active_result, host=host, sleep=sleep)
             if not stdout.strip():
                 duration_ms = int((clock() - started) * 1000)
-                pane = _capture_pane_tail(host, socket_path, session_name, run_func=run_func)
+                pane = _capture_pane_tail(
+                    host, socket_path, session_name, run_func=run_func
+                )
                 stderr = (
                     "claude done file exists but result file is missing or "
                     f"empty after {RESULT_GRACE_SECONDS:g}s grace\n{pane}"
                 )
                 return _logged_result(issue, 137, duration_ms, False, "", stderr)
-            stderr = _capture_pane_full(host, socket_path, session_name, run_func=run_func)
+            stderr = _capture_pane_full(
+                host, socket_path, session_name, run_func=run_func
+            )
             duration_ms = int((clock() - started) * 1000)
             return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
 
@@ -1093,7 +1105,9 @@ def _poll_claude_until_done(
 
         if not _session_alive(host, socket_path, session_name, run_func=run_func):
             duration_ms = int((clock() - started) * 1000)
-            stderr = _capture_pane_tail(host, socket_path, session_name, run_func=run_func)
+            stderr = _capture_pane_tail(
+                host, socket_path, session_name, run_func=run_func
+            )
             return _logged_result(issue, 1, duration_ms, False, "", stderr)
         # Idle requires BOTH the pane and the agent's session transcript to
         # stop changing. The two signals are complementary: a long tool call
@@ -1119,7 +1133,9 @@ def _poll_claude_until_done(
             consecutive_stuck = stuck_count > MODAL_STUCK_LIMIT
             if consecutive_stuck or modal_actions_total > MODAL_TOTAL_LIMIT:
                 duration_ms = int((clock() - started) * 1000)
-                tail = _capture_pane_tail(host, socket_path, session_name, run_func=run_func)
+                tail = _capture_pane_tail(
+                    host, socket_path, session_name, run_func=run_func
+                )
                 reason = (
                     f"the same prompt did not clear after {MODAL_STUCK_LIMIT} "
                     "consecutive automated interactions"
@@ -1181,7 +1197,9 @@ def _poll_claude_until_done(
         if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
             if nudges_used >= IDLE_NUDGE_ATTEMPTS:
                 duration_ms = int((clock() - started) * 1000)
-                tail = _capture_pane_tail(host, socket_path, session_name, run_func=run_func)
+                tail = _capture_pane_tail(
+                    host, socket_path, session_name, run_func=run_func
+                )
                 stderr = (
                     "claude idle at prompt with no done file after "
                     f"{IDLE_NUDGE_ATTEMPTS} completion nudges; agent ended its "
@@ -1271,7 +1289,15 @@ def _deliver_steer_records(
         message = str(record.get("message") or "").strip()
         if kind == "abort":
             with suppress(OSError):
-                _tmux(host, run_func, socket_path, "send-keys", "-t", session_name, "Escape")
+                _tmux(
+                    host,
+                    run_func,
+                    socket_path,
+                    "send-keys",
+                    "-t",
+                    session_name,
+                    "Escape",
+                )
         elif kind == "steer":
             if not message:
                 continue
@@ -1285,7 +1311,9 @@ def _deliver_steer_records(
             prompt_file,
             _steer_turn_text(kind, message, active_result, active_done),
         )
-        _paste_and_submit(host, run_func, socket_path, session_name, prompt_file, sleep=sleep)
+        _paste_and_submit(
+            host, run_func, socket_path, session_name, prompt_file, sleep=sleep
+        )
         delivered = True
         LOGGER.info(
             "claude_steer_delivered issue_id=%s kind=%s generation=%s",
@@ -1495,7 +1523,9 @@ def _paste_and_submit(
             if int(submit.returncode) != 0:
                 return False
             sleep(SUBMIT_RETRY_INTERVAL_SECONDS)
-            capture = _tmux(host, run_func, socket_path, "capture-pane", "-pt", session_name)
+            capture = _tmux(
+                host, run_func, socket_path, "capture-pane", "-pt", session_name
+            )
             if int(capture.returncode) != 0:
                 return False
             pane = strip_ansi(capture.stdout or capture.stderr or "")
@@ -1553,7 +1583,9 @@ def _send_nudge(
     The idle input box is empty, so the reminder is submitted as a fresh turn.
     """
     host.write_text(prompt_file, _nudge_text(result_file, done_file))
-    _paste_and_submit(host, run_func, socket_path, session_name, prompt_file, sleep=sleep)
+    _paste_and_submit(
+        host, run_func, socket_path, session_name, prompt_file, sleep=sleep
+    )
 
 
 def _hit_permission_modal(pane: str) -> bool:
