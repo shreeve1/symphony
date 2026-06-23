@@ -1,7 +1,7 @@
 ---
 id: 101
 title: Remote-aware Claude launch (cwd / temp-dir / pidfile)
-status: in-progress
+status: review
 blocked_by: [100]
 parent: 96
 priority: 0
