@@ -191,10 +191,14 @@ def _parse_run_metrics(stdout: str) -> dict[str, Any]:
 def _hit_permission_gate(stdout: str, stderr: str) -> bool:
     """Return true when the executor clean-exited after denied tool access."""
 
-    return bool(_PERMISSION_GATE_RE.search(_ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}")))
+    return bool(
+        _PERMISSION_GATE_RE.search(_ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}"))
+    )
 
 
 def _hit_approval_gate(stdout: str, stderr: str) -> bool:
     """Return true when a clean exit still needs operator approval."""
 
-    return bool(_APPROVAL_GATE_RE.search(_ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}")))
+    return bool(
+        _APPROVAL_GATE_RE.search(_ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}"))
+    )

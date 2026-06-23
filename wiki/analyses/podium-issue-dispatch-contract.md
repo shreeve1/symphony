@@ -40,7 +40,7 @@ pi does not discover `~/.claude/skills`; the scheduler passes `--skill <SKILL.md
 
 ## Timeout
 
-Global run timeout is 60 min (`config.py` default `3_600_000`, env `SYMPHONY_RUN_TIMEOUT_MS` override, both binding WORKFLOW.md frontmatters updated; frontmatter remains decorative for the actual subprocess kill). Per-issue `max_duration_seconds` was dropped — schema, API, UI, and migration `0006_drop_max_duration_seconds` [source: web/api/migrations/versions/0006_drop_max_duration_seconds.py].
+Global run timeout is 2 hours (`config.py` default `7_200_000`, env `SYMPHONY_RUN_TIMEOUT_MS` override). This supersedes the original 60-minute default (`3_600_000`) after Run #258 timed out during a long `dev-plan` audit loop. Historical binding `WORKFLOW.md` frontmatter remains decorative for the actual subprocess kill. Per-issue `max_duration_seconds` was dropped — schema, API, UI, and migration `0006_drop_max_duration_seconds` [source: web/api/migrations/versions/0006_drop_max_duration_seconds.py].
 
 ## Live verification
 
@@ -56,6 +56,6 @@ Fix (C-0169, live + verified 2026-06-13): `models.yml` entries may declare an op
 
 - [analyses/podium-014-new-issue-flow.md](podium-014-new-issue-flow.md) — "preferred_model free text, unlisted models still dispatch" no longer true.
 - [analyses/podium-028-model-catalog-searchable-dropdowns.md](podium-028-model-catalog-searchable-dropdowns.md) — catalog promoted from dropdown aid to dispatch contract.
-- [concepts/prompt-renderer.md](../concepts/prompt-renderer.md) — renderer now prepends the skill directive; timeout default 3600000.
+- [concepts/prompt-renderer.md](../concepts/prompt-renderer.md) — renderer now prepends the skill directive; timeout default is owned by `SymphonyConfig`.
 - [concepts/thin-engine-v2.md](../concepts/thin-engine-v2.md) — provider/model no longer fixed per-host by env for Podium bindings.
 - [sources/symphony-host-service-unit.md](../sources/symphony-host-service-unit.md) — `SYMPHONY_PI_*` env demoted to legacy fallback.

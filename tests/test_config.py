@@ -6,7 +6,6 @@ from config import ConfigError, SymphonyConfig, _truthy
 from plane_adapter import InMemoryTransport, build_adapter
 from tracker_contract import TrackerRole
 
-
 _NO_BINDINGS_YML = "/nonexistent/symphony-bindings.yml"
 
 
@@ -69,10 +68,11 @@ def test_from_env_loads_legacy_plane_env_values_with_optional_defaults():
     assert config.pi_provider == "zai"
     assert config.pi_model == "glm-5.1:high"
     assert config.poll_interval_ms == 30_000
-    assert config.run_timeout_ms == 3_600_000
+    assert config.run_timeout_ms == 7_200_000
     assert config.claude_persist_idle_ttl_s == 2_700
     assert config.claude_persist_max_live == 8
     assert config.blocked_reconciler_interval_ms == 1_800_000
+    assert config.issue_telegram_notifications_enabled is False
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
 
 
@@ -132,6 +132,12 @@ def test_from_env_loads_optional_values():
     assert config.claude_persist_max_live == 3
     assert config.blocked_reconciler_interval_ms == 3_000
     assert config.lock_path == Path("/run/symphony.lock")
+
+
+def test_from_env_loads_issue_telegram_notifications_opt_in():
+    config = SymphonyConfig.from_env(_env(SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS="true"))
+
+    assert config.issue_telegram_notifications_enabled is True
 
 
 def test_from_env_loads_pi_provider_override():
@@ -321,6 +327,71 @@ bindings:
 
     assert config.bindings[0].claude_persist is True
     assert config.bindings[1].claude_persist is False
+
+
+def test_bindings_yml_parses_auto_close_on_verified_flag(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: patrol-infra
+    plane_project_id: project-a
+    repo_path: /srv/infra
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+    auto_close_on_verified: true
+  - name: plain-infra
+    plane_project_id: project-b
+    repo_path: /srv/plain
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+    assert config.bindings[0].auto_close_on_verified is True
+    assert config.bindings[1].auto_close_on_verified is False
+
+
+def test_bindings_yml_rejects_auto_close_on_verified_for_coding(tmp_path: Path):
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: bad-coding
+    plane_project_id: project-a
+    repo_path: /srv/code
+    base_branch: main
+    default_agent: pi
+    tracker: podium
+    type: coding
+    auto_close_on_verified: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"bindings\[0\]\.auto_close_on_verified"):
+        SymphonyConfig.from_env(
+            {
+                "PLANE_API_URL": "http://plane.example.test",
+                "PLANE_API_KEY": "env-secret",
+                "PLANE_WORKSPACE_SLUG": "homelab",
+                "PI_BIN": "/usr/local/bin/pi",
+                "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+            }
+        )
 
 
 def test_bindings_yml_rejects_non_bool_claude_persist(tmp_path: Path):

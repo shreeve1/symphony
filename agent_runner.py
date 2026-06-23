@@ -36,7 +36,6 @@ from proc_runtime import (
 )
 from session_continuity import derive_session_id
 
-
 LOGGER = logging.getLogger(__name__)
 TERMINATE_GRACE_SECONDS = 5
 PI_HELP_TIMEOUT_SECONDS = 30
@@ -280,9 +279,6 @@ def _agent_env(
         "XDG_RUNTIME_DIR",
         "PYTHONUNBUFFERED",
         "TMPDIR",
-        "TELEGRAM_BOT_TOKEN",
-        "TELEGRAM_CHAT_ID",
-        "TELEGRAM_HOME_CHANNEL",
         "ZAI_API_KEY",
         "PI_OFFLINE",
         "PI_CODING_AGENT_DIR",
@@ -299,6 +295,11 @@ def _agent_env(
             "PYTHONPATH": str(Path(__file__).parent),
         }
     )
+    if getattr(config, "issue_telegram_notifications_enabled", False):
+        for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_HOME_CHANNEL"):
+            if key in source_env:
+                env[key] = source_env[key]
+        env["SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS"] = "1"
     if _uses_plane_tracker(config):
         env.update(_tracker_callback_env(config))
     return env
@@ -1221,7 +1222,9 @@ def _drain_rpc_events(
                         spool.flush()
                         spool_written += len(delta)
                         if spool_written >= TAIL_SPOOL_MAX_BYTES:
-                            spool.write("\n[tail truncated — see run log for full output]\n")
+                            spool.write(
+                                "\n[tail truncated — see run log for full output]\n"
+                            )
                             spool.flush()
                             spool.close()
                             spool = None

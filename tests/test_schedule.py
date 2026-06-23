@@ -46,7 +46,7 @@ UTC = timezone.utc
 
 def test_parse_valid_schedule_with_not_after_and_quoted_reason():
     body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
+        "Symphony-Schedule: not_before=2026-05-08T20:00:00Z "
         'not_after=2026-05-08T22:00:00Z reason="rotate creds"'
     )
     event = parse_schedule_comment(body)
@@ -60,7 +60,9 @@ def test_parse_valid_schedule_with_not_after_and_quoted_reason():
 
 
 def test_parse_schedule_without_not_after_returns_none_for_advisory_field():
-    body = 'Symphony-Schedule: not_before=2026-05-08T20:00:00+00:00 reason="rotate creds"'
+    body = (
+        'Symphony-Schedule: not_before=2026-05-08T20:00:00+00:00 reason="rotate creds"'
+    )
     event = parse_schedule_comment(body)
     assert event is not None
     assert event.not_after is None
@@ -68,9 +70,7 @@ def test_parse_schedule_without_not_after_returns_none_for_advisory_field():
 
 
 def test_parse_schedule_accepts_offset_other_than_utc_and_normalises_to_utc():
-    body = (
-        'Symphony-Schedule: not_before=2026-05-08T22:00:00+02:00 reason="ok"'
-    )
+    body = 'Symphony-Schedule: not_before=2026-05-08T22:00:00+02:00 reason="ok"'
     event = parse_schedule_comment(body)
     assert event is not None
     assert event.not_before == datetime(2026, 5, 8, 20, 0, tzinfo=UTC)
@@ -92,10 +92,7 @@ def test_parse_valid_cancellation():
 
 
 def test_cancellation_rejects_unknown_keys():
-    body = (
-        'Symphony-Schedule-Cancelled: not_before=2026-05-08T20:00:00Z '
-        'reason="bad"'
-    )
+    body = 'Symphony-Schedule-Cancelled: not_before=2026-05-08T20:00:00Z reason="bad"'
     with pytest.raises(ScheduleParseError):
         parse_schedule_comment(body)
 
@@ -107,9 +104,7 @@ def test_cancellation_rejects_unknown_keys():
 
 def test_missing_reason_on_schedule_raises():
     with pytest.raises(ScheduleParseError, match="reason"):
-        parse_schedule_comment(
-            "Symphony-Schedule: not_before=2026-05-08T20:00:00Z"
-        )
+        parse_schedule_comment("Symphony-Schedule: not_before=2026-05-08T20:00:00Z")
 
 
 def test_empty_reason_on_schedule_raises():
@@ -148,17 +143,14 @@ def test_malformed_token_raises():
 
 
 def test_unknown_keys_on_schedule_raise():
-    body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
-        'priority=high reason="x"'
-    )
+    body = 'Symphony-Schedule: not_before=2026-05-08T20:00:00Z priority=high reason="x"'
     with pytest.raises(ScheduleParseError, match="unknown keys"):
         parse_schedule_comment(body)
 
 
 def test_duplicate_keys_raise():
     body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
+        "Symphony-Schedule: not_before=2026-05-08T20:00:00Z "
         'not_before=2026-05-08T21:00:00Z reason="x"'
     )
     with pytest.raises(ScheduleParseError, match="duplicate"):
@@ -167,7 +159,7 @@ def test_duplicate_keys_raise():
 
 def test_not_after_before_not_before_is_rejected():
     body = (
-        'Symphony-Schedule: not_before=2026-05-08T22:00:00Z '
+        "Symphony-Schedule: not_before=2026-05-08T22:00:00Z "
         'not_after=2026-05-08T20:00:00Z reason="x"'
     )
     with pytest.raises(ScheduleParseError, match=">= not_before"):
@@ -176,7 +168,7 @@ def test_not_after_before_not_before_is_rejected():
 
 def test_malformed_not_after_is_rejected():
     body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
+        "Symphony-Schedule: not_before=2026-05-08T20:00:00Z "
         'not_after=NOTADATE reason="x"'
     )
     with pytest.raises(ScheduleParseError):
@@ -275,10 +267,10 @@ def test_parse_schedule_marker_next_window_resolves_with_timezone_aware_now():
 @pytest.mark.parametrize(
     "line",
     [
-        "SYMPHONY_SCHEDULE: reason=\"missing not_before\"",
+        'SYMPHONY_SCHEDULE: reason="missing not_before"',
         "SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z",
-        "SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z reason=\"\"",
-        "SYMPHONY_SCHEDULE: not_before=tomorrow reason=\"natural language\"",
+        'SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z reason=""',
+        'SYMPHONY_SCHEDULE: not_before=tomorrow reason="natural language"',
         ' SYMPHONY_SCHEDULE: not_before=2026-05-08T20:00:00Z reason="indented"',
     ],
 )
@@ -315,8 +307,8 @@ def test_summary_block_tolerates_text_appended_to_end_marker_line():
 
 def test_html_wrapped_comment_round_trips_with_entities():
     body = (
-        '<p>Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
-        'reason=&quot;rotate &amp; restart&quot;</p>'
+        "<p>Symphony-Schedule: not_before=2026-05-08T20:00:00Z "
+        "reason=&quot;rotate &amp; restart&quot;</p>"
     )
     event = parse_schedule_comment(body)
     assert event is not None
@@ -349,7 +341,9 @@ def test_normalize_preserves_br_inside_quoted_reason():
     # Quote-aware wrapper stripping: <br> between tokens is collapsed to a
     # space, but a literal <br> appearing inside a quoted reason value must
     # round-trip verbatim.  Regression for round-3 audit finding 2.
-    body = 'Symphony-Schedule: not_before=2026-05-08T20:00:00Z reason="literal <br> token"'
+    body = (
+        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z reason="literal <br> token"'
+    )
     event = parse_schedule_comment(body)
     assert event is not None
     assert event.reason == "literal <br> token"
@@ -381,9 +375,7 @@ def test_format_schedule_comment_round_trips_through_parser():
 
 def test_format_schedule_rejects_naive_datetime():
     with pytest.raises(ValueError, match="timezone-aware"):
-        format_schedule_comment(
-            not_before=datetime(2026, 5, 8, 20, 0), reason="x"
-        )
+        format_schedule_comment(not_before=datetime(2026, 5, 8, 20, 0), reason="x")
 
 
 def test_format_schedule_rejects_inverted_window():
@@ -423,8 +415,12 @@ def _cancel_body(reason: str = "stop") -> str:
 
 def test_latest_event_returns_none_when_no_control_plane_comments():
     comments = [
-        CandidateComment(body="hello", created_at=datetime(2026, 5, 8, 19, 0, tzinfo=UTC)),
-        CandidateComment(body="world", created_at=datetime(2026, 5, 8, 20, 0, tzinfo=UTC)),
+        CandidateComment(
+            body="hello", created_at=datetime(2026, 5, 8, 19, 0, tzinfo=UTC)
+        ),
+        CandidateComment(
+            body="world", created_at=datetime(2026, 5, 8, 20, 0, tzinfo=UTC)
+        ),
     ]
     assert latest_event(comments) is None
 
@@ -559,7 +555,7 @@ def test_latest_malformed_event_raises_no_fallback():
         created_at=datetime(2026, 5, 8, 10, 0, tzinfo=UTC),
     )
     latest_malformed = CandidateComment(
-        body="Symphony-Schedule: not_before=NOTADATE reason=\"x\"",
+        body='Symphony-Schedule: not_before=NOTADATE reason="x"',
         created_at=datetime(2026, 5, 8, 11, 0, tzinfo=UTC),
     )
     with pytest.raises(ScheduleParseError):
@@ -592,12 +588,12 @@ def test_format_round_trips_reason_with_entity_literal():
     body = format_schedule_comment(
         not_before=when,
         not_after=None,
-        reason='literal &quot; token',
+        reason="literal &quot; token",
     )
     event = parse_schedule_comment(body)
     assert event is not None
     assert event.is_schedule
-    assert event.reason == 'literal &quot; token'
+    assert event.reason == "literal &quot; token"
 
 
 def test_normalize_preserves_internal_whitespace_in_quoted_reason():
@@ -615,7 +611,7 @@ def test_html_encoded_outer_quotes_preserve_inner_whitespace():
     # quotes around reason, the entity-decoded ``"`` must toggle quote
     # mode so inner whitespace and entities survive verbatim.  Without
     # the fix the inner spaces collapsed to a single space.
-    body = '<p>Symphony-Schedule: not_before=2026-05-08T20:00:00Z reason=&quot;a   b&quot;</p>'
+    body = "<p>Symphony-Schedule: not_before=2026-05-08T20:00:00Z reason=&quot;a   b&quot;</p>"
     event = parse_schedule_comment(body)
     assert event is not None
     assert event.reason == "a   b"
@@ -727,8 +723,8 @@ def test_html_encoded_outer_quote_with_escaped_html_quote_inside():
     rule yields a literal double quote in the parsed reason.
     """
     body = (
-        '<p>Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
-        'reason=&quot;rotate \\&quot;creds\\&quot;&quot;</p>'
+        "<p>Symphony-Schedule: not_before=2026-05-08T20:00:00Z "
+        "reason=&quot;rotate \\&quot;creds\\&quot;&quot;</p>"
     )
     event = parse_schedule_comment(body)
     assert event is not None
@@ -747,10 +743,7 @@ def test_invalid_quoted_escape_pair_raises() -> None:
     and the parser must reject the whole comment rather than silently dropping
     the backslash.
     """
-    body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
-        'reason="bad\\qescape"'
-    )
+    body = 'Symphony-Schedule: not_before=2026-05-08T20:00:00Z reason="bad\\qescape"'
     with pytest.raises(ScheduleParseError):
         parse_schedule_comment(body)
 
@@ -761,9 +754,7 @@ def test_non_iso_datetime_separator_rejected() -> None:
     `datetime.fromisoformat` is permissive on some Pythons; the strict ISO
     8601 regex gate must catch this before fromisoformat sees it.
     """
-    body = (
-        'Symphony-Schedule: not_before=2026-05-08X20:00:00Z reason="x"'
-    )
+    body = 'Symphony-Schedule: not_before=2026-05-08X20:00:00Z reason="x"'
     with pytest.raises(ScheduleParseError):
         parse_schedule_comment(body)
 
@@ -799,7 +790,7 @@ def test_format_schedule_comment_rejects_newline_in_reason() -> None:
 def test_adjacent_tokens_without_whitespace_raise() -> None:
     """`reason="x"not_after=...` must raise; tokens require whitespace separation."""
     body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00Z '
+        "Symphony-Schedule: not_before=2026-05-08T20:00:00Z "
         'reason="x"not_after=2026-05-08T21:00:00Z'
     )
     with pytest.raises(ScheduleParseError, match="whitespace"):
@@ -809,9 +800,9 @@ def test_adjacent_tokens_without_whitespace_raise() -> None:
 def test_fractional_seconds_beyond_microseconds_rejected() -> None:
     """7+ digit fractional seconds must raise rather than be silently truncated."""
     body = (
-        'Symphony-Schedule: '
-        'not_before=2026-05-08T20:00:00.1234567Z '
-        'not_after=2026-05-08T20:00:00.1234566Z '
+        "Symphony-Schedule: "
+        "not_before=2026-05-08T20:00:00.1234567Z "
+        "not_after=2026-05-08T20:00:00.1234566Z "
         'reason="x"'
     )
     with pytest.raises(ScheduleParseError, match="ISO 8601"):
@@ -820,9 +811,7 @@ def test_fractional_seconds_beyond_microseconds_rejected() -> None:
 
 def test_fractional_seconds_up_to_microseconds_accepted() -> None:
     """6-digit fractional seconds (microseconds) round-trip cleanly."""
-    body = (
-        'Symphony-Schedule: not_before=2026-05-08T20:00:00.123456Z reason="x"'
-    )
+    body = 'Symphony-Schedule: not_before=2026-05-08T20:00:00.123456Z reason="x"'
     event = parse_schedule_comment(body)
     assert event is not None
     assert event.not_before is not None
@@ -840,7 +829,16 @@ def test_format_schedule_comment_rejects_all_line_breaking_chars():
     parsing is line-oriented.  The serializer must reject every one."""
     not_before = datetime(2026, 5, 8, 20, tzinfo=timezone.utc)
     line_breakers = (
-        "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029",
+        "\n",
+        "\r",
+        "\v",
+        "\f",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x85",
+        "\u2028",
+        "\u2029",
     )
     for ch in line_breakers:
         with pytest.raises(ValueError, match="line-breaking"):
@@ -871,17 +869,13 @@ def test_quoted_datetime_with_surrounding_whitespace_rejected():
     ``not_before`` / ``not_after`` and have it silently stripped: the value
     `" 2026-05-08T20:00:00Z "` is not ISO 8601 and must raise.
     """
-    body = (
-        'Symphony-Schedule: '
-        'not_before=" 2026-05-08T20:00:00Z " '
-        'reason="x"'
-    )
+    body = 'Symphony-Schedule: not_before=" 2026-05-08T20:00:00Z " reason="x"'
     with pytest.raises(ScheduleParseError, match="ISO 8601"):
         parse_schedule_comment(body)
 
     body_after = (
-        'Symphony-Schedule: '
-        'not_before=2026-05-08T20:00:00Z '
+        "Symphony-Schedule: "
+        "not_before=2026-05-08T20:00:00Z "
         'not_after=" 2026-05-08T21:00:00Z " '
         'reason="x"'
     )
@@ -896,11 +890,7 @@ def test_whitespace_around_equals_rejected():
     is not what the serializer emits.  Both schedule and cancellation
     parsers must reject it.
     """
-    bad_schedule = (
-        'Symphony-Schedule: '
-        'not_before = 2026-05-08T20:00:00Z '
-        'reason = "x"'
-    )
+    bad_schedule = 'Symphony-Schedule: not_before = 2026-05-08T20:00:00Z reason = "x"'
     with pytest.raises(ScheduleParseError):
         parse_schedule_comment(bad_schedule)
 

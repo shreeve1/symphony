@@ -460,12 +460,57 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     assert "CLIP" + "ROXY_API_KEY" not in env
     assert "SECRET_LEAK" not in env
     assert env.get("HOME") == "/home/james"
-    assert env.get("TELEGRAM_BOT_TOKEN") == "tok-123"
-    assert env.get("TELEGRAM_CHAT_ID") == "chat-456"
+    assert "TELEGRAM_BOT_TOKEN" not in env
+    assert "TELEGRAM_CHAT_ID" not in env
+    assert "SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS" not in env
     # Defense-in-depth against ANSI color trace in captured stderr: inbound
     # TERM must be overridden, NO_COLOR forced.
     assert env.get("TERM") == "dumb"
     assert env.get("NO_COLOR") == "1"
+
+
+def test_run_agent_passes_telegram_env_only_when_issue_notifications_enabled(
+    tmp_path: Path,
+) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+
+    def fake_popen(command, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    config = SymphonyConfig(
+        plane_api_url="https://plane.example.test",
+        plane_api_key="fake-plane-key-for-tests",
+        plane_workspace_slug="homelab",
+        plane_project_id="fake-project-id",
+        homelab_repo_path=tmp_path,
+        pi_bin="pi",
+        run_timeout_ms=1000,
+        issue_telegram_notifications_enabled=True,
+    )
+
+    run_agent(
+        config,
+        _issue(),
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        mkdtemp=lambda **k: str(temp_dir),
+        environ={
+            "PATH": "/usr/bin",
+            "TELEGRAM_BOT_TOKEN": "tok-123",
+            "TELEGRAM_CHAT_ID": "chat-456",
+        },
+    )
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["TELEGRAM_BOT_TOKEN"] == "tok-123"
+    assert env["TELEGRAM_CHAT_ID"] == "chat-456"
+    assert env["SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS"] == "1"
 
 
 def test_run_agent_omits_plane_env_and_helper_for_podium_binding(

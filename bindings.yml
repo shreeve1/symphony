@@ -7,6 +7,7 @@ bindings:
     base_branch: main
     default_agent: pi
     pi_mode: rpc
+    auto_close_on_verified: true
     approval:
       enabled: false
     landing:

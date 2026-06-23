@@ -172,7 +172,9 @@ def _sanitize_comment_text(text: str, env: Mapping[str, str], *, label: str) -> 
             cleaned = cleaned.replace(secret, _REDACTED)
     if len(cleaned) <= COMMENT_MAX_CHARS:
         return cleaned
-    first_line = next((line.strip() for line in cleaned.splitlines() if line.strip()), label)
+    first_line = next(
+        (line.strip() for line in cleaned.splitlines() if line.strip()), label
+    )
     if len(first_line) > 180:
         first_line = first_line[:179].rstrip() + "…"
     tail = cleaned[-COMMENT_TAIL_CHARS:].strip()
@@ -194,7 +196,18 @@ def _reject_target_override(args: Sequence[str]) -> None:
         )
 
 
+def _telegram_issue_notifications_enabled(env: Mapping[str, str]) -> bool:
+    return env.get("SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _send_telegram(env: Mapping[str, str], state: str) -> None:
+    if not _telegram_issue_notifications_enabled(env):
+        return
     if state == "review":
         emoji = "\U0001f4cb"
         label = "Review"
@@ -210,7 +223,9 @@ def _send_telegram(env: Mapping[str, str], state: str) -> None:
         parts.append(f'\U0001f517 <a href="{_html_escape(issue_url)}">Open issue</a>')
     dashboard_url = env.get("PLANE_DASHBOARD_URL", "")
     if dashboard_url:
-        parts.append(f'\U0001f4ca <a href="{_html_escape(dashboard_url)}">Dashboard</a>')
+        parts.append(
+            f'\U0001f4ca <a href="{_html_escape(dashboard_url)}">Dashboard</a>'
+        )
     _send_telegram_message(env, "\n".join(parts))
 
 
@@ -222,12 +237,15 @@ def _build_issue_url(env: Mapping[str, str], issue_id: str) -> str:
     """
     if not issue_id:
         return ""
-    base_url = (env.get("SYMPHONY_PLANE_FRONTEND_URL") or env.get("SYMPHONY_PLANE_API_URL", "")).rstrip("/")
+    base_url = (
+        env.get("SYMPHONY_PLANE_FRONTEND_URL") or env.get("SYMPHONY_PLANE_API_URL", "")
+    ).rstrip("/")
     workspace = env.get("SYMPHONY_PLANE_WORKSPACE_SLUG", "")
     project_id = env.get("SYMPHONY_PLANE_PROJECT_ID", "")
     if not base_url or not workspace or not project_id:
         return ""
     from urllib.parse import urlparse
+
     if env.get("SYMPHONY_PLANE_FRONTEND_URL"):
         base = base_url
     else:
@@ -242,11 +260,13 @@ def _send_telegram_message(env: Mapping[str, str], message: str) -> None:
     if not token or not chat_id:
         return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML",
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML",
+        }
+    ).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,
@@ -297,7 +317,10 @@ def run(
     if command == "comment":
         if len(args) < 2:
             raise PlaneCliError("plane comment requires comment text")
-        client.post(config.comment_path(), {"comment_html": _format_agent_comment(" ".join(args[1:]), env)})
+        client.post(
+            config.comment_path(),
+            {"comment_html": _format_agent_comment(" ".join(args[1:]), env)},
+        )
         return 0
 
     if command == "label":
@@ -468,7 +491,9 @@ def _parse_iso_arg(value: str, flag: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise PlaneCliError(f"{flag} is not a valid ISO 8601 datetime: {value!r}") from exc
+        raise PlaneCliError(
+            f"{flag} is not a valid ISO 8601 datetime: {value!r}"
+        ) from exc
     if parsed.tzinfo is None:
         raise PlaneCliError(f"{flag} must include an explicit UTC offset: {value!r}")
     return parsed

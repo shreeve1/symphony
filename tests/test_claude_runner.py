@@ -475,6 +475,39 @@ def test_claude_ready_timeout_is_fast_synthetic_failure(tmp_path: Path) -> None:
     assert result.stderr.startswith("claude_ready_timeout\nauth prompt")
 
 
+def test_wait_until_ready_drives_first_run_bypass_consent_modal() -> None:
+    # A host that has never accepted bypass mode shows a consent modal whose
+    # default is "1. No, exit"; readiness only appears after Down+Enter selects
+    # "2. Yes, I accept". A blanket Enter would abort, so verify Down precedes it.
+    consent = "Bypass Permissions mode\n1. No, exit\n2. Yes, I accept"
+    keys: list[str] = []
+    state = {"accepted": False}
+
+    def run_func(command, **kwargs):
+        if "send-keys" in command:
+            key = command[-1]
+            keys.append(key)
+            if key == "Enter" and "Down" in keys:
+                state["accepted"] = True
+            return Completed()
+        if "capture-pane" in command:
+            pane = "bypass permissions on" if state["accepted"] else consent
+            return Completed(stdout=pane)
+        return Completed()
+
+    ready = claude_runner._wait_until_ready(
+        Path("/tmp/s.sock"),
+        "sess",
+        run_func=run_func,
+        clock=iter([0.0, 0.0, 0.1, 0.2, 0.3]).__next__,
+        sleep=lambda _: None,
+        timeout_s=10.0,
+    )
+
+    assert ready is True
+    assert keys[:2] == ["Down", "Enter"]
+
+
 def test_claude_session_dead_without_done_returns_pane_tail(tmp_path: Path) -> None:
     fake = TmuxFake(pane="shift+tab to cycle\ncrashed", result_text=None)  # type: ignore[arg-type]
 

@@ -3,7 +3,7 @@ title: Symphony operations
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-06-15
+updated: 2026-06-23
 sources:
   - wiki/raw/runbook-symphony.md
   - wiki/raw/symphony-context.md
@@ -82,9 +82,11 @@ Safe enable flow: verify dry-run candidates first → set `APPLY=true` → resta
 
 ## Telegram notifications
 
-Fire-and-forget. Notifications fire only on **IN_REVIEW** and **BLOCKED** state transitions; scheduled and released ticket notifications are intentionally disabled to reduce noise [source: wiki/raw/runbook-symphony.md#199-201].
+Issue-transition Telegram notifications are disabled by default. `main.py` only creates and passes `TelegramNotifier` into the scheduler when `SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS` is truthy; otherwise IN_REVIEW/BLOCKED scheduler notifications short-circuit because `notifier=None`. `agent_runner.py` also withholds Telegram credentials from launched agents by default, and `plane_cli.py` refuses to send `plane review` / `plane blocked` Telegram messages unless the same opt-in flag is present [source: main.py, agent_runner.py, plane_cli.py].
 
-Architecture: `notifier.py` (`TelegramNotifier` class, async `send` + sync `send_sync`); `scheduler.py` calls after transitions; `plane_cli.py` sends on `plane review` and `plane blocked` commands. Failures log warnings, never block scheduler [source: wiki/raw/runbook-symphony.md#205-208].
+When the opt-in is enabled, issue notifications remain fire-and-forget for **IN_REVIEW** and **BLOCKED** transitions only; scheduled and released ticket notifications stay intentionally disabled to reduce noise [source: wiki/raw/runbook-symphony.md#199-201]. The systemd `OnFailure=telegram-alert@%n.service` failure-alert path is separate and unchanged [source: wiki/raw/send-telegram-systemd-alert].
+
+Architecture: `notifier.py` (`TelegramNotifier` class, async `send` + sync `send_sync`); `scheduler.py` calls after transitions when passed a notifier; `plane_cli.py` sends on `plane review` and `plane blocked` commands only under the opt-in flag. Failures log warnings, never block scheduler [source: wiki/raw/runbook-symphony.md#205-208, main.py, plane_cli.py].
 
 Config env (from `/home/james/symphony-host.env`):
 
@@ -95,8 +97,9 @@ Config env (from `/home/james/symphony-host.env`):
 | `TELEGRAM_HOME_CHANNEL` | one of two | fallback chat target |
 | `PLANE_FRONTEND_URL` | optional | issue links |
 | `PLANE_DASHBOARD_URL` | optional | dashboard link |
+| `SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS` | no | truthy opt-in for issue-transition Telegram notifications; default disabled |
 
-Startup logs confirm `telegram_notifications_enabled` or `telegram_notifications_disabled` [source: wiki/raw/runbook-symphony.md#224].
+Startup logs confirm `issue_telegram_notifications_enabled` or `issue_telegram_notifications_disabled` [source: main.py].
 
 Message format: `📋 <b>IDENT</b>: Name → <b>Review</b>` or `🚫 <b>IDENT</b>: Name → <b>Blocked</b>` with optional reason and links.
 

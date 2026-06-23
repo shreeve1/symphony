@@ -129,6 +129,13 @@ rules strictly:
     the scheduler treats that as `done`. If you made repo changes, commit them
     yourself first. The scheduler will not perform git writes, cleanup, or other
     git state management for you.
+17. When the issue states a measurable or curable condition — a patrol finding
+    such as "reclaimable=9.0GB (>5GB)" or "service X down" — re-check that exact
+    condition after you act and emit `SYMPHONY_RESULT: done` only if it is now
+    cleared (e.g. reclaimable back under threshold). If you cannot re-verify, or
+    the condition still holds, emit `SYMPHONY_RESULT: review` instead so a human
+    confirms. On bindings the operator has opted into verified auto-close, a
+    `done` verdict closes the issue directly, so reserve it for confirmed cures.
 
 ## Plan Mode
 

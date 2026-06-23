@@ -18,7 +18,6 @@ import {
 	type IssueDetail,
 	type IssuePatch,
 	type Run,
-	type ScheduleRequest,
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
 import {
@@ -140,91 +139,6 @@ function usePatchIssue() {
 			queryClient.invalidateQueries({
 				queryKey: ["issues", issue.binding_name],
 			});
-		},
-	});
-}
-
-interface ScheduleVariables {
-	issue: IssueDetail;
-	body: ScheduleRequest;
-}
-
-function useScheduleIssueMutation() {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: ({ issue, body }: ScheduleVariables) =>
-			scheduleIssue(issue.id, body),
-		onMutate: async ({ issue }) => {
-			const detailKey = ["issue", issue.id];
-			const listKey = ["issues", issue.binding_name];
-			await queryClient.cancelQueries({ queryKey: detailKey });
-			await queryClient.cancelQueries({ queryKey: listKey });
-			const previousDetail = queryClient.getQueryData<IssueDetail>(detailKey);
-			const previousList = queryClient.getQueryData<IssueDetail[]>(listKey);
-			const scheduledFor = new Date().toISOString();
-			// The /schedule endpoint forces state='todo'; mirror that optimistically
-			// so the card moves to the To Do column immediately, not on refetch.
-			queryClient.setQueryData<IssueDetail>(
-				detailKey,
-				(old) => old && { ...old, scheduled_for: scheduledFor, state: "todo" },
-			);
-			queryClient.setQueryData<IssueDetail[]>(listKey, (old) =>
-				old?.map((item) =>
-					item.id === issue.id
-						? { ...item, scheduled_for: scheduledFor, state: "todo" }
-						: item,
-				),
-			);
-			return { previousDetail, previousList };
-		},
-		onError: (_error, { issue }, context) => {
-			if (context?.previousDetail) {
-				queryClient.setQueryData(["issue", issue.id], context.previousDetail);
-			}
-			if (context?.previousList) {
-				queryClient.setQueryData(["issues", issue.binding_name], context.previousList);
-			}
-		},
-		onSettled: (_data, _error, { issue }) => {
-			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
-			queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
-		},
-	});
-}
-
-function useUnscheduleIssueMutation() {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: (issue: IssueDetail) => unscheduleIssue(issue.id),
-		onMutate: async (issue) => {
-			const detailKey = ["issue", issue.id];
-			const listKey = ["issues", issue.binding_name];
-			await queryClient.cancelQueries({ queryKey: detailKey });
-			await queryClient.cancelQueries({ queryKey: listKey });
-			const previousDetail = queryClient.getQueryData<IssueDetail>(detailKey);
-			const previousList = queryClient.getQueryData<IssueDetail[]>(listKey);
-			queryClient.setQueryData<IssueDetail>(
-				detailKey,
-				(old) => old && { ...old, scheduled_for: null },
-			);
-			queryClient.setQueryData<IssueDetail[]>(listKey, (old) =>
-				old?.map((item) =>
-					item.id === issue.id ? { ...item, scheduled_for: null } : item,
-				),
-			);
-			return { previousDetail, previousList };
-		},
-		onError: (_error, issue, context) => {
-			if (context?.previousDetail) {
-				queryClient.setQueryData(["issue", issue.id], context.previousDetail);
-			}
-			if (context?.previousList) {
-				queryClient.setQueryData(["issues", issue.binding_name], context.previousList);
-			}
-		},
-		onSettled: (_data, _error, issue) => {
-			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
-			queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
 		},
 	});
 }
@@ -359,44 +273,73 @@ function ChipToggle({
 	);
 }
 
-// Schedule is not a PATCH field — "Yes" POSTs a next-window schedule and "No"
-// DELETEs it — but it applies immediately on change like the toggles beside it,
-// so it lives in the chip row instead of a full-width card.
+type ScheduleMode = "none" | "next_window";
+
+interface StagedDispatchControls {
+	scheduleMode: ScheduleMode | null;
+	approval_required: boolean | null;
+	approved: boolean | null;
+}
+
+const EMPTY_STAGED_DISPATCH: StagedDispatchControls = {
+	scheduleMode: null,
+	approval_required: null,
+	approved: null,
+};
+
+function scheduleModeFor(issue: IssueDetail): ScheduleMode {
+	return issue.scheduled_for ? "next_window" : "none";
+}
+
+function hasStagedDispatch(staged: StagedDispatchControls): boolean {
+	return (
+		staged.scheduleMode != null ||
+		staged.approval_required != null ||
+		staged.approved != null
+	);
+}
+
+// Schedule is a dispatch-affecting control. The flyout stages it locally and
+// applies it from the Send button, so changing Yes/No cannot move the card yet.
 function ScheduleChip({
 	issue,
-	onSchedule,
-	onUnschedule,
+	value,
+	onChange,
 	disabled,
+	staged,
 }: {
 	issue: IssueDetail;
-	onSchedule: (body: ScheduleRequest) => void;
-	onUnschedule: () => void;
+	value: ScheduleMode;
+	onChange: (mode: ScheduleMode) => void;
 	disabled: boolean;
+	staged: boolean;
 }) {
 	const currentNotBefore = issue.scheduled_for
 		? (latestScheduleNotBefore(issue.comments_md) ?? issue.scheduled_for)
 		: null;
 	return (
-		<ChipShell label="schedule">
-			<select
-				data-testid="issue-schedule-mode"
-				value={currentNotBefore ? "next_window" : "none"}
-				disabled={disabled}
-				title={currentNotBefore ? `Scheduled for ${currentNotBefore}` : undefined}
-				onChange={(e) =>
-					e.target.value === "next_window"
-						? onSchedule({
-								not_before: "next_window",
-								reason: DEFAULT_SCHEDULE_REASON,
-							})
-						: onUnschedule()
-				}
-				className="cursor-pointer bg-transparent font-medium outline-none disabled:opacity-50"
-			>
-				<option value="none">No</option>
-				<option value="next_window">Yes</option>
-			</select>
-		</ChipShell>
+		<span data-testid="issue-schedule">
+			<ChipShell label="schedule">
+				<select
+					data-testid="issue-schedule-mode"
+					value={value}
+					disabled={disabled}
+					title={
+						staged
+							? "Pending until Send"
+							: currentNotBefore
+								? `Scheduled for ${currentNotBefore}`
+								: undefined
+					}
+					onChange={(e) => onChange(e.target.value as ScheduleMode)}
+					className="cursor-pointer bg-transparent font-medium outline-none disabled:opacity-50"
+				>
+					<option value="none">No</option>
+					<option value="next_window">Yes</option>
+				</select>
+				{staged && <span className="font-medium text-amber-600">pending</span>}
+			</ChipShell>
+		</span>
 	);
 }
 
@@ -411,18 +354,30 @@ function MetadataChips({
 	skillNames,
 	showEmptySkillHint,
 	onPatch,
-	onSchedule,
-	onUnschedule,
-	schedulePending,
+	staged,
+	approvalEnabled,
+	onStageApprovalRequired,
+	onStageApproved,
+	onStageSchedule,
+	stagedPending,
 }: {
 	issue: IssueDetail;
 	skillNames: readonly string[];
 	showEmptySkillHint: boolean;
 	onPatch: OnPatch;
-	onSchedule: (body: ScheduleRequest) => void;
-	onUnschedule: () => void;
-	schedulePending: boolean;
+	staged: StagedDispatchControls;
+	approvalEnabled: boolean;
+	onStageApprovalRequired: (value: boolean) => void;
+	onStageApproved: (value: boolean) => void;
+	onStageSchedule: (mode: ScheduleMode) => void;
+	stagedPending: boolean;
 }) {
+	const scheduleMode = staged.scheduleMode ?? scheduleModeFor(issue);
+	const scheduleStaged = staged.scheduleMode != null;
+	const approvalRequired = staged.approval_required ?? issue.approval_required;
+	const approvalRequiredStaged = staged.approval_required != null;
+	const approved = staged.approved ?? issue.approved;
+	const approvedStaged = staged.approved != null;
 	return (
 		<div className="space-y-1.5">
 			<div className="flex flex-wrap gap-1.5" data-testid="metadata-chips">
@@ -468,23 +423,28 @@ function MetadataChips({
 				/>
 				{issue.binding_type === "infra" && (
 					<>
-						<ChipToggle
-							label="approval"
-							field="approval_required"
-							value={issue.approval_required}
-							onPatch={onPatch}
-						/>
-						<ChipToggle
-							label="approved"
-							field="approved"
-							value={issue.approved}
-							onPatch={onPatch}
-						/>
+						{approvalEnabled && (
+							<>
+								<ChipToggle
+									label={approvalRequiredStaged ? "approval*" : "approval"}
+									field="approval_required"
+									value={approvalRequired}
+									onPatch={() => onStageApprovalRequired(!approvalRequired)}
+								/>
+								<ChipToggle
+									label={approvedStaged ? "approved*" : "approved"}
+									field="approved"
+									value={approved}
+									onPatch={() => onStageApproved(!approved)}
+								/>
+							</>
+						)}
 						<ScheduleChip
 							issue={issue}
-							onSchedule={onSchedule}
-							onUnschedule={onUnschedule}
-							disabled={schedulePending}
+							value={scheduleMode}
+							onChange={onStageSchedule}
+							disabled={stagedPending}
+							staged={scheduleStaged}
 						/>
 					</>
 				)}
@@ -524,14 +484,19 @@ function MetadataChips({
 // buried as Runs accumulate.
 function ReplyComposer({
 	issue,
+	staged,
+	onClearStaged,
 	onSent,
 }: {
 	issue: IssueDetail;
+	staged: StagedDispatchControls;
+	onClearStaged: () => void;
 	onSent: () => void;
 }) {
 	const queryClient = useQueryClient();
 	const [draft, setDraft] = useState("");
 	const taRef = useRef<HTMLTextAreaElement>(null);
+	const hasStaged = hasStagedDispatch(staged);
 
 	// Auto-grow: start small (one row) and expand to fit the draft up to a cap,
 	// after which it scrolls. Resync height whenever the draft changes (typing,
@@ -551,17 +516,47 @@ function ReplyComposer({
 	// A scheduled issue sits in todo until its maintenance window. /reply would
 	// re-dispatch it early (and 409 on todo), so post an append-only comment
 	// instead — the operator can annotate the held issue without disturbing it.
-	const commentMode = isTodo && issue.scheduled_for != null && !runningOrActive;
-	const replyDisabled = (runningOrActive || isTodo) && !commentMode;
+	const commentMode =
+		(isTodo && issue.scheduled_for != null && !runningOrActive) ||
+		staged.scheduleMode != null;
+	const replyDisabled = runningOrActive || (isTodo && !commentMode && !hasStaged);
 	const hint = runningOrActive
 		? "Agent is running — reply when it parks for review."
-		: "Already queued to run.";
+		: hasStaged
+			? "Press Send to apply the staged controls."
+			: "Already queued to run.";
 
 	const reply = useMutation({
-		mutationFn: (body: string) =>
-			commentMode ? postComment(issue.id, body) : postReply(issue.id, body),
+		mutationFn: async (body: string) => {
+			let result: IssueDetail | null = null;
+			const approvalPatch: IssuePatch = {};
+			if (staged.approval_required != null) {
+				approvalPatch.approval_required = staged.approval_required;
+			}
+			if (staged.approved != null) approvalPatch.approved = staged.approved;
+			if (Object.keys(approvalPatch).length > 0) {
+				result = await patchIssue(issue.id, approvalPatch);
+			}
+
+			const text = body.trim();
+			if (staged.scheduleMode != null) {
+				if (text) result = await postComment(issue.id, body);
+				result =
+					staged.scheduleMode === "next_window"
+						? await scheduleIssue(issue.id, {
+								not_before: "next_window",
+								reason: DEFAULT_SCHEDULE_REASON,
+							})
+						: await unscheduleIssue(issue.id);
+				return result;
+			}
+
+			if (!text) return result ?? issue;
+			return commentMode ? postComment(issue.id, body) : postReply(issue.id, body);
+		},
 		onSuccess: () => {
 			setDraft("");
+			onClearStaged();
 			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
 			queryClient.invalidateQueries({
 				queryKey: ["issues", issue.binding_name],
@@ -578,9 +573,11 @@ function ReplyComposer({
 				value={draft}
 				rows={1}
 				placeholder={
-					commentMode
-						? "Add a comment (held until window — won't re-run the agent)…"
-						: "Write a reply to the agent…"
+					hasStaged
+						? "Comment, then Send to apply staged controls…"
+						: commentMode
+							? "Add a comment (held until window — won't re-run the agent)…"
+							: "Write a reply to the agent…"
 				}
 				disabled={replyDisabled}
 				onChange={(e) => setDraft(e.target.value)}
@@ -603,7 +600,7 @@ function ReplyComposer({
 				<button
 					type="button"
 					data-testid="reply-send"
-					disabled={replyDisabled || reply.isPending || draft.trim() === ""}
+					disabled={replyDisabled || reply.isPending || (!hasStaged && draft.trim() === "")}
 					onClick={() => reply.mutate(draft)}
 					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
 				>
@@ -899,6 +896,9 @@ export function IssueFlyout({
 		useFlyoutWidth();
 	const [tab, setTab] = useState<Tab>("comments");
 	const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+	const [stagedDispatch, setStagedDispatch] = useState<StagedDispatchControls>(
+		EMPTY_STAGED_DISPATCH,
+	);
 	const panelRef = useRef<HTMLElement | null>(null);
 
 	const detail = useQuery({
@@ -916,8 +916,6 @@ export function IssueFlyout({
 			issueDetailRefetchIntervalMs(detail.data),
 	});
 	const patch = usePatchIssue();
-	const schedule = useScheduleIssueMutation();
-	const unschedule = useUnscheduleIssueMutation();
 	const onPatch: OnPatch = (issuePatch) => {
 		if (!detail.data) return;
 		patch.mutate(
@@ -943,6 +941,7 @@ export function IssueFlyout({
 	useEffect(() => {
 		setTab("comments");
 		setSelectedRunId(null);
+		setStagedDispatch(EMPTY_STAGED_DISPATCH);
 	}, [issueId]);
 
 	// Escape closes (click-outside is handled by the backdrop).
@@ -974,6 +973,29 @@ export function IssueFlyout({
 			: null;
 	const bindingPiMode = binding?.pi_mode ?? null;
 	const bindingClaudePersist = binding?.claude_persist ?? null;
+	const bindingApprovalEnabled = binding?.approval_enabled ?? false;
+	const stageSchedule = (mode: ScheduleMode) => {
+		if (!issue) return;
+		setStagedDispatch((current) => ({
+			...current,
+			scheduleMode: mode === scheduleModeFor(issue) ? null : mode,
+		}));
+	};
+	const stageApprovalRequired = (value: boolean) => {
+		if (!issue) return;
+		setStagedDispatch((current) => ({
+			...current,
+			approval_required: value === issue.approval_required ? null : value,
+		}));
+	};
+	const stageApproved = (value: boolean) => {
+		if (!issue) return;
+		setStagedDispatch((current) => ({
+			...current,
+			approved: value === issue.approved ? null : value,
+		}));
+	};
+	const clearStagedDispatch = () => setStagedDispatch(EMPTY_STAGED_DISPATCH);
 
 	return (
 		<>
@@ -1054,9 +1076,12 @@ export function IssueFlyout({
 								skillNames={skillNames}
 								showEmptySkillHint={showEmptySkillHint}
 								onPatch={onPatch}
-								onSchedule={(body) => schedule.mutate({ issue, body })}
-								onUnschedule={() => unschedule.mutate(issue)}
-								schedulePending={schedule.isPending || unschedule.isPending}
+								staged={stagedDispatch}
+								approvalEnabled={bindingApprovalEnabled}
+								onStageApprovalRequired={stageApprovalRequired}
+								onStageApproved={stageApproved}
+								onStageSchedule={stageSchedule}
+								stagedPending={false}
 							/>
 
 							<div>
@@ -1098,7 +1123,12 @@ export function IssueFlyout({
 										// accumulate; thread below renders oldest-first,
 										// scrolled to the newest entry on open.
 										<div className="space-y-3">
-											<ReplyComposer issue={issue} onSent={onClose} />
+											<ReplyComposer
+												issue={issue}
+												staged={stagedDispatch}
+												onClearStaged={clearStagedDispatch}
+												onSent={onClose}
+											/>
 											<CommentsThread
 												issueId={issue.id}
 												source={issue.comments_md}

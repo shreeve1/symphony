@@ -3,7 +3,7 @@ title: Symphony Automation Runbook (homelab)
 type: source-summary
 status: promoted
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-23
 sources:
   - wiki/raw/runbook-symphony.md
   - ~/homelab/docs/runbooks/automation/symphony.md
@@ -27,7 +27,7 @@ Operational runbook for Symphony as deployed against the homelab Binding. Lives 
 - **Smoke Test Evidence** — `issue_claimed`, `agent_started`, `tick_completed dispatched=true`, Plane reaches terminal state, comments exist, repo clean [source: wiki/raw/runbook-symphony.md#86-95].
 - **Ticket Scheduling** — see [Symphony operations](../concepts/symphony-operations.md) for the maintenance-window rule.
 - **Blocked Reconciler** — three env vars (`SYMPHONY_BLOCKED_RECONCILER_ENABLED|APPLY|INTERVAL_MS`), dry-run default, evidence contract: counts distinct `Patrol pass for ...` comments newer than the latest failure [source: wiki/raw/runbook-symphony.md#136-197].
-- **Telegram Notifications** — fire-and-forget on IN_REVIEW and BLOCKED transitions; configured via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` or `TELEGRAM_HOME_CHANNEL` [source: wiki/raw/runbook-symphony.md#199-235].
+- **Telegram Notifications** — the source runbook describes fire-and-forget IN_REVIEW/BLOCKED issue notifications configured via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` or `TELEGRAM_HOME_CHANNEL`; current code disables issue-transition Telegram by default and requires `SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS` to opt in, while systemd failure alerts remain separate [source: wiki/raw/runbook-symphony.md#199-235, main.py, agent_runner.py, plane_cli.py].
 - **Common Failure Pointers** — env names only; 401 = missing `X-API-Key`; 404 = use UUID not slug; 429 = cap pagination; `worktree_dirty` = inspect `/home/james/homelab`; missing comments = Plane write paths need trailing slashes [source: wiki/raw/runbook-symphony.md#237-244].
 
 ## Related wiki pages

@@ -1989,6 +1989,47 @@ async def _classify_terminal(
         ):
             return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
+    if (
+        not is_coding
+        and verdict == "done"
+        and binding is not None
+        and binding.auto_close_on_verified
+    ):
+        # Verified-close (ADR-0020): on an opt-in infra binding, a `done` verdict
+        # means the agent re-checked the issue's own condition and confirmed it
+        # cleared, so close the issue directly instead of parking it in In Review.
+        # `review` and unmarked clean runs still go to In Review below; a failed
+        # re-check is the agent's cue to emit `review`/`blocked`, and the patrol's
+        # next cycle reopens via record_failure if a `done` was wrong.
+        close_body = (
+            f"**Symphony closed:**\n\n{summary}"
+            if summary
+            else "**Symphony closed:** Agent verified the condition is cleared."
+        )
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="succeeded",
+            verdict="done",
+            summary=summary,
+            ended_at=now().isoformat(),
+        )
+        await adapter.add_comment(candidate.id, CommentPayload(body=close_body))
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        if await _handle_archived_terminal(
+            adapter, config, candidate, run_id, binding=binding
+        ):
+            return TickResult(True, "archived-terminal", candidate.id, mode=mode)
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=done reason=agent-verified-close",
+            candidate.id,
+        )
+        return TickResult(True, "agent-verified-close", candidate.id, mode=mode)
+
     reason_code = (
         "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
     )

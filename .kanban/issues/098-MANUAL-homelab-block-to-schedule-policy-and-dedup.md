@@ -1,7 +1,7 @@
 ---
 id: 98
 title: MANUAL — homelab block→schedule policy + dedup-don't-clobber (cross-repo)
-status: blocked
+status: done
 blocked_by: [94, 95]
 parent: null
 priority: 0
@@ -55,10 +55,10 @@ block→schedule policy (item 1) is live, or they immediately re-block.
 
 ## Acceptance criteria
 
-- [ ] `/home/james/homelab/CLAUDE.md` documents the medium-risk block→schedule policy with the symbolic `next_window` value and the "schedule context = authorized to apply" rule; high-risk still blocks.
-- [ ] `record_failure` on an already-scheduled Podium issue posts evidence only (no reopen/reschedule/reset), detected via `scheduled_for`+`state=todo` (not labels).
-- [ ] `record_pass` close on a scheduled issue clears the schedule; a below-threshold pass leaves it intact.
-- [ ] Homelab-stack regression tests cover the schedule emission, dedup-don't-clobber, and record_pass-clears-schedule paths; the `InMemoryPodiumTransport` mock enforces the hold semantics.
+- [x] `/home/james/homelab/CLAUDE.md` documents the medium-risk block→schedule policy with the symbolic `next_window` value and the "schedule context = authorized to apply" rule; high-risk still blocks.
+- [x] `record_failure` on an already-scheduled Podium issue posts evidence only (no reopen/reschedule/reset), detected via `scheduled_for`+`state=todo` (not labels).
+- [x] `record_pass` close on a scheduled issue clears the schedule; a below-threshold pass leaves it intact.
+- [x] Homelab-stack regression tests cover the schedule emission, dedup-don't-clobber, and record_pass-clears-schedule paths; the `InMemoryPodiumTransport` mock enforces the hold semantics.
 - [ ] Verified after #94/#95 are deployed: one real medium-risk finding schedules into the window and applies in-window (operator-observed before broad rollout).
 - [ ] The existing medium-risk blocked backlog is re-opened to `todo` (after item 1 is live) and converts to scheduled on the next patrol cycle rather than staying blocked.
 

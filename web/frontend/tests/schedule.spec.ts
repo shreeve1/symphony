@@ -1,9 +1,6 @@
 import { expect, expectCleanConsole, seedIssue, test } from "./fixtures";
 
-test("infra new-issue schedule defaults to no", async ({
-	page,
-	problems,
-}) => {
+test("infra new-issue schedule defaults to no", async ({ page, problems }) => {
 	const title = `e2e unscheduled create ${Date.now()}`;
 
 	await page.goto("/homelab");

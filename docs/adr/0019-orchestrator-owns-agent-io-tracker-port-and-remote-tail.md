@@ -60,6 +60,38 @@ moves *into* the adapter behind `adapter.agent_provisioning()`. The core engine
 then loops over `adapter.*` with no tracker name in it. Adding a tracker =
 implement engine-I/O + declare provisioning.
 
+The provisioning half has a locked shape — one dataclass, one method:
+
+```python
+@dataclass(frozen=True)
+class AgentProvisioning:
+    helper_files: dict[str, Path]   # filename -> source path; shipped onto PATH, chmod 700
+    env: dict[str, str]             # injected into the agent's environment
+    endpoint: str | None            # URL the agent must reach; drives tunnel-vs-direct
+
+async def agent_provisioning(self, issue: CandidateIssue) -> AgentProvisioning: ...
+```
+
+Three locked decisions in that shape:
+
+- **Emptiness is the flag, not a capability boolean.** Podium returns
+  `AgentProvisioning({}, {}, None)`; the dispatch layer ships no helper, injects
+  no tracker env, and opens no tunnel *because* all three are empty. The
+  "agent-during-run vs scheduler-writes-after-exit" distinction falls out of an
+  empty provisioning — no separate flag. (Verified: the Podium path never
+  consults such a flag today; it simply does no callbacks.)
+- **`async`, and takes the `issue`.** This makes `agent_provisioning()` the sole
+  chokepoint where a per-run credential is minted: Halo exchanges its OAuth2
+  client-credentials for a short-lived bearer token scoped to the issue, and
+  *only that token* enters `env`. The client secret never leaves aidev / never
+  crosses the SSH boundary to a remote host. Plane/Podium return immediately;
+  the cost of `async` is nil for them and mandatory for Halo's token exchange.
+  One method to audit for the secret boundary, not a minting step bolted on
+  elsewhere.
+- **`helper_files` is `dict[str, Path]` (source paths), not inline bytes.** Matches
+  today's `plane_cli_source: Path` so Plane migrates with near-zero change; the
+  remote path already `read_text()`s at ship time.
+
 Consequences:
 - The SSH reverse tunnel stops being a Plane concept. The adapter says "the agent
   must reach `<api_url>`"; the dispatch layer sets up a reverse tunnel **iff**

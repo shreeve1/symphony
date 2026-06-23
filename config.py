@@ -20,7 +20,6 @@ from tracker_contract import (
     TrackerUserMapping,
 )
 
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -100,6 +99,7 @@ class ProjectBinding:
     tracker: Literal["plane", "podium"] = "plane"
     pi_mode: Literal["one-shot", "rpc"] = "one-shot"
     claude_persist: bool = False
+    auto_close_on_verified: bool = False
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
     remote: RemotePolicy | None = None
@@ -172,7 +172,7 @@ class SymphonyConfig:
     pi_provider: str = "zai"
     pi_model: str = "glm-5.1:high"
     poll_interval_ms: int = 30_000
-    run_timeout_ms: int = 3_600_000
+    run_timeout_ms: int = 7_200_000
     run_cap: int = 2
     claude_persist_idle_ttl_s: int = 2_700
     claude_persist_max_live: int = 8
@@ -185,6 +185,7 @@ class SymphonyConfig:
     blocked_reconciler_enabled: bool = True
     blocked_reconciler_apply: bool = False
     blocked_reconciler_interval_ms: int = 1_800_000
+    issue_telegram_notifications_enabled: bool = False
     base_branch: str = "HEAD"
     bindings: tuple[ProjectBinding, ...] = field(default_factory=tuple)
 
@@ -290,7 +291,7 @@ class SymphonyConfig:
             pi_provider=source.get("SYMPHONY_PI_PROVIDER", "zai"),
             pi_model=source.get("SYMPHONY_PI_MODEL", "glm-5.1:high"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
-            run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "3600000")),
+            run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "7200000")),
             run_cap=int(source.get("SYMPHONY_RUN_CAP", "2")),
             claude_persist_idle_ttl_s=int(
                 source.get("SYMPHONY_CLAUDE_PERSIST_IDLE_TTL_S", "2700")
@@ -323,6 +324,11 @@ class SymphonyConfig:
             ),
             blocked_reconciler_interval_ms=int(
                 source.get("SYMPHONY_BLOCKED_RECONCILER_INTERVAL_MS", "1800000")
+            ),
+            issue_telegram_notifications_enabled=_truthy(
+                source.get("SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS"),
+                default=False,
+                name="SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS",
             ),
             base_branch=first.base_branch,
             bindings=bindings,
@@ -520,6 +526,15 @@ def _binding_from_mapping(
     claude_persist = _optional_bool(
         raw.get("claude_persist", False), prefix=f"{prefix}.claude_persist"
     )
+    auto_close_on_verified = _optional_bool(
+        raw.get("auto_close_on_verified", False),
+        prefix=f"{prefix}.auto_close_on_verified",
+    )
+    if auto_close_on_verified and binding_type == "coding":
+        raise ConfigError(
+            f"{prefix}.auto_close_on_verified: only infra bindings may auto-close "
+            f"on a verified done verdict, got type '{binding_type}'"
+        )
     remote = _remote_from_mapping(raw.get("remote"), prefix=f"{prefix}.remote")
     if remote is not None:
         if claude_persist:
@@ -552,6 +567,7 @@ def _binding_from_mapping(
         tracker=tracker,
         pi_mode=pi_mode,
         claude_persist=claude_persist,
+        auto_close_on_verified=auto_close_on_verified,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),

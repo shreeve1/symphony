@@ -71,7 +71,10 @@ export function ScheduleControl({
 					</select>
 				</label>
 				{currentNotBefore && (
-					<p data-testid={`${testid}-current`} className="text-xs text-muted-foreground">
+					<p
+						data-testid={`${testid}-current`}
+						className="text-xs text-muted-foreground"
+					>
 						Scheduled for {currentNotBefore}
 					</p>
 				)}

@@ -12,6 +12,22 @@ Append entries with this format:
 ---
 
 
+## [2026-06-23] session-update | Global run timeout default raised to 2 hours
+
+- Actor: agent (Pi)
+- Inputs: operator request after Run #258 timeout; `config.py`; `tests/test_config.py`; `runs/258.log`.
+- Outputs: updated `config.py`; updated `tests/test_config.py`; updated `wiki/analyses/podium-issue-dispatch-contract.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/concepts/prompt-renderer.md`; updated `wiki/CLAIMS.md`; this log entry.
+- Notes: Default `SymphonyConfig.run_timeout_ms` and `SYMPHONY_RUN_TIMEOUT_MS` fallback changed from `3_600_000` to `7_200_000` ms. Env override remains authoritative; live `symphony-host.service` needs a restart to load the code/default for new dispatches. Verified with `py_compile config.py` and `pytest tests/test_config.py -q` (55 passed).
+
+
+## [2026-06-23] session-update | Run #242 summary END marker tolerance
+
+- Actor: agent (Pi), via `/grill-me`
+- Inputs: Issue #98 / Run #242 operator request; `runs/242.log`; `scheduler/markers.py`; `tests/test_schedule.py`; live `podium.db` read/backfill for Run 242 / Issue 97.
+- Outputs: updated `wiki/analyses/podium-046-unified-output-contract.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; this log entry.
+- Notes: Root cause was parser strictness, not missing agent output: `SYMPHONY_SUMMARY_END` was glued to trailing prose, so `_parse_summary_block` missed a valid summary and the completion comment fell back to "Agent finished without a summary." Commit `0ac7c5e` makes the summary END token close the block even with same-line trailing text and adds a regression test. Run #242 / Issue #97 was backfilled from the existing log. Claim gate was checked but no new claim was admitted because the hot claim file is over budget; no secrets or env files were read. Service restart/deploy was deferred because the working tree contains unrelated pre-existing changes.
+
+
 ## [2026-06-21] session-update | Issue #84 flyout staged controls decision
 
 - Actor: agent (Pi) + operator (James), via `/grill-me`
@@ -1276,3 +1292,9 @@ Append entries with this format:
 - Inputs: operator question on Run #234 + reply "Proceed with fix you outline"; reads of `runs/234.log`, `prompt_renderer.py`, `session_continuity.py`, `scheduler/__init__.py` (`_with_schedule_context`/`_invoke_renderer`/`_prepare_resume_candidate`), homelab `CLAUDE.md` + `tickets/74.md`, `wiki/analyses/adr-0018-...md`.
 - Outputs: fix in `prompt_renderer.py` resume branch (re-append `_render_schedule_context` for non-coding bindings); 2 regression tests in `tests/test_prompt_renderer_podium.py`; CLAIMS C-0305; updated ADR-0018 analysis ("Resume-mode dropped the Schedule Context" section); this log entry.
 - Notes: Run #234 blocked an image prune because the resume-mode prompt discarded the `## Schedule Context` block (the homelab policy apply-now signal) — the structural cause behind C-0300 resumed-session hypothesis. Verified: `pytest test_prompt_renderer_podium.py test_prompt_renderer.py test_scheduler.py test_session_continuity.py` → 205 passed. NOT committed or deployed; item 5 clean schedule-and-apply verify still required before #098 item 6 (re-open blocked backlog 63/66/71/74/75/76).
+
+## [2026-06-23] session-update | Issue #97 disable issue Telegram notifications
+- Actor: agent (Symphony unattended, issue #97).
+- Inputs: issue request to disable Telegram notifications for issues; code reads of `main.py`, `agent_runner.py`, `plane_cli.py`, `config.py`, `scheduler/__init__.py`, `notifier.py`; wiki Telegram operations pages.
+- Outputs: issue Telegram opt-in flag `SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS`; default scheduler notifier disabled; agent Telegram credentials withheld unless opted in; `plane_cli` Telegram guarded by the same flag; updated tests; updated `wiki/concepts/symphony-operations.md`, `wiki/sources/runbook-symphony.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md` (C-0015 superseded, C-0306 added), and this log entry.
+- Notes: Systemd failure Telegram alerts (`telegram-alert@%n.service` / `send-telegram-systemd-alert`) remain unchanged. Verification recorded in the issue summary.

@@ -32,10 +32,10 @@ from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
 from notifier import TelegramNotifier
 from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, build_adapter
-from tracker_adapter import TrackerAdapter
 from prompt_renderer import IssueData, render_prompt
 from repo_host import repo_host_for
 from scheduler import _resolve_mode, reconcile_startup, run_loop
+from tracker_adapter import TrackerAdapter
 from tracker_contract import TrackerContract
 
 
@@ -310,11 +310,15 @@ async def async_main() -> None:
         len(config.bindings),
     )
 
-    notifier = TelegramNotifier.from_env()
+    notifier = (
+        TelegramNotifier.from_env()
+        if config.issue_telegram_notifications_enabled
+        else None
+    )
     if notifier:
-        logging.getLogger(__name__).info("telegram_notifications_enabled")
+        logging.getLogger(__name__).info("issue_telegram_notifications_enabled")
     else:
-        logging.getLogger(__name__).info("telegram_notifications_disabled")
+        logging.getLogger(__name__).info("issue_telegram_notifications_disabled")
 
     await run_bindings_loop(config, notifier=notifier)
 

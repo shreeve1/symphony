@@ -77,7 +77,11 @@ def test_comment_subcommand_posts_comment_text_to_env_issue():
     transport = MockTransport()
 
     assert (
-        run(["plane", "comment", "ready", "for", "review"], env=_env(), transport=transport)
+        run(
+            ["plane", "comment", "ready", "for", "review"],
+            env=_env(),
+            transport=transport,
+        )
         == 0
     )
 
@@ -178,14 +182,18 @@ def test_state_commands_reject_positional_issue_argument():
 
 
 def test_runtime_script_has_no_symphony_imports():
-    source = open(Path(__file__).resolve().parent.parent / "plane_cli.py", encoding="utf-8").read()
+    source = open(
+        Path(__file__).resolve().parent.parent / "plane_cli.py", encoding="utf-8"
+    ).read()
 
     assert "import symphony" not in source
     assert "from symphony" not in source
 
 
 def test_file_has_python_shebang():
-    source = (Path(__file__).resolve().parent.parent / "plane_cli.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "plane_cli.py").read_text(
+        encoding="utf-8"
+    )
 
     assert source.startswith("#!/usr/bin/env python3\n")
 
@@ -255,7 +263,9 @@ def test_urllib_transport_sets_plane_api_key_header(monkeypatch):
 
 def test_urllib_transport_maps_http_error(monkeypatch):
     def fake_urlopen(request, timeout):
-        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", Message(), None)
+        raise urllib.error.HTTPError(
+            request.full_url, 403, "Forbidden", Message(), None
+        )
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     config = PlaneCliConfig.from_env(_env())
@@ -298,7 +308,9 @@ def test_state_ids_match_plane_contract_default_contract():
         "blocked": PlaneState.BLOCKED,
         "todo": PlaneState.TODO,
     }
-    expected = {verb: DEFAULT_CONTRACT.state_ids[state] for verb, state in state_key_map.items()}
+    expected = {
+        verb: DEFAULT_CONTRACT.state_ids[state] for verb, state in state_key_map.items()
+    }
     assert STATE_IDS == expected, (
         "plane_cli.STATE_IDS drifted from plane_contract.DEFAULT_CONTRACT. "
         "Re-run scripts/sync_plane_ids.py to regenerate."
@@ -372,7 +384,8 @@ def test_comments_command_bounds_long_historical_comments(capsys):
     transport = MockTransport()
     transport._comments = [
         {
-            "comment_html": "historical summary\n" + "verbose historical output\n" * 300,
+            "comment_html": "historical summary\n"
+            + "verbose historical output\n" * 300,
             "created_at": "2026-05-04T01:00:00Z",
         }
     ]
@@ -387,7 +400,10 @@ def test_comments_command_bounds_long_historical_comments(capsys):
 def test_comments_command_redacts_known_secrets(capsys):
     transport = MockTransport()
     transport._comments = [
-        {"comment_html": "key=fake-plane-key-for-tests", "created_at": "2026-05-04T01:00:00Z"}
+        {
+            "comment_html": "key=fake-plane-key-for-tests",
+            "created_at": "2026-05-04T01:00:00Z",
+        }
     ]
 
     assert run(["plane", "comments"], env=_env(), transport=transport) == 0
@@ -700,7 +716,9 @@ def test_unschedule_command_rejects_target_override():
 def test_schedule_command_fails_fast_when_scheduled_label_missing(monkeypatch):
     """Plan task 4.7: fail fast if generated IDs lack scheduled."""
     monkeypatch.setattr(
-        plane_cli, "LABEL_IDS", {k: v for k, v in plane_cli.LABEL_IDS.items() if k != "scheduled"}
+        plane_cli,
+        "LABEL_IDS",
+        {k: v for k, v in plane_cli.LABEL_IDS.items() if k != "scheduled"},
     )
     transport = MockTransport()
 
@@ -723,7 +741,9 @@ def test_schedule_command_fails_fast_when_scheduled_label_missing(monkeypatch):
 def test_schedule_command_fails_fast_when_todo_state_missing(monkeypatch):
     """Plan task 4.7: fail fast if generated IDs lack todo state."""
     monkeypatch.setattr(
-        plane_cli, "STATE_IDS", {k: v for k, v in plane_cli.STATE_IDS.items() if k != "todo"}
+        plane_cli,
+        "STATE_IDS",
+        {k: v for k, v in plane_cli.STATE_IDS.items() if k != "todo"},
     )
     transport = MockTransport()
 
@@ -745,7 +765,9 @@ def test_schedule_command_fails_fast_when_todo_state_missing(monkeypatch):
 
 def test_unschedule_command_fails_fast_when_scheduled_label_missing(monkeypatch):
     monkeypatch.setattr(
-        plane_cli, "LABEL_IDS", {k: v for k, v in plane_cli.LABEL_IDS.items() if k != "scheduled"}
+        plane_cli,
+        "LABEL_IDS",
+        {k: v for k, v in plane_cli.LABEL_IDS.items() if k != "scheduled"},
     )
     transport = MockTransport()
 
@@ -760,7 +782,9 @@ def test_unschedule_command_fails_fast_when_scheduled_label_missing(monkeypatch)
 
 def test_unschedule_command_fails_fast_when_todo_state_missing(monkeypatch):
     monkeypatch.setattr(
-        plane_cli, "STATE_IDS", {k: v for k, v in plane_cli.STATE_IDS.items() if k != "todo"}
+        plane_cli,
+        "STATE_IDS",
+        {k: v for k, v in plane_cli.STATE_IDS.items() if k != "todo"},
     )
     transport = MockTransport()
 
@@ -799,10 +823,14 @@ def test_schedule_validates_before_any_mutation():
 
 # ── URL helpers ────────────────────────────────────────────────────────────────
 
+
 def test_build_issue_url_returns_frontend_url():
     env = _env()
     url = plane_cli._build_issue_url(env, "issue-123")
-    assert url == "https://plane.example.test/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123/"
+    assert (
+        url
+        == "https://plane.example.test/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-123/"
+    )
 
 
 def test_build_issue_url_strips_api_path_from_base():
@@ -813,12 +841,17 @@ def test_build_issue_url_strips_api_path_from_base():
 
 
 def test_build_issue_url_prefers_frontend_url():
-    env = _env({
-        "SYMPHONY_PLANE_API_URL": "http://127.0.0.1:8000",
-        "SYMPHONY_PLANE_FRONTEND_URL": "http://10.20.20.16:8000",
-    })
+    env = _env(
+        {
+            "SYMPHONY_PLANE_API_URL": "http://127.0.0.1:8000",
+            "SYMPHONY_PLANE_FRONTEND_URL": "http://10.20.20.16:8000",
+        }
+    )
     url = plane_cli._build_issue_url(env, "issue-xyz")
-    assert url == "http://10.20.20.16:8000/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-xyz/"
+    assert (
+        url
+        == "http://10.20.20.16:8000/homelab/projects/cff68c17-bff6-452f-89b3-9b570613cfaa/issues/issue-xyz/"
+    )
 
 
 def test_build_issue_url_returns_empty_when_issue_id_empty():
@@ -835,6 +868,41 @@ def test_build_issue_url_returns_empty_when_project_missing():
     assert plane_cli._build_issue_url(env, "issue-1") == ""
 
 
+def test_review_command_does_not_send_telegram_without_opt_in(monkeypatch):
+    transport = MockTransport()
+    captured = {"called": False}
+
+    def fake_urlopen(request, timeout):
+        captured["called"] = True
+        raise AssertionError("issue Telegram should be opt-in")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    rc = run(
+        ["plane", "review"],
+        env=_env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"}),
+        transport=transport,
+    )
+
+    assert rc == 0
+    assert captured["called"] is False
+    assert transport.calls[-1][2] == {"state": STATE_IDS["review"]}
+
+
+def test_send_telegram_disabled_by_default(monkeypatch):
+    captured = {"called": False}
+
+    def fake_urlopen(request, timeout):
+        captured["called"] = True
+        raise AssertionError("issue Telegram should be opt-in")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    plane_cli._send_telegram(env, "review")
+
+    assert captured["called"] is False
+
+
 def test_send_telegram_for_review_includes_issue_url(monkeypatch):
     import json as _json
 
@@ -844,14 +912,25 @@ def test_send_telegram_for_review_includes_issue_url(monkeypatch):
         captured["data"] = _json.loads(request.data.decode())
 
         class FakeResp:
-            def read(self): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         return FakeResp()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    env = _env(
+        {
+            "TELEGRAM_BOT_TOKEN": "tok",
+            "TELEGRAM_CHAT_ID": "chat",
+            "SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS": "1",
+        }
+    )
     plane_cli._send_telegram(env, "review")
 
     text = captured["data"]["text"]
@@ -870,14 +949,25 @@ def test_send_telegram_for_blocked_includes_issue_url(monkeypatch):
         captured["data"] = _json.loads(request.data.decode())
 
         class FakeResp:
-            def read(self): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         return FakeResp()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    env = _env(
+        {
+            "TELEGRAM_BOT_TOKEN": "tok",
+            "TELEGRAM_CHAT_ID": "chat",
+            "SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS": "1",
+        }
+    )
     plane_cli._send_telegram(env, "blocked")
 
     text = captured["data"]["text"]
@@ -895,18 +985,26 @@ def test_send_telegram_for_review_includes_dashboard_url_when_set(monkeypatch):
         captured["data"] = _json.loads(request.data.decode())
 
         class FakeResp:
-            def read(self): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         return FakeResp()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    env = _env({
-        "TELEGRAM_BOT_TOKEN": "tok",
-        "TELEGRAM_CHAT_ID": "chat",
-        "PLANE_DASHBOARD_URL": "http://plane.example.test/dash/",
-    })
+    env = _env(
+        {
+            "TELEGRAM_BOT_TOKEN": "tok",
+            "TELEGRAM_CHAT_ID": "chat",
+            "PLANE_DASHBOARD_URL": "http://plane.example.test/dash/",
+            "SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS": "1",
+        }
+    )
     plane_cli._send_telegram(env, "review")
 
     text = captured["data"]["text"]
@@ -923,14 +1021,25 @@ def test_send_telegram_omits_dashboard_when_not_set(monkeypatch):
         captured["data"] = _json.loads(request.data.decode())
 
         class FakeResp:
-            def read(self): pass
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def read(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         return FakeResp()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    env = _env({"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"})
+    env = _env(
+        {
+            "TELEGRAM_BOT_TOKEN": "tok",
+            "TELEGRAM_CHAT_ID": "chat",
+            "SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS": "1",
+        }
+    )
     plane_cli._send_telegram(env, "review")
 
     text = captured["data"]["text"]

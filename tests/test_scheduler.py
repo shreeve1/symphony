@@ -5139,3 +5139,94 @@ async def test_handle_archived_terminal_skips_worktree_for_remote(
     assert handled is True
     # worktree_active still cleared despite skipping local FS ops.
     assert adapter.column_updates == [("issue-1", {"worktree_active": False})]
+
+
+@pytest.mark.asyncio
+async def test_verified_done_closes_issue_on_auto_close_binding(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    binding = replace(config.bindings[0], auto_close_on_verified=True)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    stdout = (
+        "SYMPHONY_RESULT: done\n"
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        "Re-checked reclaimable: now 2.1GB, under the 5GB threshold.\n"
+        "SYMPHONY_SUMMARY_END"
+    )
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        binding=binding,
+    )
+
+    assert result.reason == "agent-verified-close"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+    assert any(
+        "Symphony closed:" in c["comment_html"]
+        for c in transport.comments["issue-1"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_verdict_still_parks_in_review_on_auto_close_binding(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    binding = replace(config.bindings[0], auto_close_on_verified=True)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    stdout = (
+        "SYMPHONY_RESULT: review\n"
+        "SYMPHONY_SUMMARY_BEGIN\nCould not re-verify; needs a human.\nSYMPHONY_SUMMARY_END"
+    )
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        binding=binding,
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_done_verdict_parks_in_review_without_auto_close_flag(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    binding = replace(config.bindings[0], auto_close_on_verified=False)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    stdout = "SYMPHONY_RESULT: done\nSYMPHONY_SUMMARY_BEGIN\nDone.\nSYMPHONY_SUMMARY_END"
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        binding=binding,
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )

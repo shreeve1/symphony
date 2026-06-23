@@ -7,10 +7,9 @@ from typing import Any, cast
 
 import pytest
 
+import main
 from agent_runner import AgentRunnerError, RemoteAgentAdapter, RoutingAgentAdapter
 from plane_poller import CandidateIssue
-
-import main
 
 
 class StopLoop(Exception):
@@ -60,11 +59,39 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     assert captured["issue"].schedule_late == "false"
 
 
-def test_async_main_passes_configured_bindings_loop(monkeypatch):
+def test_async_main_disables_issue_telegram_notifications_by_default(monkeypatch):
     calls = {}
 
     class FakeConfig:
         bindings = ("binding",)
+        issue_telegram_notifications_enabled = False
+
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+    async def fake_run_bindings_loop(config, *, notifier=None):
+        calls["run_bindings_loop"] = (config, notifier)
+
+    def fail_from_env():
+        raise AssertionError("Telegram notifier should not be loaded by default")
+
+    monkeypatch.setattr(main, "SymphonyConfig", FakeConfig)
+    monkeypatch.setattr(main.TelegramNotifier, "from_env", staticmethod(fail_from_env))
+    monkeypatch.setattr(main, "run_bindings_loop", fake_run_bindings_loop)
+
+    asyncio.run(main.async_main())
+
+    assert isinstance(calls["run_bindings_loop"][0], FakeConfig)
+    assert calls["run_bindings_loop"][1] is None
+
+
+def test_async_main_passes_opted_in_issue_telegram_notifier(monkeypatch):
+    calls = {}
+
+    class FakeConfig:
+        bindings = ("binding",)
+        issue_telegram_notifications_enabled = True
 
         @classmethod
         def from_env(cls):

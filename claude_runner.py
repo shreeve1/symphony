@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner import AgentResult, AgentRunnerError, CompletedLike
+from claude_host import ClaudeHost, LocalClaudeHost
 from config import SymphonyConfig
 from proc_runtime import (
     DEFAULT_RUNTIME_DIR,
@@ -756,13 +757,14 @@ def run_claude_agent(
     started = clock()
     nonce = (nonce_factory or (lambda: uuid.uuid4().hex[:12]))()
     binding_name = _issue_binding_name(config, issue)
+    host: ClaudeHost = LocalClaudeHost(mkdtemp)
     if persist:
         socket_path = persistent_socket_path(binding_name, issue.id)
         namespace = socket_path.stem
-        temp_dir = Path(mkdtemp(prefix=f"{namespace}-{nonce}-"))
+        temp_dir = host.mkdtemp(prefix=f"{namespace}-{nonce}-")
     else:
         namespace = f"symphony-claude-{issue.id}-{nonce}"
-        temp_dir = Path(mkdtemp(prefix=f"{namespace}-"))
+        temp_dir = host.mkdtemp(prefix=f"{namespace}-")
         socket_path = Path("/tmp") / f"{namespace}.sock"
     session_name = namespace
     prompt_file = temp_dir / "prompt.txt"
@@ -797,7 +799,7 @@ def run_claude_agent(
         # (incremental vs full re-feed) upstream, not this launch flag.
         session_arg = (
             "--resume"
-            if (resume_requested or transcript_file.exists())
+            if (resume_requested or host.exists(transcript_file))
             else "--session-id"
         )
         LOGGER.info(
@@ -808,9 +810,9 @@ def run_claude_agent(
             session_id,
             str(resume_requested).lower(),
         )
-        prompt_file.write_text(
+        host.write_text(
+            prompt_file,
             _wrap_prompt(rendered_prompt, result_file, done_file, issue),
-            encoding="utf-8",
         )
         reattached = False
         if persist and _persistent_session_live(
@@ -930,6 +932,7 @@ def run_claude_agent(
             session_name,
             transcript_file,
             prompt_file,
+            host=host,
             run_id=run_id,
             source_env=source_env,
             clock=clock,
@@ -963,6 +966,7 @@ def _poll_claude_until_done(
     transcript_file: Path,
     prompt_file: Path,
     *,
+    host: ClaudeHost,
     run_id: str,
     source_env: Mapping[str, str],
     clock: Callable[[], float],
@@ -988,7 +992,7 @@ def _poll_claude_until_done(
     active_done = done_file
 
     while clock() <= deadline:
-        if active_done.exists():
+        if host.exists(active_done):
             records, steer_offset = _read_steer_records(
                 run_id,
                 steer_offset,
@@ -1012,7 +1016,7 @@ def _poll_claude_until_done(
                 last_mtime = None
                 continue
 
-            stdout = _read_result_with_grace(active_result, sleep=sleep)
+            stdout = _read_result_with_grace(active_result, host=host, sleep=sleep)
             if not stdout.strip():
                 duration_ms = int((clock() - started) * 1000)
                 pane = _capture_pane_tail(socket_path, session_name, run_func=run_func)
@@ -1340,6 +1344,13 @@ def _wait_until_ready(
         pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
         if _ready_pattern_seen(pane):
             return True
+        if _hit_bypass_consent_modal(pane):
+            # First-run consent modal (a host that has never accepted bypass mode)
+            # defaults to "1. No, exit"; Down moves to "2. Yes, I accept". The
+            # blanket-Enter modal logic elsewhere would pick the wrong option here.
+            _send_down(run_func, socket_path, session_name)
+            sleep(0.3)
+            _send_enter(run_func, socket_path, session_name)
         sleep(0.5)
     return False
 
@@ -1347,6 +1358,16 @@ def _wait_until_ready(
 def _ready_pattern_seen(text: str) -> bool:
     lowered = text.lower()
     return "bypass permissions on" in lowered or "shift+tab to cycle" in lowered
+
+
+def _hit_bypass_consent_modal(text: str) -> bool:
+    """True on the first-run "Bypass Permissions mode" consent modal.
+
+    Distinct from a normal permission modal: it precedes readiness, and its
+    default selection is the safe "No, exit", so a blanket Enter would abort.
+    """
+    lowered = text.lower()
+    return "bypass permissions mode" in lowered and "yes, i accept" in lowered
 
 
 def _tmux(
@@ -1519,9 +1540,20 @@ def _send_escape(
         _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Escape")
 
 
+def _send_down(
+    run_func: Callable[..., CompletedLike],
+    socket_path: Path,
+    session_name: str,
+) -> None:
+    """Send Down to move a modal's selection off its default option."""
+    with suppress(OSError):
+        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Down")
+
+
 def _read_result_with_grace(
     result_file: Path,
     *,
+    host: ClaudeHost,
     sleep: Callable[[float], object],
     grace_s: float = RESULT_GRACE_SECONDS,
     step_s: float = RESULT_GRACE_STEP_SECONDS,
@@ -1535,12 +1567,11 @@ def _read_result_with_grace(
     """
     steps = max(1, int(grace_s / step_s))
     for _ in range(steps):
-        if result_file.exists():
-            text = result_file.read_text(encoding="utf-8")
-            if text.strip():
-                return text
+        text = host.read_text(result_file)
+        if text.strip():
+            return text
         sleep(step_s)
-    return result_file.read_text(encoding="utf-8") if result_file.exists() else ""
+    return host.read_text(result_file)
 
 
 def _session_file_mtime(path: Path) -> float | None:

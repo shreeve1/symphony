@@ -83,4 +83,4 @@ The final `<issue>` block remains last and escapes `name` + `description` [sourc
 - [homelab WORKFLOW.md](../entities/workflow-homelab.md), [trading WORKFLOW.md](../entities/workflow-trading.md)
 - [Scheduler loop — verdict markers](scheduler-loop.md)
 
-> **2026-06-12 update:** for Podium issues with a `preferred_skill`, the renderer now prepends a skill-invocation directive to the prompt, and `WorkflowConfig.run_timeout_ms` defaults to 3600000. See [../analyses/podium-issue-dispatch-contract.md](../analyses/podium-issue-dispatch-contract.md).
+> **2026-06-12 update; timeout amended 2026-06-23:** for Podium issues with a `preferred_skill`, the renderer now prepends a skill-invocation directive to the prompt. Runtime timeout is owned by `SymphonyConfig`; default is now `7_200_000` ms. See [../analyses/podium-issue-dispatch-contract.md](../analyses/podium-issue-dispatch-contract.md).

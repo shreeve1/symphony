@@ -3,7 +3,7 @@ title: "#046 Unify agent output contract and clean the comment stream"
 type: analysis
 status: promoted
 created: 2026-06-13
-updated: 2026-06-21
+updated: 2026-06-23
 sources:
   - .kanban/issues/046-unified-output-contract.md
   - prompt_renderer.py
@@ -14,6 +14,7 @@ sources:
   - tracker_podium.py
   - claude_runner.py
   - tests/test_scheduler.py
+  - tests/test_schedule.py
   - tests/test_prompt_renderer.py
   - tests/test_tracker_podium.py
   - tests/test_engine_against_podium.py
@@ -24,6 +25,7 @@ sources:
   - wiki/raw/sessions/2026-06-19-approval-gate-report-truncation-marker-drop.md
   - .kanban/issues/052-question-park.md
   - .kanban/issues/094-symphony-schedule-marker.md
+  - runs/242.log
 confidence: high
 tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflow, scheduling]
 ---
@@ -57,6 +59,12 @@ The fix preserves markerless approval-needed blocking but makes explicit contrac
 The same false positive recurred on issues #53/#55/#57 (run 120) even on a service that already had the precedence fix. Distinct root cause: `_classify_terminal` parsed the verdict marker and gates from the **2 KB tail-truncated** `_format_report` output (`_parse_result_marker(stdout)`, `_hit_*_gate(stdout, ...)`). `_format_report` → `_sanitize_report(..., max_bytes=REPORT_MAX_BYTES=2048)` keeps only the trailing 2048 bytes, so an agent summary larger than ~2 KB pushed the head `SYMPHONY_RESULT` marker out of the surviving tail → `verdict=None` while approval-policy prose in the tail re-tripped `_hit_approval_gate` → spurious `approval-gate` block. The precedence guard could not help because the marker was dropped before parsing; `_extract_summary`/`_extract_question` already read the raw streams, making this an inconsistency [source: scheduler/sanitize.py; source: scheduler/__init__.py; source: runs/120.log].
 
 The fix classifies verdict + permission/approval gates from the raw `result.stdout`/`result.stderr` streams (`class_stdout`/`class_stderr`, gated by `parse_stderr`), mirroring `_extract_summary`; the truncated `_format_report` output is retained only for bounded human-facing comments. `_parse_result_marker`, `_hit_permission_gate`, and `_hit_approval_gate` strip ANSI internally so feeding raw streams preserves the prior sanitized-input matching. Regression test `test_verdict_marker_honored_when_summary_exceeds_report_truncation` (head marker + >`REPORT_MAX_BYTES` summary + tail approval prose) fails pre-fix (`approval-gate`) and passes post-fix (`agent-marker-review`). Deployed live (commit `2cf2eb2`), reproduced on smoke Issue 58 / Run 122 (succeeded, verdict=done) with an offline `runs/122.log` probe confirming the old truncated-parse path would have blocked, and the three stuck issues 53/55/57 were requeued (`PATCH state=todo`) and re-ran clean to `in_review` [source: scheduler/__init__.py; source: scheduler/markers.py; source: tests/test_scheduler.py; source: wiki/raw/sessions/2026-06-19-approval-gate-report-truncation-marker-drop.md].
+
+### Follow-on: END marker glued to trailing text (2026-06-23, Run #242)
+
+Run #242 had a valid multi-line summary in `runs/242.log`, but the closing marker appeared as `SYMPHONY_SUMMARY_ENDAcknowledged — ...` because additional prose was appended on the same line. The old `_SUMMARY_BLOCK_RE` required `SYMPHONY_SUMMARY_END` to terminate the line, so `_parse_summary_block` returned `None`; the scheduler therefore stored `run.summary=NULL` and posted only `**Symphony completed:** Agent finished without a summary.` to Issue #97 despite the summary being present in the log [source: runs/242.log; source: scheduler/markers.py].
+
+Commit `0ac7c5e` makes `_SUMMARY_BLOCK_RE` treat the `SYMPHONY_SUMMARY_END` token as closing the block even when non-newline text trails it, while still capturing only the block body. Regression `test_summary_block_tolerates_text_appended_to_end_marker_line` mirrors the Run #242 shape and asserts the trailing text is excluded [source: scheduler/markers.py; source: tests/test_schedule.py]. The live `podium.db` row for Run #242 / Issue #97 was backfilled from `runs/242.log` after the fixed parser extracted the existing summary.
 
 ## Verbatim posting, no header wrapper
 

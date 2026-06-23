@@ -10,6 +10,7 @@ export interface Binding {
 	binding_type: "infra" | "coding";
 	pi_mode: "one-shot" | "rpc";
 	claude_persist?: boolean;
+	approval_enabled: boolean;
 	is_remote: boolean;
 	repo_name: string | null;
 }
