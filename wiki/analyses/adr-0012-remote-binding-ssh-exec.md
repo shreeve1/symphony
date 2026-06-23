@@ -3,7 +3,7 @@ title: ADR-0012 — Remote Bindings dispatch over SSH-exec
 type: analysis
 status: promoted
 created: 2026-06-15
-updated: 2026-06-19
+updated: 2026-06-23
 sources:
   - docs/adr/0012-remote-binding-ssh-exec.md
   - config.py (RemotePolicy, ProjectBinding.remote, _remote_from_mapping, remote invariants)
@@ -15,6 +15,9 @@ sources:
   - scheduler.py (code_sha seam, worktree/compaction/gate guards)
   - web/api/main.py (worktree force-off + _is_remote_binding guards + compaction 422)
   - tests/test_remote_agent.py, tests/test_repo_host.py, tests/test_ssh_support.py
+  - claude_host.py (ClaudeHost, LocalClaudeHost, SshClaudeHost seam)
+  - tests/test_claude_host.py (ClaudeHost seam coverage)
+  - .kanban/issues/099-claudehost-seam-completion.md
   - web/api/schema.py (binding table)
   - plans/remote-binding-dispatch-pipeline.md
   - web/api/main.py (list_bindings is_remote/repo_name enrichment, Issue 34)
@@ -112,3 +115,9 @@ A `/grill-me` walkthrough of the dispatch path, treating remote bindings as a **
 - **Native Session Resume cannot engage for remote — v2 follow-up, C-0252.** `session_continuity` does local-FS `.exists()`/`glob()` against `~/.pi/agent/sessions/`, but the remote transcript lives on the remote host (and `_dispatch_cwd` hands remote the local `homelab_repo_path`), so resume always degrades to `refeed` → cold re-dispatch. Resume-over-SSH is tracked, sibling of the deferred remote Session Tail.
 - **Secrets are the remote host's job — contract reaffirmed, C-0254.** `_remote_exports` forwards only `SYMPHONY_ISSUE_ID`/`TERM`/`NO_COLOR` (plus Plane callback for Plane). Remote agents own their env (SSH profile / repo `.env`), per ADR-0011. Not a gap.
 - **Still deferred (v2):** remote orphan reaping, pre-dispatch reachability gate, remote worktrees, remote Session Tail over SSH, styled host chip.
+
+## Remote Claude v2 progress 2026-06-23 — Issue #99 ClaudeHost seam completion
+
+Issue #99 completed the additive ClaudeHost surface needed before the runner can become host-aware: the `ClaudeHost` Protocol and both concrete hosts now expose `tmux_argv`, `is_remote`, and `rmtree` [source: claude_host.py] [source: .kanban/issues/099-claudehost-seam-completion.md]. Local behavior is preserved by `LocalClaudeHost.tmux_argv(...) == ["tmux", "-S", str(socket_path), *args]`, `LocalClaudeHost.is_remote is False`, and `shutil.rmtree(..., ignore_errors=True)` cleanup; SSH behavior marks `is_remote=True` and wraps cleanup as remote `rm -rf <quoted path>` [source: claude_host.py] [source: tests/test_claude_host.py].
+
+This slice intentionally did **not** rewire `claude_runner.py` call sites; next remote-Claude work still needs runner mediation through `host.tmux_argv`, remote launch `-c`/env handling, remote liveness, config/routing, and an actual-runner revalidation against a disposable remote checkout [source: .kanban/progress.md] [source: docs/adr/0012-remote-binding-ssh-exec.md]. Actionable review for #99 re-read the base-to-HEAD diff, checked touched-file LSP diagnostics, reran the issue verification command (`.venv/bin/python -m pytest tests/test_claude_host.py tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_host.py`), and added `action_reviewed: 2026-06-23` [source: .kanban/issues/099-claudehost-seam-completion.md] [source: .kanban/progress.md].
