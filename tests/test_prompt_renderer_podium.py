@@ -216,6 +216,51 @@ def test_resume_prompt_contains_wrapper_and_newest_operator_reply_only(
     assert "POD-10" not in prompt
 
 
+def test_resume_prompt_keeps_schedule_context_for_infra(tmp_path: Path) -> None:
+    """ADR-0018 C-0300: a scheduled ticket released into the window can dispatch
+    as a resume; the '## Schedule Context' block (the apply-now authorization)
+    must survive so the agent applies instead of blocking."""
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-20",
+            name="aidev docker prune",
+            comments_md=_RESUME_CX,
+            schedule_not_before="2026-06-22T07:00:00+00:00",
+            schedule_reason="image prune waits for maintenance window",
+            schedule_source="Symphony-Schedule comment",
+        ),
+        path=work,
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "## Schedule Context" in prompt
+    assert "image prune waits for maintenance window" in prompt
+    # Still the mechanical resume wrapper, not the full preamble/issue body.
+    assert "## Symphony output contract" in prompt
+    assert "Roll back to staging first" in prompt
+    assert "<issue>" not in prompt
+
+
+def test_resume_prompt_omits_schedule_context_for_coding(tmp_path: Path) -> None:
+    """Coding bindings never get a schedule-context block, resume or not."""
+    work = _default_workflow(tmp_path)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-21",
+            comments_md=_RESUME_CX,
+            schedule_not_before="2026-06-22T07:00:00+00:00",
+        ),
+        path=work,
+        tracker_kind="podium",
+        binding_type="coding",
+        resume=True,
+    )
+
+    assert "## Schedule Context" not in prompt
+
+
 def test_resume_prompt_omits_older_operator_replies(tmp_path: Path) -> None:
     work = _default_workflow(tmp_path)
     prompt = render_prompt(

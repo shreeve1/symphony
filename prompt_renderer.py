@@ -422,6 +422,14 @@ def render_prompt(
         )
 
         parts = [OUTPUT_CONTRACT]
+        # A scheduled ticket released into the maintenance window can dispatch as
+        # a resume. Without this, the "## Schedule Context" block is dropped and
+        # the agent loses its "you're in the approved window, apply now" signal,
+        # falling back to blocking medium-risk work (ADR-0018 C-0300).
+        if binding_type != "coding":
+            schedule_context = _render_schedule_context(issue)
+            if schedule_context:
+                parts.append(schedule_context)
         if delta_block:
             parts.append(delta_block)
         prompt = "\n\n".join(parts)

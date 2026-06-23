@@ -52,5 +52,5 @@ The spool records assistant deltas, not the native session file's full tool-call
 
 ## Follow-ups
 
-- Remote-tail feature is working-tree only — **not committed, not deployed** (deploy = restart `symphony-host` + journal verify), not yet live-verified on a real remote run.
+- Remote-tail feature **committed (`0030694`) + spool size-cap (`5839869`, `TAIL_SPOOL_MAX_BYTES`=1 MiB, tmpfs safety) + deployed 2026-06-21** by restarting `symphony-host` (writer, `code_sha=5839869`, 5 bindings, clean) **and** `podium-api` (reader). `/run/symphony` shared channel verified (both run as `james`). **Not yet live-verified on a real remote run** — self-verifies on the next n8n/ai-web-chat dispatch.
 - Build the tracker port + Halo adapter (Thread A).
