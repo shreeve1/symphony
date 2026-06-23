@@ -1,7 +1,7 @@
 ---
 id: 100
 title: Route runner tmux funnel + session cleanup through the host
-status: in-progress
+status: review
 blocked_by: [99]
 parent: 96
 priority: 0
