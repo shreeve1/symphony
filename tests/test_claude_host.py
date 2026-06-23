@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from claude_host import LocalClaudeHost, SshClaudeHost
+from claude_host import ClaudeHost, LocalClaudeHost, SshClaudeHost
 from config import RemotePolicy
 
 
@@ -37,6 +37,34 @@ def test_mkdtemp_uses_injected_func_and_prefix() -> None:
     result = LocalClaudeHost(fake_mkdtemp).mkdtemp(prefix="sym-")
     assert result == Path("/tmp/fake-dir")
     assert calls == ["sym-"]
+
+
+def test_protocol_declares_complete_claude_host_seam() -> None:
+    assert {"tmux_argv", "is_remote", "rmtree"} <= set(ClaudeHost.__dict__)
+
+
+def test_local_host_tmux_argv_and_is_remote() -> None:
+    host = LocalClaudeHost()
+    assert host.tmux_argv(Path("/tmp/s.sock"), "new-session", "-d") == [
+        "tmux",
+        "-S",
+        "/tmp/s.sock",
+        "new-session",
+        "-d",
+    ]
+    assert host.is_remote is False
+
+
+def test_local_host_rmtree_ignores_missing_and_removes_tree(tmp_path: Path) -> None:
+    target = tmp_path / "scratch"
+    (target / "nested").mkdir(parents=True)
+    (target / "nested" / "file.txt").write_text("x", encoding="utf-8")
+
+    host = LocalClaudeHost()
+    host.rmtree(target)
+    host.rmtree(target)
+
+    assert not target.exists()
 
 
 # --- SshClaudeHost (Step B): remote transport over a pooled SSH ControlMaster ---
@@ -113,6 +141,15 @@ def test_ssh_host_mkdtemp_returns_remote_path() -> None:
 def test_ssh_host_tmux_argv_runs_tmux_on_remote() -> None:
     host = SshClaudeHost(REMOTE, run_func=_recorder()[0])
     argv = host.tmux_argv(Path("/tmp/s.sock"), "capture-pane", "-pt", "sess")
+    assert host.is_remote is True
     assert argv[0] == "ssh" and "symphony@n8n" in argv
     tail = argv[argv.index("symphony@n8n") + 1 :]
     assert tail == ["tmux", "-S", "/tmp/s.sock", "capture-pane", "-pt", "sess"]
+
+
+def test_ssh_host_rmtree_runs_remote_rm_rf() -> None:
+    run_func, calls = _recorder()
+    SshClaudeHost(REMOTE, run_func=run_func).rmtree(Path("/tmp/has space"))
+    call = calls[0]
+    assert call["check"] is False
+    assert call["argv"][-1] == "rm -rf '/tmp/has space'"

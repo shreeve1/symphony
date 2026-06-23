@@ -1,11 +1,13 @@
 ---
 id: 99
 title: Complete the ClaudeHost seam (tmux_argv / is_remote / rmtree)
-status: pending
+status: in-progress
 blocked_by: []
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: ralph
 ---
 
 ## What to build

@@ -19,10 +19,12 @@ calibrated against a real host (Step C). tmux execution stays on the injected
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 import ssh_support
 from config import RemotePolicy
@@ -47,6 +49,19 @@ class ClaudeHost(Protocol):
         """Create a temp dir for the prompt/result/done files and return it."""
         ...
 
+    def tmux_argv(self, socket_path: Path, *args: str) -> list[str]:
+        """Return argv for a tmux command against ``socket_path`` on this host."""
+        ...
+
+    @property
+    def is_remote(self) -> bool:
+        """True when Claude dispatch runs on a remote host."""
+        ...
+
+    def rmtree(self, path: Path) -> None:
+        """Remove a dispatch temp dir, ignoring missing paths."""
+        ...
+
 
 class LocalClaudeHost:
     """Run Claude dispatch I/O on the scheduler host — today's behavior.
@@ -69,6 +84,16 @@ class LocalClaudeHost:
 
     def mkdtemp(self, *, prefix: str) -> Path:
         return Path(self._mkdtemp(prefix=prefix))
+
+    def tmux_argv(self, socket_path: Path, *args: str) -> list[str]:
+        return ["tmux", "-S", str(socket_path), *args]
+
+    @property
+    def is_remote(self) -> bool:
+        return False
+
+    def rmtree(self, path: Path) -> None:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 class SshClaudeHost:
@@ -102,6 +127,10 @@ class SshClaudeHost:
         self._control_path = control_path or (
             Path(tempfile.gettempdir()) / f"symphony-claude-{remote.host}.ctl"
         )
+
+    @property
+    def is_remote(self) -> bool:
+        return True
 
     def _ssh_base(self) -> list[str]:
         # ControlMaster opts must precede the user@host that ssh_base_args puts
@@ -175,3 +204,12 @@ class SshClaudeHost:
         # claude_runner and validates quoting/timing live against n8n before the
         # remote path is trusted unattended.
         return self._ssh_base() + ["tmux", "-S", str(socket_path), *args]
+
+    def rmtree(self, path: Path) -> None:
+        self._run(
+            self._ssh(f"rm -rf {shlex.quote(str(path))}"),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=self._timeout_s,
+        )
