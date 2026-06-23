@@ -1,1 +1,2 @@
 How does Symphony disambiguate duplicate model ids in models.yml? ||| provider/id
+Why can models.yml changes block all dispatch until restart? ||| duplicate-id validator

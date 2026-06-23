@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-23] session-update | Issue 112 duplicate model-id block
+
+- Actor: agent (Pi), via `diagnose` workflow + `symphony-restart` restart ritual.
+- Inputs: operator report for symphony Issue 112; `podium.db` issue/run rows; `journalctl -u symphony-host.service` around 16:58, 21:49, and 21:59 UTC; `model_catalog.py`; `models.yml`; `wiki/analyses/podium-issue-dispatch-contract.md`.
+- Outputs: restarted `symphony-host.service` from stale `code_sha=ed887e5` to `code_sha=a2e16c7`; requeued Issue 112 through `web.api.main.patch_issue(..., {"state":"todo"})`; updated `wiki/analyses/podium-issue-dispatch-contract.md`; updated `wiki/CLAIMS.md` (C-0311); updated `wiki/eval/model-catalog.eval`; this log entry.
+- Notes: Root cause was deployment ordering, not bad Issue data: live scheduler loaded old global-unique-id validator but re-read the new duplicate-id `models.yml` on dispatch, producing `Dispatch blocked: model resolution failed: duplicate model id: claude-opus-4-8`. After restart, startup probes/reconcile passed, Issue 112 requeued, and Run 323 claimed/dispatched with Claude `claude-opus-4-8`. No env file or secret read; no direct Podium SQLite mutation.
+
 ## [2026-06-23] session-update | Pi CLIProxy model catalog update
 
 - Actor: agent (Pi), via `symphony-models` skill.
