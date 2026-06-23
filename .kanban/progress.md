@@ -28,3 +28,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Remote Claude runs skip local temp-dir mkdir and pidfile registration; host cleanup owns remote temp/socket removal.
 **Notes for next iteration:** #102 can build remote modal/session/steer behavior on this launch path; remote native resume is still deferred.
 **Actionable review:** Fresh reviewer inspected `git diff 57871fe09944748ca240de99d55e2a542af4106b HEAD`, read changed files, reran the issue verification command, and returned `RALPH_REVIEW: PASS`.
+
+## #102 Remote modal handling, fresh session-id, disabled steering — 2026-06-23
+
+**What changed:** Remote Claude runs now handle permission/question modals on every poll, always launch with a fresh `--session-id`, and ignore live steering records.
+**Files:** `claude_runner.py`, `tests/test_claude_runner.py`, `.kanban/issues/102-remote-modal-continuity-steering.md`
+**Decisions:** Remote Claude remains cold-start/no-steer for this slice; local idle nudging remains transcript-mtime gated.
+**Conventions established:** Remote prompt updates for modal replies, steer turns, and nudges go through `ClaudeHost.write_text` before tmux `load-buffer` reads the host-local prompt path.
+**Notes for next iteration:** #103 can now relax scheduler/config/routing gates for remote+claude; native remote resume and live steering remain deferred.
+**Actionable review:** Fresh reviewer inspected `git diff 2c085d9af2c160022d2307aff12efe51bd840391 HEAD`, read changed files, reran the issue verification command, and returned `RALPH_REVIEW: PASS`.
