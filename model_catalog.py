@@ -32,7 +32,7 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
     if not isinstance(models, list):
         raise ValueError("models must be a list")
 
-    seen: set[str] = set()
+    seen: set[tuple[str, str, str]] = set()
     defaults_by_agent: dict[str, str] = {}
     result: list[dict[str, Any]] = []
     for index, item in enumerate(models):
@@ -42,8 +42,6 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
         agent = item.get("agent")
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError(f"models[{index}].id is required")
-        if model_id in seen:
-            raise ValueError(f"duplicate model id: {model_id}")
         if agent not in KNOWN_AGENTS:
             raise ValueError(f"models[{index}].agent must be one of {KNOWN_AGENTS}")
 
@@ -56,6 +54,9 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
                 entry[key] = value
         if agent == "pi" and not entry.get("provider"):
             raise ValueError(f"models[{index}].provider is required for pi models")
+        identity = (str(agent), str(entry.get("provider", "")), model_id)
+        if identity in seen:
+            raise ValueError(f"duplicate model entry: {model_id}")
         efforts = item.get("efforts")
         if efforts is not None:
             if not isinstance(efforts, list) or not efforts:
@@ -82,7 +83,7 @@ def validate_models(data: Any) -> list[dict[str, Any]]:
                     )
                 defaults_by_agent[str(agent)] = model_id
         result.append(entry)
-        seen.add(model_id)
+        seen.add(identity)
     return result
 
 
@@ -98,14 +99,33 @@ def resolve_model(
     """Resolve an issue's preferred model (or the catalog default) to an entry.
 
     Raises ModelResolutionError for models absent from the catalog — dispatch
-    must fail loudly instead of silently running a different model.
+    must fail loudly instead of silently running a different model. When a
+    provider exposes the same id as another agent/provider, `preferred_model`
+    may be either `id` (if unique for the resolved agent) or `provider/id`.
     """
     if preferred_model:
-        for entry in models:
-            if entry["id"] == preferred_model:
-                return entry
+        matches = [entry for entry in models if entry["id"] == preferred_model]
+        if not matches:
+            wanted_provider, _, wanted_id = preferred_model.partition("/")
+            if wanted_id:
+                matches = [
+                    entry
+                    for entry in models
+                    if entry["id"] == wanted_id
+                    and entry.get("provider") == wanted_provider
+                ]
+        agent_matches = [entry for entry in matches if entry["agent"] == agent]
+        if len(agent_matches) == 1:
+            return agent_matches[0]
+        if len(agent_matches) > 1:
+            raise ModelResolutionError(
+                f"model {preferred_model!r} is ambiguous for agent `{agent}`; "
+                "use provider/id"
+            )
+        if len(matches) == 1:
+            return matches[0]
         raise ModelResolutionError(
-            f"model {preferred_model!r} is not in models.yml; "
+            f"model {preferred_model!r} is not in models.yml for agent `{agent}`; "
             "add it to the catalog or clear preferred_model"
         )
     for entry in models:

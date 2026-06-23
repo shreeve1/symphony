@@ -100,10 +100,10 @@ def test_symphony_models_edit_round_trip_uses_shared_validator(tmp_path: Path) -
             {
                 "models": [
                     {"id": "duplicate", "agent": "claude"},
-                    {"id": "duplicate", "agent": "pi"},
+                    {"id": "duplicate", "agent": "claude"},
                 ]
             },
-            "duplicate model id",
+            "duplicate model entry",
         ),
     ],
 )

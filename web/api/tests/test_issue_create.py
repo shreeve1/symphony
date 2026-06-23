@@ -4,6 +4,7 @@ import os
 import subprocess
 from collections.abc import Iterator
 from importlib import import_module
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -256,7 +257,7 @@ def test_models_validator_rejects_invalid_catalogs() -> None:
         main._validate_models({"models": [{"agent": "claude"}]})
     with pytest.raises(ValueError, match="agent must be one of"):
         main._validate_models({"models": [{"id": "bad", "agent": "bad"}]})
-    with pytest.raises(ValueError, match="duplicate model id"):
+    with pytest.raises(ValueError, match="duplicate model entry"):
         main._validate_models(
             {
                 "models": [
@@ -314,8 +315,6 @@ def test_create_coerces_worktree_active_off_for_remote_binding(
     # Remote bindings (ADR-0012) defer worktrees: worktree_active is forced
     # False at create even when the client asks for it.
     from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
-
-    from pathlib import Path
 
     with main.connect(Path(os.environ["PODIUM_DB_PATH"])) as connection:
         connection.execute(

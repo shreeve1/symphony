@@ -28,6 +28,19 @@ def test_validate_models_allows_one_default_per_agent() -> None:
     ]
 
 
+def test_validate_models_allows_same_id_for_different_agent_or_provider() -> None:
+    models = validate_models(
+        _catalog(
+            {"id": "claude-opus-4-8", "agent": "claude"},
+            {"id": "claude-opus-4-8", "agent": "pi", "provider": "cliproxy"},
+            {"id": "shared", "agent": "pi", "provider": "a"},
+            {"id": "shared", "agent": "pi", "provider": "b"},
+        )
+    )
+
+    assert len(models) == 4
+
+
 @pytest.mark.parametrize(
     "agent, first, second",
     [("pi", "gpt-a", "gpt-b"), ("claude", "claude-a", "claude-b")],
@@ -141,3 +154,38 @@ def test_resolve_model_explicit_preference_ignores_agent_default() -> None:
     )
     with pytest.raises(ModelResolutionError, match="missing-model"):
         resolve_model("missing-model", models, agent="claude")
+
+
+def test_resolve_model_prefers_matching_agent_for_duplicate_id() -> None:
+    models = validate_models(
+        _catalog(
+            {"id": "claude-opus-4-8", "agent": "claude"},
+            {"id": "claude-opus-4-8", "agent": "pi", "provider": "cliproxy"},
+        )
+    )
+
+    resolved = resolve_model("claude-opus-4-8", models, agent="pi")
+
+    assert resolved["agent"] == "pi"
+    assert resolved["provider"] == "cliproxy"
+
+
+def test_resolve_model_accepts_provider_prefix_for_duplicate_pi_id() -> None:
+    models = validate_models(
+        _catalog(
+            {"id": "shared", "agent": "pi", "provider": "a"},
+            {"id": "shared", "agent": "pi", "provider": "b"},
+        )
+    )
+
+    assert resolve_model("b/shared", models, agent="pi")["provider"] == "b"
+    with pytest.raises(ModelResolutionError, match="ambiguous"):
+        resolve_model("shared", models, agent="pi")
+
+
+def test_resolve_model_keeps_slash_ids_as_exact_ids() -> None:
+    models = validate_models(
+        _catalog({"id": "vendor/model", "agent": "pi", "provider": "openrouter"})
+    )
+
+    assert resolve_model("vendor/model", models, agent="pi")["id"] == "vendor/model"

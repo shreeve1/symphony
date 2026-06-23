@@ -35,7 +35,12 @@ def catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "    default: true\n"
         "  - id: deepseek-v4-pro\n"
         "    agent: pi\n"
-        "    provider: deepseek\n",
+        "    provider: deepseek\n"
+        "  - id: claude-opus-4-8\n"
+        "    agent: claude\n"
+        "  - id: claude-opus-4-8\n"
+        "    agent: pi\n"
+        "    provider: cliproxy\n",
         encoding="utf-8",
     )
     monkeypatch.setattr("model_catalog.MODELS_PATH", path)
@@ -102,6 +107,62 @@ def test_claude_model_on_pi_agent_blocks(catalog: Path) -> None:
     assert error is not None
     assert "claude-fable-5" in error
     assert "requires agent `claude` but the issue resolves to agent `pi`" in error
+
+
+def test_duplicate_id_resolves_by_agent(catalog: Path) -> None:
+    pi_candidate, pi_error = _apply_dispatch_gate(
+        _candidate(preferred_model="claude-opus-4-8"), _binding()
+    )
+    claude_candidate, claude_error = _apply_dispatch_gate(
+        _candidate(preferred_model="claude-opus-4-8", labels=("agent:claude",)),
+        _binding(),
+    )
+
+    assert pi_error is None
+    assert pi_candidate.resolved_provider == "cliproxy"
+    assert pi_candidate.resolved_model == "claude-opus-4-8:high"
+    assert claude_error is None
+    assert claude_candidate.resolved_provider == ""
+    assert claude_candidate.resolved_model == "claude-opus-4-8"
+
+
+def test_provider_prefix_resolves_duplicate_pi_id(catalog: Path) -> None:
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + "  - id: shared\n"
+        + "    agent: pi\n"
+        + "    provider: a\n"
+        + "  - id: shared\n"
+        + "    agent: pi\n"
+        + "    provider: b\n",
+        encoding="utf-8",
+    )
+
+    candidate, error = _apply_dispatch_gate(
+        _candidate(preferred_model="b/shared", reasoning_effort="low"), _binding()
+    )
+
+    assert error is None
+    assert candidate.resolved_provider == "b"
+    assert candidate.resolved_model == "shared:low"
+
+
+def test_bare_duplicate_pi_id_blocks(catalog: Path) -> None:
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8")
+        + "  - id: shared\n"
+        + "    agent: pi\n"
+        + "    provider: a\n"
+        + "  - id: shared\n"
+        + "    agent: pi\n"
+        + "    provider: b\n",
+        encoding="utf-8",
+    )
+
+    _, error = _apply_dispatch_gate(_candidate(preferred_model="shared"), _binding())
+
+    assert error is not None
+    assert "ambiguous" in error
 
 
 def test_missing_skill_row_blocks(catalog: Path) -> None:

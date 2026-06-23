@@ -113,6 +113,13 @@ function labelFor(options: readonly ComboOption[], value: string) {
 	return options.find((option) => option.value === value)?.label ?? value;
 }
 
+function modelValue(option: ModelOption, models: readonly ModelOption[]) {
+	const duplicateId = models.some(
+		(other) => other !== option && other.id === option.id,
+	);
+	return duplicateId && option.provider ? `${option.provider}/${option.id}` : option.id;
+}
+
 // Searchable zero-dependency combobox. Free-text mode updates the submitted
 // value as the operator types; selection-only mode only submits clicked options.
 function FieldCombobox({
@@ -310,17 +317,21 @@ function NewIssueModal({
 	const agentOptions = (options.data?.agents ?? []).map((name) => ({
 		value: name,
 	}));
-	const modelOptions = (options.data?.models ?? [])
+	const models = options.data?.models ?? [];
+	const modelOptions = models
 		.filter((option: ModelOption) => !agent || option.agent === agent)
-		.map((option: ModelOption) => ({
-			value: option.id,
-			label: option.label ? `${option.label} (${option.id})` : option.id,
-		}));
+		.map((option: ModelOption) => {
+			const value = modelValue(option, models);
+			return {
+				value,
+				label: option.label ? `${option.label} (${value})` : value,
+			};
+		});
 	const branchOptions = (options.data?.branches ?? []).map((name) => ({
 		value: name,
 	}));
-	const selectedModelEfforts = (options.data?.models ?? []).find(
-		(option: ModelOption) => option.id === model,
+	const selectedModelEfforts = models.find(
+		(option: ModelOption) => modelValue(option, models) === model,
 	)?.efforts;
 	const effortChoices = selectedModelEfforts ?? DEFAULT_EFFORTS;
 	const effortOptions = effortChoices.map((name) => ({ value: name }));
@@ -333,11 +344,11 @@ function NewIssueModal({
 	// agent. If the selected agent has no default, clear the model field so
 	// the operator never silently submits a cross-agent mismatch.
 	useEffect(() => {
-		const match = (options.data?.models ?? []).find(
+		const match = models.find(
 			(option: ModelOption) => option.default && option.agent === agent,
-		)?.id;
-		setModel(match ?? "");
-	}, [options.data?.models, agent]);
+		);
+		setModel(match ? modelValue(match, models) : "");
+	}, [models, agent]);
 
 	// Clear a set effort the newly selected model doesn't support, so the form
 	// never submits an effort the dispatch gate would reject.
