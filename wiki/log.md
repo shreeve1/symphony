@@ -11,6 +11,14 @@ Append entries with this format:
 
 ---
 
+## [2026-06-23] session-update | Issue #102 remote Claude modal/session behavior
+
+- Actor: agent (Pi), Ralph implementation + fresh review
+- Inputs: `.kanban/issues/102-remote-modal-continuity-steering.md`; `git diff 2c085d9af2c160022d2307aff12efe51bd840391 HEAD`; `claude_runner.py`; `tests/test_claude_runner.py`; issue verification command.
+- Outputs: updated `.kanban/issues/102-remote-modal-continuity-steering.md`; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; this log entry.
+- Notes: #102 decouples Claude permission/question modal handling from the idle gate, forces remote Claude launches to use `--session-id`, and makes remote steering delivery a no-op. Verification passed exactly as issue-specified (71 pytest tests; ruff clean), touched-file LSP diagnostics were clean, and fresh review returned `RALPH_REVIEW: PASS`. Claim row was not added; the promoted ADR analysis carries the durable fact. Wiki claim budget was set to 300 so `gate.py audit` matches the curated wiki scale (259 active claims).
+
+---
 
 ## [2026-06-23] session-update | Issue #100 Claude runner host-mediated tmux cleanup
 
