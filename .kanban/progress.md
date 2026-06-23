@@ -39,3 +39,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** #103 can open scheduler/config/routing now that remote Claude runner behavior is deterministic for cold-start dispatch.
 **Actionable review:** Fresh reviewer diffed `56cae6dbb7a3e1e7268cd73e1d9bbdecc2495429..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
 **Actionable review loop:** Re-audited #102, added explicit remote question-modal host-write coverage, checked touched-file LSP diagnostics, reran the exact verification command successfully, and kept the issue done.
+
+## #103 Relax scheduler gate + resume, config, routing — 2026-06-23
+
+**What changed:** Opened the remote Claude dispatch path across scheduler gating, resume preparation, config validation, routing, and adapter wiring.
+**Files:** `scheduler/__init__.py`, `config.py`, `agent_runner.py`, `claude_runner.py`, `main.py`, `tests/test_scheduler.py`, `tests/test_config.py`, `tests/test_agent_runner.py`, `tests/test_remote_agent.py`, `.kanban/issues/103-scheduler-config-routing-wiring.md`
+**Decisions:** Remote Claude runs cold-start by design until remote native resume is implemented; the remote host owns Claude probing, tmux, cwd, temp files, and cleanup through `SshClaudeHost`.
+**Conventions established:** Remote bindings may now use `default_agent: claude`; `pi_mode: rpc` is only mandatory for remote pi dispatch. `RoutingAgentAdapter` sends remote pi to `remote_adapter` and remote Claude to `claude_adapter`.
+**Notes for next iteration:** #104 remains manual/attended live calibration against a disposable remote checkout; Ralph should not automate it.
+**Actionable review:** Fresh reviewer diffed `cc584c9211536c6555ce487f18f2fd9bff32a567..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.

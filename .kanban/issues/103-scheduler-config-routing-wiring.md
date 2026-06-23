@@ -1,13 +1,14 @@
 ---
 id: 103
 title: Relax scheduler gate + resume, config, routing; wire the adapter
-status: review
+status: done
 blocked_by: [102]
 parent: 96
 priority: 0
 created: 2026-06-23
 updated: 2026-06-23
 actor: ralph
+action_reviewed: 2026-06-23
 ---
 
 ## What to build
@@ -37,14 +38,14 @@ the now-remote-aware Claude runner. Source of truth:
 
 ## Acceptance criteria
 
-- [ ] Remote+claude passes `_apply_dispatch_gate`; remote+claude with a local
+- [x] Remote+claude passes `_apply_dispatch_gate`; remote+claude with a local
       claude-probe failure still passes (probe skipped for remote); prior remote-only-pi
       assertions updated.
-- [ ] `_prepare_resume_candidate` returns a cold (`resumed=False`) candidate for a
+- [x] `_prepare_resume_candidate` returns a cold (`resumed=False`) candidate for a
       remote+claude binding even when a same-named local Claude transcript exists.
-- [ ] Remote coding binding with `default_agent: claude` parses; remote+claude+
+- [x] Remote coding binding with `default_agent: claude` parses; remote+claude+
       `claude_persist` raises; remote+claude with `type != coding` raises.
-- [ ] `RoutingAgentAdapter` routes remote+claude → claude adapter; remote+pi → remote-pi
+- [x] `RoutingAgentAdapter` routes remote+claude → claude adapter; remote+pi → remote-pi
       adapter.
 
 ## Verification
@@ -54,3 +55,12 @@ the now-remote-aware Claude runner. Source of truth:
 ## Blocked by
 
 - Blocked by #102
+
+## Implementation Notes
+
+- Relaxed the scheduler dispatch gate so remote Claude bindings can pass without the local Claude probe, while unsupported agents still fail loudly.
+- Kept remote Claude resume cold by returning before local transcript eligibility checks.
+- Allowed remote coding bindings to default to Claude without requiring RPC pi mode, while preserving remote coding and no-`claude_persist` guards.
+- Routed remote Claude dispatch through the Claude adapter, wired `ClaudeAgentAdapter` to build `SshClaudeHost`, and passed remote fields from `main.build_binding_runtime`.
+- Verification passed: `.venv/bin/python -m pytest tests/test_scheduler.py tests/test_config.py tests/test_agent_runner.py -q && /usr/local/bin/ruff check scheduler/__init__.py config.py agent_runner.py main.py`.
+- Fresh review diffed `cc584c9211536c6555ce487f18f2fd9bff32a567..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
