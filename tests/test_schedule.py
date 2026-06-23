@@ -298,6 +298,16 @@ def test_summary_block_strips_schedule_marker_line():
     assert summary == "before\n\nafter"
 
 
+def test_summary_block_tolerates_text_appended_to_end_marker_line():
+    summary = _parse_summary_block(
+        "SYMPHONY_SUMMARY_BEGIN\n"
+        "body\n"
+        "SYMPHONY_SUMMARY_ENDAcknowledged — subagent result\n"
+    )
+
+    assert summary == "body"
+
+
 # ---------------------------------------------------------------------------
 # HTML / entity round-trip
 # ---------------------------------------------------------------------------

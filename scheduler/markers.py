@@ -31,7 +31,7 @@ _METRIC_MARKER_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _SUMMARY_BLOCK_RE = re.compile(
-    r"^SYMPHONY_SUMMARY_BEGIN[ \t]*\n(.*?)\nSYMPHONY_SUMMARY_END[ \t]*$",
+    r"^SYMPHONY_SUMMARY_BEGIN[ \t]*\n(.*?)\nSYMPHONY_SUMMARY_END(?:[ \t]*$|[^\n]*(?:\n|$))",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 _MARKER_LINE_RE = re.compile(
