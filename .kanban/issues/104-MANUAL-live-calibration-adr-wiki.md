@@ -1,11 +1,13 @@
 ---
 id: 104
 title: MANUAL — live calibration against disposable n8n checkout, ADR flip, wiki
-status: pending
+status: blocked
 blocked_by: [103]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: ralph
 ---
 
 ## What to build
@@ -49,3 +51,7 @@ post-run remote-residue check, and the ADR-0012 status diff.
 ## Blocked by
 
 - Blocked by #103
+
+## Blocker
+
+Unattended Ralph cannot execute this issue because the issue is explicitly manual/attended, requires live remote Claude/TUI calibration on a disposable n8n checkout, and has no automated verification command that can be run exactly in this session. The remaining work should be performed by an attended operator following the evidence steps in the issue.

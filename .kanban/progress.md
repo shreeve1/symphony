@@ -48,3 +48,10 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Remote bindings may now use `default_agent: claude`; `pi_mode: rpc` is only mandatory for remote pi dispatch. `RoutingAgentAdapter` sends remote pi to `remote_adapter` and remote Claude to `claude_adapter`.
 **Notes for next iteration:** #104 remains manual/attended live calibration against a disposable remote checkout; Ralph should not automate it.
 **Actionable review:** Fresh reviewer diffed `cc584c9211536c6555ce487f18f2fd9bff32a567..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
+
+## #104 MANUAL — live calibration against disposable n8n checkout, ADR flip, wiki — 2026-06-23
+
+**What changed:** Parked the issue as blocked for an attended operator; no live remote calibration was attempted by unattended Ralph.
+**Files:** `.kanban/issues/104-MANUAL-live-calibration-adr-wiki.md`, `.kanban/progress.md`
+**Decisions:** The remaining remote Claude calibration requires a live disposable n8n checkout, TUI timing observation, teardown evidence, ADR flip, and wiki update, so it cannot be completed by this unattended one-issue Ralph run.
+**Notes for next iteration:** Run #104 manually/attended, collect the evidence listed in its Verification section, then update ADR-0012 and the wiki.
