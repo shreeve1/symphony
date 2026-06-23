@@ -1,7 +1,7 @@
 ---
 id: 103
 title: Relax scheduler gate + resume, config, routing; wire the adapter
-status: in-progress
+status: review
 blocked_by: [102]
 parent: 96
 priority: 0
