@@ -84,3 +84,5 @@ The final `<issue>` block remains last and escapes `name` + `description` [sourc
 - [Scheduler loop — verdict markers](scheduler-loop.md)
 
 > **2026-06-12 update; timeout amended 2026-06-23:** for Podium issues with a `preferred_skill`, the renderer now prepends a skill-invocation directive to the prompt. Runtime timeout is owned by `SymphonyConfig`; default is now `7_200_000` ms. See [../analyses/podium-issue-dispatch-contract.md](../analyses/podium-issue-dispatch-contract.md).
+
+> **2026-06-23 — `OUTPUT_CONTRACT` change planned (ADR-0022, `proposed`, C-0308):** the forced `SYMPHONY_SUMMARY` block will be downgraded to an optional fallback. The engine will post the agent's captured natural turn as the comment (pi `assistant_parts` / claude transcript turn) and the contract wording changes to "answer naturally; no summary block required" while keeping the terminal `SYMPHONY_RESULT:` marker. Not yet built. See [../analyses/adr-0022-post-captured-turn-not-forced-summary.md](../analyses/adr-0022-post-captured-turn-not-forced-summary.md).

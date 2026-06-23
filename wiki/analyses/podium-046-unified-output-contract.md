@@ -32,6 +32,8 @@ tags: [podium, dispatch, output-contract, summary, comments, claim-time, workflo
 
 # #046 Unify agent output contract and clean the comment stream
 
+> **PARTIALLY SUPERSEDED 2026-06-23 by ADR-0022 (`proposed`, C-0308).** The forced `SYMPHONY_SUMMARY` block as the *content* channel is being walked back: the engine will instead post the agent's **captured natural turn** (pi `assistant_parts` / claude transcript turn), with the `SYMPHONY_SUMMARY` block downgraded to an optional fallback. The verdict-marker contract, secret redaction, raw-stream verdict parsing (C-0257), Timeline-footer/claim-comment removal, and re-injection cap all survive. C-0160 (sub-extract only the block) and C-0161 (post the block verbatim as the comment) are the specific claims affected — still `active` (current code), forward-pointed to C-0308. See [adr-0022-post-captured-turn-not-forced-summary.md](adr-0022-post-captured-turn-not-forced-summary.md).
+
 Issue #046 collapses the agent end-of-run contract into one engine-owned source and strips machine noise from the human comment stream. Before it, the `SYMPHONY_RESULT`/`SYMPHONY_SUMMARY` boilerplate was duplicated across `claude_runner._wrap_prompt` and each binding's `WORKFLOW.md`, the single-line `SYMPHONY_SUMMARY:` marker truncated multi-line output, and every closing comment carried a machine `Timeline` footer plus a `Symphony claimed at <ts>` claim comment [source: .kanban/issues/046-unified-output-contract.md; source: wiki/raw/sessions/2026-06-13-unified-output-contract.md].
 
 ## One output contract
