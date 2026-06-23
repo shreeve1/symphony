@@ -1,7 +1,7 @@
 ---
 id: 99
 title: Complete the ClaudeHost seam (tmux_argv / is_remote / rmtree)
-status: in-progress
+status: review
 blocked_by: []
 parent: 96
 priority: 0
