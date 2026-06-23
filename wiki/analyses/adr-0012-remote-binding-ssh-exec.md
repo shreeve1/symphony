@@ -18,6 +18,8 @@ sources:
   - claude_host.py (ClaudeHost, LocalClaudeHost, SshClaudeHost seam)
   - tests/test_claude_host.py (ClaudeHost seam coverage)
   - .kanban/issues/099-claudehost-seam-completion.md
+  - .kanban/issues/100-route-runner-tmux-cleanup-through-host.md
+  - tests/test_claude_runner.py (Claude runner host routing coverage)
   - web/api/schema.py (binding table)
   - plans/remote-binding-dispatch-pipeline.md
   - web/api/main.py (list_bindings is_remote/repo_name enrichment, Issue 34)
@@ -116,8 +118,10 @@ A `/grill-me` walkthrough of the dispatch path, treating remote bindings as a **
 - **Secrets are the remote host's job — contract reaffirmed, C-0254.** `_remote_exports` forwards only `SYMPHONY_ISSUE_ID`/`TERM`/`NO_COLOR` (plus Plane callback for Plane). Remote agents own their env (SSH profile / repo `.env`), per ADR-0011. Not a gap.
 - **Still deferred (v2):** remote orphan reaping, pre-dispatch reachability gate, remote worktrees, remote Session Tail over SSH, styled host chip.
 
-## Remote Claude v2 progress 2026-06-23 — Issue #99 ClaudeHost seam completion
+## Remote Claude v2 progress 2026-06-23 — Issues #99/#100 ClaudeHost runner routing
 
-Issue #99 completed the additive ClaudeHost surface needed before the runner can become host-aware: the `ClaudeHost` Protocol and both concrete hosts now expose `tmux_argv`, `is_remote`, and `rmtree` [source: claude_host.py] [source: .kanban/issues/099-claudehost-seam-completion.md]. Local behavior is preserved by `LocalClaudeHost.tmux_argv(...) == ["tmux", "-S", str(socket_path), *args]`, `LocalClaudeHost.is_remote is False`, and `shutil.rmtree(..., ignore_errors=True)` cleanup; SSH behavior marks `is_remote=True` and wraps cleanup as remote `rm -rf <quoted path>` [source: claude_host.py] [source: tests/test_claude_host.py].
+Issue #99 completed the additive ClaudeHost surface needed before the runner could become host-aware: the `ClaudeHost` Protocol and both concrete hosts expose `tmux_argv`, `is_remote`, and `rmtree` [source: claude_host.py] [source: .kanban/issues/099-claudehost-seam-completion.md]. Local behavior is preserved by `LocalClaudeHost.tmux_argv(...) == ["tmux", "-S", str(socket_path), *args]` and `LocalClaudeHost.is_remote is False`; SSH behavior marks `is_remote=True`, wraps tmux behind SSH, and wraps cleanup as remote `rm -rf <quoted path>` [source: claude_host.py] [source: tests/test_claude_host.py].
 
-This slice intentionally did **not** rewire `claude_runner.py` call sites; next remote-Claude work still needs runner mediation through `host.tmux_argv`, remote launch `-c`/env handling, remote liveness, config/routing, and an actual-runner revalidation against a disposable remote checkout [source: .kanban/progress.md] [source: docs/adr/0012-remote-binding-ssh-exec.md]. Actionable review for #99 re-read the base-to-HEAD diff, checked touched-file LSP diagnostics, reran the issue verification command (`.venv/bin/python -m pytest tests/test_claude_host.py tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_host.py`), and added `action_reviewed: 2026-06-23` [source: .kanban/issues/099-claudehost-seam-completion.md] [source: .kanban/progress.md].
+Issue #100 rewired the Claude runner's tmux and cleanup path through that host seam: `_tmux` builds argv via `host.tmux_argv`, readiness/paste/modal/nudge/session-alive helpers thread `host`, stale-session and run cleanup kill with `host.tmux_argv(..., "kill-session", ...)`, and socket/temp-dir removal goes through `host.rmtree` [source: claude_runner.py] [source: .kanban/issues/100-route-runner-tmux-cleanup-through-host.md]. Actionable review then repaired the remaining host-backed prompt writes for steer/nudge/question autoreply plus remote socket existence checks, and updated stale docs that still said runner routing was deferred [source: claude_runner.py] [source: claude_host.py] [source: tests/test_claude_runner.py] [source: .kanban/progress.md].
+
+Still deferred after #100: remote launch/config/routing, remote process cwd/env details, remote liveness beyond the host-backed checks already routed, and actual-runner validation against a disposable remote checkout [source: docs/adr/0012-remote-binding-ssh-exec.md] [source: .kanban/progress.md]. #100 verification passed exactly as written: `.venv/bin/python -m pytest tests/test_claude_runner.py tests/test_claude_persist.py tests/test_claude_host.py -q && /usr/local/bin/ruff check claude_runner.py claude_host.py` [source: .kanban/issues/100-route-runner-tmux-cleanup-through-host.md].
