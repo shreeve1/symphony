@@ -1,11 +1,13 @@
 ---
 id: 101
 title: Remote-aware Claude launch (cwd / temp-dir / pidfile)
-status: pending
+status: in-progress
 blocked_by: [100]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: ralph
 ---
 
 ## What to build

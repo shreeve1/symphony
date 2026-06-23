@@ -433,20 +433,19 @@ class RecordingClaudeHost:
     is_remote = True
 
     def __init__(self) -> None:
+        self.files: dict[Path, str] = {}
         self.removed: list[Path] = []
         self.writes: list[tuple[Path, str]] = []
 
     def write_text(self, path: Path, text: str) -> None:
+        self.files[path] = text
         self.writes.append((path, text))
 
     def read_text(self, path: Path) -> str:
-        for written_path, text in reversed(self.writes):
-            if written_path == path:
-                return text
-        return path.read_text(encoding="utf-8") if path.exists() else ""
+        return self.files.get(path, "")
 
     def exists(self, path: Path) -> bool:
-        return path.exists()
+        return path in self.files
 
     def mkdtemp(self, *, prefix: str) -> Path:
         return Path(f"/remote/{prefix}tmp")
@@ -958,6 +957,70 @@ def test_claude_env_allowlist_and_launch_argv_cwd(tmp_path: Path) -> None:
         "XDG_RUNTIME_DIR",
     ]
     assert env["SYMPHONY_ISSUE_ID"] == "42"
+
+
+def test_remote_claude_launch_uses_tmux_cwd_env_and_host_cleanup(
+    tmp_path: Path,
+) -> None:
+    class SshLikeHost(RecordingClaudeHost):
+        def tmux_argv(self, socket_path: Path, *args: str) -> list[str]:
+            return ["ssh", "n8n", "tmux", "-S", str(socket_path), *args]
+
+    host = SshLikeHost()
+
+    class RemoteTmuxFake:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[str], dict]] = []
+            self.result_file: Path | None = None
+            self.done_file: Path | None = None
+
+        def __call__(self, command, **kwargs):
+            self.calls.append((command, kwargs))
+            if "new-session" in command:
+                return Completed()
+            if "capture-pane" in command:
+                return Completed(stdout="bypass permissions on")
+            if "load-buffer" in command:
+                prompt = host.read_text(Path(command[-1]))
+                self.result_file = _path_after(prompt, "literal result file path:")
+                self.done_file = _path_after(prompt, "literal done file path:")
+                return Completed()
+            if "send-keys" in command:
+                assert self.result_file is not None
+                assert self.done_file is not None
+                host.write_text(self.result_file, "SYMPHONY_RESULT: done")
+                host.write_text(self.done_file, "")
+                return Completed()
+            return Completed()
+
+    fake = RemoteTmuxFake()
+    pid_dir = tmp_path / "pid"
+
+    run_claude_agent(
+        _config(tmp_path),
+        _issue(),
+        "prompt",
+        run_func=fake,
+        host=host,
+        remote_start_dir="/srv/remote/repo",
+        pidfile_dir=pid_dir,
+        nonce_factory=lambda: "abc",
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+    )
+
+    launch_call = next(call for call in fake.calls if "new-session" in call[0])
+    command, kwargs = launch_call
+    assert command[:5] == ["ssh", "n8n", "tmux", "-S", "/tmp/symphony-claude-42-abc.sock"]
+    assert command[command.index("-c") + 1] == "/srv/remote/repo"
+    assert command[command.index("-e") + 1] == "SYMPHONY_ISSUE_ID=42"
+    assert "cwd" not in kwargs
+    assert "env" not in kwargs
+    assert not list(pid_dir.glob("*.pid"))
+    assert host.removed == [
+        Path("/remote/symphony-claude-42-abc-tmp"),
+        Path("/tmp/symphony-claude-42-abc.sock"),
+    ]
 
 
 def test_claude_worktree_active_uses_created_worktree_cwd(tmp_path: Path) -> None:
