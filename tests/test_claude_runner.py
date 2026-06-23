@@ -552,6 +552,50 @@ def test_remote_steer_is_noop_and_nudge_writes_through_host(tmp_path: Path) -> N
     assert "completion protocol" in host.writes[0][1]
 
 
+def test_remote_question_modal_reply_writes_through_host(tmp_path: Path) -> None:
+    host = RecordingClaudeHost()
+    calls: list[list[str]] = []
+    prompt_file = tmp_path / "prompt.txt"
+    result_file = tmp_path / "result.0.txt"
+    done_file = tmp_path / "done.0"
+
+    def run_func(command, **kwargs):
+        calls.append(command)
+        if "capture-pane" in command:
+            return Completed(stdout=_QUESTION_MODAL)
+        if "has-session" in command:
+            return Completed(returncode=0)
+        if "send-keys" in command and "Enter" in command:
+            if host.files.get(prompt_file) == claude_runner.MODAL_QUESTION_REPLY:
+                host.write_text(result_file, "SYMPHONY_RESULT: done")
+                host.write_text(done_file, "")
+            return Completed()
+        return Completed()
+
+    result = claude_runner._poll_claude_until_done(
+        _issue(),
+        0.0,
+        10.0,
+        done_file,
+        result_file,
+        tmp_path / "remote.sock",
+        "session",
+        tmp_path / "remote-session.jsonl",
+        prompt_file,
+        host=host,
+        run_id="",
+        source_env={},
+        clock=lambda: 0.0,
+        sleep=lambda _: None,
+        run_func=run_func,
+    )
+
+    assert result is not None
+    assert result.exit_code == 0
+    assert (prompt_file, claude_runner.MODAL_QUESTION_REPLY) in host.writes
+    assert not prompt_file.exists()
+
+
 def test_claude_success_uses_result_file_stdout_and_pane_stderr(tmp_path: Path) -> None:
     fake = TmuxFake(
         pane="\x1b[31mshift+tab to cycle\x1b[0m", result_text="hello without marker"

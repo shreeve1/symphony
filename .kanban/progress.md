@@ -38,3 +38,4 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Modal and nudge prompt files are written through `ClaudeHost.write_text`; new remote Claude prompt writes must stay behind the host seam.
 **Notes for next iteration:** #103 can open scheduler/config/routing now that remote Claude runner behavior is deterministic for cold-start dispatch.
 **Actionable review:** Fresh reviewer diffed `56cae6dbb7a3e1e7268cd73e1d9bbdecc2495429..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
+**Actionable review loop:** Re-audited #102, added explicit remote question-modal host-write coverage, checked touched-file LSP diagnostics, reran the exact verification command successfully, and kept the issue done.

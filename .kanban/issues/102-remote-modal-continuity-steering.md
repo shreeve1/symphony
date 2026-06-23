@@ -51,5 +51,6 @@ never fires. Source of truth: `plans/feature-remote-claude-dispatch.md` (Group 4
 - Forced remote Claude dispatches to use a fresh UUID `--session-id` and never `--resume` until remote native resume is implemented.
 - Disabled queued live steering delivery for remote Claude hosts while keeping nudge/modal prompt writes routed through `ClaudeHost.write_text`.
 - Added regression coverage for pre-idle modal handling, remote cold-start session IDs, remote steer no-op, and host-backed prompt writes.
+- Actionable review loop added explicit remote question-modal host-write coverage.
 - Verification passed: `.venv/bin/python -m pytest tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_runner.py`.
 - Fresh review diffed `56cae6dbb7a3e1e7268cd73e1d9bbdecc2495429..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
