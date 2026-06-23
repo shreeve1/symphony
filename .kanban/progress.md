@@ -19,3 +19,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Any new tmux helper path should accept/thread `host` and call `_tmux(..., host=host)` rather than building tmux argv directly.
 **Notes for next iteration:** #101 can add remote launch using the host-threaded tmux/cleanup seam; `LocalClaudeHost.rmtree` now handles socket files as well as temp directories.
 **Actionable review:** Fresh reviewer diffed `b176dab83316e93fb55abaf978f11a429f77d6d6..HEAD`, read every changed file, repaired remaining host-backed prompt writes/socket checks plus stale docs, verified touched-file LSP diagnostics clean, and reran the exact verification command successfully.
+
+## #101 Remote-aware Claude launch — 2026-06-23
+
+**What changed:** Added the remote launch branch to `run_claude_agent` while preserving the local launch path.
+**Files:** `claude_runner.py`, `tests/test_claude_runner.py`, `.kanban/issues/101-remote-aware-launch-cwd-tempdir-pidfile.md`
+**Decisions:** Remote Claude launch sets cwd/env through tmux `-c`/`-e` and only forwards `SYMPHONY_ISSUE_ID`; local launch keeps subprocess `cwd=` and `_claude_env`.
+**Conventions established:** Remote Claude temp files and cleanup stay behind `ClaudeHost`; local `/proc` pidfiles are skipped for remote hosts.
+**Notes for next iteration:** #102 can build on `host`/`remote_start_dir` to force fresh remote session IDs, disable remote steering, and adjust modal polling.
+**Actionable review:** Fresh reviewer diffed `fa2a4d770d1d58bfbfd30d6f9adb69dd3fbdb074..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
