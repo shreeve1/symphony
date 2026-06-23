@@ -1,7 +1,7 @@
 ---
 id: 99
 title: Complete the ClaudeHost seam (tmux_argv / is_remote / rmtree)
-status: review
+status: done
 blocked_by: []
 parent: 96
 priority: 0
@@ -27,11 +27,11 @@ behavior change. Source of truth: `plans/feature-remote-claude-dispatch.md` (Gro
 
 ## Acceptance criteria
 
-- [ ] `ClaudeHost` Protocol declares `tmux_argv`, `is_remote`, `rmtree`.
-- [ ] `LocalClaudeHost.tmux_argv(sock, "new-session", ...)` == `["tmux","-S",str(sock),"new-session",...]`.
-- [ ] `LocalClaudeHost.is_remote is False`; `SshClaudeHost.is_remote is True`.
-- [ ] `SshClaudeHost.rmtree` produces an ssh-wrapped `rm -rf <path>` argv (asserted, not executed).
-- [ ] No behavior change to existing runner/persist tests.
+- [x] `ClaudeHost` Protocol declares `tmux_argv`, `is_remote`, `rmtree`.
+- [x] `LocalClaudeHost.tmux_argv(sock, "new-session", ...)` == `["tmux","-S",str(sock),"new-session",...]`.
+- [x] `LocalClaudeHost.is_remote is False`; `SshClaudeHost.is_remote is True`.
+- [x] `SshClaudeHost.rmtree` produces an ssh-wrapped `rm -rf <path>` argv (asserted, not executed).
+- [x] No behavior change to existing runner/persist tests.
 
 ## Verification
 
@@ -40,3 +40,9 @@ behavior change. Source of truth: `plans/feature-remote-claude-dispatch.md` (Gro
 ## Blocked by
 
 None — can start immediately.
+
+## Implementation Notes
+
+- Added the complete ClaudeHost seam surface (`tmux_argv`, `is_remote`, `rmtree`) to the Protocol and local/SSH hosts.
+- Added tests for local tmux argv/removal, remote flagging, and SSH `rm -rf` argv construction.
+- Verification passed: `.venv/bin/python -m pytest tests/test_claude_host.py tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_host.py`.
