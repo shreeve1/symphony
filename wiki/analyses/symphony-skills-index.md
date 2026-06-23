@@ -74,7 +74,7 @@ Refreshes the Podium `skill` table from repo-local `.claude/skills/**/SKILL.md` 
 
 ### `symphony-models`
 
-Maintains repo-root `models.yml` as authored git-tracked config. It documents list/add/remove edits and lints via `web.api.main._load_models()` / `_validate_models()` so it reuses the #028 catalog contract (`agent` in `pi|claude`, required unique `id`, optional `provider`/`label`) instead of adding bespoke helper code. The skill reminds operators that `preferred_model` remains free text and forbids service restarts, Plane calls, env-file reads, direct DB edits, and secret printing [source: .claude/skills/symphony-models/SKILL.md] [source: tests/skills/test_catalog_maintenance_skills.py].
+Maintains repo-root `models.yml` as authored git-tracked config. It documents list/add/remove edits and lints via `web.api.main._load_models()` / `_validate_models()` so it reuses the #028 catalog contract (`agent` in `pi|claude`, `provider` required for pi entries, uniqueness by `(agent, provider, id)`, optional `label`) instead of adding bespoke helper code. The skill reminds operators that `preferred_model` is the dispatch contract, keeps one `default: true` per dispatchable agent, and forbids service restarts, Plane calls, env-file reads, direct DB edits, and secret printing [source: .claude/skills/symphony-models/SKILL.md] [source: model_catalog.py] [source: tests/skills/test_catalog_maintenance_skills.py].
 
 ### `symphony-binding-scaffold`
 

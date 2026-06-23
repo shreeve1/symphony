@@ -3,15 +3,18 @@ title: "Podium issue-field dispatch contract (model catalog, effort, skill, clau
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-23
 sources:
   - wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md
   - model_catalog.py
+  - models.yml
   - scheduler.py
   - agent_runner.py
   - prompt_renderer.py
   - skill_mode_map.py
+  - web/frontend/components/NewIssueModal.tsx
   - tests/test_dispatch_gate.py
+  - tests/test_model_catalog.py
 confidence: high
 tags: [podium, dispatch, models, skills, reasoning-effort, claude]
 ---
@@ -32,7 +35,9 @@ As of #043, Claude is wired: a matching Claude entry annotates the candidate wit
 
 ## Model catalog is the contract
 
-`model_catalog.py` (shared by `web.api.main` `/options` and the scheduler) requires: unique ids, `agent` in `pi|claude`, `provider` on every pi entry, and at most one `default: true` entry per agent [source: model_catalog.py; models.yml]. The per-agent default dispatches when `preferred_model` is unset; the new-issue modal preselects by selected agent [source: web/frontend/components/NewIssueModal.tsx]. `SYMPHONY_PI_MODEL`/`SYMPHONY_PI_PROVIDER` are a legacy Plane-path fallback only; the podium startup pi probe exercises the Pi catalog default [source: main.py].
+`model_catalog.py` (shared by `web.api.main` `/options` and the scheduler) requires: entries unique by `(agent, provider, id)`, `agent` in `pi|claude`, `provider` on every pi entry, and at most one `default: true` entry per agent [source: model_catalog.py; models.yml]. Duplicate bare ids are allowed across agent/provider boundaries; dispatch resolves a bare `preferred_model` by the already-resolved agent, and `provider/id` is accepted for same-agent provider disambiguation [source: model_catalog.py; tests/test_model_catalog.py; tests/test_dispatch_gate.py]. The per-agent default dispatches when `preferred_model` is unset; the new-issue modal preselects by selected agent and uses `provider/id` values only when duplicate ids need disambiguation [source: web/frontend/components/NewIssueModal.tsx]. `SYMPHONY_PI_MODEL`/`SYMPHONY_PI_PROVIDER` are a legacy Plane-path fallback only; the podium startup pi probe exercises the Pi catalog default [source: main.py].
+
+2026-06-23 catalog update: Pi now exposes the CLIProxy provider models `claude-haiku-4-5-20251001`, `claude-opus-4-8`, and `claude-sonnet-4-6`; the latter two intentionally share ids with Claude-agent entries and resolve to `provider=cliproxy` only when the Issue resolves to `agent=pi` [source: models.yml; model_catalog.py; tests/test_dispatch_gate.py].
 
 ## Skill application
 

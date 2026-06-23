@@ -3,14 +3,16 @@ title: "Podium #028 — models.yml catalog and searchable dropdowns"
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-12
+updated: 2026-06-23
 sources:
   - models.yml
+  - model_catalog.py
   - web/api/main.py
   - web/api/tests/test_issue_create.py
   - web/frontend/lib/api.ts
   - web/frontend/components/NewIssueModal.tsx
   - web/frontend/tests/new-issue.spec.ts
+  - tests/test_model_catalog.py
   - .kanban/progress.md
 confidence: high
 tags: [podium, web-ui, model-catalog, options, combobox, ralph]
@@ -24,13 +26,13 @@ tags: [podium, web-ui, model-catalog, options, combobox, ralph]
 
 `models.yml` at the repo root is the source of truth for UI model choices. It is auto-discovered relative to the repo root like `bindings.yml`, and the initial catalog is seeded from the former hardcoded list: four `claude-*` entries tagged `agent: claude` and one `glm-5.1:high` tagged `agent: pi` with `provider: zai`. Optional `label` and `provider` fields are preserved in the API response. [source: models.yml]
 
-`web/api/main.py` now defines `MODELS_PATH`, `_load_models()`, and `_validate_models()`. The validator is the shared catalog gate future tooling should reuse: the top-level document must contain a `models` list, each entry must have a non-empty `id`, `agent` must be one of `pi` or `claude`, and duplicate ids are rejected. [source: web/api/main.py] [source: web/api/tests/test_issue_create.py]
+`web/api/main.py` now defines `MODELS_PATH`, `_load_models()`, and `_validate_models()`. The validator is the shared catalog gate future tooling should reuse: the top-level document must contain a `models` list, each entry must have a non-empty `id`, `agent` must be one of `pi` or `claude`, and duplicate entries are rejected by `(agent, provider, id)` rather than by bare id. This allows a Pi provider model to share the same upstream id as a Claude-agent entry while remaining dispatch-distinguishable. [source: web/api/main.py] [source: model_catalog.py] [source: web/api/tests/test_issue_create.py] [source: tests/test_model_catalog.py]
 
 `GET /api/bindings/{name}/options` returns `models` as objects (`{id, agent, label?, provider?}`) instead of strings. Missing, unreadable, malformed, or schema-invalid `models.yml` degrades to `models: []` without turning the endpoint into a 500, mirroring branch-list degradation. `KNOWN_MODELS` was removed; `KNOWN_AGENTS` stays because it mirrors scheduler validation rather than an authored catalog. [source: web/api/main.py] [source: web/api/tests/test_issue_create.py]
 
 ## Frontend contract
 
-`IssueOptions.models` is now `ModelOption[]`, and `NewIssueModal` filters model options by the selected Agent. With no Agent selected, all catalog models are shown; with `claude`, only `claude-*` models are shown; with `pi`, only pi models are shown. [source: web/frontend/lib/api.ts] [source: web/frontend/components/NewIssueModal.tsx]
+`IssueOptions.models` is now `ModelOption[]`, and `NewIssueModal` filters model options by the selected Agent. With no Agent selected, all catalog models are shown; with `claude`, only Claude-agent models are shown; with `pi`, only pi models are shown. When duplicate ids appear in the option set, provider-backed rows use `provider/id` as the submitted value so the dropdown has unique keys and the scheduler can disambiguate same-agent provider duplicates. [source: web/frontend/lib/api.ts] [source: web/frontend/components/NewIssueModal.tsx]
 
 The native `FieldSelect` was replaced with a zero-dependency `FieldCombobox` for Skill, Effort, Agent, Model, and Base branch. Agent, Model, and Base branch run in free-text mode; Skill remains selection-only because `preferred_skill` is FK-validated server-side. `preferred_agent` and `preferred_model` remain free text end to end, so unlisted models still dispatch and server-side validation does not reject them. [source: web/frontend/components/NewIssueModal.tsx] [source: web/api/main.py]
 
@@ -44,6 +46,8 @@ Backend tests cover object-shaped `/options` models, catalog validation failures
 
 ## Claims
 
-C-0114, C-0115 in [CLAIMS.md](../CLAIMS.md). C-0114 supersedes C-0056's older `KNOWN_MODELS` placeholder wording.
+C-0114, C-0115, and C-0310 in [CLAIMS.md](../CLAIMS.md). C-0114 supersedes C-0056's older `KNOWN_MODELS` placeholder wording; C-0310 records the 2026-06-23 `(agent, provider, id)` duplicate-id identity update.
 
 > **2026-06-12 update:** `models.yml` was promoted from dropdown aid to dispatch contract — unknown models block dispatch, exactly one `default: true` entry (gpt-5.5) is required, provider is required for pi entries. See [podium-issue-dispatch-contract.md](podium-issue-dispatch-contract.md).
+>
+> **2026-06-23 update:** Pi CLIProxy models were added (`claude-haiku-4-5-20251001`, `claude-opus-4-8`, `claude-sonnet-4-6`), and the catalog identity changed from globally unique bare `id` to `(agent, provider, id)` so CLIProxy can expose ids that also exist as Claude-agent models. [source: models.yml] [source: model_catalog.py]
