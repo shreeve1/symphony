@@ -44,10 +44,12 @@ the now-remote-aware Claude runner. Source of truth:
       `claude_persist` raises; remote+claude with `type != coding` raises.
 - [ ] `RoutingAgentAdapter` routes remote+claude → claude adapter; remote+pi → remote-pi
       adapter.
+- [ ] `main.py` `_build_binding_runtime` builds a `ClaudeAgentAdapter` with the remote
+      fields for a remote+claude binding (asserted in `tests/test_main.py`).
 
 ## Verification
 
-`.venv/bin/python -m pytest tests/test_scheduler.py tests/test_config.py tests/test_agent_runner.py -q && /usr/local/bin/ruff check scheduler/__init__.py config.py agent_runner.py main.py`
+`.venv/bin/python -m pytest tests/test_scheduler.py tests/test_config.py tests/test_agent_runner.py tests/test_main.py -q && /usr/local/bin/ruff check scheduler/__init__.py config.py agent_runner.py main.py`
 
 ## Blocked by
 
