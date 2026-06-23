@@ -792,8 +792,8 @@ def run_claude_agent(
             temp_dir.mkdir(parents=True, exist_ok=True)
             cwd = _resolve_cwd(config, issue, create_worktree_func=create_worktree_func)
             env = _claude_env(issue, source_env)
-        session_id = getattr(issue, "agent_session_id", "") or derive_session_id(
-            issue.id
+        session_id = str(uuid.uuid4()) if host.is_remote else (
+            getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
         )
         resume_requested = bool(getattr(issue, "resumed", False))
         transcript_file = session_file or session_file_path("claude", cwd, session_id)
@@ -807,8 +807,9 @@ def run_claude_agent(
         # run wrote. Forcing --session-id there collides and claude exits before
         # readiness, surfacing as claude_ready_timeout. Pick the flag by
         # transcript existence; the resumed flag governs prompt *content*
-        # (incremental vs full re-feed) upstream, not this launch flag.
-        session_arg = (
+        # (incremental vs full re-feed) upstream, not this launch flag. Remote
+        # Claude is always a fresh cold-start until remote native resume exists.
+        session_arg = "--session-id" if host.is_remote else (
             "--resume"
             if (resume_requested or host.exists(transcript_file))
             else "--session-id"
@@ -1104,81 +1105,81 @@ def _poll_claude_until_done(
             unchanged_polls = 0
             last_pane = pane
             last_mtime = mtime
+        is_permission = _hit_permission_modal(pane)
+        is_question = not is_permission and _hit_question_modal(pane)
+        if is_permission or is_question:
+            # Track a modal that refuses to clear: same pane across repeated
+            # interactions means Enter / the auto-reply is not landing. Count
+            # total interactions too, as a backstop against a modal whose pane
+            # text drifts between cycles (which keeps resetting stuck_count).
+            if pane == stuck_modal_pane:
+                stuck_count += 1
+            else:
+                stuck_modal_pane = pane
+                stuck_count = 1
+            modal_actions_total += 1
+            consecutive_stuck = stuck_count > MODAL_STUCK_LIMIT
+            if consecutive_stuck or modal_actions_total > MODAL_TOTAL_LIMIT:
+                duration_ms = int((clock() - started) * 1000)
+                tail = _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func, host=host
+                )
+                reason = (
+                    f"the same prompt did not clear after {MODAL_STUCK_LIMIT} "
+                    "consecutive automated interactions"
+                    if consecutive_stuck
+                    else "prompts kept reappearing past "
+                    f"{MODAL_TOTAL_LIMIT} total automated interactions"
+                )
+                stderr = (
+                    "claude parked at a prompt it could not get past "
+                    "(Enter to approve / Escape+reply to a question); "
+                    f"{reason}, so the run was aborted\n{tail}"
+                )
+                LOGGER.info(
+                    "claude_modal_stuck issue_id=%s consecutive=%s total=%s "
+                    "interactions_sent=%s duration_ms=%s",
+                    issue.id,
+                    stuck_count,
+                    modal_actions_total,
+                    modal_actions_total - 1,
+                    duration_ms,
+                )
+                return _logged_result(issue, -1, duration_ms, False, "", stderr)
+            if is_permission:
+                # Option 1 ("Yes") is pre-selected; Enter approves it. Blanket
+                # auto-approve, no carve-out (operator decision 2026-06-19).
+                _send_enter(run_func, socket_path, session_name, host=host)
+                LOGGER.info(
+                    "claude_permission_modal_approved issue_id=%s attempt=%s",
+                    issue.id,
+                    stuck_count,
+                )
+            else:
+                # Multi-choice picker: dismiss it, let the TUI settle, then
+                # tell the agent to proceed on its own recommendation.
+                _send_escape(run_func, socket_path, session_name, host=host)
+                sleep(MODAL_QUESTION_SETTLE_SECONDS)
+                host.write_text(prompt_file, MODAL_QUESTION_REPLY)
+                _paste_and_submit(
+                    run_func,
+                    socket_path,
+                    session_name,
+                    prompt_file,
+                    sleep=sleep,
+                    host=host,
+                )
+                LOGGER.info(
+                    "claude_question_modal_autoreplied issue_id=%s attempt=%s",
+                    issue.id,
+                    stuck_count,
+                )
+            unchanged_polls = 0
+            last_pane = None
+            last_mtime = None
+            sleep(1.0)
+            continue
         if unchanged_polls >= IDLE_POLLS_BEFORE_NUDGE:
-            is_permission = _hit_permission_modal(pane)
-            is_question = not is_permission and _hit_question_modal(pane)
-            if is_permission or is_question:
-                # Track a modal that refuses to clear: same pane across repeated
-                # interactions means Enter / the auto-reply is not landing. Count
-                # total interactions too, as a backstop against a modal whose pane
-                # text drifts between cycles (which keeps resetting stuck_count).
-                if pane == stuck_modal_pane:
-                    stuck_count += 1
-                else:
-                    stuck_modal_pane = pane
-                    stuck_count = 1
-                modal_actions_total += 1
-                consecutive_stuck = stuck_count > MODAL_STUCK_LIMIT
-                if consecutive_stuck or modal_actions_total > MODAL_TOTAL_LIMIT:
-                    duration_ms = int((clock() - started) * 1000)
-                    tail = _capture_pane_tail(
-                        socket_path, session_name, run_func=run_func, host=host
-                    )
-                    reason = (
-                        f"the same prompt did not clear after {MODAL_STUCK_LIMIT} "
-                        "consecutive automated interactions"
-                        if consecutive_stuck
-                        else "prompts kept reappearing past "
-                        f"{MODAL_TOTAL_LIMIT} total automated interactions"
-                    )
-                    stderr = (
-                        "claude parked at a prompt it could not get past "
-                        "(Enter to approve / Escape+reply to a question); "
-                        f"{reason}, so the run was aborted\n{tail}"
-                    )
-                    LOGGER.info(
-                        "claude_modal_stuck issue_id=%s consecutive=%s total=%s "
-                        "interactions_sent=%s duration_ms=%s",
-                        issue.id,
-                        stuck_count,
-                        modal_actions_total,
-                        modal_actions_total - 1,
-                        duration_ms,
-                    )
-                    return _logged_result(issue, -1, duration_ms, False, "", stderr)
-                if is_permission:
-                    # Option 1 ("Yes") is pre-selected; Enter approves it. Blanket
-                    # auto-approve, no carve-out (operator decision 2026-06-19).
-                    _send_enter(run_func, socket_path, session_name, host=host)
-                    LOGGER.info(
-                        "claude_permission_modal_approved issue_id=%s attempt=%s",
-                        issue.id,
-                        stuck_count,
-                    )
-                else:
-                    # Multi-choice picker: dismiss it, let the TUI settle, then
-                    # tell the agent to proceed on its own recommendation.
-                    _send_escape(run_func, socket_path, session_name, host=host)
-                    sleep(MODAL_QUESTION_SETTLE_SECONDS)
-                    host.write_text(prompt_file, MODAL_QUESTION_REPLY)
-                    _paste_and_submit(
-                        run_func,
-                        socket_path,
-                        session_name,
-                        prompt_file,
-                        sleep=sleep,
-                        host=host,
-                    )
-                    LOGGER.info(
-                        "claude_question_modal_autoreplied issue_id=%s attempt=%s",
-                        issue.id,
-                        stuck_count,
-                    )
-                unchanged_polls = 0
-                last_pane = None
-                last_mtime = None
-                sleep(1.0)
-                continue
             if nudges_used >= IDLE_NUDGE_ATTEMPTS:
                 duration_ms = int((clock() - started) * 1000)
                 tail = _capture_pane_tail(
@@ -1265,6 +1266,8 @@ def _deliver_steer_records(
 
     active_result = _generation_result_path(prompt_file.parent, generation)
     active_done = _generation_done_path(prompt_file.parent, generation)
+    if host is not None and host.is_remote:
+        return generation, active_result, active_done, False
     delivered = False
     for record in records:
         kind = str(record.get("kind") or "")

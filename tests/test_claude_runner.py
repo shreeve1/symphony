@@ -515,12 +515,12 @@ def test_stale_session_cleanup_uses_host(tmp_path: Path) -> None:
     assert host.removed == [socket_path]
 
 
-def test_steer_and_nudge_write_prompts_through_host(tmp_path: Path) -> None:
+def test_remote_steer_is_noop_and_nudge_writes_through_host(tmp_path: Path) -> None:
     host = RecordingClaudeHost()
     calls: list[list[str]] = []
     prompt_file = tmp_path / "prompt.txt"
 
-    claude_runner._deliver_steer_records(
+    generation, active_result, active_done, delivered = claude_runner._deliver_steer_records(
         _issue(),
         [{"kind": "steer", "message": "keep going"}],
         0,
@@ -542,9 +542,14 @@ def test_steer_and_nudge_write_prompts_through_host(tmp_path: Path) -> None:
         host=host,
     )
 
-    assert len(host.writes) == 2
-    assert "Operator steer" in host.writes[0][1]
-    assert "completion protocol" in host.writes[1][1]
+    assert (generation, active_result, active_done, delivered) == (
+        0,
+        tmp_path / "result.0.txt",
+        tmp_path / "done.0",
+        False,
+    )
+    assert len(host.writes) == 1
+    assert "completion protocol" in host.writes[0][1]
 
 
 def test_claude_success_uses_result_file_stdout_and_pane_stderr(tmp_path: Path) -> None:
@@ -998,7 +1003,7 @@ def test_remote_claude_launch_uses_tmux_cwd_env_and_host_cleanup(
 
     run_claude_agent(
         _config(tmp_path),
-        _issue(),
+        _issue(agent_session_id=issue_session_id("42"), resumed=True),
         "prompt",
         run_func=fake,
         host=host,
@@ -1014,6 +1019,9 @@ def test_remote_claude_launch_uses_tmux_cwd_env_and_host_cleanup(
     assert command[:5] == ["ssh", "n8n", "tmux", "-S", "/tmp/symphony-claude-42-abc.sock"]
     assert command[command.index("-c") + 1] == "/srv/remote/repo"
     assert command[command.index("-e") + 1] == "SYMPHONY_ISSUE_ID=42"
+    assert "--session-id" in command
+    assert command[command.index("--session-id") + 1] != issue_session_id("42")
+    assert "--resume" not in command
     assert "cwd" not in kwargs
     assert "env" not in kwargs
     assert not list(pid_dir.glob("*.pid"))
@@ -1339,6 +1347,7 @@ class _PermissionModalThenApprovesTmux:
         self.result_file: Path | None = None
         self.done_file: Path | None = None
         self.modal_captures = 0
+        self.approved_after_captures = 0
         self.recovered = False
 
     def __call__(self, command, **kwargs):
@@ -1353,15 +1362,16 @@ class _PermissionModalThenApprovesTmux:
                 self.nudge_count += 1
             return Completed()
         if "send-keys" in command and "Enter" in command:
-            # The idle handler's approval Enter lands only after the loop has
-            # idled on the modal; the startup submit Enter comes far earlier.
+            # The modal handler approves after the first post-submit modal
+            # capture; the startup submit Enter comes before that capture.
             if (
                 not self.recovered
-                and self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE
+                and self.modal_captures > 1
                 and self.result_file is not None
                 and self.done_file is not None
             ):
                 self.enters += 1
+                self.approved_after_captures = self.modal_captures
                 self.result_file.write_text("SYMPHONY_RESULT: done", encoding="utf-8")
                 self.done_file.write_text("", encoding="utf-8")
                 self.recovered = True
@@ -1402,6 +1412,7 @@ def test_claude_permission_modal_is_approved_then_completes(tmp_path: Path) -> N
     assert fake.enters == 1
     assert fake.escapes == 0
     assert fake.nudge_count == 0
+    assert fake.approved_after_captures < claude_runner.IDLE_POLLS_BEFORE_NUDGE
     assert result.exit_code == 0
     assert result.timed_out is False
     assert result.stdout == "SYMPHONY_RESULT: done"
@@ -1425,7 +1436,7 @@ class _PermissionModalPersistsTmux:
                 self.nudge_count += 1
             return Completed()
         if "send-keys" in command and "Enter" in command:
-            if self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE:
+            if self.modal_captures > 1:
                 self.approval_enters += 1
             return Completed()
         if "capture-pane" in command:
@@ -1559,7 +1570,7 @@ class _DriftingPermissionModalTmux:
                 self.nudge_count += 1
             return Completed()
         if "send-keys" in command and "Enter" in command:
-            if self.modal_captures >= claude_runner.IDLE_POLLS_BEFORE_NUDGE:
+            if self.modal_captures > 1:
                 self.approval_enters += 1
                 self.revision += 1  # pane drifts -> stuck_count will reset
             return Completed()

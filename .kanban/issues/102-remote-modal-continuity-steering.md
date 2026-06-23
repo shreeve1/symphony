@@ -1,11 +1,12 @@
 ---
 id: 102
 title: Remote modal handling, fresh session-id, disabled steering
-status: pending
+status: in-progress
 blocked_by: [101]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
 ---
 
 ## What to build
