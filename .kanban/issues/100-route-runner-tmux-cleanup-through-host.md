@@ -1,13 +1,14 @@
 ---
 id: 100
 title: Route runner tmux funnel + session cleanup through the host
-status: review
+status: done
 blocked_by: [99]
 parent: 96
 priority: 0
 created: 2026-06-23
 updated: 2026-06-23
 actor: ralph
+action_reviewed: 2026-06-23
 ---
 
 ## What to build
@@ -41,19 +42,19 @@ unchanged (an injected `LocalClaudeHost` reproduces today's argv).
 
 ## Acceptance criteria
 
-- [ ] `_tmux` builds argv via `host.tmux_argv`; with `LocalClaudeHost` the resulting argv
+- [x] `_tmux` builds argv via `host.tmux_argv`; with `LocalClaudeHost` the resulting argv
       is identical to today's `["tmux","-S",str(sock),...]`.
-- [ ] `_tmux` takes `host` as a required (non-defaulted) parameter, and every wrapper
+- [x] `_tmux` takes `host` as a required (non-defaulted) parameter, and every wrapper
       (`_capture_pane_full/_tail`, `_paste_and_submit`, `_send_nudge`, `_send_down`,
       `_session_alive`) forwards an explicit `host` — no `host=` default anywhere.
-- [ ] A remote (fake `SshClaudeHost`) run's `has-session` liveness check and pane captures
+- [x] A remote (fake `SshClaudeHost`) run's `has-session` liveness check and pane captures
       go through `host.tmux_argv` (run on the remote), not the local host.
-- [ ] Cleanup kills the session via `host.tmux_argv(...,"kill-session",...)` and removes
+- [x] Cleanup kills the session via `host.tmux_argv(...,"kill-session",...)` and removes
       artifacts via `host.rmtree` (no direct `shutil.rmtree` / hardcoded `tmux` left in
       the cleanup path).
-- [ ] Existing `tests/test_claude_runner.py` + `tests/test_claude_persist.py` pass
+- [x] Existing `tests/test_claude_runner.py` + `tests/test_claude_persist.py` pass
       unchanged in behavior (TmuxFake + injected LocalClaudeHost).
-- [ ] New test: a remote (fake `SshClaudeHost`) run kills the session and rmtrees via
+- [x] New test: a remote (fake `SshClaudeHost`) run kills the session and rmtrees via
       the host, not locally.
 
 ## Verification
@@ -63,3 +64,11 @@ unchanged (an injected `LocalClaudeHost` reproduces today's argv).
 ## Blocked by
 
 - Blocked by #99
+
+## Implementation Notes
+
+- Routed the Claude tmux funnel and wrapper helpers through explicit `ClaudeHost` arguments.
+- Routed session/run cleanup and persistent-session checks through host operations.
+- Added remote-host tests for SSH-wrapped liveness, pane capture, kill-session, and cleanup.
+- Verification passed: `.venv/bin/python -m pytest tests/test_claude_runner.py tests/test_claude_persist.py tests/test_claude_host.py -q && /usr/local/bin/ruff check claude_runner.py claude_host.py`.
+- Fresh review passed against `git diff b76db6cef32e4504cc9eb32d939f5b56d4702ad7 HEAD`.
