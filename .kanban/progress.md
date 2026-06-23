@@ -18,4 +18,4 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Kept `remove_tree` as an optional local-test compatibility injection; normal cleanup now falls back to `host.rmtree`.
 **Conventions established:** Any new tmux helper path should accept/thread `host` and call `_tmux(..., host=host)` rather than building tmux argv directly.
 **Notes for next iteration:** #101 can add remote launch using the host-threaded tmux/cleanup seam; `LocalClaudeHost.rmtree` now handles socket files as well as temp directories.
-**Actionable review:** Fresh reviewer diffed `b176dab83316e93fb55abaf978f11a429f77d6d6..HEAD`, read every changed file, reran the exact verification command, and returned `RALPH_REVIEW: PASS`.
+**Actionable review:** Fresh reviewer diffed `b176dab83316e93fb55abaf978f11a429f77d6d6..HEAD`, read every changed file, repaired remaining host-backed prompt writes/socket checks plus stale docs, verified touched-file LSP diagnostics clean, and reran the exact verification command successfully.

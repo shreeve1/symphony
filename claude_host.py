@@ -7,13 +7,9 @@ host runs the agent. ``ClaudeHost`` is the seam that keeps the runner
 host-agnostic for that I/O; ``LocalClaudeHost`` is today's behavior verbatim
 (everything on the scheduler host).
 
-This is Step A of the remote-Claude build: only the file/tempdir capability the
-runner consumes today is abstracted. The SSH peer (``SshClaudeHost``, mirroring
-``repo_host.SshRepoHost``) plus the tmux-command and transcript-mtime capabilities
-it additionally needs are added when remote dispatch is wired (Step B) and
-calibrated against a real host (Step C). tmux execution stays on the injected
-``run_func`` for now; transcript mtime stays a ``claude_runner`` module function
-(a test monkeypatches it).
+This is the remote-Claude host seam: file/tempdir I/O, tmux argv construction,
+and cleanup removal are host-owned. Transcript mtime still stays a
+``claude_runner`` module function (a test monkeypatches it).
 """
 
 from __future__ import annotations
@@ -112,10 +108,8 @@ class SshClaudeHost:
     ``""``/``False`` under a bounded timeout, matching ``SshRepoHost``.
 
     ``tmux_argv`` returns the ssh-wrapped argv that runs ``tmux`` *on the remote*
-    (against a remote-side socket). The ``claude_runner`` tmux sites are not yet
-    routed through it — that rewire lands with Step C live calibration, which the
-    ADR requires before the remote path can be trusted unattended. The method
-    exists now so the transport contract is complete and unit-tested in advance.
+    (against a remote-side socket). The runner routes tmux command construction
+    through this method so transport choice stays behind the host seam.
     """
 
     def __init__(

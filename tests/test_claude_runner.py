@@ -434,11 +434,15 @@ class RecordingClaudeHost:
 
     def __init__(self) -> None:
         self.removed: list[Path] = []
+        self.writes: list[tuple[Path, str]] = []
 
     def write_text(self, path: Path, text: str) -> None:
-        path.write_text(text, encoding="utf-8")
+        self.writes.append((path, text))
 
     def read_text(self, path: Path) -> str:
+        for written_path, text in reversed(self.writes):
+            if written_path == path:
+                return text
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
     def exists(self, path: Path) -> bool:
@@ -510,6 +514,38 @@ def test_stale_session_cleanup_uses_host(tmp_path: Path) -> None:
         ["remote-tmux", str(socket_path), "kill-session", "-t", "session"]
     ]
     assert host.removed == [socket_path]
+
+
+def test_steer_and_nudge_write_prompts_through_host(tmp_path: Path) -> None:
+    host = RecordingClaudeHost()
+    calls: list[list[str]] = []
+    prompt_file = tmp_path / "prompt.txt"
+
+    claude_runner._deliver_steer_records(
+        _issue(),
+        [{"kind": "steer", "message": "keep going"}],
+        0,
+        prompt_file,
+        tmp_path / "remote.sock",
+        "session",
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        sleep=lambda _: None,
+        host=host,
+    )
+    claude_runner._send_nudge(
+        lambda command, **kwargs: calls.append(command) or Completed(),
+        tmp_path / "remote.sock",
+        "session",
+        prompt_file,
+        tmp_path / "result.txt",
+        tmp_path / "done",
+        sleep=lambda _: None,
+        host=host,
+    )
+
+    assert len(host.writes) == 2
+    assert "Operator steer" in host.writes[0][1]
+    assert "completion protocol" in host.writes[1][1]
 
 
 def test_claude_success_uses_result_file_stdout_and_pane_stderr(tmp_path: Path) -> None:

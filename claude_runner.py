@@ -380,7 +380,8 @@ def _persistent_session_live(
 ) -> bool:
     """True when a persistent tmux socket/session/server is safe to reuse."""
 
-    if not socket_path.exists():
+    host = host or LocalClaudeHost()
+    if not host.exists(socket_path):
         return False
     if not _session_alive(socket_path, session_name, run_func=run_func, host=host):
         return False
@@ -855,7 +856,7 @@ def run_claude_agent(
                 cleanup.metadata_path = None
 
         if not reattached:
-            if persist and socket_path.exists():
+            if persist and host.exists(socket_path):
                 _cleanup_claude_session_artifacts(
                     socket_path,
                     session_name,
@@ -1142,7 +1143,7 @@ def _poll_claude_until_done(
                     # tell the agent to proceed on its own recommendation.
                     _send_escape(run_func, socket_path, session_name, host=host)
                     sleep(MODAL_QUESTION_SETTLE_SECONDS)
-                    prompt_file.write_text(MODAL_QUESTION_REPLY, encoding="utf-8")
+                    host.write_text(prompt_file, MODAL_QUESTION_REPLY)
                     _paste_and_submit(
                         run_func,
                         socket_path,
@@ -1271,9 +1272,9 @@ def _deliver_steer_records(
         generation += 1
         active_result = _generation_result_path(prompt_file.parent, generation)
         active_done = _generation_done_path(prompt_file.parent, generation)
-        prompt_file.write_text(
-            _steer_turn_text(kind, message, active_result, active_done),
-            encoding="utf-8",
+        writer = host or LocalClaudeHost()
+        writer.write_text(
+            prompt_file, _steer_turn_text(kind, message, active_result, active_done)
         )
         _paste_and_submit(
             run_func, socket_path, session_name, prompt_file, sleep=sleep, host=host
@@ -1561,7 +1562,8 @@ def _send_nudge(
     Reuses ``_paste_and_submit`` so the same paste/Enter race handling applies.
     The idle input box is empty, so the reminder is submitted as a fresh turn.
     """
-    prompt_file.write_text(_nudge_text(result_file, done_file), encoding="utf-8")
+    writer = host or LocalClaudeHost()
+    writer.write_text(prompt_file, _nudge_text(result_file, done_file))
     _paste_and_submit(
         run_func, socket_path, session_name, prompt_file, sleep=sleep, host=host
     )

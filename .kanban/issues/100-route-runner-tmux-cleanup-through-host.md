@@ -53,5 +53,5 @@ unchanged (an injected `LocalClaudeHost` reproduces today's argv).
 - Routed `_tmux` through `ClaudeHost.tmux_argv` and threaded the host through Claude runner polling, readiness, paste, modal, nudge, and session-alive helpers.
 - Routed stale-session and run cleanup through `host.tmux_argv(..., "kill-session", ...)` and `host.rmtree`, while preserving the legacy `remove_tree` injection for existing local tests.
 - Taught `LocalClaudeHost.rmtree` to remove files as well as directories so socket cleanup keeps local behavior.
-- Added host-recording tests for `_tmux`, `ClaudeRunCleanup`, and stale-session cleanup.
-- Fresh review passed and reran the exact issue verification command successfully.
+- Added host-recording tests for `_tmux`, `ClaudeRunCleanup`, stale-session cleanup, and host-backed steer/nudge prompt writes.
+- Actionable review repaired remaining local prompt writes/socket checks and stale host-seam docs, then reran the exact issue verification command successfully.
