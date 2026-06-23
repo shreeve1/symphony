@@ -28,3 +28,4 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Remote Claude temp files and cleanup stay behind `ClaudeHost`; local `/proc` pidfiles are skipped for remote hosts.
 **Notes for next iteration:** #102 can build on `host`/`remote_start_dir` to force fresh remote session IDs, disable remote steering, and adjust modal polling.
 **Actionable review:** Fresh reviewer diffed `fa2a4d770d1d58bfbfd30d6f9adb69dd3fbdb074..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
+**Actionable review loop:** Re-audited the base diff for #101, checked touched-file LSP diagnostics, reran the exact verification command successfully, and added `action_reviewed`.
