@@ -1,12 +1,14 @@
 ---
 id: 102
 title: Remote modal handling, fresh session-id, disabled steering
-status: review
+status: done
 blocked_by: [101]
 parent: 96
 priority: 0
 created: 2026-06-23
 updated: 2026-06-23
+actor: ralph
+action_reviewed: 2026-06-23
 ---
 
 ## What to build
@@ -28,12 +30,12 @@ never fires. Source of truth: `plans/feature-remote-claude-dispatch.md` (Group 4
 
 ## Acceptance criteria
 
-- [ ] A permission/question modal is handled on a poll where `unchanged_polls` is below
+- [x] A permission/question modal is handled on a poll where `unchanged_polls` is below
       the idle threshold.
-- [ ] Remote dispatch launches with `--session-id` (never `--resume`).
-- [ ] `_deliver_steer_records` is a no-op when `host.is_remote`.
-- [ ] Modal/nudge prompt writes go through `host.write_text` (asserted for the remote host).
-- [ ] Local modal-handling behavior is unchanged (existing tests pass).
+- [x] Remote dispatch launches with `--session-id` (never `--resume`).
+- [x] `_deliver_steer_records` is a no-op when `host.is_remote`.
+- [x] Modal/nudge prompt writes go through `host.write_text` (asserted for the remote host).
+- [x] Local modal-handling behavior is unchanged (existing tests pass).
 
 ## Verification
 
@@ -42,3 +44,12 @@ never fires. Source of truth: `plans/feature-remote-claude-dispatch.md` (Group 4
 ## Blocked by
 
 - Blocked by #101
+
+## Implementation Notes
+
+- Hoisted Claude permission/question modal handling out of the idle-only branch so remote sessions can auto-approve/autoreply even without a local transcript mtime signal.
+- Forced remote Claude dispatches to use a fresh UUID `--session-id` and never `--resume` until remote native resume is implemented.
+- Disabled queued live steering delivery for remote Claude hosts while keeping nudge/modal prompt writes routed through `ClaudeHost.write_text`.
+- Added regression coverage for pre-idle modal handling, remote cold-start session IDs, remote steer no-op, and host-backed prompt writes.
+- Verification passed: `.venv/bin/python -m pytest tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_runner.py`.
+- Fresh review diffed `56cae6dbb7a3e1e7268cd73e1d9bbdecc2495429..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.

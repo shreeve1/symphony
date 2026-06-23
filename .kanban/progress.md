@@ -29,3 +29,12 @@ This file tracks implementation notes across Ralph iterations.
 **Notes for next iteration:** #102 can build on `host`/`remote_start_dir` to force fresh remote session IDs, disable remote steering, and adjust modal polling.
 **Actionable review:** Fresh reviewer diffed `fa2a4d770d1d58bfbfd30d6f9adb69dd3fbdb074..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
 **Actionable review loop:** Re-audited the base diff for #101, checked touched-file LSP diagnostics, reran the exact verification command successfully, and added `action_reviewed`.
+
+## #102 Remote modal handling, fresh session-id, disabled steering — 2026-06-23
+
+**What changed:** Remote Claude runs now handle permission/question modals on every poll, cold-start with a fresh `--session-id`, and ignore queued live steering.
+**Files:** `claude_runner.py`, `tests/test_claude_runner.py`, `.kanban/issues/102-remote-modal-continuity-steering.md`
+**Decisions:** Remote native resume and live steering stay deferred; remote dispatch always uses a fresh UUID session and drops queued steer records rather than trying to write turns into a remote session.
+**Conventions established:** Modal and nudge prompt files are written through `ClaudeHost.write_text`; new remote Claude prompt writes must stay behind the host seam.
+**Notes for next iteration:** #103 can open scheduler/config/routing now that remote Claude runner behavior is deterministic for cold-start dispatch.
+**Actionable review:** Fresh reviewer diffed `56cae6dbb7a3e1e7268cd73e1d9bbdecc2495429..HEAD`, read every changed file, reran the exact verification command successfully, and returned `RALPH_REVIEW: PASS`.
