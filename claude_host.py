@@ -18,11 +18,12 @@ calibrated against a real host (Step C). tmux execution stays on the injected
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import suppress
 import shlex
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -93,7 +94,11 @@ class LocalClaudeHost:
         return False
 
     def rmtree(self, path: Path) -> None:
-        shutil.rmtree(path, ignore_errors=True)
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            with suppress(FileNotFoundError):
+                path.unlink()
 
 
 class SshClaudeHost:

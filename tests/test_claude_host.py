@@ -55,16 +55,23 @@ def test_local_host_tmux_argv_and_is_remote() -> None:
     assert host.is_remote is False
 
 
-def test_local_host_rmtree_ignores_missing_and_removes_tree(tmp_path: Path) -> None:
+def test_local_host_rmtree_ignores_missing_and_removes_tree_or_file(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "scratch"
     (target / "nested").mkdir(parents=True)
     (target / "nested" / "file.txt").write_text("x", encoding="utf-8")
+    file_target = tmp_path / "socket.sock"
+    file_target.write_text("x", encoding="utf-8")
 
     host = LocalClaudeHost()
     host.rmtree(target)
+    host.rmtree(file_target)
     host.rmtree(target)
+    host.rmtree(file_target)
 
     assert not target.exists()
+    assert not file_target.exists()
 
 
 # --- SshClaudeHost (Step B): remote transport over a pooled SSH ControlMaster ---

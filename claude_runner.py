@@ -314,6 +314,7 @@ def _claude_server_pid(
     session_name: str,
     *,
     run_func: Callable[..., CompletedLike],
+    host: ClaudeHost | None = None,
 ) -> int | None:
     """Return the tmux server pid for a socket, or None if it cannot be read.
 
@@ -329,6 +330,7 @@ def _claude_server_pid(
             "-t",
             session_name,
             "#{pid}",
+            host=host,
         )
     except OSError:
         return None
@@ -345,6 +347,7 @@ def _register_claude_run(
     *,
     run_func: Callable[..., CompletedLike],
     pidfile_dir: Path,
+    host: ClaudeHost | None = None,
 ) -> Path | None:
     """Record a sidecar pidfile so the reaper can recognise this live run.
 
@@ -352,7 +355,9 @@ def _register_claude_run(
     server pid and its start-time; the boot reaper uses both to tell a live run
     from a stale socket (the start-time guard survives pid reuse).
     """
-    server_pid = _claude_server_pid(socket_path, session_name, run_func=run_func)
+    server_pid = _claude_server_pid(
+        socket_path, session_name, run_func=run_func, host=host
+    )
     if server_pid is None:
         return None
     start_time = pid_start_time(server_pid)
@@ -371,14 +376,17 @@ def _persistent_session_live(
     session_name: str,
     *,
     run_func: Callable[..., CompletedLike],
+    host: ClaudeHost | None = None,
 ) -> bool:
     """True when a persistent tmux socket/session/server is safe to reuse."""
 
     if not socket_path.exists():
         return False
-    if not _session_alive(socket_path, session_name, run_func=run_func):
+    if not _session_alive(socket_path, session_name, run_func=run_func, host=host):
         return False
-    server_pid = _claude_server_pid(socket_path, session_name, run_func=run_func)
+    server_pid = _claude_server_pid(
+        socket_path, session_name, run_func=run_func, host=host
+    )
     return server_pid is not None and pid_alive(server_pid)
 
 
@@ -387,27 +395,22 @@ def _cleanup_claude_session_artifacts(
     session_name: str,
     *,
     run_func: Callable[..., CompletedLike],
+    host: ClaudeHost | None = None,
     pidfile_path: Path | None = None,
     metadata_path: Path | None = None,
 ) -> None:
     """Best-effort cleanup for a stale reusable Claude session."""
 
+    host = host or LocalClaudeHost()
     with suppress(OSError):
         run_func(
-            [
-                "tmux",
-                "-S",
-                str(socket_path),
-                "kill-session",
-                "-t",
-                session_name,
-            ],
+            host.tmux_argv(socket_path, "kill-session", "-t", session_name),
             capture_output=True,
             text=True,
             check=False,
         )
     with suppress(OSError):
-        socket_path.unlink(missing_ok=True)
+        host.rmtree(socket_path)
     if pidfile_path is not None:
         with suppress(OSError):
             pidfile_path.unlink(missing_ok=True)
@@ -666,9 +669,10 @@ class ClaudeRunCleanup:
     session_name: str
     temp_dir: Path
     run_func: Callable[..., CompletedLike] = subprocess.run
-    remove_tree: Callable[[str], object] = shutil.rmtree
+    remove_tree: Callable[[str], object] | None = None
     pidfile_path: Path | None = None
     metadata_path: Path | None = None
+    host: ClaudeHost = field(default_factory=LocalClaudeHost)
     run_cleaned: bool = field(default=False, init=False)
     session_cleaned: bool = field(default=False, init=False)
 
@@ -678,8 +682,11 @@ class ClaudeRunCleanup:
         if self.run_cleaned:
             return
         self.run_cleaned = True
-        with suppress(FileNotFoundError):
-            self.remove_tree(str(self.temp_dir))
+        with suppress(OSError):
+            if self.remove_tree is not None:
+                self.remove_tree(str(self.temp_dir))
+            else:
+                self.host.rmtree(self.temp_dir)
 
     def cleanup_session(self) -> None:
         """Tear down the tmux session and session-scoped sidecars."""
@@ -689,20 +696,15 @@ class ClaudeRunCleanup:
         self.session_cleaned = True
         with suppress(OSError):
             self.run_func(
-                [
-                    "tmux",
-                    "-S",
-                    str(self.socket_path),
-                    "kill-session",
-                    "-t",
-                    self.session_name,
-                ],
+                self.host.tmux_argv(
+                    self.socket_path, "kill-session", "-t", self.session_name
+                ),
                 capture_output=True,
                 text=True,
                 check=False,
             )
         with suppress(OSError):
-            self.socket_path.unlink(missing_ok=True)
+            self.host.rmtree(self.socket_path)
         if self.pidfile_path is not None:
             with suppress(OSError):
                 self.pidfile_path.unlink(missing_ok=True)
@@ -737,7 +739,7 @@ def run_claude_agent(
     *,
     run_func: Callable[..., CompletedLike] = subprocess.run,
     mkdtemp: Callable[..., str] = tempfile.mkdtemp,
-    remove_tree: Callable[[str], object] = shutil.rmtree,
+    remove_tree: Callable[[str], object] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], object] = time.sleep,
     environ: dict[str, str] | None = None,
@@ -771,7 +773,7 @@ def run_claude_agent(
     result_file = temp_dir / "result.0.txt"
     done_file = temp_dir / "done.0"
     cleanup = ClaudeRunCleanup(
-        socket_path, session_name, temp_dir, run_func, remove_tree
+        socket_path, session_name, temp_dir, run_func, remove_tree, host=host
     )
     session_reusable = False
     run_id = str(getattr(issue, "active_run_id", "") or "")
@@ -816,7 +818,7 @@ def run_claude_agent(
         )
         reattached = False
         if persist and _persistent_session_live(
-            socket_path, session_name, run_func=run_func
+            socket_path, session_name, run_func=run_func, host=host
         ):
             cleanup.metadata_path = _write_claude_session_metadata(
                 metadata_path,
@@ -831,9 +833,10 @@ def run_claude_agent(
                 session_name,
                 run_func=run_func,
                 pidfile_dir=metadata_dir,
+                host=host,
             )
             reattached = _paste_and_submit(
-                run_func, socket_path, session_name, prompt_file, sleep=sleep
+                run_func, socket_path, session_name, prompt_file, sleep=sleep, host=host
             )
             if reattached:
                 LOGGER.info(
@@ -844,6 +847,7 @@ def run_claude_agent(
                     socket_path,
                     session_name,
                     run_func=run_func,
+                    host=host,
                     pidfile_path=cleanup.pidfile_path,
                     metadata_path=cleanup.metadata_path,
                 )
@@ -856,6 +860,7 @@ def run_claude_agent(
                     socket_path,
                     session_name,
                     run_func=run_func,
+                    host=host,
                     pidfile_path=pidfile_path,
                     metadata_path=metadata_path,
                 )
@@ -868,10 +873,8 @@ def run_claude_agent(
                 session_name=session_name,
             )
             launch = run_func(
-                [
-                    "tmux",
-                    "-S",
-                    str(socket_path),
+                host.tmux_argv(
+                    socket_path,
                     "new-session",
                     "-d",
                     "-s",
@@ -883,7 +886,7 @@ def run_claude_agent(
                     model,
                     session_arg,
                     session_id,
-                ],
+                ),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -900,6 +903,7 @@ def run_claude_agent(
                 session_name,
                 run_func=run_func,
                 pidfile_dir=metadata_dir,
+                host=host,
             )
 
             ready = _wait_until_ready(
@@ -909,16 +913,17 @@ def run_claude_agent(
                 clock=clock,
                 sleep=sleep,
                 timeout_s=ready_timeout_s,
+                host=host,
             )
             if not ready:
                 stderr = "claude_ready_timeout\n" + _capture_pane_tail(
-                    socket_path, session_name, run_func=run_func
+                    socket_path, session_name, run_func=run_func, host=host
                 )
                 duration_ms = int((clock() - started) * 1000)
                 return _logged_result(issue, 1, duration_ms, False, "", stderr)
 
             _paste_and_submit(
-                run_func, socket_path, session_name, prompt_file, sleep=sleep
+                run_func, socket_path, session_name, prompt_file, sleep=sleep, host=host
             )
 
         deadline = started + (config.run_timeout_ms / 1000)
@@ -1008,6 +1013,7 @@ def _poll_claude_until_done(
                 session_name,
                 run_func=run_func,
                 sleep=sleep,
+                host=host,
             )
             if delivered:
                 unchanged_polls = 0
@@ -1019,13 +1025,17 @@ def _poll_claude_until_done(
             stdout = _read_result_with_grace(active_result, host=host, sleep=sleep)
             if not stdout.strip():
                 duration_ms = int((clock() - started) * 1000)
-                pane = _capture_pane_tail(socket_path, session_name, run_func=run_func)
+                pane = _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func, host=host
+                )
                 stderr = (
                     "claude done file exists but result file is missing or "
                     f"empty after {RESULT_GRACE_SECONDS:g}s grace\n{pane}"
                 )
                 return _logged_result(issue, 137, duration_ms, False, "", stderr)
-            stderr = _capture_pane_full(socket_path, session_name, run_func=run_func)
+            stderr = _capture_pane_full(
+                socket_path, session_name, run_func=run_func, host=host
+            )
             duration_ms = int((clock() - started) * 1000)
             return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
 
@@ -1044,6 +1054,7 @@ def _poll_claude_until_done(
             session_name,
             run_func=run_func,
             sleep=sleep,
+            host=host,
         )
         if delivered:
             unchanged_polls = 0
@@ -1052,9 +1063,11 @@ def _poll_claude_until_done(
             last_mtime = None
             continue
 
-        if not _session_alive(socket_path, session_name, run_func=run_func):
+        if not _session_alive(socket_path, session_name, run_func=run_func, host=host):
             duration_ms = int((clock() - started) * 1000)
-            stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
+            stderr = _capture_pane_tail(
+                socket_path, session_name, run_func=run_func, host=host
+            )
             return _logged_result(issue, 1, duration_ms, False, "", stderr)
         # Idle requires BOTH the pane and the agent's session transcript to
         # stop changing. The two signals are complementary: a long tool call
@@ -1063,7 +1076,9 @@ def _poll_claude_until_done(
         # transcript still being appended. Treating activity on either channel
         # as "not idle" stops a working agent from being nudged or killed. A
         # missing transcript (mtime is None) counts as activity, never idle.
-        pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
+        pane = _capture_pane_full(
+            socket_path, session_name, run_func=run_func, host=host
+        )
         mtime = _session_file_mtime(transcript_file)
         if mtime is not None and pane == last_pane and mtime == last_mtime:
             unchanged_polls += 1
@@ -1089,7 +1104,7 @@ def _poll_claude_until_done(
                 if consecutive_stuck or modal_actions_total > MODAL_TOTAL_LIMIT:
                     duration_ms = int((clock() - started) * 1000)
                     tail = _capture_pane_tail(
-                        socket_path, session_name, run_func=run_func
+                        socket_path, session_name, run_func=run_func, host=host
                     )
                     reason = (
                         f"the same prompt did not clear after {MODAL_STUCK_LIMIT} "
@@ -1116,7 +1131,7 @@ def _poll_claude_until_done(
                 if is_permission:
                     # Option 1 ("Yes") is pre-selected; Enter approves it. Blanket
                     # auto-approve, no carve-out (operator decision 2026-06-19).
-                    _send_enter(run_func, socket_path, session_name)
+                    _send_enter(run_func, socket_path, session_name, host=host)
                     LOGGER.info(
                         "claude_permission_modal_approved issue_id=%s attempt=%s",
                         issue.id,
@@ -1125,11 +1140,16 @@ def _poll_claude_until_done(
                 else:
                     # Multi-choice picker: dismiss it, let the TUI settle, then
                     # tell the agent to proceed on its own recommendation.
-                    _send_escape(run_func, socket_path, session_name)
+                    _send_escape(run_func, socket_path, session_name, host=host)
                     sleep(MODAL_QUESTION_SETTLE_SECONDS)
                     prompt_file.write_text(MODAL_QUESTION_REPLY, encoding="utf-8")
                     _paste_and_submit(
-                        run_func, socket_path, session_name, prompt_file, sleep=sleep
+                        run_func,
+                        socket_path,
+                        session_name,
+                        prompt_file,
+                        sleep=sleep,
+                        host=host,
                     )
                     LOGGER.info(
                         "claude_question_modal_autoreplied issue_id=%s attempt=%s",
@@ -1143,7 +1163,9 @@ def _poll_claude_until_done(
                 continue
             if nudges_used >= IDLE_NUDGE_ATTEMPTS:
                 duration_ms = int((clock() - started) * 1000)
-                tail = _capture_pane_tail(socket_path, session_name, run_func=run_func)
+                tail = _capture_pane_tail(
+                    socket_path, session_name, run_func=run_func, host=host
+                )
                 stderr = (
                     "claude idle at prompt with no done file after "
                     f"{IDLE_NUDGE_ATTEMPTS} completion nudges; agent ended its "
@@ -1165,6 +1187,7 @@ def _poll_claude_until_done(
                 active_result,
                 active_done,
                 sleep=sleep,
+                host=host,
             )
             nudges_used += 1
             unchanged_polls = 0
@@ -1174,7 +1197,7 @@ def _poll_claude_until_done(
         sleep(1.0)
 
     duration_ms = int((clock() - started) * 1000)
-    stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func)
+    stderr = _capture_pane_tail(socket_path, session_name, run_func=run_func, host=host)
     return _logged_result(issue, -1, duration_ms, True, "", stderr)
 
 
@@ -1218,6 +1241,7 @@ def _deliver_steer_records(
     *,
     run_func: Callable[..., CompletedLike],
     sleep: Callable[[float], object],
+    host: ClaudeHost | None = None,
 ) -> tuple[int, Path, Path, bool]:
     """Deliver queued Claude steer/abort records and return current gen paths."""
 
@@ -1229,7 +1253,15 @@ def _deliver_steer_records(
         message = str(record.get("message") or "").strip()
         if kind == "abort":
             with suppress(OSError):
-                _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Escape")
+                _tmux(
+                    run_func,
+                    socket_path,
+                    "send-keys",
+                    "-t",
+                    session_name,
+                    "Escape",
+                    host=host,
+                )
         elif kind == "steer":
             if not message:
                 continue
@@ -1243,7 +1275,9 @@ def _deliver_steer_records(
             _steer_turn_text(kind, message, active_result, active_done),
             encoding="utf-8",
         )
-        _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
+        _paste_and_submit(
+            run_func, socket_path, session_name, prompt_file, sleep=sleep, host=host
+        )
         delivered = True
         LOGGER.info(
             "claude_steer_delivered issue_id=%s kind=%s generation=%s",
@@ -1338,19 +1372,22 @@ def _wait_until_ready(
     clock: Callable[[], float],
     sleep: Callable[[float], object],
     timeout_s: float,
+    host: ClaudeHost | None = None,
 ) -> bool:
     deadline = clock() + timeout_s
     while clock() <= deadline:
-        pane = _capture_pane_full(socket_path, session_name, run_func=run_func)
+        pane = _capture_pane_full(
+            socket_path, session_name, run_func=run_func, host=host
+        )
         if _ready_pattern_seen(pane):
             return True
         if _hit_bypass_consent_modal(pane):
             # First-run consent modal (a host that has never accepted bypass mode)
             # defaults to "1. No, exit"; Down moves to "2. Yes, I accept". The
             # blanket-Enter modal logic elsewhere would pick the wrong option here.
-            _send_down(run_func, socket_path, session_name)
+            _send_down(run_func, socket_path, session_name, host=host)
             sleep(0.3)
-            _send_enter(run_func, socket_path, session_name)
+            _send_enter(run_func, socket_path, session_name, host=host)
         sleep(0.5)
     return False
 
@@ -1371,10 +1408,14 @@ def _hit_bypass_consent_modal(text: str) -> bool:
 
 
 def _tmux(
-    run_func: Callable[..., CompletedLike], socket_path: Path, *args: str
+    run_func: Callable[..., CompletedLike],
+    socket_path: Path,
+    *args: str,
+    host: ClaudeHost | None = None,
 ) -> CompletedLike:
+    host = host or LocalClaudeHost()
     return run_func(
-        ["tmux", "-S", str(socket_path), *args],
+        host.tmux_argv(socket_path, *args),
         capture_output=True,
         text=True,
         check=False,
@@ -1386,9 +1427,12 @@ def _capture_pane_full(
     session_name: str,
     *,
     run_func: Callable[..., CompletedLike],
+    host: ClaudeHost | None = None,
 ) -> str:
     try:
-        result = _tmux(run_func, socket_path, "capture-pane", "-pt", session_name)
+        result = _tmux(
+            run_func, socket_path, "capture-pane", "-pt", session_name, host=host
+        )
     except OSError:
         return ""
     return strip_ansi(result.stdout or result.stderr or "")
@@ -1399,10 +1443,18 @@ def _capture_pane_tail(
     session_name: str,
     *,
     run_func: Callable[..., CompletedLike],
+    host: ClaudeHost | None = None,
 ) -> str:
     try:
         result = _tmux(
-            run_func, socket_path, "capture-pane", "-pt", session_name, "-S", "-200"
+            run_func,
+            socket_path,
+            "capture-pane",
+            "-pt",
+            session_name,
+            "-S",
+            "-200",
+            host=host,
         )
     except OSError:
         return ""
@@ -1416,6 +1468,7 @@ def _paste_and_submit(
     prompt_file: Path,
     *,
     sleep: Callable[[float], object],
+    host: ClaudeHost | None = None,
 ) -> bool:
     """Paste the prompt and submit it, tolerating the tmux paste/Enter race.
 
@@ -1425,21 +1478,33 @@ def _paste_and_submit(
     submitted; a stray Enter on the already-submitted prompt is harmless.
     """
     try:
-        load = _tmux(run_func, socket_path, "load-buffer", str(prompt_file))
+        load = _tmux(
+            run_func, socket_path, "load-buffer", str(prompt_file), host=host
+        )
         if int(load.returncode) != 0:
             return False
-        paste = _tmux(run_func, socket_path, "paste-buffer", "-t", session_name)
+        paste = _tmux(
+            run_func, socket_path, "paste-buffer", "-t", session_name, host=host
+        )
         if int(paste.returncode) != 0:
             return False
         sleep(PASTE_SETTLE_SECONDS)
         for _ in range(SUBMIT_RETRY_ATTEMPTS):
             submit = _tmux(
-                run_func, socket_path, "send-keys", "-t", session_name, "Enter"
+                run_func,
+                socket_path,
+                "send-keys",
+                "-t",
+                session_name,
+                "Enter",
+                host=host,
             )
             if int(submit.returncode) != 0:
                 return False
             sleep(SUBMIT_RETRY_INTERVAL_SECONDS)
-            capture = _tmux(run_func, socket_path, "capture-pane", "-pt", session_name)
+            capture = _tmux(
+                run_func, socket_path, "capture-pane", "-pt", session_name, host=host
+            )
             if int(capture.returncode) != 0:
                 return False
             pane = strip_ansi(capture.stdout or capture.stderr or "")
@@ -1489,6 +1554,7 @@ def _send_nudge(
     done_file: Path,
     *,
     sleep: Callable[[float], object],
+    host: ClaudeHost | None = None,
 ) -> None:
     """Paste a completion-protocol reminder into an idle session and submit it.
 
@@ -1496,7 +1562,9 @@ def _send_nudge(
     The idle input box is empty, so the reminder is submitted as a fresh turn.
     """
     prompt_file.write_text(_nudge_text(result_file, done_file), encoding="utf-8")
-    _paste_and_submit(run_func, socket_path, session_name, prompt_file, sleep=sleep)
+    _paste_and_submit(
+        run_func, socket_path, session_name, prompt_file, sleep=sleep, host=host
+    )
 
 
 def _hit_permission_modal(pane: str) -> bool:
@@ -1524,30 +1592,48 @@ def _send_enter(
     run_func: Callable[..., CompletedLike],
     socket_path: Path,
     session_name: str,
+    *,
+    host: ClaudeHost | None = None,
 ) -> None:
     """Send Enter to approve a Claude permission modal's pre-selected option."""
     with suppress(OSError):
-        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Enter")
+        _tmux(
+            run_func, socket_path, "send-keys", "-t", session_name, "Enter", host=host
+        )
 
 
 def _send_escape(
     run_func: Callable[..., CompletedLike],
     socket_path: Path,
     session_name: str,
+    *,
+    host: ClaudeHost | None = None,
 ) -> None:
     """Send Escape to dismiss a Claude modal (mirrors the abort path)."""
     with suppress(OSError):
-        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Escape")
+        _tmux(
+            run_func,
+            socket_path,
+            "send-keys",
+            "-t",
+            session_name,
+            "Escape",
+            host=host,
+        )
 
 
 def _send_down(
     run_func: Callable[..., CompletedLike],
     socket_path: Path,
     session_name: str,
+    *,
+    host: ClaudeHost | None = None,
 ) -> None:
     """Send Down to move a modal's selection off its default option."""
     with suppress(OSError):
-        _tmux(run_func, socket_path, "send-keys", "-t", session_name, "Down")
+        _tmux(
+            run_func, socket_path, "send-keys", "-t", session_name, "Down", host=host
+        )
 
 
 def _read_result_with_grace(
@@ -1592,9 +1678,12 @@ def _session_alive(
     session_name: str,
     *,
     run_func: Callable[..., CompletedLike],
+    host: ClaudeHost | None = None,
 ) -> bool:
     try:
-        result = _tmux(run_func, socket_path, "has-session", "-t", session_name)
+        result = _tmux(
+            run_func, socket_path, "has-session", "-t", session_name, host=host
+        )
     except OSError:
         return False
     return int(result.returncode) == 0

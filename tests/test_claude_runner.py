@@ -429,6 +429,89 @@ def test_claude_cleanup_removes_pidfile(tmp_path: Path) -> None:
     assert not pidfile.exists()
 
 
+class RecordingClaudeHost:
+    is_remote = True
+
+    def __init__(self) -> None:
+        self.removed: list[Path] = []
+
+    def write_text(self, path: Path, text: str) -> None:
+        path.write_text(text, encoding="utf-8")
+
+    def read_text(self, path: Path) -> str:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def exists(self, path: Path) -> bool:
+        return path.exists()
+
+    def mkdtemp(self, *, prefix: str) -> Path:
+        return Path(f"/remote/{prefix}tmp")
+
+    def tmux_argv(self, socket_path: Path, *args: str) -> list[str]:
+        return ["remote-tmux", str(socket_path), *args]
+
+    def rmtree(self, path: Path) -> None:
+        self.removed.append(path)
+
+
+def test_tmux_uses_host_argv(tmp_path: Path) -> None:
+    host = RecordingClaudeHost()
+    calls: list[list[str]] = []
+
+    result = claude_runner._tmux(
+        lambda command, **kwargs: calls.append(command) or Completed(stdout="ok"),
+        tmp_path / "remote.sock",
+        "has-session",
+        "-t",
+        "session",
+        host=host,
+    )
+
+    assert result.stdout == "ok"
+    assert calls == [
+        ["remote-tmux", str(tmp_path / "remote.sock"), "has-session", "-t", "session"]
+    ]
+
+
+def test_cleanup_routes_session_and_tempdir_through_host(tmp_path: Path) -> None:
+    host = RecordingClaudeHost()
+    calls: list[list[str]] = []
+    socket_path = tmp_path / "remote.sock"
+    temp_dir = tmp_path / "run"
+
+    cleanup = ClaudeRunCleanup(
+        socket_path,
+        "session",
+        temp_dir,
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        host=host,
+    )
+    cleanup.cleanup()
+
+    assert calls == [
+        ["remote-tmux", str(socket_path), "kill-session", "-t", "session"]
+    ]
+    assert host.removed == [socket_path, temp_dir]
+
+
+def test_stale_session_cleanup_uses_host(tmp_path: Path) -> None:
+    host = RecordingClaudeHost()
+    calls: list[list[str]] = []
+    socket_path = tmp_path / "remote.sock"
+
+    claude_runner._cleanup_claude_session_artifacts(
+        socket_path,
+        "session",
+        run_func=lambda command, **kwargs: calls.append(command) or Completed(),
+        host=host,
+    )
+
+    assert calls == [
+        ["remote-tmux", str(socket_path), "kill-session", "-t", "session"]
+    ]
+    assert host.removed == [socket_path]
+
+
 def test_claude_success_uses_result_file_stdout_and_pane_stderr(tmp_path: Path) -> None:
     fake = TmuxFake(
         pane="\x1b[31mshift+tab to cycle\x1b[0m", result_text="hello without marker"
