@@ -12,6 +12,14 @@ Append entries with this format:
 ---
 
 
+## [2026-06-23] session-update | Issue #99 ClaudeHost seam actionable review
+
+- Actor: agent (Pi), Ralph actionable review loop
+- Inputs: `.kanban/issues/099-claudehost-seam-completion.md`; `git diff 2ba032d9832d1a83db846075c5d000edc01b6e5d HEAD`; `claude_host.py`; `tests/test_claude_host.py`; issue verification command.
+- Outputs: updated `.kanban/issues/099-claudehost-seam-completion.md` with `action_reviewed: 2026-06-23`; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; this log entry.
+- Notes: Review found #99 correct and purely additive: `ClaudeHost`/`LocalClaudeHost`/`SshClaudeHost` now expose `tmux_argv`, `is_remote`, and `rmtree`; `claude_runner.py` call-site mediation remains deferred to the next remote-Claude slice. Verification passed exactly as issue-specified (`.venv/bin/python -m pytest tests/test_claude_host.py tests/test_claude_runner.py tests/test_claude_persist.py -q && /usr/local/bin/ruff check claude_host.py`, 80 passed; ruff clean) and touched-file LSP diagnostics were clean. Claim gate check for an atomic #99 claim returned `EVICT_FIRST` because `wiki/CLAIMS.md` is already over budget (257 active > 40), so no claim row was added and broad claim demotion was deferred.
+
+
 ## [2026-06-23] session-update | Global run timeout default raised to 2 hours
 
 - Actor: agent (Pi)
