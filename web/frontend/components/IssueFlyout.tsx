@@ -519,7 +519,8 @@ function ReplyComposer({
 	const commentMode =
 		(isTodo && issue.scheduled_for != null && !runningOrActive) ||
 		staged.scheduleMode != null;
-	const replyDisabled = runningOrActive || (isTodo && !commentMode && !hasStaged);
+	const replyDisabled =
+		runningOrActive || (isTodo && !commentMode && !hasStaged);
 	const hint = runningOrActive
 		? "Agent is running — reply when it parks for review."
 		: hasStaged
@@ -552,7 +553,9 @@ function ReplyComposer({
 			}
 
 			if (!text) return result ?? issue;
-			return commentMode ? postComment(issue.id, body) : postReply(issue.id, body);
+			return commentMode
+				? postComment(issue.id, body)
+				: postReply(issue.id, body);
 		},
 		onSuccess: () => {
 			setDraft("");
@@ -600,7 +603,11 @@ function ReplyComposer({
 				<button
 					type="button"
 					data-testid="reply-send"
-					disabled={replyDisabled || reply.isPending || (!hasStaged && draft.trim() === "")}
+					disabled={
+						replyDisabled ||
+						reply.isPending ||
+						(!hasStaged && draft.trim() === "")
+					}
 					onClick={() => reply.mutate(draft)}
 					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
 				>
@@ -779,19 +786,25 @@ function SteerComposer({
 }
 
 // Comments are stored as one chronological markdown blob (oldest first); each
-// entry is an appended block headed by a known marker. Operator entries
-// (`### Operator Reply/Steer/Abort (…)`), patrol entries (`### Patrol (…)`,
-// the ADR-0017 /comment primitive), and any non-agent text are always shown.
-// Agent run summaries (`**Symphony completed:**`, `**Symphony
-// question:**`, `### Symphony AI Summary`) stack up one-per-run, so we collapse
-// them to only the most recent — older completions stay in Run history. The
-// blob is rendered straight through (no sub-heading split) so a multi-heading
-// summary is never shredded. Keeps the `view-comments_md` testid as the
-// container so existing coverage (text presence) still holds.
+// entry is an appended block headed by a known marker. The blob is rendered
+// straight through (no sub-heading split) so a multi-heading summary is never
+// shredded. Keeps the `view-comments_md` testid as the container so existing
+// coverage (text presence) still holds.
+//
+// Both agent run summaries and operator replies stack up one-per-run/reply, so
+// we collapse them to only the most recent entry of each kind — older ones
+// stay in Run history. Patrol entries (`### Patrol`) and any non-agent text
+// are always shown.
 const AGENT_SUMMARY_MARKERS = [
 	"**Symphony completed:**",
 	"**Symphony question:**",
 	"### Symphony AI Summary",
+] as const;
+
+const OPERATOR_MARKERS = [
+	"### Operator Reply (",
+	"### Operator Steer (",
+	"### Operator Abort (",
 ] as const;
 
 // Split only at known entry headers, never at arbitrary sub-headings, so a
@@ -803,24 +816,44 @@ function isAgentSummary(entry: string): boolean {
 	return AGENT_SUMMARY_MARKERS.some((marker) => entry.startsWith(marker));
 }
 
+function isOperatorEntry(entry: string): boolean {
+	return OPERATOR_MARKERS.some((marker) => entry.startsWith(marker));
+}
+
 function collapseCompletions(source: string): {
 	text: string;
-	hiddenCount: number;
+	hiddenAgentCount: number;
+	hiddenOperatorCount: number;
 } {
 	const entries = source.split(ENTRY_BOUNDARY);
 	let lastAgentIndex = -1;
+	let lastOperatorIndex = -1;
 	entries.forEach((entry, index) => {
-		if (isAgentSummary(entry.trim())) lastAgentIndex = index;
+		const trimmed = entry.trim();
+		if (isAgentSummary(trimmed)) lastAgentIndex = index;
+		if (isOperatorEntry(trimmed)) lastOperatorIndex = index;
 	});
-	if (lastAgentIndex === -1) return { text: source, hiddenCount: 0 };
-	let hiddenCount = 0;
-	const kept = entries.filter((entry, index) => {
-		if (!isAgentSummary(entry.trim())) return true;
-		if (index === lastAgentIndex) return true;
-		hiddenCount += 1;
-		return false;
+	let hiddenAgentCount = 0;
+	let hiddenOperatorCount = 0;
+	const kept = entries.filter((_entry, index) => {
+		const trimmed = _entry.trim();
+		if (isAgentSummary(trimmed)) {
+			if (index === lastAgentIndex) return true;
+			hiddenAgentCount += 1;
+			return false;
+		}
+		if (isOperatorEntry(trimmed)) {
+			if (index === lastOperatorIndex) return true;
+			hiddenOperatorCount += 1;
+			return false;
+		}
+		return true;
 	});
-	return { text: kept.join("\n\n").trim(), hiddenCount };
+	return {
+		text: kept.join("\n\n").trim(),
+		hiddenAgentCount,
+		hiddenOperatorCount,
+	};
 }
 
 function CommentsThread({
@@ -847,7 +880,9 @@ function CommentsThread({
 		const el = scrollRef.current;
 		if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
 	}, [source]);
-	const { text, hiddenCount } = collapseCompletions(source);
+	const { text, hiddenAgentCount, hiddenOperatorCount } =
+		collapseCompletions(source);
+	const totalHidden = hiddenAgentCount + hiddenOperatorCount;
 	const hasComments = text.trim().length > 0;
 	return (
 		<div
@@ -860,13 +895,25 @@ function CommentsThread({
 		>
 			{hasComments ? (
 				<div className="space-y-2">
-					{hiddenCount > 0 && (
+					{totalHidden > 0 && (
 						<p
 							data-testid="hidden-completions-note"
 							className="text-xs text-muted-foreground"
 						>
-							{hiddenCount} earlier Symphony completion
-							{hiddenCount === 1 ? "" : "s"} hidden — see Run history below.
+							{hiddenAgentCount > 0 && (
+								<>
+									{hiddenAgentCount} earlier Symphony completion
+									{hiddenAgentCount === 1 ? "" : "s"}
+									{hiddenOperatorCount > 0 && ", "}
+								</>
+							)}
+							{hiddenOperatorCount > 0 && (
+								<>
+									{hiddenOperatorCount} earlier operator repl
+									{hiddenOperatorCount === 1 ? "y" : "ies"}
+								</>
+							)}{" "}
+							hidden — see Run history below.
 						</p>
 					)}
 					<div className="rounded-md border p-2">

@@ -8,8 +8,8 @@ import {
 
 // A multi-run conversation appends one `**Symphony completed:**` block per run,
 // so the stored blob accumulates every completion. The Comments tab should show
-// only the most recent completion (older ones stay in Run history) while
-// keeping every operator reply.
+// only the most recent completion and most recent operator reply (older ones
+// stay in Run history).
 test("comments tab collapses stacked completions to the most recent", async ({
 	page,
 	problems,
@@ -26,10 +26,7 @@ test("comments tab collapses stacked completions to the most recent", async ({
 	);
 
 	await page.goto("/trading");
-	await page
-		.getByTestId("issue-card")
-		.filter({ hasText: title })
-		.click();
+	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
 	const comments = page.getByTestId("view-comments_md");
@@ -67,10 +64,7 @@ test("comments tab keeps a patrol entry visible between collapsed completions", 
 	);
 
 	await page.goto("/trading");
-	await page
-		.getByTestId("issue-card")
-		.filter({ hasText: title })
-		.click();
+	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
 	const comments = page.getByTestId("view-comments_md");
@@ -83,6 +77,47 @@ test("comments tab keeps a patrol entry visible between collapsed completions", 
 	await expect(comments).not.toContainText("FIRST_COMPLETION_UNIQUE");
 	await expect(page.getByTestId("hidden-completions-note")).toContainText(
 		"1 earlier Symphony completion hidden",
+	);
+
+	expectCleanConsole(problems);
+});
+
+// Multiple `### Operator Reply` blocks stack up one per reply. Only the latest
+// operator reply should show; earlier ones are collapsed alongside stacked agent
+// completions.
+test("comments tab collapses stacked operator replies to the latest", async ({
+	page,
+	problems,
+}) => {
+	const title = `collapse-operator ${Date.now()}`;
+	const { issueId } = seedIssue("trading", title, "in_review");
+	setIssueComments(
+		issueId,
+		[
+			"**Symphony completed:**\n\nFIRST_COMPLETION_UNIQUE work done.",
+			"### Operator Reply (2026-06-23T12:00:00+00:00)\n\nFIRST_OP_REPLY_UNIQUE do more.",
+			"**Symphony completed:**\n\nSECOND_COMPLETION_UNIQUE more work done.",
+			"### Operator Reply (2026-06-23T13:00:00+00:00)\n\nLATEST_OP_REPLY_UNIQUE final note.",
+		].join("\n\n"),
+	);
+
+	await page.goto("/trading");
+	await page.getByTestId("issue-card").filter({ hasText: title }).click();
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+
+	const comments = page.getByTestId("view-comments_md");
+	// Latest completion and latest operator reply are shown.
+	await expect(comments).toContainText("SECOND_COMPLETION_UNIQUE");
+	await expect(comments).toContainText("LATEST_OP_REPLY_UNIQUE");
+	// Earlier completion and earlier operator reply are hidden.
+	await expect(comments).not.toContainText("FIRST_COMPLETION_UNIQUE");
+	await expect(comments).not.toContainText("FIRST_OP_REPLY_UNIQUE");
+	// Hidden note should now mention both.
+	await expect(page.getByTestId("hidden-completions-note")).toContainText(
+		"1 earlier Symphony completion",
+	);
+	await expect(page.getByTestId("hidden-completions-note")).toContainText(
+		"1 earlier operator reply",
 	);
 
 	expectCleanConsole(problems);

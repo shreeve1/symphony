@@ -1252,6 +1252,15 @@ def _drain_rpc_events(
                     reason = ame.get("reason") or ame.get("error")
                     if reason:
                         stderr_parts.append(str(reason))
+            elif event_type == "message_end":
+                # An errored final message (e.g. upstream API overload after
+                # tool execution) surfaces here, not in a message_update.
+                message = event.get("message") or {}
+                if message.get("stopReason") == "error":
+                    error_seen = True
+                    err = message.get("errorMessage") or message.get("error", "")
+                    if err:
+                        stderr_parts.append(str(err))
             elif event_type == "agent_end":
                 raw_code = event.get("exit_code", 0)
                 try:
