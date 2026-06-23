@@ -199,7 +199,10 @@ def build_binding_runtime(
             binding=binding,
             pi_adapter=pi_dispatch_adapter,
             claude_adapter=ClaudeAgentAdapter(
-                binding_config, persist=binding.claude_persist
+                binding_config,
+                persist=binding.claude_persist,
+                remote=binding.remote,
+                remote_repo_path=binding.repo_path if binding.is_remote else None,
             ),
             remote_adapter=remote_adapter,
         ),

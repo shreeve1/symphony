@@ -1,11 +1,13 @@
 ---
 id: 103
 title: Relax scheduler gate + resume, config, routing; wire the adapter
-status: pending
+status: in-progress
 blocked_by: [102]
 parent: 96
 priority: 0
 created: 2026-06-23
+updated: 2026-06-23
+actor: ralph
 ---
 
 ## What to build

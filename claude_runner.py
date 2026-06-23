@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner import AgentResult, AgentRunnerError, CompletedLike
-from claude_host import ClaudeHost, LocalClaudeHost
-from config import SymphonyConfig
+from claude_host import ClaudeHost, LocalClaudeHost, SshClaudeHost
+from config import RemotePolicy, SymphonyConfig
 from proc_runtime import (
     DEFAULT_RUNTIME_DIR,
     RPC_RUNTIME_DIR_ENV,
@@ -726,10 +726,18 @@ class ClaudeAgentAdapter:
 
     config: SymphonyConfig
     persist: bool = False
+    remote: RemotePolicy | None = None
+    remote_repo_path: Path | str | None = None
 
     def __call__(self, issue: CandidateIssue, rendered_prompt: str, /) -> AgentResult:
+        host = SshClaudeHost(self.remote) if self.remote is not None else None
         return run_claude_agent(
-            self.config, issue, rendered_prompt, persist=self.persist
+            self.config,
+            issue,
+            rendered_prompt,
+            persist=self.persist,
+            host=host,
+            remote_start_dir=self.remote_repo_path,
         )
 
 

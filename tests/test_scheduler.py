@@ -4929,13 +4929,15 @@ def _local_binding(config: SymphonyConfig) -> ProjectBinding:
     return config.bindings[0]
 
 
-def _remote_binding(config: SymphonyConfig) -> ProjectBinding:
+def _remote_binding(
+    config: SymphonyConfig, *, default_agent: str = "pi"
+) -> ProjectBinding:
     return replace(
         config.bindings[0],
         name="n8n",
         binding_type="coding",
         tracker="podium",
-        default_agent="pi",
+        default_agent=default_agent,
         remote=RemotePolicy(host="100.95.224.218", user="itadmin"),
     )
 
@@ -5015,6 +5017,36 @@ async def test_prepare_resume_candidate_remote_uses_seam_no_fs(
     assert decision is None
 
 
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_remote_claude_stays_cold(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _remote_binding(config, default_agent="claude")
+    monkeypatch.setattr(
+        scheduler,
+        "repo_host_for",
+        lambda b, *, cwd=None, **kwargs: _RecordingRepoHost("remote-claude"),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "evaluate_resume_eligibility",
+        lambda *args, **kwargs: pytest.fail("remote claude resume evaluated locally"),
+    )
+
+    result, decision = await scheduler._prepare_resume_candidate(
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        config,
+        _candidate("issue-1"),
+        {"latest_run_id": "run-1"},
+        binding=binding,  # pyright: ignore[reportArgumentType]
+    )
+
+    assert result.resumed is False
+    assert result.agent_session_sha == "remote-claude"
+    assert decision is None
+
+
 # T.6.2
 def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
     config = _config(tmp_path)
@@ -5087,13 +5119,21 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
 
 
 # T.8.1
-def test_dispatch_gate_blocks_remote_claude(tmp_path: Path) -> None:
+def test_dispatch_gate_allows_remote_claude_and_skips_local_probe(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = _config(tmp_path)
     binding = _remote_binding(config)
     candidate = _candidate("issue-1", labels=("agent:claude",))
-    _, error = scheduler._apply_dispatch_gate(candidate, binding)
-    assert error is not None
-    assert "remote bindings support only pi" in error
+    monkeypatch.setattr(
+        scheduler, "claude_probe_failure_reason", lambda: "local claude missing"
+    )
+
+    result, error = scheduler._apply_dispatch_gate(candidate, binding)
+
+    assert error is None
+    assert result.resolved_model.startswith("claude-")
+    assert result.resolved_provider == ""
 
 
 # T.8.2

@@ -1120,16 +1120,15 @@ class RoutingAgentAdapter:
         agent = self.binding.resolve_agent(issue.labels)
         pi_agent, claude_agent = KNOWN_AGENTS
         if self.binding.is_remote:
-            if agent != pi_agent:
-                raise AgentRunnerError(
-                    f"Remote binding `{self.binding.name}` supports only pi dispatch "
-                    f"in v1 (ADR-0012); got `{agent}`"
-                )
-            if self.remote_adapter is None:
-                raise AgentRunnerError(
-                    f"Remote binding `{self.binding.name}` has no remote adapter configured"
-                )
-            return self.remote_adapter(issue, rendered_prompt)
+            if agent == pi_agent:
+                if self.remote_adapter is None:
+                    raise AgentRunnerError(
+                        f"Remote binding `{self.binding.name}` has no remote adapter configured"
+                    )
+                return self.remote_adapter(issue, rendered_prompt)
+            if agent == claude_agent:
+                return self.claude_adapter(issue, rendered_prompt)
+            raise AgentRunnerError(f"No agent adapter configured for `{agent}`")
         if agent == pi_agent:
             return self.pi_adapter(issue, rendered_prompt)
         if agent == claude_agent:

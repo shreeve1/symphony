@@ -547,15 +547,10 @@ def _binding_from_mapping(
                 f"{prefix}.type: remote bindings require 'coding' in v1 "
                 f"(ADR-0012), got '{binding_type}'"
             )
-        if pi_mode != "rpc":
+        if default_agent == "pi" and pi_mode != "rpc":
             raise ConfigError(
-                f"{prefix}.pi_mode: remote bindings require 'rpc' "
+                f"{prefix}.pi_mode: remote bindings require 'rpc' for pi "
                 f"(ADR-0012), got '{pi_mode}'"
-            )
-        if default_agent != "pi":
-            raise ConfigError(
-                f"{prefix}.default_agent: remote bindings require 'pi' in v1 "
-                f"(ADR-0012), got '{default_agent}'"
             )
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),

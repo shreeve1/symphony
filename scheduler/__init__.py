@@ -466,6 +466,8 @@ async def _prepare_resume_candidate(
         agent_session_sha=current_sha,
         resumed=False,
     )
+    if binding is not None and binding.is_remote and agent == "claude":
+        return base_candidate, None
     supports_resume = agent == "claude" or (
         agent == "pi" and getattr(binding, "pi_mode", "one-shot") == "rpc"
     )
@@ -548,10 +550,11 @@ def _apply_dispatch_gate(
     defaults silently.
     """
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
-    if binding is not None and binding.is_remote and agent != "pi":
+    is_remote = binding is not None and binding.is_remote
+    if is_remote and agent not in {"pi", "claude"}:
         return candidate, (
-            "Dispatch blocked: remote bindings support only pi in v1 "
-            "(ADR-0012); clear the agent:claude label / preferred_agent."
+            "Dispatch blocked: remote bindings support only pi or claude "
+            "(ADR-0012); clear the unsupported agent label / preferred_agent."
         )
     try:
         entry = resolve_model(
@@ -565,7 +568,7 @@ def _apply_dispatch_gate(
             f"`{entry['agent']}` but the issue resolves to agent `{agent}`; "
             "pick a matching model or change preferred_agent."
         )
-    if agent == "claude" and (probe_failure := claude_probe_failure_reason()):
+    if agent == "claude" and not is_remote and (probe_failure := claude_probe_failure_reason()):
         return candidate, (
             "Dispatch blocked: claude engine probe failed at startup: "
             f"{probe_failure}. Fix the install and restart."

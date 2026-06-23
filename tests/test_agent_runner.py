@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import agent_runner as agent_runner_module
+import claude_runner as claude_runner_module
 from agent_runner import (
     AgentResult,
     AgentRunnerError,
@@ -22,7 +23,8 @@ from agent_runner import (
     verify_pi_rpc_support,
     verify_pi_support,
 )
-from config import ProjectBinding, SymphonyConfig
+from claude_runner import ClaudeAgentAdapter
+from config import ProjectBinding, RemotePolicy, SymphonyConfig
 from plane_poller import CandidateIssue
 
 steer_queue = import_module("web.api.steer_queue")
@@ -386,6 +388,74 @@ def test_routing_agent_adapter_routes_by_resolved_agent(tmp_path: Path) -> None:
     )
 
     assert seen == ["pi", "claude"]
+
+
+def test_routing_remote_claude_uses_claude_adapter(tmp_path: Path) -> None:
+    seen: list[str] = []
+    binding = ProjectBinding(
+        name="n8n",
+        plane_project_id="project",
+        repo_path=tmp_path,
+        base_branch="main",
+        tracker_contract=_config(tmp_path).bindings[0].tracker_contract,
+        binding_type="coding",
+        tracker="podium",
+        default_agent="claude",
+        remote=RemotePolicy(host="h", user="u"),
+    )
+    def claude_adapter(issue, prompt):
+        seen.append("claude")
+        return AgentResult(0, 1, False, "claude", "")
+
+    def remote_adapter(issue, prompt):
+        seen.append("remote-pi")
+        return AgentResult(0, 1, False, "remote", "")
+
+    router = RoutingAgentAdapter(
+        binding,
+        pi_adapter=lambda i, p: AgentResult(0, 1, False, "pi", ""),
+        claude_adapter=claude_adapter,
+        remote_adapter=remote_adapter,
+    )
+
+    result = router(_issue(), "prompt")
+
+    assert result.stdout == "claude"
+    assert seen == ["claude"]
+
+
+def test_claude_agent_adapter_wires_remote_host(monkeypatch, tmp_path: Path) -> None:
+    remote = RemotePolicy(host="h", user="u")
+    captured: dict[str, object] = {}
+
+    class FakeSshClaudeHost:
+        def __init__(self, policy):
+            captured["remote"] = policy
+
+    def fake_run_claude_agent(config, issue, rendered_prompt, **kwargs):
+        captured["config"] = config
+        captured["issue"] = issue
+        captured["prompt"] = rendered_prompt
+        captured.update(kwargs)
+        return AgentResult(0, 1, False, "ok", "")
+
+    monkeypatch.setattr(claude_runner_module, "SshClaudeHost", FakeSshClaudeHost)
+    monkeypatch.setattr(
+        claude_runner_module, "run_claude_agent", fake_run_claude_agent
+    )
+    adapter = ClaudeAgentAdapter(
+        _config(tmp_path), remote=remote, remote_repo_path=Path("/srv/repo")
+    )
+    issue = _issue()
+
+    result = adapter(issue, "prompt")
+
+    assert result.stdout == "ok"
+    assert captured["remote"] is remote
+    assert captured["host"].__class__ is FakeSshClaudeHost
+    assert captured["remote_start_dir"] == Path("/srv/repo")
+    assert captured["issue"] is issue
+    assert captured["prompt"] == "prompt"
 
 
 def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> None:
