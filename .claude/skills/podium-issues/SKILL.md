@@ -26,7 +26,8 @@ Podium instead of Ralph's local kanban.
 2. Draft vertical tracer-bullet slices using the `/to-issues` rules:
    - each slice is end-to-end and independently useful;
    - acceptance criteria are objective;
-   - verification is a repo-correct command, not prose;
+   - verification is a repo-correct runnable command, not prose — slicer-created
+     issues are stamped `auto_land=true`, and review backstop re-runs this command;
    - blockers are explicit;
    - `locks` labels identify resources that must not co-run.
 3. Show the proposed slices and ask the operator to approve granularity,
@@ -73,8 +74,8 @@ Podium instead of Ralph's local kanban.
 
 ## Safety rules
 
-- The live command creates `todo` Podium issues and may make them dispatchable on
-  the next scheduler poll. Dry-run first.
+- The live command creates `todo` Podium issues with `auto_land=true` and may make
+  them dispatchable on the next scheduler poll. Dry-run first.
 - Dependencies are created blocker-first; dependent `blocked_by` uses the real
   Podium ids returned by earlier inserts.
 - The old `issues import-kanban` mirror is retired. If you need Ralph local

@@ -97,7 +97,7 @@ def _issue_rows(db_path: Path) -> list[tuple[Any, ...]]:
         return connection.execute(
             """
             SELECT id, title, description, state, base_branch, preferred_agent,
-                   blocked_by, locks
+                   blocked_by, locks, auto_land
             FROM issue ORDER BY id
             """
         ).fetchall()
@@ -145,6 +145,7 @@ def test_create_plan_issues_in_dependency_order_with_real_blockers(
     assert json.loads(rows[1][6]) == [1]
     assert json.loads(rows[0][7]) == ["web-api"]
     assert json.loads(rows[1][7]) == ["web-frontend"]
+    assert [bool(r[8]) for r in rows] == [True, True]
     assert "uv run pytest tests/test_api.py -q" in rows[0][2]
     assert rows[0][3:6] == ("todo", "main", "pi")
     assert sentinel.read_text(encoding="utf-8") == before
@@ -238,5 +239,5 @@ def test_cli_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
 
     assert podium.main(["issues", "list", "--binding", "demo"]) == 0
     out = capsys.readouterr().out
-    assert "#1 demo todo blocked_by=[] locks=['web-api'] API slice" in out
-    assert "#2 demo todo blocked_by=[1] locks=['web-frontend'] UI slice" in out
+    assert "#1 demo todo auto_land=True blocked_by=[] locks=['web-api'] API slice" in out
+    assert "#2 demo todo auto_land=True blocked_by=[1] locks=['web-frontend'] UI slice" in out
