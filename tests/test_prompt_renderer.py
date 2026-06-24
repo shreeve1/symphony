@@ -12,7 +12,10 @@ def test_review_mode_heading_absent_returns_validation() -> None:
 
 
 def test_review_mode_prose_only_verification_returns_coding() -> None:
-    assert review_mode("## Verification\n\nRestart the service and confirm logs.") == "coding"
+    assert (
+        review_mode("## Verification\n\nRestart the service and confirm logs.")
+        == "coding"
+    )
 
 
 def test_review_mode_empty_description_returns_validation() -> None:
