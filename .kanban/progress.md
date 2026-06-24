@@ -28,3 +28,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** `blocked_by`/`locks` are omitted-as-empty API lists; cycle validation applies to `blocked_by` only.
 **Verification:** `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q` passed; `uv run python -m py_compile web/api/main.py web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py` passed; LSP diagnostics found 0 issues in touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `4e761ed52dbd06d5bc3c8e5e058a6fa68e56dbfa..HEAD`, read all changed files, reran verification, and passed.
+
+## #108 Isolation — worktree-per-run default-ON for local bindings — 2026-06-24
+
+**What changed:** Local coding bindings now default dispatch/resume into deterministic per-issue worktrees, with `SYMPHONY_WORKTREE_DEFAULT=false` as the opt-out switch; remote bindings still run in their configured shared repo.
+**Files:** `config.py`, `scheduler/__init__.py`, `tests/test_config.py`, `tests/test_scheduler.py`
+**Decisions:** Default isolation applies to local coding bindings while preserving explicit `worktree_active` opt-in and remote no-worktree behavior; dispatch marks Podium rows `worktree_active=True` so existing landing/cleanup owns terminal removal.
+**Conventions established:** Use `SymphonyConfig.worktree_default` / `SYMPHONY_WORKTREE_DEFAULT` for the global worktree-default kill switch.
+**Verification:** `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`, `uv run pytest tests/test_config.py -q`, `uv run python -m py_compile config.py scheduler/__init__.py tests/test_config.py tests/test_scheduler.py`, and `uv run ruff check config.py scheduler/__init__.py tests/test_config.py tests/test_scheduler.py` passed; LSP diagnostics found 0 issues in touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `2e53a0547e23267f055adc95a789febfc2f6360c..HEAD`, read all changed files, reran verification, and passed.
