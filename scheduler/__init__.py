@@ -7,6 +7,7 @@ import inspect
 import logging
 import random
 import re
+import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -557,6 +558,77 @@ async def _render_for_dispatch(
 def _next_review_dispatch_marker(comments_md: str) -> str:
     prior = len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
     return f"### Symphony Review ({prior + 1})\n\nReview run dispatched."
+
+
+def _extract_runnable_verification(issue_body: str) -> str:
+    """Return a shell command from a cleanly-runnable ## Verification section."""
+    heading = re.search(r"^##[ \t]+Verification[ \t]*$", issue_body, re.MULTILINE)
+    if heading is None:
+        return ""
+    next_heading = re.search(r"^##[ \t]+", issue_body[heading.end() :], re.MULTILINE)
+    end = heading.end() + next_heading.start() if next_heading else len(issue_body)
+    section = issue_body[heading.end() : end]
+    parts = section.split("`")
+    if len(parts) < 3 or len(parts) % 2 == 0:
+        return ""
+    commands: list[str] = []
+    for index, part in enumerate(parts):
+        if index % 2:
+            command = part.strip()
+            if not command:
+                return ""
+            commands.append(command)
+            continue
+        if re.sub(r"\b(?:and|then)\b|[\s,.;:]", "", part, flags=re.IGNORECASE):
+            return ""
+    return " && ".join(commands)
+
+
+def _review_verification_cwd(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None,
+) -> Path:
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    if _worktree_enabled(config, candidate, binding=resolved_binding):
+        binding_name = candidate.binding_name or (
+            resolved_binding.name if resolved_binding is not None else ""
+        )
+        if binding_name:
+            worktree_helpers = import_module("worktree_facade")
+            return cast(
+                Path,
+                worktree_helpers.worktree_dir(
+                    config.homelab_repo_path,
+                    binding_name,
+                    str(candidate.id),
+                ),
+            )
+    return config.homelab_repo_path
+
+
+def _run_runnable_verification(command: str, cwd: Path) -> int:
+    try:
+        completed = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        LOGGER.warning("review_verification_exec_error cwd=%s error=%s", cwd, exc)
+        return 127
+    if completed.returncode != 0:
+        LOGGER.warning(
+            "review_verification_failed cwd=%s returncode=%s stdout=%r stderr=%r",
+            cwd,
+            completed.returncode,
+            completed.stdout[-1000:],
+            completed.stderr[-1000:],
+        )
+    return completed.returncode
 
 
 def _apply_dispatch_gate(
@@ -3154,6 +3226,49 @@ async def _handle_review_terminal_done(
     if not _REVIEW_DISPATCH_MARKER_RE.search(comments_md):
         return False
 
+    _iu, _du = _build_urls(config, candidate.id)
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    binding_name = candidate.binding_name or (
+        resolved_binding.name if resolved_binding is not None else ""
+    )
+    issue_id = str(candidate.id)
+    issue_body = str(issue.get("description") or candidate.description or "")
+    verification_command = _extract_runnable_verification(issue_body)
+    if verification_command:
+        verification_cwd = _review_verification_cwd(
+            config, candidate, binding=resolved_binding
+        )
+        returncode = await asyncio.to_thread(
+            _run_runnable_verification, verification_command, verification_cwd
+        )
+        if returncode != 0:
+            backstop_summary = (
+                f"Review verification backstop failed: `{verification_command}`"
+            )
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                secrets=secrets,
+                state="failed",
+                verdict="blocked",
+                summary=backstop_summary,
+                ended_at=now().isoformat(),
+            )
+            await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Review verification backstop failed: `{verification_command}` exited {returncode}.",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return True
+
     if summary:
         completion_body = f"**Symphony review passed:**\n\n{summary}"
     else:
@@ -3176,12 +3291,6 @@ async def _handle_review_terminal_done(
     ):
         return True
 
-    _iu, _du = _build_urls(config, candidate.id)
-    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    binding_name = candidate.binding_name or (
-        resolved_binding.name if resolved_binding is not None else ""
-    )
-    issue_id = str(candidate.id)
     worktree_helpers = import_module("worktree_facade")
 
     if binding_name and await asyncio.to_thread(

@@ -1,7 +1,7 @@
 ---
 id: 120
 title: Driver backstop — re-run runnable Verification, override an over-optimistic review pass
-status: pending
+status: in-progress
 blocked_by: [119]
 locks: [scheduler]
 priority: 2

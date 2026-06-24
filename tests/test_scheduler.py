@@ -2623,6 +2623,124 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
     assert "Health check OK" not in completion_comment
 
 
+def test_extract_runnable_verification() -> None:
+    assert (
+        scheduler._extract_runnable_verification(
+            "## Verification\n\n`uv run pytest x -q`"
+        )
+        == "uv run pytest x -q"
+    )
+    assert (
+        scheduler._extract_runnable_verification(
+            "## Verification\n\n`uv run pytest x -q` and `uv run python -m py_compile y.py`"
+        )
+        == "uv run pytest x -q && uv run python -m py_compile y.py"
+    )
+    assert (
+        scheduler._extract_runnable_verification(
+            "## Verification\n\nRestart the service and confirm logs."
+        )
+        == ""
+    )
+    assert (
+        scheduler._extract_runnable_verification(
+            "## Verification\n\nRun `uv run pytest x -q`."
+        )
+        == ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_backstop_failure_blocks_without_landing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`false`",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    monkeypatch.setattr(
+        "worktree_facade.worktree_is_dirty",
+        lambda *a: pytest.fail("dirty gate must not run after backstop failure"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("failing backstop must not land worktree"),
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert (
+        "verification backstop failed"
+        in transport.comments["issue-1"][-1]["comment_html"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_prose_verification_skips_backstop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\nRestart the service and confirm logs.",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda repo, binding, issue, base: calls.append((binding, issue, base)) or None,
+    )
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            base_branch="main",
+            review_dispatch=True,
+        ),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert calls == [("homelab", "issue-1", "main")]
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+
+
 @pytest.mark.asyncio
 async def test_review_terminal_auto_land_marks_done_and_lands_worktree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
