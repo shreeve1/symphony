@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import json
+import logging
+import sqlite3
 import threading
 from collections import defaultdict
 from dataclasses import replace
@@ -169,6 +172,59 @@ def _schedule_comment(
         "created_at": created_at,
         "comment_html": format_schedule_comment(not_before=not_before, reason=reason),
     }
+
+
+@pytest.mark.asyncio
+async def test_podium_candidates_wait_for_dependencies(tmp_path: Path, caplog) -> None:
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+
+        def insert_issue(title: str, state: str = "todo", blocked_by=()) -> int:
+            cursor = connection.execute(
+                """
+                INSERT INTO issue(
+                  binding_name, title, description, state, preferred_agent,
+                  comments_md, context_md, blocked_by, created_at, updated_at
+                ) VALUES ('test', ?, '', ?, 'pi', '', '', ?,
+                          '2026-06-11T00:00:00+00:00',
+                          '2026-06-11T00:00:00+00:00')
+                """,
+                (title, state, json.dumps(list(blocked_by))),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+        running = insert_issue("running blocker", "running")
+        done = insert_issue("done blocker", "done")
+        waiting = insert_issue("waiting", blocked_by=[running])
+        ready_after_done = insert_issue("ready after done", blocked_by=[done])
+        independent = insert_issue("independent")
+        unresolved = insert_issue("unresolved", blocked_by=[9999])
+        connection.commit()
+
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    with caplog.at_level(logging.WARNING, logger="tracker_podium"):
+        candidates = await adapter.list_candidates()
+
+    candidate_ids = {candidate.id for candidate in candidates}
+    assert str(waiting) not in candidate_ids
+    assert {str(ready_after_done), str(independent), str(unresolved)} <= candidate_ids
+    assert (await adapter.get_issue(str(waiting)))["state"] == "todo"
+    assert "dependency_blocker_unresolved issue=" in caplog.text
+    assert "blocker=9999" in caplog.text
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE issue SET state = 'done' WHERE id = ?", (running,))
+        connection.commit()
+
+    candidates = await adapter.list_candidates()
+    assert str(waiting) in {candidate.id for candidate in candidates}
 
 
 def _write_plan(repo: Path, issue_identifier: str) -> Path:

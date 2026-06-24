@@ -16,6 +16,7 @@ issue row.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,8 @@ from web.api.db import resolve_db_path
 
 PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
+LOGGER = logging.getLogger(__name__)
+DEPENDENCY_DONE_STATES = {"done", "archived"}
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -150,7 +153,13 @@ class PodiumTrackerAdapter:
 
     async def list_candidates(self) -> list[CandidateIssue]:
         candidates = []
-        for issue in await self.list_issues_by_state(TrackerRole.STATE_TODO):
+        issues = await self.list_issues()
+        state_by_id = {str(issue["id"]): str(issue.get("state") or "") for issue in issues}
+        for issue in issues:
+            if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
+                continue
+            if not self._dependencies_satisfied(issue, state_by_id):
+                continue
             preferred_skill = issue.get("preferred_skill")
             candidates.append(
                 CandidateIssue(
@@ -176,6 +185,22 @@ class PodiumTrackerAdapter:
                 )
             )
         return candidates
+
+    def _dependencies_satisfied(
+        self, issue: dict[str, Any], state_by_id: dict[str, str]
+    ) -> bool:
+        for blocker_id in issue.get("blocked_by") or []:
+            blocker_state = state_by_id.get(str(blocker_id))
+            if blocker_state is None:
+                LOGGER.warning(
+                    "dependency_blocker_unresolved issue=%s blocker=%s",
+                    issue["id"],
+                    blocker_id,
+                )
+                continue
+            if blocker_state not in DEPENDENCY_DONE_STATES:
+                return False
+        return True
 
     async def list_issues(
         self,
