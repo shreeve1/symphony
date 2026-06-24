@@ -1,7 +1,7 @@
 ---
 id: 121
 title: Skill — /podium-issues slicer stamps auto_land=true on created issues
-status: in-progress
+status: review
 blocked_by: [112, 115]
 locks: [skills]
 priority: 2
