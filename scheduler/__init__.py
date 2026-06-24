@@ -28,6 +28,16 @@ from notifier import (
 )
 from plane_adapter import PlaneRateLimitError
 from prompt_renderer import render_previous_comments_block, review_mode
+from redispatch_core import (
+    COMMIT_REDISPATCH_REPLY_PREFIX,
+    MAX_COMMIT_REDISPATCH,
+    RELAND_DONE_PREFIX,
+    RELAND_DONE_RE,
+    RELAND_PENDING_PREFIX,
+    RELAND_PENDING_RE,
+    count_commit_redispatches,
+    redispatch_commit_note,
+)
 from repo_host import repo_host_for
 from schedule import (
     SCHEDULED_LABEL_WINDOW_END_HOUR as _SCHEDULED_LABEL_WINDOW_END_HOUR,
@@ -562,6 +572,45 @@ async def _render_for_dispatch(
 def _next_review_dispatch_marker(comments_md: str) -> str:
     prior = len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
     return f"### Symphony Review ({prior + 1})\n\nReview run dispatched."
+
+
+def _reland_pending_count(comments_md: str) -> int:
+    return len(RELAND_PENDING_RE.findall(comments_md or ""))
+
+
+def _reland_done_count(comments_md: str) -> int:
+    return len(RELAND_DONE_RE.findall(comments_md or ""))
+
+
+def _commit_redispatch_body(
+    config: SymphonyConfig,
+    binding_name: str,
+    issue_id: str,
+    *,
+    auto_land: bool,
+    now: datetime,
+) -> str:
+    worktree_helpers = import_module("worktree_facade")
+    worktree_path = worktree_helpers.worktree_dir(
+        config.homelab_repo_path, binding_name, issue_id
+    )
+    branch = worktree_helpers.branch_name(binding_name, issue_id)
+    body = (
+        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · {now.isoformat()})\n\n"
+        f"{redispatch_commit_note(worktree_path, branch)}"
+    )
+    if auto_land:
+        body += f"\n\n{RELAND_PENDING_PREFIX} · {now.isoformat()}"
+    return body
+
+
+def _reland_done_body(comments_md: str, *, now: datetime) -> str:
+    outstanding = _reland_pending_count(comments_md) - _reland_done_count(comments_md)
+    if outstanding <= 0:
+        return ""
+    return "\n".join(
+        f"{RELAND_DONE_PREFIX} · {now.isoformat()}" for _ in range(outstanding)
+    )
 
 
 def _extract_runnable_verification(issue_body: str) -> str:
@@ -3364,14 +3413,28 @@ async def _handle_review_terminal_done(
         return True
 
     base_branch = candidate.base_branch or config.base_branch
-    if binding_name and await asyncio.to_thread(
-        _review_worktree_diff_empty,
-        config,
-        resolved_binding,
-        binding_name,
-        issue_id,
-        base_branch,
-    ):
+    diff_empty = bool(
+        binding_name
+        and await asyncio.to_thread(
+            _review_worktree_diff_empty,
+            config,
+            resolved_binding,
+            binding_name,
+            issue_id,
+            base_branch,
+        )
+    )
+    diff_empty_and_clean = bool(
+        diff_empty
+        and not await asyncio.to_thread(
+            _review_worktree_is_dirty,
+            config,
+            resolved_binding,
+            binding_name,
+            issue_id,
+        )
+    )
+    if diff_empty_and_clean:
         block_summary = (
             "Review halted: nothing to review — implement run produced no changes."
         )
@@ -3460,6 +3523,7 @@ async def _handle_review_terminal_done(
     ):
         return True
 
+    auto_land = bool(issue.get("auto_land") or False)
     if binding_name and await asyncio.to_thread(
         _review_worktree_is_dirty,
         config,
@@ -3467,19 +3531,43 @@ async def _handle_review_terminal_done(
         binding_name,
         issue_id,
     ):
-        await _block_issue(
-            adapter,
+        prior_redispatches = count_commit_redispatches(
+            str(issue.get("comments_md") or "")
+        )
+        if prior_redispatches >= MAX_COMMIT_REDISPATCH:
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Review halted: still uncommitted after {MAX_COMMIT_REDISPATCH} "
+                "re-dispatches; worktree intact.",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return True
+        await adapter.add_comment(
             candidate.id,
-            "Review auto-land halted: review worktree has uncommitted changes.",
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
+            CommentPayload(
+                body=_commit_redispatch_body(
+                    config,
+                    binding_name,
+                    issue_id,
+                    auto_land=auto_land,
+                    now=now(),
+                )
+            ),
+        )
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=todo reason=review-dirty-commit-redispatch attempt=%s",
+            candidate.id,
+            prior_redispatches + 1,
         )
         return True
 
-    if not bool(issue.get("auto_land") or False):
+    if not auto_land:
         await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
         LOGGER.info(
             "state_transitioned issue_id=%s state=in-review reason=review-passed-awaiting-operator-merge",
@@ -3520,6 +3608,13 @@ async def _handle_review_terminal_done(
             dashboard_url=_du,
         )
         return True
+
+    reland_issue = await _fetch_issue(adapter, candidate.id)
+    reland_done_body = _reland_done_body(
+        str(reland_issue.get("comments_md") or ""), now=now()
+    )
+    if reland_done_body:
+        await adapter.add_comment(candidate.id, CommentPayload(body=reland_done_body))
 
     update_columns = getattr(adapter, "_update_issue_columns", None)
     if callable(update_columns):

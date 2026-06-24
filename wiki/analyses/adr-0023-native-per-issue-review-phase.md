@@ -20,6 +20,7 @@ sources:
   - web/api/schema.py
   - web/api/migrations/versions/0011_issue_auto_land.py
   - tracker_podium.py
+  - redispatch_core.py
   - "~/.claude/skills/ralph/SKILL.md"
   - "~/.claude/skills/dev-review-pi/SKILL.md"
 confidence: high
@@ -63,9 +64,10 @@ the scheduler never merges, ADR-0014). The human merge is the only review.
    `## Verification`, fixes in place, emits `SYMPHONY_RESULT: done|blocked`. Slice #116 landed this foundation as `REVIEW_PREAMBLE` plus `render_review_prompt(issue)`, which renders the preamble + issue body + `OUTPUT_CONTRACT` without skill or `WORKFLOW.md` loading [source: prompt_renderer.py] [source: tests/test_prompt_renderer.py] [source: .kanban/issues/116-review-preamble-renderer-constant.md]. Slice #120 landed the driver backstop: `_handle_review_terminal_done` extracts cleanly backticked `## Verification` commands, runs them in the issue worktree cwd before dirty-worktree/auto-land handling, and blocks without landing on nonzero exit; prose-only verification skips the driver shell gate [source: scheduler/__init__.py] [source: tests/test_scheduler.py] [source: .kanban/issues/120-review-verification-backstop.md]. ADR-0024 split the renderer by `review_mode(issue.description)`: descriptions with a `## Verification` heading keep the coding `REVIEW_PREAMBLE`, while descriptions without that heading use `VALIDATION_REVIEW_PREAMBLE`, a read-only validation contract that confirms the discussed outcome/decision still matches repo reality, writes no code, invents no verification, and blocks only on a genuine contradiction [source: prompt_renderer.py] [source: tests/test_prompt_renderer.py].
 3. **Scope.** Universal for all `type: coding` bindings; infra excluded (ADR-0020
    `auto_close_on_verified` already covers it).
-4. **Pass-terminal is provenance-gated**, behind a **clean-committed-worktree gate**
-   (dirty at pass time → `blocked`, never redispatch-to-`todo`). New `issue.auto_land`
-   boolean:
+4. **Pass-terminal is provenance-gated**, behind committed-worktree safety gates.
+   ADR-0023 initially blocked dirty pass-time worktrees; ADR-0024 Issue #132 replaces
+   that with capped commit-redispatch so dirty-but-passing reviews preserve work and
+   re-enter review after the agent commits. New `issue.auto_land` boolean:
    - slicer-authored (`auto_land = true`, set by the 112 `/podium-issues` slicer) →
      `in_review → done` and call a new **process-neutral `land_worktree`** (merge +
      ADR-0021 slice 113 rebase-retry + cleanup, extracted from `_maybe_merge_worktree`
@@ -146,4 +148,10 @@ The coding branch is intentionally unchanged for any issue body containing `## V
 
 Issue #131 adds `worktree_diff_empty` to `web/api/worktree.py` and re-exports it through `worktree_facade.py`. The helper compares the issue branch against the base with `git diff --quiet <base>...<branch>` semantics: `True` means the branch has no committed diff, while a missing worktree, missing branch/base ref, or unexpected git error returns `False` because unknown is not empty [source: web/api/worktree.py] [source: worktree_facade.py].
 
-The coding review terminal now checks this local worktree diff after the validation-review branch and before the runnable-verification backstop, dirty-worktree gate, `auto_land` read, or landing. If the branch has no diff, the Run is finalized `failed`/`blocked`, terminal output context is appended, and the Issue is blocked with “nothing to review — implement run produced no changes” so a no-op implementation branch cannot pass review or land [source: scheduler/__init__.py] [source: tests/test_scheduler.py]. Focused git-helper tests cover empty branch, committed branch, absent worktree, and missing branch; scheduler regression coverage asserts the guard fires before backstop/dirty/land calls [source: web/api/tests/test_worktree.py] [source: tests/test_scheduler.py]. C-0328 tracks the implemented guard.
+The coding review terminal now checks this local worktree diff after the validation-review branch and before the runnable-verification backstop or landing. If the branch has no diff **and the worktree is clean**, the Run is finalized `failed`/`blocked`, terminal output context is appended, and the Issue is blocked with “nothing to review — implement run produced no changes” so a no-op implementation branch cannot pass review or land; a dirty empty-diff worktree instead falls through to Issue #132's commit-redispatch path [source: scheduler/__init__.py] [source: tests/test_scheduler.py]. Focused git-helper tests cover empty branch, committed branch, absent worktree, and missing branch; scheduler regression coverage asserts the guard fires before backstop/land calls for clean empty diffs [source: web/api/tests/test_worktree.py] [source: tests/test_scheduler.py]. C-0330 supersedes C-0328 with the clean-only refinement.
+
+## ADR-0024 dirty-worktree commit-redispatch + reland re-entry (Issue #132)
+
+Issue #132 replaces ADR-0023's dirty-worktree instant block in the coding review branch with the ADR-0014 commit-redispatch vocabulary. When a passing review finds the worktree dirty, `_handle_review_terminal_done` counts prior `COMMIT_REDISPATCH_REPLY_PREFIX` notes via `redispatch_core.count_commit_redispatches`; below `MAX_COMMIT_REDISPATCH`, it appends the auto-commit operator note, transitions the Issue back to `todo`, and leaves the worktree intact for the agent to commit [source: scheduler/__init__.py] [source: redispatch_core.py]. At or over the cap, it blocks with “still uncommitted after N re-dispatches; worktree intact” [source: scheduler/__init__.py] [source: tests/test_scheduler.py].
+
+For `auto_land=true` issues only, the same redispatch comment includes a `### Symphony Reland Pending` marker. `tracker_podium.list_candidates` now reselects a marked `in_review` issue as a review when pending markers outnumber done markers, while operator-authored `auto_land=false` issues skip the marker and rest in `in_review` after the commit run [source: tracker_podium.py] [source: tests/test_tracker_podium.py]. On a successful clean auto-land, the scheduler appends enough `### Symphony Reland Done` markers to balance all pending markers before transitioning to `done`, making the reland predicate idempotent even after multiple dirty redispatches [source: scheduler/__init__.py] [source: tests/test_scheduler.py]. C-0329 tracks this implemented reland path.

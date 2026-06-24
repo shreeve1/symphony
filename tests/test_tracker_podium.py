@@ -244,6 +244,40 @@ async def test_issue_dependency_fields_default_to_empty_lists(tmp_path: Path) ->
     assert issue["locks"] == []
 
 
+@pytest.mark.asyncio
+async def test_reland_pending_reselects_marked_review_issue(tmp_path: Path) -> None:
+    from redispatch_core import RELAND_DONE_PREFIX, RELAND_PENDING_PREFIX
+
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, state="in_review")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET comments_md = ? WHERE id = ?",
+            (f"### Symphony Review (1)\n\n{RELAND_PENDING_PREFIX} · one", issue_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              preferred_skill, comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'balanced', '', 'in_review', 'pi', '/dev-build', ?, '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """,
+            (
+                f"### Symphony Review (1)\n\n{RELAND_PENDING_PREFIX} · one\n{RELAND_DONE_PREFIX} · one",
+            ),
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path, binding_name="test"
+    ).list_candidates()
+
+    assert [candidate.id for candidate in candidates] == [str(issue_id)]
+    assert candidates[0].review_dispatch is True
+
+
 def test_connections_enable_wal_and_busy_timeout(tmp_path: Path) -> None:
     adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
 

@@ -1,5 +1,12 @@
 # Wiki Log
 
+## [2026-06-24] session-update | Issue #132 ADR-0024 dirty reland redispatch
+
+- Actor: agent (Pi), direct implementation.
+- Inputs: Podium Issue #132 / ADR-0024 slice 5; `scheduler/__init__.py`; `tracker_podium.py`; `redispatch_core.py`; `tests/test_scheduler.py`; `tests/test_tracker_podium.py`; issue verification command.
+- Outputs: replaced dirty-but-passing coding review instant block with capped commit-redispatch; added `auto_land=true` reland-pending marker and clean auto-land reland-done balancing; extended Podium review candidate selection for unconsumed reland markers; refined the empty-diff guard to block only clean no-op branches so dirty empty-diff worktrees reach commit-redispatch; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md` (C-0329/C-0330; C-0328 superseded), `wiki/eval/worktree.eval`, and this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_scheduler.py tests/test_tracker_podium.py -q`, 215 passed) after `uv sync --extra dev` installed the local dev extra. Advisor review caught the initial empty-diff shadowing bug before finalization; fixed and re-verified. Touched-file LSP diagnostics passed. No secrets/env files read; no service restart, live DB mutation, or outward notification.
+
 ## [2026-06-24] session-update | Issue #131 ADR-0024 empty-diff guard
 
 - Actor: agent (Pi), direct implementation.

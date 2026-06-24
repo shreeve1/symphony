@@ -1,1 +1,2 @@
 What happens when Podium worktree FF merge fails because base advanced without conflict? ||| rebase
+How does ADR-0024 handle a dirty but passing coding review before auto-land? ||| RELAND_PENDING

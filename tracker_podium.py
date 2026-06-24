@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE
 from skill_mode_map import mode_for_skill
 from tracker_contract import (
     DEFAULT_CONTRACT,
@@ -167,7 +168,12 @@ class PodiumTrackerAdapter:
             is_todo = self.issue_is_state(issue, TrackerRole.STATE_TODO)
             is_review = self.issue_is_state(issue, TrackerRole.STATE_IN_REVIEW)
             comments_md = str(issue.get("comments_md") or "")
-            review_dispatch = is_review and not REVIEW_MARKER_RE.search(comments_md)
+            reland_unconsumed = len(RELAND_PENDING_RE.findall(comments_md)) > len(
+                RELAND_DONE_RE.findall(comments_md)
+            )
+            review_dispatch = is_review and (
+                not REVIEW_MARKER_RE.search(comments_md) or reland_unconsumed
+            )
             if not is_todo and not review_dispatch:
                 continue
             if is_todo and not self._dependencies_satisfied(issue, state_by_id):

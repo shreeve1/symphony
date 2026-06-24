@@ -2715,14 +2715,11 @@ async def test_review_terminal_empty_diff_blocks_before_backstop_or_landing(
         "auto_land": True,
     }
     monkeypatch.setattr("worktree_facade.worktree_diff_empty", lambda *a: True)
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
     monkeypatch.setattr(
         scheduler,
         "_run_runnable_verification",
         lambda *a: pytest.fail("empty diff must block before backstop"),
-    )
-    monkeypatch.setattr(
-        "worktree_facade.worktree_is_dirty",
-        lambda *a: pytest.fail("empty diff must block before dirty gate"),
     )
     monkeypatch.setattr(
         "worktree_facade.land_worktree",
@@ -2797,6 +2794,7 @@ async def test_review_terminal_skips_non_review_dispatch_run(
     )
 
     assert handled is False
+    assert not transport.comments["issue-1"]
 
 
 @pytest.mark.asyncio
@@ -3110,9 +3108,55 @@ async def test_review_terminal_without_auto_land_stays_in_review(
 
 
 @pytest.mark.asyncio
-async def test_review_terminal_dirty_worktree_blocks(
+async def test_review_terminal_dirty_auto_land_redispatches_with_reland_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX, RELAND_PENDING_PREFIX
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": (
+            "### Symphony Review (1)\n\n"
+            f"{COMMIT_REDISPATCH_REPLY_PREFIX} · first)\n\n"
+            f"{RELAND_PENDING_PREFIX} · first"
+        ),
+        "auto_land": True,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_diff_empty", lambda *a: True)
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: True)
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    body = transport.comments["issue-1"][-1]["comment_html"]
+    assert COMMIT_REDISPATCH_REPLY_PREFIX in body
+    assert RELAND_PENDING_PREFIX in body
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_dirty_operator_redispatches_without_reland_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX, RELAND_PENDING_PREFIX
+
     transport = FakeTransport()
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
@@ -3139,9 +3183,102 @@ async def test_review_terminal_dirty_worktree_blocks(
 
     assert (
         transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    body = transport.comments["issue-1"][-1]["comment_html"]
+    assert COMMIT_REDISPATCH_REPLY_PREFIX in body
+    assert RELAND_PENDING_PREFIX not in body
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_dirty_worktree_over_cap_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX, MAX_COMMIT_REDISPATCH
+
+    transport = FakeTransport()
+    prior = "\n\n".join(
+        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · attempt-{index})"
+        for index in range(MAX_COMMIT_REDISPATCH)
+    )
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": f"### Symphony Review (1)\n\n{prior}",
+        "auto_land": True,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: True)
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert (
+        transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
-    assert "uncommitted changes" in transport.comments["issue-1"][-1]["comment_html"]
+    assert "still uncommitted after 2 re-dispatches; worktree intact" in transport.comments[
+        "issue-1"
+    ][-1]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_clean_auto_land_balances_all_reland_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import RELAND_DONE_PREFIX, RELAND_PENDING_PREFIX
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": (
+            "### Symphony Review (1)\n\n"
+            f"{RELAND_PENDING_PREFIX} · one\n"
+            f"{RELAND_PENDING_PREFIX} · two"
+        ),
+        "auto_land": True,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr("worktree_facade.land_worktree", lambda *a: None)
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+    done_comments = [
+        comment["comment_html"]
+        for comment in transport.comments["issue-1"]
+        if RELAND_DONE_PREFIX in comment["comment_html"]
+    ]
+    assert len(done_comments) == 1
+    assert done_comments[0].count(RELAND_DONE_PREFIX) == 2
 
 
 @pytest.mark.asyncio
