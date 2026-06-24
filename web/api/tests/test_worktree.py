@@ -21,6 +21,7 @@ from web.api.worktree import (
     land_worktree,
     merge_worktree,
     remove_worktree,
+    worktree_diff_empty,
     worktree_dir,
     worktree_exists,
     worktree_is_dirty,
@@ -370,3 +371,36 @@ def test_worktree_is_dirty_clean_after_commit(
     _git(wt_path, "add", ".")
     _git(wt_path, "commit", "-m", "agent change")
     assert not worktree_is_dirty(repo, binding_name, issue_id)
+
+
+# --- worktree_diff_empty (ADR-0024) ---
+
+
+def test_worktree_diff_empty_clean_branch_returns_true(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    create_worktree(repo, binding_name, issue_id, "main")
+    assert worktree_diff_empty(repo, binding_name, issue_id, "main")
+
+
+def test_worktree_diff_empty_committed_change_returns_false(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "agent change")
+    assert not worktree_diff_empty(repo, binding_name, issue_id, "main")
+
+
+def test_worktree_diff_empty_absent_worktree_returns_false(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    assert not worktree_diff_empty(repo, binding_name, issue_id, "main")
+
+
+def test_worktree_diff_empty_missing_branch_returns_false(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    worktree_dir(repo, binding_name, issue_id).mkdir(parents=True)
+    assert not worktree_diff_empty(repo, binding_name, issue_id, "main")

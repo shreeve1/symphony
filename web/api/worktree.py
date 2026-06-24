@@ -132,6 +132,58 @@ def worktree_is_dirty(repo_path: Path, binding_name: str, issue_id: str) -> bool
     return any(line.strip() for line in result.splitlines())
 
 
+def worktree_diff_empty(
+    repo_path: Path,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str = "main",
+) -> bool:
+    """Return True if the issue branch has no committed diff vs ``base_branch``.
+
+    Missing worktree, branch, or base refs return False: unknown is not empty.
+    """
+    if not worktree_dir(repo_path, binding_name, issue_id).is_dir():
+        return False
+
+    branch = branch_name(binding_name, issue_id)
+    if (
+        _run_git(
+            repo_path, ["show-ref", "--verify", f"refs/heads/{branch}"], check=False
+        )
+        is None
+    ):
+        return False
+    if (
+        _run_git(
+            repo_path,
+            ["rev-parse", "--verify", f"{base_branch}^{{commit}}"],
+            check=False,
+        )
+        is None
+    ):
+        return False
+
+    result = subprocess.run(
+        ["git", "-C", str(repo_path), "diff", "--quiet", f"{base_branch}...{branch}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    LOGGER.warning(
+        "git_diff_quiet_failed base=%s branch=%s returncode=%s stderr=%s",
+        base_branch,
+        branch,
+        result.returncode,
+        result.stderr,
+    )
+    return False
+
+
 def merge_worktree(
     repo_path: Path,
     binding_name: str,

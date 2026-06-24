@@ -1,5 +1,12 @@
 # Wiki Log
 
+## [2026-06-24] session-update | Issue #131 ADR-0024 empty-diff guard
+
+- Actor: agent (Pi), direct implementation.
+- Inputs: Podium Issue #131 / ADR-0024 slice 4; `web/api/worktree.py`; `worktree_facade.py`; `scheduler/__init__.py`; `web/api/tests/test_worktree.py`; `tests/test_scheduler.py`; issue verification command.
+- Outputs: added `worktree_diff_empty`; re-exported it via `worktree_facade`; added coding-review empty-diff blocking before backstop/dirty/auto-land/landing; added focused worktree helper tests and scheduler regression; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0328); this log entry.
+- Notes: Verification passed as issue-specified (`uv run pytest web/api/tests/test_worktree.py tests/test_scheduler.py -q`, 228 passed, 1 Starlette/httpx deprecation warning) after `uv sync --extra dev` installed the local dev extra. Ruff and touched-file LSP diagnostics passed. No secrets/env files read; no service restart, live DB mutation, or outward notification.
+
 Append entries with this format:
 
 ## [2026-06-24] session-update | Podium flyout markdown overflow fix

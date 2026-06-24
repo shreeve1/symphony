@@ -2704,6 +2704,58 @@ async def test_review_terminal_backstop_failure_blocks_without_landing(
 
 
 @pytest.mark.asyncio
+async def test_review_terminal_empty_diff_blocks_before_backstop_or_landing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_diff_empty", lambda *a: True)
+    monkeypatch.setattr(
+        scheduler,
+        "_run_runnable_verification",
+        lambda *a: pytest.fail("empty diff must block before backstop"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.worktree_is_dirty",
+        lambda *a: pytest.fail("empty diff must block before dirty gate"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("empty diff must not land worktree"),
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert (
+        "nothing to review — implement run produced no changes"
+        in transport.comments["issue-1"][-1]["comment_html"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_review_terminal_skips_non_review_dispatch_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -30,13 +30,19 @@ from plane_adapter import PlaneRateLimitError
 from prompt_renderer import render_previous_comments_block, review_mode
 from repo_host import repo_host_for
 from schedule import (
+    SCHEDULED_LABEL_WINDOW_END_HOUR as _SCHEDULED_LABEL_WINDOW_END_HOUR,
+)
+from schedule import (
+    SCHEDULED_LABEL_WINDOW_START_HOUR as _SCHEDULED_LABEL_WINDOW_START_HOUR,
+)
+from schedule import (
+    SCHEDULED_LABEL_WINDOW_TZ as _SCHEDULED_LABEL_WINDOW_TZ,
+)
+from schedule import (
     CandidateComment,
     ScheduleEvent,
     ScheduleEventType,
     ScheduleParseError,
-    SCHEDULED_LABEL_WINDOW_END_HOUR as _SCHEDULED_LABEL_WINDOW_END_HOUR,
-    SCHEDULED_LABEL_WINDOW_START_HOUR as _SCHEDULED_LABEL_WINDOW_START_HOUR,
-    SCHEDULED_LABEL_WINDOW_TZ as _SCHEDULED_LABEL_WINDOW_TZ,
     format_schedule_comment,
     latest_event,
     next_maintenance_window,
@@ -61,6 +67,9 @@ from tracker_types import (
 )
 from web.api.db import resolve_run_log_root
 
+from .markers import (
+    _SCHEDULE_MARKER_RE as _SCHEDULE_MARKER_RE,
+)
 from .markers import (
     _bound_summary_block as _bound_summary_block,
 )
@@ -87,9 +96,6 @@ from .markers import (
 )
 from .markers import (
     _parse_summary_marker as _parse_summary_marker,
-)
-from .markers import (
-    _SCHEDULE_MARKER_RE as _SCHEDULE_MARKER_RE,
 )
 from .sanitize import (
     _collect_secrets as _collect_secrets,
@@ -660,6 +666,24 @@ def _review_worktree_is_dirty(
         bool,
         worktree_helpers.worktree_is_dirty(
             config.homelab_repo_path, binding_name, issue_id
+        ),
+    )
+
+
+def _review_worktree_diff_empty(
+    config: SymphonyConfig,
+    binding: ProjectBinding | None,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str,
+) -> bool:
+    if binding is not None and binding.is_remote:
+        return False
+    worktree_helpers = import_module("worktree_facade")
+    return cast(
+        bool,
+        worktree_helpers.worktree_diff_empty(
+            config.homelab_repo_path, binding_name, issue_id, base_branch
         ),
     )
 
@@ -3339,6 +3363,42 @@ async def _handle_review_terminal_done(
         )
         return True
 
+    base_branch = candidate.base_branch or config.base_branch
+    if binding_name and await asyncio.to_thread(
+        _review_worktree_diff_empty,
+        config,
+        resolved_binding,
+        binding_name,
+        issue_id,
+        base_branch,
+    ):
+        block_summary = (
+            "Review halted: nothing to review — implement run produced no changes."
+        )
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=block_summary,
+            ended_at=now().isoformat(),
+        )
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            block_summary,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
     verification_command = _extract_runnable_verification(issue_body)
     if verification_command:
         verification_cwd = _review_verification_cwd(
@@ -3440,7 +3500,6 @@ async def _handle_review_terminal_done(
         )
         return True
 
-    base_branch = candidate.base_branch or config.base_branch
     error = await asyncio.to_thread(
         _land_review_worktree,
         config,
