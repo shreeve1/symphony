@@ -107,3 +107,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Review prompts must mandate exact `## Verification`, permit in-place fixes, and end with one `SYMPHONY_RESULT: done|blocked` marker.
 **Verification:** `uv run pytest tests/test_prompt_renderer.py -q` and `uv run python -m py_compile prompt_renderer.py` passed; ruff and LSP diagnostics passed for touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `5fc06962b3bbc71ba22bacfb9fd6735bc574d47c..HEAD`, read all changed files, reran verification, ran ruff, checked criteria, and passed.
+
+## #117 Extract process-neutral land_worktree — 2026-06-24
+
+**What changed:** Added `land_worktree` as a process-neutral merge-and-cleanup helper, refactored `_maybe_merge_worktree` to call it, and re-exported it through `worktree_facade.py`.
+**Files:** `web/api/worktree.py`, `web/api/main.py`, `worktree_facade.py`, `web/api/tests/test_worktree.py`, `.kanban/issues/117-land-worktree-process-neutral.md`
+**Decisions:** Keep issue-state mutation and dirty-worktree redispatch in the API wrapper; `land_worktree` only runs git merge/rebase-retry/cleanup and returns a block reason.
+**Conventions established:** Scheduler/importer-facing worktree helpers go through `worktree_facade.py`.
+**Verification:** `uv run pytest web/api/tests/test_worktree.py -q` and `uv run python -m py_compile web/api/worktree.py web/api/main.py worktree_facade.py` passed; ruff and LSP diagnostics found 0 touched-file errors.
+**Action review:** 2026-06-24 fresh review diffed `ca648d25735927929a4df53a8d452f10674e56d1..HEAD`, read all changed files, reran verification, and passed with notes about formatting-only hunks.

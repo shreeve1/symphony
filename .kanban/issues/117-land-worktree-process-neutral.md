@@ -1,11 +1,14 @@
 ---
 id: 117
 title: Extract process-neutral land_worktree (merge+land core, no state mutation)
-status: review
+status: done
 blocked_by: [113]
 locks: [web-api]
 priority: 1
 created: 2026-06-24
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -33,13 +36,17 @@ breaks the review flow. Extract a pure merge+land core both callers share.
 
 ## Acceptance criteria
 
-- [ ] `land_worktree` exists in `web/api/worktree.py`; does merge + 113 rebase-retry +
+- [x] `land_worktree` exists in `web/api/worktree.py`; does merge + 113 rebase-retry +
       cleanup only; no issue-state mutation, no redispatch.
-- [ ] `_maybe_merge_worktree` is refactored onto `land_worktree`; the operator-merge
+- [x] `_maybe_merge_worktree` is refactored onto `land_worktree`; the operator-merge
       path (clean→merge, dirty→redispatch, fail→blocked comment) is behavior-identical.
-- [ ] `worktree_facade` re-exports `land_worktree` (in the shim and `__all__`).
+- [x] `worktree_facade` re-exports `land_worktree` (in the shim and `__all__`).
 
 ## Verification
 
 `uv run pytest web/api/tests/test_worktree.py -q`
 and `uv run python -m py_compile web/api/worktree.py web/api/main.py worktree_facade.py`
+
+## Implementation Notes
+
+Added `land_worktree` as a process-neutral merge-and-cleanup helper, refactored `_maybe_merge_worktree` to keep its existing state/redispatch wrapper around that helper, and re-exported the helper through `worktree_facade.py`. Added a worktree test that verifies land merges and removes the worktree.
