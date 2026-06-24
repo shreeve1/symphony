@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-24] session-update | Ralph issue #113 FF merge rebase retry
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/113-ff-merge-rebase-retry.md`; `git diff 38d2e4452016fb8b924fc70cc81858374ddfc640 HEAD`; `web/api/worktree.py`; `web/api/tests/test_worktree.py`; issue verification command.
+- Outputs: implemented one local rebase+FF retry for non-conflicting diverged-base worktree merges; marked `.kanban/issues/113-ff-merge-rebase-retry.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/analysis-session-worktree-done-commit-redispatch.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0317, C-0087 superseded); updated `wiki/eval/worktree.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest web/api/tests/test_worktree.py -q`, 24 passed). Ruff, py_compile, and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. Initial non-login shell lacked `uv` on PATH, so verification used `PATH=/home/james/.local/bin:$PATH` while running the exact issue command. No secrets/env files read; no service restart, live DB mutation, or outward notification.
+
 ## [2026-06-24] session-update | Issue #105 remote Claude edit+commit landing smoke
 
 - Actor: agent (Pi), direct live smoke harness.

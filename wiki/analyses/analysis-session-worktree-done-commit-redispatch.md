@@ -6,6 +6,7 @@ created: 2026-06-18
 updated: 2026-06-24
 sources:
   - docs/adr/0014-worktree-done-commit-redispatch.md
+  - .kanban/issues/113-ff-merge-rebase-retry.md
   - web/api/worktree.py
   - worktree_facade.py
   - web/api/main.py
@@ -69,8 +70,10 @@ Built from `plans/feature-worktree-done-commit-redispatch.md` via `/dev-build`. 
 
 Issue #108 (2026-06-24) flips local coding bindings to default worktree isolation: `SymphonyConfig.worktree_default` / `SYMPHONY_WORKTREE_DEFAULT` defaults true, `_worktree_enabled` excludes remote bindings, local coding candidates are marked `worktree_active=True` during resume/dispatch, and Podium rows are updated so the existing done-time merge/cleanup path still owns terminal removal. The old explicit `worktree_active=true` opt-in still works; `SYMPHONY_WORKTREE_DEFAULT=false` is the kill switch [source: .kanban/issues/108-worktree-per-run-default.md; source: config.py; source: scheduler/__init__.py; source: tests/test_scheduler.py].
 
-Feature is no longer designed as dormant/opt-in for local coding dispatch. **ADR-0014 `accepted` and implemented 2026-06-18 (C-0250); issue #108 makes the `symphony` self-binding isolation default-on for local coding runs (C-0316).**
+Issue #113 (2026-06-24) narrows the old non-FF abort posture: when `merge_worktree` hits an FF-only failure because the base branch advanced, it attempts one local `git rebase <base_branch>` inside the issue worktree and retries the fast-forward merge. A clean rebase lands and lets the caller clean up the worktree; a rebase conflict aborts and returns the existing block message while leaving the worktree intact [source: .kanban/issues/113-ff-merge-rebase-retry.md; source: web/api/worktree.py; source: web/api/tests/test_worktree.py].
+
+Feature is no longer designed as dormant/opt-in for local coding dispatch. **ADR-0014 `accepted` and implemented 2026-06-18 (C-0250); issue #108 makes the `symphony` self-binding isolation default-on for local coding runs (C-0316); issue #113 makes non-conflicting parallel landings conflict-free by rebase+retry (C-0317).**
 
 ## Claims
 
-C-0246, C-0249 active but C-0249's "feature dormant" observation is superseded for local coding dispatch by C-0316; **C-0247 superseded (gap closed), C-0248 superseded (predicate refined), C-0250 (implemented), C-0316 (default-on local coding isolation)** — see [CLAIMS.md](../CLAIMS.md).
+C-0246, C-0249 active but C-0249's "feature dormant" observation is superseded for local coding dispatch by C-0316; **C-0247 superseded (gap closed), C-0248 superseded (predicate refined), C-0250 (implemented), C-0316 (default-on local coding isolation), C-0317 (diverged-base rebase retry), C-0087 superseded for the old no-rebase abort posture** — see [CLAIMS.md](../CLAIMS.md).
