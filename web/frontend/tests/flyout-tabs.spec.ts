@@ -1,4 +1,10 @@
-import { expect, expectCleanConsole, seedIssue, test } from "./fixtures";
+import {
+	expect,
+	expectCleanConsole,
+	seedIssue,
+	setIssueComments,
+	test,
+} from "./fixtures";
 
 test("flyout switches between Comments and Session tabs", async ({
 	page,
@@ -54,6 +60,43 @@ test("flyout switches between Comments and Session tabs", async ({
 		.toBeCloseTo(normalWidth, 0);
 	const restoredWidth = (await flyout.boundingBox())?.width ?? 0;
 	expect(restoredWidth).toBeLessThan(maximizedWidth);
+
+	expectCleanConsole(problems);
+});
+
+test("flyout comments wrap long diagnostic blocks", async ({
+	page,
+	problems,
+}) => {
+	const { issueId } = seedIssue(
+		"homelab",
+		"Flyout overflow diagnostic",
+		"in_review",
+	);
+	const marker = JSON.stringify({
+		consecutive_passes: 0,
+		domain: "infra",
+		external_id: "homelab-patrol-infra-9690678d",
+		last_fail_at: "2026-06-24T15:00:34.912740+00:00",
+		last_pass_at: "2026-06-23T03:00:37.152185+00:00",
+		latest_status: "failed",
+		severity: "medium",
+	});
+	setIssueComments(
+		issueId,
+		`### Patrol (2026-06-24T00:00:00Z)\n\n**Diagnostic:**\n\n\`\`\`\n${marker}\n\`\`\`\n`,
+	);
+
+	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("flyout-title")).toHaveText(
+		"Flyout overflow diagnostic",
+	);
+	const comments = page.getByTestId("view-comments_md");
+	await expect
+		.poll(() =>
+			comments.evaluate((el) => el.scrollWidth - el.clientWidth),
+		)
+		.toBeLessThanOrEqual(1);
 
 	expectCleanConsole(problems);
 });
