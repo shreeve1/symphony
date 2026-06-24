@@ -1,7 +1,7 @@
 ---
 id: 122
 title: MANUAL — deploy ADR-0023 review phase (live Alembic 0011 + restart + verify)
-status: done
+status: review
 blocked_by: [115, 118, 119, 120, 121]
 priority: 2
 created: 2026-06-24
