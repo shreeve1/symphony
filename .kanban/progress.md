@@ -98,3 +98,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** API `auto_land` follows existing boolean-field behavior (`worktree_active`, `approval_required`): create defaults false, patch accepts explicit bool and rejects null.
 **Verification:** `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics passed for touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `a795b80fef512771fae8a5d9d7c25f5963a85219..HEAD`, read changed files, reran verification, ran ruff, checked criteria, and passed.
+
+## #116 REVIEW_PREAMBLE renderer constant — 2026-06-24
+
+**What changed:** Added `REVIEW_PREAMBLE` and `render_review_prompt(issue)` so review dispatch can render the review contract, issue body, and centralized output contract without skill or WORKFLOW loading.
+**Files:** `prompt_renderer.py`, `tests/test_prompt_renderer.py`, `.kanban/issues/116-review-preamble-renderer-constant.md`
+**Decisions:** Keep review prompting as an engine-owned renderer constant; expose it through a sibling render helper rather than overloading normal implement dispatch.
+**Conventions established:** Review prompts must mandate exact `## Verification`, permit in-place fixes, and end with one `SYMPHONY_RESULT: done|blocked` marker.
+**Verification:** `uv run pytest tests/test_prompt_renderer.py -q` and `uv run python -m py_compile prompt_renderer.py` passed; ruff and LSP diagnostics passed for touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `5fc06962b3bbc71ba22bacfb9fd6735bc574d47c..HEAD`, read all changed files, reran verification, ran ruff, checked criteria, and passed.
