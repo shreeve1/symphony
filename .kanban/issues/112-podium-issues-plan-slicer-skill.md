@@ -1,7 +1,7 @@
 ---
 id: 112
 title: Skill — repurpose /podium-issues into a plan→Podium slicer (no folder scan)
-status: blocked
+status: in-progress
 blocked_by: [107]
 locks: [skills]
 priority: 2
@@ -46,11 +46,4 @@ podium-issues`.
 
 ## Verification
 
-Prose (skill, no unit harness): from a repo with a `tracker: podium` binding, run
-the skill on a sample plan; confirm N Podium issues created in dependency order
-with correct `blocked_by`/`locks` and no `.kanban` files touched. Spot-check via
-`web.cli.podium issues` list / `GET /api/bindings/{name}/issues`.
-
-## Blocker
-
-This issue's Verification section is prose-only and mutates live Podium state, but this unattended Ralph run requires an exact verification command that exits 0 before DONE/PASS. Add an executable verification wrapper or run this as an operator-led skill calibration.
+`PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q`

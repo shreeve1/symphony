@@ -1,26 +1,13 @@
-"""Mirror local kanban issues into Podium as one Issue per file.
+"""Create Podium issues from an LLM-sliced plan spec.
 
-`/to-issues` writes vertical-slice issues to ``<repo>/.kanban/issues/{NNN}-{slug}.md``
-for the Ralph loop. This module pushes those same issues into Podium so they
-dispatch through the Symphony scheduler: each kanban file becomes one Podium
-Issue in the binding whose ``repo_path`` matches the current working directory.
-
-DB-direct on purpose: the Podium HTTP API gates ``/api/*`` behind a session
-cookie and only the bcrypt password hash lives in the environment, so an
-unattended/auto-chained push cannot log in. Inserting through ``web.api.db``
-(which honors ``PODIUM_DB_PATH``) hits the same database the running API uses
-and mirrors the column list of ``web.api.main.create_binding_issue``.
-
-Issues are inserted in ascending kanban ``id`` order. Podium dispatches todo
-issues ``ORDER BY created_at ASC, id ASC`` (``tracker_podium.py``), so insertion
-order is the dispatch order — the issues run chronologically. Podium has no
-dependency field, so ``blocked_by`` survives only as text inside the issue
-description (advisory, not gated).
+The /podium-issues skill does the natural-language slicing. This module is the
+boring sink: resolve the Podium binding for cwd, then insert the already-sliced
+issues in dependency order so blocked_by contains real Podium ids.
 """
 
 from __future__ import annotations
 
-import re
+import json
 import sqlite3
 import subprocess
 from dataclasses import dataclass
@@ -36,20 +23,21 @@ _seed = cast(Any, import_module("web.api.seed"))
 connect = _db.connect
 BINDINGS_PATH = _seed.BINDINGS_PATH
 
-_FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
-
 
 class PodiumIssuesError(RuntimeError):
-    """Raised for operator-facing failures (no binding match, missing board)."""
+    """Raised for operator-facing failures."""
 
 
 @dataclass(frozen=True)
-class KanbanIssue:
-    path: Path
-    kid: int
+class PlanSlice:
+    key: str
     title: str
-    body: str
-    podium_issue_id: int | None
+    description: str
+    acceptance: list[str]
+    verification: str
+    blocked_by: list[str]
+    locks: list[str]
+    priority: int | None = None
 
 
 def _git_toplevel(cwd: Path) -> Path:
@@ -68,12 +56,6 @@ def _git_toplevel(cwd: Path) -> Path:
 def resolve_binding_for_cwd(
     cwd: Path, bindings_path: Path = BINDINGS_PATH
 ) -> dict[str, Any]:
-    """Return the ``tracker: podium`` binding whose repo contains ``cwd``.
-
-    Matches the cwd's git toplevel (falling back to the resolved cwd) against
-    each binding's resolved ``repo_path``. Raises ``PodiumIssuesError`` listing
-    available podium bindings when nothing matches.
-    """
     root = _git_toplevel(cwd)
     bindings = _seed._load_bindings(bindings_path)
     podium = [b for b in bindings if str(b.get("tracker")) == "podium"]
@@ -87,66 +69,79 @@ def resolve_binding_for_cwd(
     )
 
 
-def parse_kanban_issue(path: Path) -> KanbanIssue:
-    text = path.read_text(encoding="utf-8")
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
-        raise PodiumIssuesError(f"{path}: missing YAML frontmatter")
-    front = yaml.safe_load(match.group(1)) or {}
-    body = match.group(2).strip("\n")
-    if "id" not in front:
-        raise PodiumIssuesError(f"{path}: frontmatter missing 'id'")
-    # Parse the id from the raw frontmatter token, not the YAML-coerced value:
-    # YAML 1.1 reads a zero-padded all-octal-digit id like ``060`` as octal
-    # (-> 48). The raw decimal token matches the filename and Ralph's
-    # ``grep "^id: NNN$"`` lookup, which both keep the zero-padding.
-    id_match = re.search(r"(?m)^id:[ \t]*[\"']?0*([0-9]+)", match.group(1))
-    if not id_match:
-        raise PodiumIssuesError(f"{path}: frontmatter 'id' is not numeric")
-    raw_marker = front.get("podium_issue_id")
-    return KanbanIssue(
-        path=path,
-        kid=int(id_match.group(1), 10),
-        title=str(front.get("title") or path.stem),
-        body=body,
-        podium_issue_id=int(raw_marker) if raw_marker is not None else None,
+def _load_plan_slices(plan_path: Path) -> list[PlanSlice]:
+    raw = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    rows = raw.get("slices") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list) or not rows:
+        raise PodiumIssuesError(f"{plan_path}: expected non-empty 'slices' list")
+
+    slices: list[PlanSlice] = []
+    seen: set[str] = set()
+    for idx, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise PodiumIssuesError(f"{plan_path}: slice {idx} is not an object")
+        key = str(row.get("key") or idx)
+        if key in seen:
+            raise PodiumIssuesError(f"{plan_path}: duplicate slice key {key!r}")
+        seen.add(key)
+        title = str(row.get("title") or "").strip()
+        verification = str(row.get("verification") or "").strip()
+        if not title or not verification:
+            raise PodiumIssuesError(f"{plan_path}: slice {key!r} needs title+verification")
+        acceptance = [str(x) for x in row.get("acceptance", [])]
+        if not acceptance:
+            raise PodiumIssuesError(f"{plan_path}: slice {key!r} needs acceptance")
+        slices.append(
+            PlanSlice(
+                key=key,
+                title=title,
+                description=str(row.get("description") or "").strip(),
+                acceptance=acceptance,
+                verification=verification,
+                blocked_by=[str(x) for x in row.get("blocked_by", [])],
+                locks=[str(x) for x in row.get("locks", [])],
+                priority=row.get("priority"),
+            )
+        )
+    unknown = sorted({b for s in slices for b in s.blocked_by} - seen)
+    if unknown:
+        raise PodiumIssuesError(f"{plan_path}: unknown blocked_by keys: {unknown}")
+    return _dependency_order(slices)
+
+
+def _dependency_order(slices: list[PlanSlice]) -> list[PlanSlice]:
+    remaining = {s.key: s for s in slices}
+    emitted: set[str] = set()
+    ordered: list[PlanSlice] = []
+    while remaining:
+        ready = [
+            s for s in slices if s.key in remaining and all(b in emitted for b in s.blocked_by)
+        ]
+        if not ready:
+            raise PodiumIssuesError("slice dependency cycle detected")
+        for item in ready:
+            ordered.append(item)
+            emitted.add(item.key)
+            remaining.pop(item.key)
+    return ordered
+
+
+def _description(slice_: PlanSlice) -> str:
+    acceptance = "\n".join(f"- [ ] {item}" for item in slice_.acceptance)
+    return (
+        f"## What to build\n\n{slice_.description}\n\n"
+        f"## Acceptance criteria\n\n{acceptance}\n\n"
+        f"## Verification\n\n{slice_.verification}\n"
     )
-
-
-def scan_pending(kanban_dir: Path) -> list[KanbanIssue]:
-    """Parsed issues lacking a ``podium_issue_id`` marker, ascending kanban id."""
-    if not kanban_dir.is_dir():
-        raise PodiumIssuesError(f"no kanban issues directory at {kanban_dir}")
-    issues = [parse_kanban_issue(p) for p in sorted(kanban_dir.glob("*.md"))]
-    pending = [i for i in issues if i.podium_issue_id is None]
-    return sorted(pending, key=lambda i: i.kid)
-
-
-def write_back_marker(path: Path, issue_id: int, binding_name: str) -> None:
-    """Insert ``podium_issue_id``/``podium_binding`` into the file's frontmatter.
-
-    Body and existing frontmatter keys are preserved verbatim; the two markers
-    are appended just before the closing ``---`` fence.
-    """
-    text = path.read_text(encoding="utf-8")
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
-        raise PodiumIssuesError(f"{path}: missing YAML frontmatter")
-    front_block = match.group(1).rstrip("\n")
-    body = text[match.end(1) :]  # includes the trailing "\n---\n..." remainder
-    addition = f"\npodium_issue_id: {issue_id}\npodium_binding: {binding_name}"
-    path.write_text(f"---\n{front_block}{addition}{body}", encoding="utf-8")
 
 
 def _insert_issue(
     connection: sqlite3.Connection,
     binding: dict[str, Any],
-    issue: KanbanIssue,
+    slice_: PlanSlice,
+    blocked_by_ids: list[int],
     now: str,
 ) -> int:
-    name = str(binding["name"])
-    base_branch = str(binding.get("base_branch") or "main")
-    preferred_agent = binding.get("default_agent")
     approval = binding.get("approval") or {}
     approval_required = (
         bool(approval.get("enabled")) if isinstance(approval, dict) else False
@@ -157,58 +152,89 @@ def _insert_issue(
           binding_name, title, description, state, priority, preferred_agent,
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
           approval_required, approved, scheduled_for, base_branch, comments_md,
-          context_md, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', NULL, ?, NULL, NULL, 'high', 0, ?, 0, NULL, ?, '', '', ?, ?)
+          context_md, external_id, blocked_by, locks, created_at, updated_at
+        ) VALUES (?, ?, ?, 'todo', ?, ?, NULL, NULL, 'high', 0, ?, 0, NULL, ?, '', '', NULL, ?, ?, ?, ?)
         """,
         (
-            name,
-            f"[k#{issue.kid}] {issue.title}",
-            issue.body,
-            preferred_agent,
+            str(binding["name"]),
+            slice_.title,
+            _description(slice_),
+            slice_.priority,
+            binding.get("default_agent"),
             int(approval_required),
-            base_branch,
+            str(binding.get("base_branch") or "main"),
+            json.dumps(blocked_by_ids),
+            json.dumps(slice_.locks),
             now,
             now,
         ),
     )
-    return int(cursor.lastrowid)
+    issue_id = cursor.lastrowid
+    if issue_id is None:
+        raise RuntimeError("insert did not return an issue id")
+    return int(issue_id)
 
 
-def import_kanban_issues(
+def create_plan_issues(
     cwd: Path,
+    plan_path: Path,
     *,
     bindings_path: Path = BINDINGS_PATH,
     dry_run: bool = False,
 ) -> list[str]:
-    """Push pending kanban issues into Podium; yield one summary line per issue.
-
-    Resolves the binding from ``cwd``, scans ``<repo>/.kanban/issues/``, and for
-    each file without a ``podium_issue_id`` inserts a Podium Issue (ascending
-    kanban id), then writes the marker back. ``dry_run`` performs no DB writes
-    and no file mutation.
-    """
     binding = resolve_binding_for_cwd(cwd, bindings_path)
+    slices = _load_plan_slices(plan_path)
     name = str(binding["name"])
-    repo_root = Path(str(binding["repo_path"])).resolve()
-    pending = scan_pending(repo_root / ".kanban" / "issues")
-
-    lines = [f"binding={name} repo={repo_root} pending={len(pending)}"]
-    if not pending:
-        lines.append("nothing to import (all issues already have podium_issue_id)")
-        return lines
+    lines = [f"binding={name} slices={len(slices)}"]
     if dry_run:
-        for issue in pending:
-            lines.append(f"k#{issue.kid} '{issue.title}' -> podium (dry-run)")
+        for slice_ in slices:
+            deps = ",".join(slice_.blocked_by) or "none"
+            locks = ",".join(slice_.locks) or "none"
+            lines.append(f"{slice_.key} '{slice_.title}' blocked_by={deps} locks={locks} -> podium (dry-run)")
         return lines
 
+    created: dict[str, int] = {}
     now = datetime.now(UTC).isoformat()
     connection = connect()
     try:
-        for issue in pending:
-            podium_id = _insert_issue(connection, binding, issue, now)
+        for slice_ in slices:
+            blocked_by_ids = [created[key] for key in slice_.blocked_by]
+            issue_id = _insert_issue(connection, binding, slice_, blocked_by_ids, now)
+            created[slice_.key] = issue_id
             connection.commit()
-            write_back_marker(issue.path, podium_id, name)
-            lines.append(f"k#{issue.kid} '{issue.title}' -> podium #{podium_id}")
+            lines.append(
+                f"{slice_.key} '{slice_.title}' -> podium #{issue_id}"
+            )
     finally:
         connection.close()
     return lines
+
+
+def list_issues(binding_name: str | None = None) -> list[str]:
+    connection = connect()
+    try:
+        if binding_name:
+            rows = connection.execute(
+                """
+                SELECT id, binding_name, title, state, blocked_by, locks
+                FROM issue WHERE binding_name = ? ORDER BY id
+                """,
+                (binding_name,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT id, binding_name, title, state, blocked_by, locks
+                FROM issue ORDER BY id
+                """
+            ).fetchall()
+    finally:
+        connection.close()
+    lines = []
+    for row in rows:
+        blocked_by = json.loads(row[4] or "[]")
+        locks = json.loads(row[5] or "[]")
+        lines.append(
+            f"#{row[0]} {row[1]} {row[3]} blocked_by={blocked_by} locks={locks} {row[2]}"
+        )
+    return lines or ["no issues"]
