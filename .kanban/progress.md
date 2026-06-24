@@ -80,3 +80,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Podium plan slicing uses slice keys only inside the YAML spec; persisted dependencies are real Podium ids.
 **Verification:** `PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q` passed; LSP diagnostics found 0 issues in touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `a9f20d03c149d3953345cac213f184aa77a88443..HEAD`, reran verification, ran ruff, checked criteria, and passed.
+
+## #114 Add issue.auto_land column — 2026-06-24
+
+**What changed:** Added `issue.auto_land` with `BOOLEAN NOT NULL DEFAULT FALSE`, Alembic migration 0011, `INITIAL_REVISION` bump, and tracker bool coercion for the read path.
+**Files:** `web/api/schema.py`, `web/api/migrations/versions/0011_issue_auto_land.py`, `tracker_podium.py`, `tests/test_tracker_podium.py`, `.kanban/issues/114-issue-auto-land-column.md`
+**Decisions:** Keep `auto_land` false by default; only future slicer/write-path work should set it true.
+**Conventions established:** `auto_land` is exposed from `PodiumTrackerAdapter` as a Python `bool`; NULL/missing values read as `False`.
+**Verification:** `uv run pytest tests/test_alembic_baseline.py -q` and `uv run python -m py_compile web/api/schema.py tracker_podium.py` passed; `tests/test_tracker_podium.py` and an upgrade/downgrade smoke for 0011 also passed. LSP diagnostics only reported environment-only missing imports for Alembic/SQLAlchemy in the migration.
+**Action review:** 2026-06-24 fresh review diffed `d5bd697adf9f6976ac6ae0f92461a5eb6309a023..HEAD`, read all changed files, reran verification, and passed.
