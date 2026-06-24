@@ -2,6 +2,13 @@
 
 This file tracks implementation notes across Ralph iterations.
 
+## #105 Remote Claude edit+commit landing smoke — 2026-06-24
+
+**What changed:** Ran a live direct harness against `itadmin@100.95.224.218` using `ClaudeAgentAdapter(remote=RemotePolicy(...))`, so it exercised `SshClaudeHost` without adding a temporary production binding.
+**Evidence:** Remote Claude committed `7f34e32 smoke: remote claude edit commit` in disposable checkout `/tmp/symphony-105-remote-claude-20260624005402-26879`; `git status --short` was empty; issue-specific `/tmp`/tmux artifacts were gone; checkout was removed.
+**Files:** `.kanban/issues/105-remote-claude-edit-commit-landing-smoke.md`, `runs/105-remote-claude-edit-smoke.log` (ignored artifact), `.kanban/progress.md`
+**Decision:** Used the allowed direct harness path to avoid `bindings.yml` mutation and `symphony-host` restart.
+
 ## #99 Complete the ClaudeHost seam — 2026-06-23
 
 **What changed:** Completed the additive `ClaudeHost` seam by adding `tmux_argv`, `is_remote`, and `rmtree` across the Protocol, `LocalClaudeHost`, and `SshClaudeHost`.

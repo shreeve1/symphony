@@ -1,8 +1,9 @@
 ---
 id: 105
 title: Remote Claude edit+commit landing smoke on disposable checkout
-status: pending
+status: done
 blocked_by: []
+updated: 2026-06-24
 parent: 96
 priority: 1
 created: 2026-06-23
@@ -22,14 +23,25 @@ Keep it narrow:
 
 ## Acceptance criteria
 
-- [ ] Remote Claude creates and commits one trivial file change in the disposable checkout.
-- [ ] Remote `git status --short` is clean after the run.
-- [ ] Remote issue-specific tmux socket/temp dir are gone after the run.
-- [ ] Temporary binding/checkout are removed after verification.
+- [x] Remote Claude creates and commits one trivial file change in the disposable checkout.
+- [x] Remote `git status --short` is clean after the run.
+- [x] Remote issue-specific tmux socket/temp dir are gone after the run.
+- [x] Temporary binding/checkout are removed after verification.
 
 ## Verification
 
 Manual/prod-smoke evidence: run log, remote `git log -1 --oneline`, remote `git status --short`, and post-run residue check.
+
+Evidence log: `runs/105-remote-claude-edit-smoke.log` (ignored run artifact).
+
+## Implementation Notes
+
+- Used a direct Python harness instead of a temporary production binding to avoid `bindings.yml` mutation/restart while still exercising `ClaudeAgentAdapter(remote=RemotePolicy(...))` → `SshClaudeHost` → `run_claude_agent`.
+- Created disposable checkout `/tmp/symphony-105-remote-claude-20260624005402-26879` on `itadmin@100.95.224.218` from `/home/itadmin/itastack`; configured repo-local git identity only in that checkout.
+- Remote Claude wrote `symphony-remote-claude-smoke.txt` and committed `7f34e32 smoke: remote claude edit commit`.
+- Verified remote `git status --short` was empty after the run.
+- Verified no issue-specific remote `/tmp` or tmux artifacts matching `symphony-claude-105-remote-edit-smoke-*` remained.
+- Removed the disposable checkout; no temporary binding was created.
 
 ## Notes
 

@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-24] session-update | Issue #105 remote Claude edit+commit landing smoke
+
+- Actor: agent (Pi), direct live smoke harness.
+- Inputs: `.kanban/issues/105-remote-claude-edit-commit-landing-smoke.md`; `runs/105-remote-claude-edit-smoke.log`; `claude_runner.py`; `claude_host.py`; n8n SSH verification commands.
+- Outputs: marked `.kanban/issues/105-remote-claude-edit-commit-landing-smoke.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0314); updated `wiki/eval/model-catalog.eval`; this log entry.
+- Notes: Used the allowed direct-harness route to avoid production `bindings.yml` mutation and `symphony-host` restart while still exercising `ClaudeAgentAdapter(remote=RemotePolicy(...))` → `SshClaudeHost` → `run_claude_agent`. Remote Claude committed `7f34e32 smoke: remote claude edit commit` in disposable n8n checkout `/tmp/symphony-105-remote-claude-20260624005402-26879`; independent verification showed empty `git status --short`, no issue-specific `symphony-claude-105-remote-edit-smoke-*` temp/tmux residue, and the checkout was removed. No secrets/env files read; no temp binding was created.
+
 ## [2026-06-23] session-update | Issue #103 remote Claude scheduler/config/routing wiring
 
 - Actor: agent (Pi), via `dev-build` workflow.

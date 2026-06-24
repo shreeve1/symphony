@@ -1,3 +1,4 @@
 How does Symphony disambiguate duplicate model ids in models.yml? ||| provider/id
 Why can models.yml changes block all dispatch until restart? ||| duplicate-id validator
 How does Symphony route a remote binding with default_agent claude after issue 103? ||| default_agent=claude
+Was remote Claude edit+commit landing verified after issue 104? ||| 7f34e32
