@@ -351,22 +351,27 @@ const STATE_KEYS = STATES.map((s) => s.key);
 
 function GateHints({ issue }: { issue: IssueDetail }) {
 	if (issue.state !== "todo") return null;
+	// Some write endpoints (reply/comment/steer/abort/schedule/dismiss) and their
+	// websocket payloads may not run _decorate_issue_gates, so these fields can be
+	// absent on a freshly-mutated row. Default to [] so a re-render never throws.
+	const waitingOn = issue.unsatisfied_blocked_by ?? [];
+	const lockConflicts = issue.lock_conflicts ?? [];
 	return (
 		<div className="flex flex-wrap gap-1.5">
-			{issue.unsatisfied_blocked_by.length > 0 && (
+			{waitingOn.length > 0 && (
 				<span
 					data-testid="waiting-chip"
 					className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800"
 				>
-					Waiting on {issue.unsatisfied_blocked_by.map((id) => `#${id}`).join(", ")}
+					Waiting on {waitingOn.map((id) => `#${id}`).join(", ")}
 				</span>
 			)}
-			{issue.lock_conflicts.length > 0 && (
+			{lockConflicts.length > 0 && (
 				<span
 					data-testid="lock-chip"
 					className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-700"
 				>
-					Locked: {issue.lock_conflicts.join(", ")}
+					Locked: {lockConflicts.join(", ")}
 				</span>
 			)}
 		</div>

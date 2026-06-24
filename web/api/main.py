@@ -1486,7 +1486,7 @@ async def reply_to_issue(
         )
 
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
-    result = _row(row)
+    result = _decorate_issue_gates(connection, [_row(row)])[0]
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )
@@ -1549,7 +1549,7 @@ async def comment_on_issue(
         raise HTTPException(status_code=404, detail="issue not found")
 
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
-    result = _row(row)
+    result = _decorate_issue_gates(connection, [_row(row)])[0]
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )

@@ -41,6 +41,24 @@ def test_reply_on_in_review_returns_todo(client: TestClient, issue_id: int) -> N
     assert "please retry the migration" in payload["comments_md"]
 
 
+def test_reply_response_carries_gate_fields(
+    client: TestClient, issue_id: int
+) -> None:
+    # Regression: the reply response (and its websocket payload) must include
+    # the decorated gate fields. The reply flips state to 'todo', where the
+    # flyout renders GateHints; a missing unsatisfied_blocked_by/lock_conflicts
+    # crashed the frontend ('Application error') on the post-reply re-render.
+    _set_state(client, issue_id, "in_review")
+
+    response = client.post(f"/api/issues/{issue_id}/reply", json={"body": "go"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["state"] == "todo"
+    assert "unsatisfied_blocked_by" in payload
+    assert "lock_conflicts" in payload
+    assert "dependencies_satisfied" in payload
+
+
 # [5.2b]
 def test_reply_writes_wake_sentinel(
     client: TestClient,
