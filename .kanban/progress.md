@@ -46,3 +46,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Lock conflicts are scheduling filters only; issues stay `todo` and never transition to `blocked` because of locks.
 **Verification:** `uv run pytest tests/test_scheduler.py -q` passed; `uv run ruff check tracker_types.py tracker_podium.py scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile ...`, and LSP diagnostics passed.
 **Action review:** 2026-06-24 fresh review diffed `26f86c75fe7406e58c15daff9f0e56747e18c62f..HEAD`, read all changed files, reran verification, and passed.
+
+## #113 Merge-contention fix — 2026-06-24
+
+**What changed:** `merge_worktree` now rescues non-conflicting FF-only merge failures by rebasing the worktree branch onto the advanced base branch, then retrying the FF merge once.
+**Files:** `web/api/worktree.py`, `web/api/tests/test_worktree.py`
+**Decisions:** Rebase conflicts abort and return the existing block message, leaving the worktree intact for manual inspection; no agent re-dispatch/counter was added.
+**Conventions established:** Worktree landing stays deterministic and local-ref-only: one in-process rebase retry on non-FF, block on conflict.
+**Verification:** `uv run pytest web/api/tests/test_worktree.py -q` passed; `uv run ruff check web/api/worktree.py web/api/tests/test_worktree.py` and `uv run python -m py_compile web/api/worktree.py web/api/tests/test_worktree.py` passed; LSP diagnostics found 0 errors in touched files.
+**Action review:** 2026-06-24 fresh review diffed `38d2e4452016fb8b924fc70cc81858374ddfc640..HEAD`, read all changed files, reran verification, and passed.
