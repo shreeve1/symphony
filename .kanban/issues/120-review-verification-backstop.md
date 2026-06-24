@@ -1,11 +1,13 @@
 ---
 id: 120
 title: Driver backstop — re-run runnable Verification, override an over-optimistic review pass
-status: review
+status: done
 blocked_by: [119]
 locks: [scheduler]
 priority: 2
 created: 2026-06-24
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -32,15 +34,19 @@ and it is independently testable against issue-body fixtures.
 
 ## Acceptance criteria
 
-- [ ] A review `done` whose runnable `## Verification` exits non-zero is overridden to
+- [x] A review `done` whose runnable `## Verification` exits non-zero is overridden to
       `blocked`; the worktree is not landed.
-- [ ] A review `done` whose verification exits 0 proceeds to 119's provenance-gated
+- [x] A review `done` whose verification exits 0 proceeds to 119's provenance-gated
       handling.
-- [ ] A prose-only `## Verification` (no backtick command) skips the backstop (agent
+- [x] A prose-only `## Verification` (no backtick command) skips the backstop (agent
       mandate only); review `done` is honored.
-- [ ] The extractor returns nothing for prose and the exact command(s) for the
+- [x] The extractor returns nothing for prose and the exact command(s) for the
       backtick-joined form (unit-tested against body fixtures).
 
 ## Verification
 
 `uv run pytest tests/test_scheduler.py -q`
+
+## Implementation Notes
+
+Added `_extract_runnable_verification` plus a review-terminal backstop that runs cleanly backticked verification commands before dirty-worktree or auto-land handling. Failed commands finish the Run as blocked, append review output context, block the Issue, and skip landing; prose-only verification falls back to the review agent mandate.

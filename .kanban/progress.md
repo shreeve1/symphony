@@ -134,3 +134,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Trusted slicer-authored issues use `auto_land=true` for unattended merge; operator-authored/default issues remain `in_review` after review pass for manual merge.
 **Verification:** `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q` passed; ruff, py_compile, and LSP diagnostics passed for touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `ec4a5e24dba2018d568acd9fc3674ff8bbbad4d5..HEAD`, read every changed file, reran verification, checked ruff/syntax, and passed.
+
+## #120 Driver backstop — 2026-06-24
+
+**What changed:** Added a Python runnable-verification extractor and a review-terminal backstop that re-runs cleanly backticked `## Verification` commands before dirty-worktree or auto-land handling.
+**Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `.kanban/issues/120-review-verification-backstop.md`
+**Decisions:** Backstop failures finish the Run as `failed`/`blocked`, append review output context, block the Issue with the failing command, and never call the landing path; prose-only verification still relies on the review agent mandate.
+**Conventions established:** Cleanly runnable verification means backtick-quoted command segments joined only by connective text, returned as `cmd1 && cmd2` for multi-command sections.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed (194 tests); `uv run ruff check scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile scheduler/__init__.py tests/test_scheduler.py`, and touched-file LSP diagnostics passed.
+**Action review:** 2026-06-24 fresh review diffed `ea6ddd644cf16f46fa0c33e923482e5042cfd28a..HEAD`, read every changed file, reran exact verification, checked ruff/LSP equivalents, and passed.
