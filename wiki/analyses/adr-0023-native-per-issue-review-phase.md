@@ -3,7 +3,7 @@ title: "ADR-0023 — Native per-issue review phase for coding bindings, with pro
 type: analysis
 status: promoted
 created: 2026-06-24
-updated: 2026-06-24
+updated: 2026-06-25
 sources:
   - docs/adr/0023-native-per-issue-review-phase-and-auto-land.md
   - scheduler/__init__.py
@@ -129,3 +129,9 @@ ADR-0021 slices 105/108/112/113.
 - Dirty-worktree smoke #119 passed: review emitted done and runnable verification passed, but an intentional untracked file left the worktree dirty; terminal handling blocked the issue with “Review auto-land halted: review worktree has uncommitted changes” instead of landing or redispatching to `todo`.
 - Existing Issue #102 review after deploy exercised the fail path: a malformed/unreviewable issue was flipped to `blocked` by the review run.
 - Throwaway smoke issues #116–#119 were archived after verification; #118/#119 throwaway worktrees were manually removed after recording evidence.
+
+## Post-deploy fix — review terminal must gate on `review_dispatch`, not the marker (2026-06-25)
+
+**Root cause (verified, live):** `_handle_review_terminal_done` keyed its provenance decision off the persistent `### Symphony Review` marker in `comments_md` (`_REVIEW_DISPATCH_MARKER_RE.search(comments_md)`) instead of `candidate.review_dispatch`. The marker is written once at review dispatch and never removed, so it cannot distinguish a review run from a *later implement run on the same issue*. When an operator `/reply`s to an `in_review` issue, `POST /api/issues/{id}/reply` flips it `in_review → todo` and re-dispatches a normal implement run — but the stale marker made that run terminate through the review/auto-land path. Observed on issue #120: an operator reply (“tell me what model is being used”) at 12:05:12 produced run 352, a *second* review-terminal (`review-passed-awaiting-operator-merge`) on an already-reviewed issue, violating the “one review per issue, idempotent” invariant. For `auto_land=true` issues this would have re-triggered an unattended merge to `main`.
+
+**Fix (`scheduler/__init__.py`, commit `56302b9`):** gate the handler on `candidate.review_dispatch` (the true per-run provenance, set at selection only when the issue is `in_review` with NO marker) and return `False` early otherwise. A reopened-to-`todo` implement run has `review_dispatch=False`, so it now parks `in_review` via the normal completion path instead of re-landing. The marker is still written at dispatch and still drives the `tracker_podium.list_candidates` review-selection gate; only the *terminal* check changed. Regression test `test_review_terminal_skips_non_review_dispatch_run` in `tests/test_scheduler.py`. Verification: `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q` (221 passed). Live since `symphony-host` restart to code `56302b9` (2026-06-25); startup saw two transient `pi` probe-timeout crashes that self-healed via systemd auto-restart (unrelated to the fix; `main._probe_binding` untouched).
