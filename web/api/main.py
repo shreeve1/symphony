@@ -732,7 +732,13 @@ def _decorate_issue_gates(
 
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
-    for key in ("archived", "worktree_active", "approval_required", "approved", "auto_land"):
+    for key in (
+        "archived",
+        "worktree_active",
+        "approval_required",
+        "approved",
+        "auto_land",
+    ):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     if "blocked_by" in result:
@@ -1695,8 +1701,7 @@ async def _maybe_merge_worktree(
         from web.api.worktree import (
             base_repo_dirty,
             branch_name,
-            cleanup_worktree,
-            merge_worktree,
+            land_worktree,
             worktree_dir,
             worktree_exists,
             worktree_is_dirty,
@@ -1705,8 +1710,7 @@ async def _maybe_merge_worktree(
         from worktree import (  # type: ignore[no-redef]
             base_repo_dirty,
             branch_name,
-            cleanup_worktree,
-            merge_worktree,
+            land_worktree,
             worktree_dir,
             worktree_exists,
             worktree_is_dirty,
@@ -1769,15 +1773,12 @@ async def _maybe_merge_worktree(
         )
         return await _append_blocked_and_publish(connection, issue_id, current, msg)
 
-    # Attempt FF-only merge.
     error = await asyncio.to_thread(
-        merge_worktree, repo_path, binding_name, issue_str, base_branch
+        land_worktree, repo_path, binding_name, issue_str, base_branch
     )
     if error is not None:
         return await _append_blocked_and_publish(connection, issue_id, current, error)
 
-    # Merge succeeded: clean up worktree + branch.
-    await asyncio.to_thread(cleanup_worktree, repo_path, binding_name, issue_str)
     return _row(
         connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     )

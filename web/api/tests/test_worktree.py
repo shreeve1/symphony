@@ -18,6 +18,7 @@ from web.api.worktree import (
     branch_name,
     cleanup_worktree,
     create_worktree,
+    land_worktree,
     merge_worktree,
     remove_worktree,
     worktree_dir,
@@ -151,6 +152,20 @@ def test_remove_worktree_idempotent(
 def test_cleanup_worktree(repo: Path, binding_name: str, issue_id: str) -> None:
     create_worktree(repo, binding_name, issue_id, "main")
     cleanup_worktree(repo, binding_name, issue_id)
+    assert not worktree_exists(repo, binding_name, issue_id)
+
+
+def test_land_worktree_merges_and_cleans_up(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "feature.txt").write_text("feature work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "feature commit")
+
+    assert land_worktree(repo, binding_name, issue_id, "main") is None
+
+    assert "feature commit" in _git(repo, "log", "--oneline", "-1").stdout
     assert not worktree_exists(repo, binding_name, issue_id)
 
 

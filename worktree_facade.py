@@ -11,6 +11,7 @@ try:
     from web.api.worktree import (
         branch_name,
         create_worktree,
+        land_worktree,
         remove_worktree,
         worktree_dir,
         worktree_exists,
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover - supports alternate import path
     from worktree import (  # type: ignore[no-redef]
         branch_name,
         create_worktree,
+        land_worktree,
         remove_worktree,
         worktree_dir,
         worktree_exists,
@@ -29,6 +31,7 @@ except ImportError:  # pragma: no cover - supports alternate import path
 __all__ = [
     "branch_name",
     "create_worktree",
+    "land_worktree",
     "remove_worktree",
     "worktree_dir",
     "worktree_exists",
