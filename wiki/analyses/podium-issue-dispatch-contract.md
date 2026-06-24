@@ -14,6 +14,9 @@ sources:
   - prompt_renderer.py
   - skill_mode_map.py
   - web/frontend/components/NewIssueModal.tsx
+  - web/frontend/components/IssueFlyout.tsx
+  - web/frontend/components/QueryProvider.tsx
+  - wiki/raw/sessions/2026-06-24-reply-comment-undecorated-gate-fields-crash.md
   - tests/test_dispatch_gate.py
   - tests/test_model_catalog.py
 confidence: high
@@ -57,6 +60,32 @@ Smoke issue 20 / run 13 (homelab): run row `pi / openai-codex / gpt-5.5:low / sk
 Reasoning-effort vocabulary is model-specific, and the dispatch gate originally appended `:{effort}` to the model id with no validation, so an effort the model rejected only failed at the provider ~8s into the run. The live smoke that verified #046 hit this: `reasoning_effort=minimal` against the default `gpt-5.5` produced `gpt-5.5:minimal`, which the codex provider rejected (`'minimal' is not supported … Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'`) → Issue `blocked`/`failed` (C-0167) [source: wiki/raw/sessions/2026-06-13-046-live-output-contract-smoke.md].
 
 Fix (C-0169, live + verified 2026-06-13): `models.yml` entries may declare an optional `efforts:` list (gpt-5.5 = `[none, low, medium, high, xhigh]`); `model_catalog.validate_models` parses and validates it. The `agent == "pi"` branch of `_apply_dispatch_gate` rejects an effort absent from a declared `efforts` set with a loud `Dispatch blocked: reasoning_effort '…' is not supported by model '…'` before forming the suffix; entries without `efforts` are unvalidated (back-compat). The API `reasoning_effort` Literal widened to `none|minimal|low|medium|high|xhigh` so model-specific values aren't rejected at create/patch (per-model validity is the gate's job). The new-issue modal derives its effort dropdown from the selected model's `efforts` (full set as fallback) and clears an effort the model doesn't support; `IssueFlyout` offers the union (its model chip is free-text, so the gate is the enforcement point there) [source: model_catalog.py; source: scheduler.py; source: web/api/main.py; source: web/frontend/components/NewIssueModal.tsx]. Made live 2026-06-13 ~05:48 UTC by restarting `podium-api` + `symphony-host` (working tree, uncommitted) and an atomic frontend `deploy.sh` swap. Verified end-to-end: a `minimal` homelab smoke (issue 4) was blocked at the gate (`dispatch_completed reason=dispatch-gate-blocked`, the loud comment, **no run row**), while an `xhigh` smoke (issue 5) dispatched as `gpt-5.5:xhigh` and completed `done`/exit 0.
+
+## Issue-payload gate-field decoration contract (2026-06-24)
+
+The board/flyout render dependency/lock gating (ADR-0021 #110 chip) from three fields
+that are NOT base `issue` columns: `unsatisfied_blocked_by`, `lock_conflicts`,
+`dependencies_satisfied`. They are added by `_decorate_issue_gates` (`web/api/main.py:692`),
+which runs on `GET /api/bindings/{name}/issues`, `GET /api/issues/{id}`, the create
+path, and `patch_issue` — but originally NOT on the mutation endpoints. `/reply` and
+`/comment` returned + websocket-published a bare `_row(...)` lacking those fields; since
+`/reply` flips state to `todo` (where `GateHints` in `IssueFlyout.tsx` read
+`issue.unsatisfied_blocked_by.length` unguarded) and the websocket `issue.updated`
+payload is written straight into the React Query cache (`QueryProvider.tsx`), the
+post-reply re-render threw `undefined.length` → "Application error: a client-side
+exception" (C-0325).
+
+Fix (commit `76d5d0d`): `/reply` and `/comment` now decorate via
+`_decorate_issue_gates`; `GateHints` defaults the fields to `[]` (matching the already
+defensive `IssueCard`/`GateTags`); regression `test_reply_response_carries_gate_fields`.
+**Standing rule:** any endpoint that returns or publishes an issue row the board/flyout
+consumes must run `_decorate_issue_gates`, OR the frontend must default the decorated
+fields. The remaining bare `_row` mutation returns (steer/abort/schedule/dismiss/merge,
+`web/api/main.py:1683/1740/1782/1807/1833/1865/1902`) are safe only because of the
+frontend guard — decorate them too if a component ever reads a decorated field as
+required. Deploy split: backend fix = `podium-api` restart, frontend = `web/frontend/deploy.sh`;
+NOT `symphony-host`/`symphony-restart`, which is the scheduler, not the API/UI
+[source: wiki/raw/sessions/2026-06-24-reply-comment-undecorated-gate-fields-crash.md].
 
 ## Supersedes
 
