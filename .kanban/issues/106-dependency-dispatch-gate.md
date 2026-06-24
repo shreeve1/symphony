@@ -1,7 +1,7 @@
 ---
 id: 106
 title: Gate dispatch on dependencies (todo eligible only when blockers done)
-status: in-progress
+status: review
 blocked_by: [105]
 locks: [scheduler]
 priority: 1
