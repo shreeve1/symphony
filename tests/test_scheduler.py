@@ -2624,6 +2624,158 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_terminal_auto_land_marks_done_and_lands_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda repo, binding, issue, base: calls.append((binding, issue, base)) or None,
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            base_branch="main",
+            review_dispatch=True,
+        ),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert calls == [("homelab", "issue-1", "main")]
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_without_auto_land_stays_in_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": False,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("manual-review issue must not auto-land"),
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_dirty_worktree_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": False,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: True)
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert "uncommitted changes" in transport.comments["issue-1"][-1]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_land_conflict_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr("worktree_facade.land_worktree", lambda *a: "merge conflict")
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert transport.comments["issue-1"][-1]["comment_html"] == "merge conflict"
+
+
+@pytest.mark.asyncio
 async def test_marker_review_transitions_to_in_review(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")

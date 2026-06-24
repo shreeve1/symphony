@@ -1,7 +1,7 @@
 ---
 id: 119
 title: Review-run terminal — provenance-gated auto-land + fail→blocked
-status: pending
+status: in-progress
 blocked_by: [114, 117, 118]
 locks: [scheduler]
 priority: 1

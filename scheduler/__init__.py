@@ -2073,6 +2073,23 @@ async def _classify_terminal(
         )
         return TickResult(True, "agent-verified-close", candidate.id, mode=mode)
 
+    if verdict == "done" and await _handle_review_terminal_done(
+        adapter,
+        config,
+        candidate,
+        result=result,
+        run_id=run_id,
+        run_log_path=run_log_path,
+        secrets=secrets,
+        summary=summary or "",
+        stdout=stdout,
+        stderr=stderr,
+        now=now,
+        notifier=notifier,
+        binding=binding,
+    ):
+        return TickResult(True, "review-terminal-done", candidate.id, mode=mode)
+
     reason_code = (
         "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
     )
@@ -3114,6 +3131,136 @@ def _build_urls(config: SymphonyConfig | None, issue_id: str) -> tuple[str, str]
     if config is None:
         return "", ""
     return config.issue_url(issue_id), config.plane_dashboard_url
+
+
+async def _handle_review_terminal_done(
+    adapter: TrackerAdapter,
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    result: AgentResult,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    summary: str,
+    stdout: str,
+    stderr: str,
+    now: Callable[[], datetime],
+    notifier: TelegramNotifier | None,
+    binding: ProjectBinding | None = None,
+) -> bool:
+    issue = await _fetch_issue(adapter, candidate.id)
+    comments_md = str(issue.get("comments_md") or candidate.comments_md or "")
+    if not _REVIEW_DISPATCH_MARKER_RE.search(comments_md):
+        return False
+
+    if summary:
+        completion_body = f"**Symphony review passed:**\n\n{summary}"
+    else:
+        completion_body = "**Symphony review passed:** Reviewer reported success."
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="succeeded",
+        verdict="done",
+        summary=summary,
+        ended_at=now().isoformat(),
+    )
+    await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+    await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+    if await _handle_archived_terminal(
+        adapter, config, candidate, run_id, binding=binding
+    ):
+        return True
+
+    _iu, _du = _build_urls(config, candidate.id)
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    binding_name = candidate.binding_name or (
+        resolved_binding.name if resolved_binding is not None else ""
+    )
+    issue_id = str(candidate.id)
+    worktree_helpers = import_module("worktree_facade")
+
+    if binding_name and await asyncio.to_thread(
+        worktree_helpers.worktree_is_dirty,
+        config.homelab_repo_path,
+        binding_name,
+        issue_id,
+    ):
+        await _block_issue(
+            adapter,
+            candidate.id,
+            "Review auto-land halted: review worktree has uncommitted changes.",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    if not bool(issue.get("auto_land") or False):
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=in-review reason=review-passed-awaiting-operator-merge",
+            candidate.id,
+        )
+        return True
+
+    if not binding_name:
+        await _block_issue(
+            adapter,
+            candidate.id,
+            "Review auto-land halted: missing binding name.",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    base_branch = candidate.base_branch or config.base_branch
+    error = await asyncio.to_thread(
+        worktree_helpers.land_worktree,
+        config.homelab_repo_path,
+        binding_name,
+        issue_id,
+        base_branch,
+    )
+    if error is not None:
+        await _block_issue(
+            adapter,
+            candidate.id,
+            error,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    update_columns = getattr(adapter, "_update_issue_columns", None)
+    if callable(update_columns):
+        await _maybe_await(update_columns(candidate.id, {"worktree_active": False}))
+    await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
+    LOGGER.info(
+        "state_transitioned issue_id=%s state=done reason=review-auto-landed",
+        candidate.id,
+    )
+    await _notify_review(
+        notifier,
+        candidate.name,
+        candidate.identifier,
+        reason="Review passed; worktree auto-landed",
+        issue_url=_iu,
+        dashboard_url=_du,
+    )
+    return True
 
 
 async def _notify_review(
