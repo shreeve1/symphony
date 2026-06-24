@@ -37,3 +37,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Use `SymphonyConfig.worktree_default` / `SYMPHONY_WORKTREE_DEFAULT` for the global worktree-default kill switch.
 **Verification:** `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`, `uv run pytest tests/test_config.py -q`, `uv run python -m py_compile config.py scheduler/__init__.py tests/test_config.py tests/test_scheduler.py`, and `uv run ruff check config.py scheduler/__init__.py tests/test_config.py tests/test_scheduler.py` passed; LSP diagnostics found 0 issues in touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `2e53a0547e23267f055adc95a789febfc2f6360c..HEAD`, read all changed files, reran verification, and passed.
+
+## #109 Mutual exclusion — co-run lock gate — 2026-06-24
+
+**What changed:** Dispatch reservation now tracks in-flight lock labels and skips candidates whose `locks` intersect with already reserved work; Podium candidates carry their `locks` through `CandidateIssue`.
+**Files:** `tracker_types.py`, `tracker_podium.py`, `scheduler/__init__.py`, `tests/test_scheduler.py`
+**Decisions:** The claimed-this-tick and held-lock sets share one in-memory `in_flight_locks` map keyed by issue id; release clears both id and locks.
+**Conventions established:** Lock conflicts are scheduling filters only; issues stay `todo` and never transition to `blocked` because of locks.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed; `uv run ruff check tracker_types.py tracker_podium.py scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile ...`, and LSP diagnostics passed.
+**Action review:** 2026-06-24 fresh review diffed `26f86c75fe7406e58c15daff9f0e56747e18c62f..HEAD`, read all changed files, reran verification, and passed.

@@ -1,11 +1,13 @@
 ---
 id: 109
 title: Mutual exclusion — co-run lock gate on candidate selection
-status: review
+status: done
 blocked_by: [105, 108]
 locks: [scheduler]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -33,13 +35,17 @@ filter to candidate selection (same place the dependency gate from 106 lives —
 
 ## Acceptance criteria
 
-- [ ] Two `todo` issues sharing a lock label do not run concurrently — the second
+- [x] Two `todo` issues sharing a lock label do not run concurrently — the second
       stays `todo` until the first reaches a terminal outcome.
-- [ ] Two `todo` issues with disjoint (or empty) locks still parallelize up to
+- [x] Two `todo` issues with disjoint (or empty) locks still parallelize up to
       `run_cap` in separate worktrees.
-- [ ] A candidate whose locks intersect an in-flight issue's locks is withheld.
-- [ ] No issue is transitioned to the `blocked` state by this gate.
+- [x] A candidate whose locks intersect an in-flight issue's locks is withheld.
+- [x] No issue is transitioned to the `blocked` state by this gate.
 
 ## Verification
 
 `uv run pytest tests/test_scheduler.py -q`
+
+## Implementation Notes
+
+Added `locks` to `CandidateIssue`, hydrated Podium candidates from `issue.locks`, and taught the dispatch reservation gate to track in-flight lock labels. Conflicting candidates are skipped without state changes; disjoint/empty locks can still dispatch up to the configured cap.
