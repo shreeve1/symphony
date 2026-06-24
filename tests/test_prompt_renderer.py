@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from prompt_renderer import IssueData, render_prompt
+from prompt_renderer import IssueData, render_prompt, render_review_prompt
 
 
 def test_render_prompt_uses_infra_preamble_constant_and_substitutes() -> None:
@@ -78,3 +78,26 @@ def test_infra_renders_constant_without_workflow_file() -> None:
     assert "Symphony performs no git operations for this binding." in prompt
     assert "Body" in prompt
     assert "## Symphony output contract" in prompt
+
+
+def test_render_review_prompt_uses_unattended_review_preamble() -> None:
+    prompt = render_review_prompt(
+        IssueData(
+            identifier="AUTO-2",
+            name="Review me",
+            description="## Verification\n\n`uv run pytest tests/test_prompt_renderer.py -q`",
+            preferred_skill="dev-review-pi",
+        )
+    )
+
+    assert "You are a Symphony review agent" in prompt
+    assert "Run the issue's `## Verification` command exactly as written" in prompt
+    assert "fix it in place" in prompt
+    assert "`SYMPHONY_RESULT: done`" in prompt
+    assert "`SYMPHONY_RESULT: blocked`" in prompt
+    assert "## Verification" in prompt
+    assert "## Symphony output contract" in prompt
+    assert "First, invoke" not in prompt
+    assert "WORKFLOW.md" not in prompt
+    assert "ask the user" not in prompt.lower()
+    assert "verify scope with user" not in prompt.lower()

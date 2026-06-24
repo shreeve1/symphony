@@ -52,6 +52,29 @@ this block verbatim as the issue comment, so write it for a human reader
 
 Keep summaries and questions focused; they are bounded to ~4000 characters when posted."""
 
+# Engine-owned review preamble (ADR-0023). Review runs are unattended native
+# service work, not an operator-facing catalog skill.
+REVIEW_PREAMBLE = """\
+You are a Symphony review agent for a completed coding issue. Run in the issue's
+worktree and independently review the implementation diff against its base.
+
+## Review Duties
+
+1. Gather the surrounding context needed to judge the implementation.
+2. Check every acceptance criterion in the issue body against the actual diff.
+3. Run the issue's `## Verification` command exactly as written. You may emit
+   success only when that command exits 0.
+4. If a gap is small and fixable, fix it in place, rerun verification, and commit
+   the fix before finishing.
+5. If the gap is unsafe, unclear, outside scope, or verification still fails,
+   emit `SYMPHONY_RESULT: blocked` with the blocker in the summary.
+6. If all criteria are satisfied and verification passes, emit
+   `SYMPHONY_RESULT: done`.
+
+End with exactly one terminal `SYMPHONY_RESULT: done` or
+`SYMPHONY_RESULT: blocked` marker plus the appended Symphony summary block.
+"""
+
 # Engine-owned infra preamble (ADR-0016). This is the portable Symphony harness
 # contract — identical wherever Symphony is installed — that used to live in a
 # per-repo WORKFLOW.md. Host-specific safety and autonomy latitude live in the
@@ -365,6 +388,16 @@ def _skill_directive(preferred_skill: str | None) -> str:
     if skill == CHECKPOINTED_EXPLORATION_SKILL:
         lines.append(CHECKPOINTED_EXPLORATION_DIRECTIVE)
     return "\n\n".join(lines)
+
+
+def render_review_prompt(issue: IssueData) -> str:
+    issue_block = (
+        f"<issue>\n"
+        f"# {issue.identifier}: {_escape_issue_content(issue.name)}\n\n"
+        f"{_escape_issue_content(issue.description)}\n"
+        f"</issue>"
+    )
+    return f"{REVIEW_PREAMBLE.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
 
 
 def render_prompt(
