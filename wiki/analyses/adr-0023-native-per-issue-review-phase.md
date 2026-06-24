@@ -8,6 +8,8 @@ sources:
   - docs/adr/0023-native-per-issue-review-phase-and-auto-land.md
   - scheduler/__init__.py
   - prompt_renderer.py
+  - tests/test_prompt_renderer.py
+  - .kanban/issues/116-review-preamble-renderer-constant.md
   - web/api/main.py
   - web/api/worktree.py
   - worktree_facade.py
@@ -17,12 +19,12 @@ sources:
   - "~/.claude/skills/ralph/SKILL.md"
   - "~/.claude/skills/dev-review-pi/SKILL.md"
 confidence: high
-tags: [adr, review-phase, tralph, ralph, auto-land, worktree, in-review, merge, coding-binding, REVIEW_PREAMBLE, proposed, partially-built]
+tags: [adr, review-phase, tralph, ralph, auto-land, worktree, in-review, merge, coding-binding, REVIEW_PREAMBLE, render_review_prompt, proposed, partially-built]
 ---
 
 # ADR-0023 — Native per-issue review phase + provenance-gated auto-land
 
-**Status: proposed (2026-06-24). Partially built: slice #114 landed the `auto_land` schema/read-path; remaining review-phase slices are not built or deployed.** Trigger model + merge
+**Status: proposed (2026-06-24). Partially built: slices #114 (`auto_land` schema/read-path) and #116 (`REVIEW_PREAMBLE` + `render_review_prompt`) landed; remaining review-phase slices are not built or deployed.** Trigger model + merge
 mechanism corrected after a `dev-review-claude` (opus) pass found the original
 "keep it `running` + dispatch inline" and "scheduler calls `_maybe_merge_worktree`"
 mechanics unimplementable. Companion to ADR-0021 (P2 conflict-free parallel
@@ -54,7 +56,7 @@ the scheduler never merges, ADR-0014). The human merge is the only review.
    constant in `prompt_renderer.py`, sibling to `INFRA_PREAMBLE` (ADR-0016 pattern),
    forked from `dev-review-pi`'s brief prose but stripped of its interactive
    verify/discuss/apply-with-user steps. Pi-powered; runs the issue's
-   `## Verification`, fixes in place, emits `SYMPHONY_RESULT: done|blocked`. Driver
+   `## Verification`, fixes in place, emits `SYMPHONY_RESULT: done|blocked`. Slice #116 landed this foundation as `REVIEW_PREAMBLE` plus `render_review_prompt(issue)`, which renders the preamble + issue body + `OUTPUT_CONTRACT` without skill or `WORKFLOW.md` loading [source: prompt_renderer.py] [source: tests/test_prompt_renderer.py] [source: .kanban/issues/116-review-preamble-renderer-constant.md]. Driver
    backstop re-runs runnable verification.
 3. **Scope.** Universal for all `type: coding` bindings; infra excluded (ADR-0020
    `auto_close_on_verified` already covers it).
@@ -108,7 +110,7 @@ the scheduler never merges, ADR-0014). The human merge is the only review.
 ## Slices (114–122)
 
 114 schema/Alembic 0011 **landed** · 115 create/patch API carries `auto_land` · 116
-`REVIEW_PREAMBLE` constant · 117 extract process-neutral `land_worktree` · 118 review
+`REVIEW_PREAMBLE` constant **landed** · 117 extract process-neutral `land_worktree` · 118 review
 selection+dispatch (in_review, marker-gated) · 119 review terminal (clean-worktree
 gate, provenance-gated pass, fail→blocked) · 120 driver backstop (Python verification
 extractor) · 121 slicer stamps `auto_land=true` · 122 MANUAL deploy. Depends on
@@ -116,6 +118,8 @@ ADR-0021 slices 105/108/112/113.
 
 ## Status / follow-ups
 
-- Slice #114 landed the `issue.auto_land` schema/migration/tracker read-path and passed fresh review. Slices #115-122 remain pending.
+- Slice #114 landed the `issue.auto_land` schema/migration/tracker read-path and passed fresh review.
+- Slice #116 landed the review renderer foundation (`REVIEW_PREAMBLE` + `render_review_prompt`) and passed fresh review. It does not dispatch reviews yet; that remains #118.
+- Slices #117-122 remain pending.
 - Deploy precondition: ADR-0021 slice 108 (worktree default-ON) must be live so review-phase issues carry `worktree_active=true`.
 - Promote ADR to `accepted` once built + deployed.

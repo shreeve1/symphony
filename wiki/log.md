@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-24] session-update | Ralph issue #116 REVIEW_PREAMBLE renderer
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/116-review-preamble-renderer-constant.md`; `git diff 5fc06962b3bbc71ba22bacfb9fd6735bc574d47c HEAD`; `prompt_renderer.py`; `tests/test_prompt_renderer.py`; issue verification command.
+- Outputs: implemented `REVIEW_PREAMBLE` and `render_review_prompt(issue)`; marked `.kanban/issues/116-review-preamble-renderer-constant.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0321); updated `wiki/eval/podium-api.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_prompt_renderer.py -q` and `uv run python -m py_compile prompt_renderer.py`). Ruff and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. No env files read; no service restart, live DB mutation, or outward notification.
+
 ## [2026-06-24] session-update | Ralph issue #114 auto_land schema/read path
 
 - Actor: agent (Pi), Ralph implementation + fresh review.
