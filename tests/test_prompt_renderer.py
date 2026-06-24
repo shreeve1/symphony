@@ -1,6 +1,22 @@
 from __future__ import annotations
 
-from prompt_renderer import IssueData, render_prompt, render_review_prompt
+from prompt_renderer import IssueData, render_prompt, render_review_prompt, review_mode
+
+
+def test_review_mode_heading_present_returns_coding() -> None:
+    assert review_mode("Do work\n\n## Verification\n\n`uv run pytest -q`") == "coding"
+
+
+def test_review_mode_heading_absent_returns_validation() -> None:
+    assert review_mode("Do work\n\n## Notes\n\nNo verification section") == "validation"
+
+
+def test_review_mode_prose_only_verification_returns_coding() -> None:
+    assert review_mode("## Verification\n\nRestart the service and confirm logs.") == "coding"
+
+
+def test_review_mode_empty_description_returns_validation() -> None:
+    assert review_mode(" \n\t") == "validation"
 
 
 def test_render_prompt_uses_infra_preamble_constant_and_substitutes() -> None:

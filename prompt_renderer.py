@@ -289,6 +289,7 @@ _OPERATOR_REPLY_RE = re.compile(
 
 
 _VARIABLE_RE = re.compile(r"\{\{issue\.(\w+)\}\}")
+_VERIFICATION_HEADING_RE = re.compile(r"^##[ \t]+Verification[ \t]*$", re.MULTILINE)
 
 
 def _substitute(text: str, issue: IssueData) -> str:
@@ -398,6 +399,10 @@ def render_review_prompt(issue: IssueData) -> str:
         f"</issue>"
     )
     return f"{REVIEW_PREAMBLE.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
+
+
+def review_mode(description: str) -> Literal["coding", "validation"]:
+    return "coding" if _VERIFICATION_HEADING_RE.search(description) else "validation"
 
 
 def render_prompt(
