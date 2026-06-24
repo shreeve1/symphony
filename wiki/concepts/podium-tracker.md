@@ -3,7 +3,7 @@ title: Podium Tracker — schema, db resolution, API contract, concurrency
 type: concept
 status: promoted
 created: 2026-06-10
-updated: 2026-06-11
+updated: 2026-06-24
 sources:
   - web/api/schema.py
   - web/api/db.py
@@ -29,7 +29,7 @@ FastAPI + raw `sqlite3` (no ORM) + Pydantic v2 for the API; Alembic migrations c
 
 ## Two distinct state enums (do not conflate)
 
-- **`issue.state`**: `todo`, `in_review`, `running`, `blocked`, `done` — board column / lifecycle [source: web/api/schema.py:25].
+- **`issue.state`**: `todo`, `in_review`, `running`, `blocked`, `done`, `archived` — board column / lifecycle [source: web/api/schema.py].
 - **`run.state`**: `queued`, `running`, `succeeded`, `failed` — dispatch state machine [source: web/api/schema.py:51]. Also mirrored as `issue.latest_run_state` (nullable) [source: web/api/schema.py:40].
 - **verdict** (`run.verdict`, `issue.latest_verdict`): `done`, `review`, `blocked`, nullable [source: web/api/schema.py:39,52].
 
@@ -39,7 +39,7 @@ The startup reaper (ADR-0005) sweeps `run.state IN (queued,running)` → synthet
 
 - `binding(name PK, display_name, color, sort_order, archived)` — Binding *is* the Project; no Project table.
 - `skill(name PK, description, source)` — CLI-refreshable catalog.
-- `issue(...)` — operator intent + latest-Run projection. Typed operator levers: `preferred_agent`, `preferred_model`, `preferred_skill` (FK→skill.name), `reasoning_effort` DEFAULT `'high'`, `worktree_active` DEFAULT FALSE, infra role columns `approval_required` DEFAULT FALSE, `approved` DEFAULT FALSE, `scheduled_for` TIMESTAMP NULL, `max_duration_seconds`, `base_branch`. Two blobs: `comments_md` (human↔AI), `context_md` (AI-only). Projection cols: `latest_run_id` (FK→run.id), `latest_verdict`, `latest_run_state`, `last_event_at`.
+- `issue(...)` — operator intent + latest-Run projection. Typed operator levers: `preferred_agent`, `preferred_model`, `preferred_skill` (FK→skill.name), `reasoning_effort` DEFAULT `'high'`, `worktree_active` DEFAULT FALSE, dependency fields `blocked_by` (list of issue ids, JSON text) and `locks` (list of lock labels, JSON text), infra role columns `approval_required` DEFAULT FALSE, `approved` DEFAULT FALSE, `scheduled_for` TIMESTAMP NULL, `base_branch`. Two blobs: `comments_md` (human↔AI), `context_md` (AI-only). Projection cols: `latest_run_id` (FK→run.id), `latest_verdict`, `latest_run_state`, `last_event_at`.
 - `run(...)` — first-class per-dispatch row: `agent, provider, model, state, verdict, summary, exit_code, cost_usd, input_tokens, output_tokens, worktree_path, branch_name, base_branch, log_path, skill_invoked, started_at, ended_at`. No event-log table v1.
 [source: web/api/schema.py:6-65]
 
@@ -70,9 +70,10 @@ Scheduler success handling appends the concise completion summary to `comments_m
 - **null guard**: `NON_NULLABLE_FIELDS` set to null in the body → 422 "fields cannot be null" [source: web/api/main.py:333-337].
 - **skill FK check**: non-null `preferred_skill` → `_require_known_skill` [source: web/api/main.py:339-340].
 - **no-op guard**: only fields whose value differs from stored are `changed`; empty/echoing body returns `current` unchanged and does **not** bump `updated_at` — the board orders by `updated_at`, so a blind bump would reorder cards [source: web/api/main.py:342-346].
-- **monotonic updated_at**: `_next_updated_at` returns a value strictly greater than the stored one even when two PATCHes land within clock resolution [source: web/api/main.py:362-372].
+- **monotonic updated_at**: `_next_updated_at` returns a value strictly greater than the stored one even when two PATCHes land within clock resolution [source: web/api/main.py].
+- **dependency fields**: `blocked_by` and `locks` are accepted on create and patch. API rows return omitted/malformed stored values as `[]`; writes store JSON text. `blocked_by` is cycle-checked and a dependency cycle returns HTTP 400; `locks` are labels and have no cycle check (C-0315) [source: web/api/main.py; web/api/tests/test_issue_create.py; web/api/tests/test_issue_patch.py].
 
-POST `/api/bindings/{name}/issues` uses the same `model_validate` 400/422 split; unknown binding → 404 checked **before** body validation (C-0054). Board list orders `BY updated_at DESC, id DESC` [source: web/api/main.py:166,236-239].
+POST `/api/bindings/{name}/issues` uses the same `model_validate` 400/422 split; unknown binding → 404 checked **before** body validation (C-0054). Board list orders `BY updated_at DESC, id DESC` [source: web/api/main.py].
 
 ## LAN-bind deviation
 
@@ -95,4 +96,4 @@ Both Podium ports bind localhost in production; external access via Authelia rev
 
 ## Claims
 
-C-0059 .. C-0067, C-0079 .. C-0081, and C-0104 .. C-0106 in [CLAIMS.md](../CLAIMS.md).
+C-0059 .. C-0067, C-0079 .. C-0081, C-0104 .. C-0106, and C-0315 in [CLAIMS.md](../CLAIMS.md).

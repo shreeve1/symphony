@@ -1416,3 +1416,10 @@ Append entries with this format:
 - Notes: Decision is PROPOSED — not built, not deployed. Key finding: the engine already captures the agent's natural turn (pi `assistant_parts`; claude transcript JSONL) and discards it by sub-extracting only the summary block, so the fix is a re-route, not new machinery; pi needs no `OUTPUT_CONTRACT` wording crutch. Partially supersedes ADR-0007/#046 comment-stream design; companion to ADR-0019 (same principle, return path). Related-but-separate parked item: flip `claude_persist` default `False→True` for local bindings (`config.py:101`), own soak (8-slot cap / 45-min TTL), remote excluded by config; does not fix this bug.
 
 - 2026-06-23 — manual wiki-update: promoted ADR-0012 remote-Claude v2 calibration evidence from Issue #104 / Runs #324-#325; added raw session `wiki/raw/sessions/2026-06-23-remote-claude-live-calibration.md`; updated docs ADR, wiki analysis/index/ROUTING, and CLAIMS C-0313.
+
+## [2026-06-24] session-update | Issue #107 blocked_by/locks API write path
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/107-blocked-by-write-paths.md`; `web/api/main.py`; `web/api/tests/test_issue_create.py`; `web/api/tests/test_issue_patch.py`; issue verification command.
+- Outputs: marked `.kanban/issues/107-blocked-by-write-paths.md` done; updated `.kanban/progress.md`; updated `wiki/concepts/podium-tracker.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0315); added `wiki/eval/podium-api.eval`; this log entry.
+- Notes: #107 carries `blocked_by` and `locks` through Podium create/patch API as JSON-backed typed lists, returns omitted values as `[]`, and rejects `blocked_by` cycles with HTTP 400. Verification passed exactly as issue-specified (`uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q`, 90 passed); touched-file LSP diagnostics were clean; fresh review returned `RALPH_REVIEW: PASS`.
