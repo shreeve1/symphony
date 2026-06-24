@@ -63,6 +63,11 @@ function useCreateIssue(binding: string, bindingType: Issue["binding_type"]) {
 				latest_verdict: null,
 				latest_run_state: null,
 				last_event_at: null,
+				blocked_by: body.blocked_by ?? [],
+				locks: body.locks ?? [],
+				dependencies_satisfied: true,
+				unsatisfied_blocked_by: [],
+				lock_conflicts: [],
 			};
 			queryClient.setQueryData<Issue[]>(key, (old) => [temp, ...(old ?? [])]);
 			return { previous, tempId: temp.id };

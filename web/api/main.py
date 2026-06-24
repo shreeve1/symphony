@@ -683,6 +683,50 @@ def _blocked_by_has_cycle(
     return any(visit(parent) for parent in blocked_by)
 
 
+DONE_DEPENDENCY_STATES = {"done", "archived"}
+
+
+def _decorate_issue_gates(
+    connection: sqlite3.Connection, issues: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    blocker_states = {
+        int(row["id"]): str(row["state"])
+        for row in connection.execute("SELECT id, state FROM issue").fetchall()
+    }
+
+    binding_names = {
+        str(issue["binding_name"]) for issue in issues if "binding_name" in issue
+    }
+    active_locks: dict[str, set[str]] = {name: set() for name in binding_names}
+    rows = connection.execute(
+        """
+        SELECT binding_name, locks
+        FROM issue
+        WHERE state = 'running' OR latest_run_state IN ('queued', 'running')
+        """
+    ).fetchall()
+    for row in rows:
+        binding_name = str(row["binding_name"])
+        if binding_name in binding_names:
+            active_locks.setdefault(binding_name, set()).update(
+                _json_list(row["locks"], str)
+            )
+
+    for issue in issues:
+        unsatisfied = [
+            blocker
+            for blocker in issue.get("blocked_by", [])
+            if blocker_states.get(int(blocker)) not in (None, *DONE_DEPENDENCY_STATES)
+        ]
+        issue["unsatisfied_blocked_by"] = unsatisfied
+        issue["dependencies_satisfied"] = not unsatisfied
+        locks = set(issue.get("locks", []))
+        issue["lock_conflicts"] = sorted(
+            locks & active_locks.get(str(issue.get("binding_name")), set())
+        )
+    return issues
+
+
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
     for key in ("archived", "worktree_active", "approval_required", "approved"):
@@ -801,7 +845,7 @@ def list_binding_issues(
         """,
         tuple(params),
     ).fetchall()
-    return [_row(row) for row in rows]
+    return _decorate_issue_gates(connection, [_row(row) for row in rows])
 
 
 @app.get("/api/inbox")
@@ -827,7 +871,7 @@ def list_inbox_issues(
         ORDER BY COALESCE(i.last_event_at, i.updated_at) DESC, i.id DESC
         """
     ).fetchall()
-    return [_row(row) for row in rows]
+    return _decorate_issue_gates(connection, [_row(row) for row in rows])
 
 
 # Agents mirror the scheduler's validation set (config.py `_validate_agent`).
@@ -980,7 +1024,7 @@ async def create_binding_issue(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     connection.commit()
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
-    result = _row(row)
+    result = _decorate_issue_gates(connection, [_row(row)])[0]
     await websocket_hub.publish(
         {"type": "issue.created", "binding_name": name, "row": result}
     )
@@ -1112,7 +1156,7 @@ def get_issue(
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
-    return _row(row)
+    return _decorate_issue_gates(connection, [_row(row)])[0]
 
 
 @app.patch("/api/issues/{issue_id}")
@@ -1126,7 +1170,7 @@ async def patch_issue(
     ).fetchone()
     if stored is None:
         raise HTTPException(status_code=404, detail="issue not found")
-    current = _row(stored)
+    current = _decorate_issue_gates(connection, [_row(stored)])[0]
 
     # Validate by hand instead of typing the parameter as IssuePatch: the spec
     # distinguishes unknown fields (400) from invalid values (422), and FastAPI
@@ -1196,7 +1240,7 @@ async def patch_issue(
     connection.commit()
 
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
-    result = _row(row)
+    result = _decorate_issue_gates(connection, [_row(row)])[0]
     await websocket_hub.publish(
         {"type": "issue.updated", "id": issue_id, "row": result}
     )

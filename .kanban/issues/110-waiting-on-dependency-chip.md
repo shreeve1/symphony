@@ -1,7 +1,7 @@
 ---
 id: 110
 title: UI — read-only "waiting on #N" / "locked: <label>" chip on gated todo cards
-status: pending
+status: in-progress
 blocked_by: [105, 107]
 locks: [web-frontend]
 priority: 2

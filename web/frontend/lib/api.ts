@@ -40,6 +40,11 @@ export interface Issue {
 	latest_verdict: string | null;
 	latest_run_state: string | null;
 	last_event_at: string | null;
+	blocked_by: number[];
+	locks: string[];
+	dependencies_satisfied: boolean;
+	unsatisfied_blocked_by: number[];
+	lock_conflicts: string[];
 }
 
 // Full issue record, including the markdown bodies the list endpoint omits.
@@ -101,6 +106,11 @@ export interface InboxItem {
 	latest_run_state: string | null;
 	last_event_at: string | null;
 	inbox_dismissed_at: string | null;
+	blocked_by: number[];
+	locks: string[];
+	dependencies_satisfied: boolean;
+	unsatisfied_blocked_by: number[];
+	lock_conflicts: string[];
 }
 
 // CLI-refreshed skill catalog row (#015).
@@ -127,6 +137,8 @@ export interface IssuePatch {
 	base_branch?: string | null;
 	comments_md?: string;
 	context_md?: string;
+	blocked_by?: number[];
+	locks?: string[];
 }
 
 export interface ScheduleRequest {
@@ -150,6 +162,8 @@ export interface IssueCreate {
 	approved?: boolean;
 	schedule?: ScheduleRequest;
 	base_branch?: string;
+	blocked_by?: number[];
+	locks?: string[];
 }
 
 // Dropdown choices for the new-issue form. models come from models.yml with
