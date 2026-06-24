@@ -632,6 +632,54 @@ def test_run_agent_uses_worktree_cwd_when_issue_opted_in(tmp_path: Path) -> None
     assert "podium/trading/42" in branches
 
 
+def test_run_pi_rpc_agent_uses_worktree_cwd_when_issue_opted_in(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "message_update", "delta": "SYMPHONY_RESULT: done\n"})
+            + "\n",
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+    issue = CandidateIssue(
+        id="42",
+        identifier="HOM-42",
+        name="Worktree issue",
+        description="Test description",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        worktree_active=True,
+        base_branch="main",
+        binding_name="trading",
+    )
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return process
+
+    result = run_pi_rpc_agent(
+        _config(repo),
+        issue,
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        mkdtemp=lambda **k: str(temp_dir),
+        clock=iter([10.0, 10.1, 10.2, 10.3]).__next__,
+        environ={"PATH": "/usr/bin"},
+    )
+
+    expected_worktree = (repo / "worktrees" / "trading" / "42").resolve()
+    assert result.exit_code == 0
+    assert captured["cwd"] == str(expected_worktree)
+    assert expected_worktree.is_dir()
+
+
 def test_run_agent_uses_configured_provider_model_and_logs(
     caplog, tmp_path: Path
 ) -> None:
