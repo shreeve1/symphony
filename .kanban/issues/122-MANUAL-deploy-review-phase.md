@@ -1,11 +1,13 @@
 ---
 id: 122
 title: MANUAL — deploy ADR-0023 review phase (live Alembic 0011 + restart + verify)
-status: in-progress
+status: done
 blocked_by: [115, 118, 119, 120, 121]
 priority: 2
 created: 2026-06-24
 updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -51,14 +53,14 @@ no-ops.
 
 ## Acceptance criteria
 
-- [ ] DB backed up before migration; 0011 applied; schema parity confirmed.
-- [ ] Slicer-authored issue: implement→`in_review`→review→auto-land to `main` on pass,
+- [x] DB backed up before migration; 0011 applied; schema parity confirmed.
+- [x] Slicer-authored issue: implement→`in_review`→review→auto-land to `main` on pass,
       no operator action; worktree removed; merge notified.
-- [ ] Operator-authored issue: implement→review pass→stays `in_review`, no auto-merge.
-- [ ] Failing review → `blocked` (not done); single review; dependents stay gated.
-- [ ] Backstop overrides an over-optimistic `done`; dirty worktree → `blocked` not
+- [x] Operator-authored issue: implement→review pass→stays `in_review`, no auto-merge.
+- [x] Failing review → `blocked` (not done); single review; dependents stay gated.
+- [x] Backstop overrides an over-optimistic `done`; dirty worktree → `blocked` not
       `todo`.
-- [ ] Review run re-enters the same worktree; no orphan worktrees after terminal.
+- [x] Review run re-enters the same worktree; no orphan worktrees after terminal.
 
 ## Verification
 
@@ -67,3 +69,13 @@ parking `in_review`, then a review run selected from `in_review` in the same wor
 then `merge_succeeded` + worktree removed with no operator action; an operator-authored
 issue stays `in_review` on review pass; a failing/over-optimistic review → `blocked`;
 clean `symphony-host` restart.
+
+## Implementation Notes
+
+- Backed up live Podium DB/run logs to `/backup/podium-2026-06-24.db` and `/backup/podium-runs-2026-06-24.tar.gz`.
+- Merged the review-phase batch to live `main`, applied Alembic through `0011_issue_auto_land`, rebuilt/deployed Podium web, and restarted `podium-api`, `podium-web`, and `symphony-host`.
+- Live smoke initially found Pi RPC worktree-active runs still used the base repo cwd; fixed `run_pi_rpc_agent` to create/reuse the issue worktree and dispatch from it, added `tests/test_agent_runner.py` coverage, deployed commit `60c9634`, and restarted `symphony-host`.
+- Verified slicer auto-land with live issue #117: implement and review ran in `/home/james/symphony/worktrees/symphony/117`, review passed, `merge_succeeded` landed to `main`, and `worktree_removed` cleaned it.
+- Verified operator gate with live issue #118: review passed and stayed `in_review` with no auto-merge.
+- Verified review fail/backstop/dirty paths via live issues #102, #116, and #119; dirty review blocked instead of landing or returning to `todo`.
+- Archived throwaway issues #116–#119 after evidence capture and removed throwaway worktrees #118/#119.
