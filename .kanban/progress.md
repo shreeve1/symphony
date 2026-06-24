@@ -143,3 +143,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Cleanly runnable verification means backtick-quoted command segments joined only by connective text, returned as `cmd1 && cmd2` for multi-command sections.
 **Verification:** `uv run pytest tests/test_scheduler.py -q` passed (195 tests); `uv run ruff check scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile scheduler/__init__.py tests/test_scheduler.py`, and touched-file LSP diagnostics passed.
 **Action review:** 2026-06-24 fresh review diffed `ea6ddd644cf16f46fa0c33e923482e5042cfd28a..HEAD`, read every changed file, added missing passing-backstop coverage, reran exact verification, checked touched-file LSP diagnostics, and passed.
+
+## #121 Skill /podium-issues auto-land stamp — 2026-06-24
+
+**What changed:** `web.cli.podium issues create-from-plan` now stamps every slicer-created Podium issue with `auto_land=true`, and `issues list` shows the flag for spot checks.
+**Files:** `.claude/skills/podium-issues/SKILL.md`, `web/cli/podium_issues.py`, `web/cli/tests/test_podium_issues.py`, `.kanban/issues/121-slicer-stamp-auto-land.md`
+**Decisions:** Keep auto-land provenance in the slicer sink rather than requiring YAML authors to set it; slicer-authored issues must carry runnable verification commands because review backstop re-runs them.
+**Conventions established:** `/podium-issues` creates trusted auto-land slices; operator/API-created issues remain `auto_land=false` by default.
+**Verification:** Prose verification was exercised against a temp Podium DB/binding sample; `PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q`, `uv run pytest web/api/tests/test_issue_create.py -q`, ruff, py_compile, and touched-file LSP diagnostics passed.
+**Action review:** 2026-06-24 fresh review diffed `7288681fcc08327521634efc2a22648fc86acbe7..HEAD`, read all changed files, reran verification/lint, and passed.
