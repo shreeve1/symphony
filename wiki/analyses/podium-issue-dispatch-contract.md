@@ -3,9 +3,10 @@ title: "Podium issue-field dispatch contract (model catalog, effort, skill, clau
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-23
+updated: 2026-06-24
 sources:
   - wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md
+  - wiki/raw/sessions/2026-06-24-podium-api-model-dropdown-stale-validator.md
   - model_catalog.py
   - models.yml
   - scheduler.py
@@ -37,7 +38,7 @@ As of #043, Claude is wired: a matching Claude entry annotates the candidate wit
 
 `model_catalog.py` (shared by `web.api.main` `/options` and the scheduler) requires: entries unique by `(agent, provider, id)`, `agent` in `pi|claude`, `provider` on every pi entry, and at most one `default: true` entry per agent [source: model_catalog.py; models.yml]. Duplicate bare ids are allowed across agent/provider boundaries; dispatch resolves a bare `preferred_model` by the already-resolved agent, and `provider/id` is accepted for same-agent provider disambiguation [source: model_catalog.py; tests/test_model_catalog.py; tests/test_dispatch_gate.py]. The per-agent default dispatches when `preferred_model` is unset; the new-issue modal preselects by selected agent and uses `provider/id` values only when duplicate ids need disambiguation [source: web/frontend/components/NewIssueModal.tsx]. `SYMPHONY_PI_MODEL`/`SYMPHONY_PI_PROVIDER` are a legacy Plane-path fallback only; the podium startup pi probe exercises the Pi catalog default [source: main.py].
 
-2026-06-23 catalog update: Pi now exposes the CLIProxy provider models `claude-haiku-4-5-20251001`, `claude-opus-4-8`, and `claude-sonnet-4-6`; the latter two intentionally share ids with Claude-agent entries and resolve to `provider=cliproxy` only when the Issue resolves to `agent=pi` [source: models.yml; model_catalog.py; tests/test_dispatch_gate.py]. Deploy lesson from Issue 112: because `models.yml` is re-read on every dispatch but `model_catalog.py` is loaded only at `symphony-host` process start, catalog changes that require validator changes must be followed by `symphony-host.service` restart before requeueing issues. The stale `ed887e5` process read the new duplicate-id catalog and blocked Issue 112 with the old `duplicate model id: claude-opus-4-8` validator until restart onto `a2e16c7`; after requeue, Run 323 dispatched via Claude `claude-opus-4-8` [source: journalctl -u symphony-host.service 2026-06-23 21:49-21:59; source: model_catalog.py; source: models.yml].
+2026-06-23 catalog update: Pi now exposes the CLIProxy provider models `claude-haiku-4-5-20251001`, `claude-opus-4-8`, and `claude-sonnet-4-6`; the latter two intentionally share ids with Claude-agent entries and resolve to `provider=cliproxy` only when the Issue resolves to `agent=pi` [source: models.yml; model_catalog.py; tests/test_dispatch_gate.py]. Deploy lesson from Issue 112: because `models.yml` is re-read on every dispatch but `model_catalog.py` is loaded only at `symphony-host` process start, catalog changes that require validator changes must be followed by `symphony-host.service` restart before requeueing issues. The stale `ed887e5` process read the new duplicate-id catalog and blocked Issue 112 with the old `duplicate model id: claude-opus-4-8` validator until restart onto `a2e16c7`; after requeue, Run 323 dispatched via Claude `claude-opus-4-8` [source: journalctl -u symphony-host.service 2026-06-23 21:49-21:59; source: model_catalog.py; source: models.yml]. The same process-freshness rule applies to the Podium API dropdown: `/api/bindings/{name}/options` catches catalog `ValueError` and degrades to `models: []`, so a stale `podium-api.service` can show an empty Model list for both agents even when repo `models.yml` validates under current code; fix is restarting `podium-api.service` onto the tuple-identity validator and refreshing the browser query cache [source: web/api/main.py; web/api/tests/test_issue_create.py; wiki/raw/sessions/2026-06-24-podium-api-model-dropdown-stale-validator.md#durable-facts].
 
 ## Skill application
 
