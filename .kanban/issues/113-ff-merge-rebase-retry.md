@@ -1,7 +1,7 @@
 ---
 id: 113
 title: Merge-contention fix — FF-fail rebase-onto-base + retry, then block
-status: pending
+status: in-progress
 blocked_by: []
 locks: [web-api]
 priority: 1
