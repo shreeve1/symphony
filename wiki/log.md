@@ -56,6 +56,14 @@ Append entries with this format:
 - Notes: #100 routes Claude tmux helpers, persistent-session liveness, and cleanup through explicit `ClaudeHost` arguments. Remote fake `SshClaudeHost` tests assert `has-session`, pane capture, `kill-session`, and cleanup use SSH-wrapped tmux/rm commands. Verification passed exactly as issue-specified (82 pytest tests; ruff clean), touched-file LSP diagnostics were clean, and fresh review returned `RALPH_REVIEW: PASS`. Claim row was not added because `wiki/CLAIMS.md` is already over budget; the promoted ADR analysis carries the durable fact.
 
 
+## [2026-06-23] session-update | Issue #100 Claude runner host routing actionable review
+
+- Actor: agent (Pi), Ralph actionable review loop
+- Inputs: `.kanban/issues/100-route-runner-tmux-cleanup-through-host.md`; `git diff b176dab83316e93fb55abaf978f11a429f77d6d6 HEAD`; `claude_runner.py`; `claude_host.py`; `tests/test_claude_runner.py`; `tests/test_claude_host.py`; issue verification command.
+- Outputs: committed review fix `27e2394`; updated `.kanban/issues/100-route-runner-tmux-cleanup-through-host.md`; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0012-remote-binding-ssh-exec.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; this log entry.
+- Notes: Review found #100's tmux/cleanup host routing mostly complete but fixed remaining local prompt writes for steer/nudge/question autoreply, remote socket existence checks, and stale docs that still said runner routing was deferred. Verification passed exactly as issue-specified (`.venv/bin/python -m pytest tests/test_claude_runner.py tests/test_claude_persist.py tests/test_claude_host.py -q && /usr/local/bin/ruff check claude_runner.py claude_host.py`, 84 passed; ruff clean) and touched-file LSP diagnostics were clean. No `wiki/CLAIMS.md` row was added because the claim table was already over budget per the prior #99 gate.
+
+
 ## [2026-06-23] session-update | Issue #99 ClaudeHost seam actionable review
 
 - Actor: agent (Pi), Ralph actionable review loop
