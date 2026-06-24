@@ -1,11 +1,13 @@
 ---
 id: 107
 title: Carry blocked_by + locks through the create/patch API (cycle reject)
-status: review
+status: done
 blocked_by: [105]
 locks: [web-api]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -27,9 +29,13 @@ critical path.
 
 ## Acceptance criteria
 
-- [ ] `POST`/patch accept and persist `blocked_by` and `locks`; omitted → `[]`.
-- [ ] A `blocked_by` cycle is rejected (API 400), not silently stored.
+- [x] `POST`/patch accept and persist `blocked_by` and `locks`; omitted → `[]`.
+- [x] A `blocked_by` cycle is rejected (API 400), not silently stored.
 
 ## Verification
 
 `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q`
+
+## Implementation Notes
+
+Added API JSON round-tripping for `blocked_by` and `locks` on issue create/patch, exposed them in API rows, and reject dependency cycles with HTTP 400. Added create/patch regression coverage.

@@ -19,3 +19,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** `blocked_by` gates scheduling only; `blocked` remains reserved for agent failures.
 **Verification:** `uv run pytest tests/test_scheduler.py -q` passed; LSP diagnostics found 0 issues in touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `32b7a1576a3840a8df773d12e1e19e0a4c595728..HEAD`, read all changed files, found and repaired a page-cap dependency snapshot gap, reran verification, and passed.
+
+## #107 Carry blocked_by + locks through create/patch API — 2026-06-24
+
+**What changed:** Added `blocked_by` and `locks` to Podium issue create/patch payloads, persisted them as JSON, returned them as typed lists, and rejected dependency cycles with HTTP 400.
+**Files:** `web/api/main.py`, `web/api/tests/test_issue_create.py`, `web/api/tests/test_issue_patch.py`
+**Decisions:** API callers pass real Podium ids directly; no kanban-id mirror or translation was added.
+**Conventions established:** `blocked_by`/`locks` are omitted-as-empty API lists; cycle validation applies to `blocked_by` only.
+**Verification:** `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q` passed; `uv run python -m py_compile web/api/main.py web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py` passed; LSP diagnostics found 0 issues in touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `4e761ed52dbd06d5bc3c8e5e058a6fa68e56dbfa..HEAD`, read all changed files, reran verification, and passed.
