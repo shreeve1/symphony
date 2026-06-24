@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from config import RemotePolicy
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from pydantic import (
     BaseModel,
@@ -26,15 +25,34 @@ from pydantic import (
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
+from config import RemotePolicy
+
 try:
     from proc_runtime import tail_spool_path
+    from redispatch_core import (
+        COMMIT_REDISPATCH_REPLY_PREFIX,
+        MAX_COMMIT_REDISPATCH,
+        count_commit_redispatches,
+        redispatch_commit_note,
+    )
     from session_continuity import derive_session_id, session_file_path
 except ModuleNotFoundError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from proc_runtime import tail_spool_path  # type: ignore[no-redef]
-    from session_continuity import derive_session_id, session_file_path  # type: ignore[no-redef]
+    from redispatch_core import (  # type: ignore[no-redef]
+        COMMIT_REDISPATCH_REPLY_PREFIX,
+        MAX_COMMIT_REDISPATCH,
+        count_commit_redispatches,
+        redispatch_commit_note,
+    )
+    from session_continuity import (  # type: ignore[no-redef]
+        derive_session_id,
+        session_file_path,
+    )
+
+_count_commit_redispatches = count_commit_redispatches
 
 logger = logging.getLogger(__name__)
 
@@ -617,16 +635,8 @@ ALLOWED_REPLY_STATES = ("in_review", "blocked", "done")
 # own comments_md append, so the reply endpoint rejects them too.
 ACTIVE_RUN_STATES = ("queued", "running")
 
-# Worktree done-time commit re-dispatch (ADR-0014). When an Issue with an
-# active worktree is marked `done` but the worktree is dirty (uncommitted
-# work), Symphony re-dispatches the agent to commit its own work rather than
-# silently force-removing the worktree. Capped to avoid an infinite loop when
-# the agent repeatedly fails to commit; over the cap, fall back to `blocked`.
-MAX_COMMIT_REDISPATCH = 2
-# Substring used both as the synthetic operator-reply header and as the marker
-# counted to enforce MAX_COMMIT_REDISPATCH. Must keep the `### Operator Reply (`
-# shape so prompt_renderer's operator-reply regex surfaces it on resume.
-COMMIT_REDISPATCH_REPLY_PREFIX = "### Operator Reply (Symphony auto-commit"
+# Worktree done-time commit re-dispatch (ADR-0014) constants live in
+# redispatch_core; names stay rebound here for API-test/back-compat imports.
 
 
 # Fields whose column is conceptually NOT NULL for an operator edit: explicit
@@ -1994,18 +2004,6 @@ async def _append_blocked_and_publish(
     return result
 
 
-def _count_commit_redispatches(comments_md: str | None) -> int:
-    """Count prior auto-commit re-dispatches recorded in ``comments_md``.
-
-    Each re-dispatch appends one ``COMMIT_REDISPATCH_REPLY_PREFIX`` marker, so a
-    plain substring count gives the number of prior attempts. A legacy NULL
-    comments_md counts as 0.
-    """
-    if not comments_md:
-        return 0
-    return comments_md.count(COMMIT_REDISPATCH_REPLY_PREFIX)
-
-
 async def _redispatch_to_commit(
     connection: sqlite3.Connection,
     issue_id: int,
@@ -2040,13 +2038,7 @@ async def _redispatch_to_commit(
     branch = branch_name(binding_name, issue_str)
     note = (
         f"\n\n{COMMIT_REDISPATCH_REPLY_PREFIX} · {now})\n\n"
-        f"Your worktree at `{wt_path}` (branch `{branch}`) has uncommitted "
-        f"changes, but the Issue was marked done with nothing committed — so "
-        f"the work cannot be landed and would be lost.\n\n"
-        f"Commit only the work that already exists in the worktree: run the "
-        f"repo's tests for the changed code, then `git add -A && git commit` "
-        f"with a clear message. Do not start new work or expand scope. When the "
-        f"commit lands, end your turn."
+        f"{redispatch_commit_note(wt_path, branch)}"
     )
 
     cursor = connection.execute(
