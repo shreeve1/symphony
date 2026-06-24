@@ -49,6 +49,7 @@ def test_create_minimal_issue_applies_server_defaults(client: TestClient) -> Non
     assert body["state"] == "todo"
     assert body["reasoning_effort"] == "high"
     assert body["worktree_active"] is False
+    assert body["auto_land"] is False
     assert body["base_branch"] == "main"  # symphony base_branch in bindings.yml
     assert body["blocked_by"] == []
     assert body["locks"] == []
@@ -72,6 +73,7 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
             "preferred_model": "claude-fable-5",
             "reasoning_effort": "low",
             "worktree_active": True,
+            "auto_land": True,
             "base_branch": "develop",
         },
     )
@@ -84,6 +86,7 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
     assert body["preferred_model"] == "claude-fable-5"
     assert body["reasoning_effort"] == "low"
     assert body["worktree_active"] is True
+    assert body["auto_land"] is True
     # Explicit base_branch wins over the bindings.yml default.
     assert body["base_branch"] == "develop"
 
@@ -202,6 +205,7 @@ FAILURE_CASES = [
     ({"title": "ok", "preferred_agent": 42}, 422),
     ({"title": "ok", "preferred_model": []}, 422),
     ({"title": "ok", "worktree_active": "maybe"}, 422),
+    ({"title": "ok", "auto_land": "maybe"}, 422),
     ({"title": "ok", "reasoning_effort": "max"}, 422),
     ({"title": "ok", "reasoning_effort": None}, 422),
     ({"title": "ok", "base_branch": 7}, 422),

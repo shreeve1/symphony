@@ -1,11 +1,13 @@
 ---
 id: 115
 title: Carry auto_land through the create/patch API
-status: pending
+status: in-progress
 blocked_by: [114]
 locks: [web-api]
 priority: 1
 created: 2026-06-24
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
