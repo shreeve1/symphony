@@ -10,3 +10,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** `blocked_by` is exposed as `list[int]`; `locks` is exposed as `list[str]`.
 **Verification:** `uv run pytest web/api/tests/test_alembic_baseline.py tests/test_alembic_baseline.py -q` and `uv run python -m py_compile web/api/schema.py tracker_podium.py` passed; `tests/test_tracker_podium.py` also passed.
 **Action review:** 2026-06-24 fresh review diffed `fb2211ce7c54454dd3e83c28f324e13275b0028f..HEAD`, read all changed files, found no gaps, reran verification, and found 0 LSP diagnostics on touched Python files.
+
+## #106 Gate dispatch on dependencies — 2026-06-24
+
+**What changed:** `tracker_podium.list_candidates` now withholds `todo` issues whose `blocked_by` ids are not `done`/`archived`, keeps them in `todo`, and logs unresolved blocker ids while treating them as eligible.
+**Files:** `tracker_podium.py`, `tests/test_scheduler.py`
+**Decisions:** Dependency resolution uses one per-binding issue-state snapshot per candidate scan; unresolved blocker ids warn but do not wedge dispatch.
+**Conventions established:** `blocked_by` gates scheduling only; `blocked` remains reserved for agent failures.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` and `uv run python -m py_compile tracker_podium.py tests/test_scheduler.py` passed; LSP diagnostics found 0 issues in touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `32b7a1576a3840a8df773d12e1e19e0a4c595728..HEAD`, read all changed files, reran verification, and passed.
