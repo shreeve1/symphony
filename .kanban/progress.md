@@ -64,3 +64,10 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Gate chips are display-only spans; dependency and lock gates never add a new issue state or operator control.
 **Verification:** `pnpm -C web/frontend exec playwright test dependency-chip.spec.ts` passed; `pnpm -C web/frontend exec tsc --noEmit`, `uv run ruff check web/api/main.py`, and `uv run python -m py_compile web/api/main.py` passed; LSP found 0 critical diagnostics in touched files.
 **Action review:** 2026-06-24 fresh review diffed `db09ac745b6162601ffa5e0fba0644eb371f1960..HEAD`, read all changed files, reran verification, and passed.
+
+## #111 MANUAL deploy P2 conflict-free parallel dispatch — 2026-06-24
+
+**What changed:** Marked the issue blocked without touching live services.
+**Files:** `.kanban/issues/111-MANUAL-deploy-dependencies.md`
+**Blocker:** The issue's Verification section is prose-only live-host calibration, but this unattended run requires an exact verification command that exits 0 before DONE/PASS.
+**Notes for next iteration:** Add an executable verification wrapper or run this as an operator-led manual deployment/calibration.

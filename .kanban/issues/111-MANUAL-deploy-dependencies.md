@@ -1,10 +1,12 @@
 ---
 id: 111
 title: MANUAL — deploy P2 conflict-free parallel dispatch (live Alembic 0010 + restart + verify)
-status: pending
+status: blocked
 blocked_by: [106, 107, 108, 109, 110, 113]
 priority: 2
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -50,3 +52,13 @@ unattended.
 Prose (live host): journal shows A+C dispatched concurrently in distinct
 worktrees, B withheld until A done then dispatched, D/E serialized on the shared
 lock; clean `symphony-host` restart; no orphan worktrees.
+
+## Blocker
+
+This issue cannot be completed by this unattended Ralph worker under the run
+contract: before any DONE/PASS outcome, the worker must run the issue's
+Verification command exactly as written and receive exit code 0. This issue's
+Verification section is prose-only live-host calibration, not an executable
+command, so there is no exact command that can produce the required exit status.
+The live deployment/calibration should be rerun with an executable verification
+wrapper or handled by an operator-led/manual workflow.
