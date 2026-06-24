@@ -27,7 +27,7 @@ hiccup forcing manual board-shuffling defeats that.
 
 ## Decision
 
-Catch transient failures **at the terminal classifier** (agent exit/timeout) and at the **auto-land terminal** (rebase fixed / claim-renumbered branch now landable) and retry/re-drive instead of blocking. The richest signal — the failed process's own stderr — is available
+Catch transient failures **at the terminal classifier** (agent exit/timeout) and at the **auto-land terminal** (rebase fixed / claim-renumbered branch now landable), and at **startup probe** (transient pi probe timeout) and retry/re-drive instead of blocking/crash-looping. The richest signal — the failed process's own stderr — is available
 exactly there, and retrying at the terminal means the issue never visibly hits
 `blocked`, so there is no board churn to babysit.
 
@@ -40,7 +40,7 @@ exactly there, and retrying at the terminal means the issue never visibly hits
 2. **Allowlist of transient signatures, not a denylist.** Retry only when the
    failure matches a known-transient signature; everything else blocks exactly as
    today. The set (matched against captured stderr / the error payload):
-   `server_is_overloaded`, `service_unavailable`, `overloaded`, rate-limit / `429`,
+   `server_is_overloaded`, `service_unavailable`, `overloaded`, startup probe timeout, rate-limit / `429`,
    `502` / `503` / `504`, connection reset / connection error, and
    `result.timed_out`. A real code defect is the common case for a nonzero exit, so
    the allowlist errs toward blocking: a *new*, unlisted transient string blocks
@@ -105,6 +105,14 @@ exactly there, and retrying at the terminal means the issue never visibly hits
     independently. Until then, claim-ID collision is treated as an auto-land
     re-drive/renumber case, not a code defect.
 
+11. **Startup probe transient failures should not crash-loop the host.** After
+    deploying ADR-0024 (`0ca14fe`), `verify_pi_support` timed out twice on
+    `pi --print ... ping`; systemd restarted the service until a later probe
+    passed. The process eventually became healthy, proving the failure was
+    transient, but a transient probe timeout still crashed the dispatcher. ADR-0026
+    should treat startup probe timeouts like terminal transients: bounded retry /
+    fail-soft per binding, not immediate process death.
+
 ## Shippable in two independent pieces
 
 - **Implement-run retry** (the #128 case, and the common one) is fully independent
@@ -112,6 +120,7 @@ exactly there, and retrying at the terminal means the issue never visibly hits
   ADR-0024 batch, to stop most of the babysitting immediately.
 - **Review-run retry** (the #129/#131 case) reuses ADR-0024 slice #132's reland-marker
   accounting and lands **with or after** #132.
+- **Startup-probe retry/fail-soft** handles transient `verify_pi_support` timeouts before the scheduler crash-loops.
 - **Auto-land re-drive** (the #130/#131 land-block case) lands after the branch is
   cleanly rebased/renumbered and FF-able; if there is a genuine conflict, it stays
   blocked for human resolution.
@@ -134,6 +143,7 @@ exactly there, and retrying at the terminal means the issue never visibly hits
   block backlog appears.
 - Claim-ID collision handling becomes part of the unattended landing story; a
   branch-local `next free C-ID` is not safe under parallel agents.
+- Startup probe retry/fail-soft prevents a transient provider timeout from taking down all bindings during deploy.
 
 ## Considered options
 

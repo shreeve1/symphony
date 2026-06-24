@@ -24,6 +24,7 @@ ADR-0026 is proposed after the ADR-0024 batch exposed that the dispatch loop sti
 - **Provider overload / 503:** Issues #128, #129, and #131 blocked after Codex returned `server_is_overloaded`. #128 failed during implementation and needed requeue to `todo`; #129/#131 failed during review and needed the review marker stripped/neutralized so review could re-dispatch.
 - **Auto-land re-drive:** #130 and #131 had passing reviews but blocked during auto-land after `main` advanced. Rebase/renumbering made the branches landable, but nothing re-drove `land_worktree`; a human had to call it and flip the Issue state.
 - **Concurrent wiki claim IDs:** #131 collided with an unrelated C-0327 claim from a frontend fix. The branch had to be rebased with #131's empty-diff claim renumbered to C-0328 before landing.
+- **Startup probe timeouts:** after restart onto `0ca14fe`, `verify_pi_support` timed out twice on `pi --print ... ping`, causing systemd restarts before a later probe passed and the scheduler reached steady no-candidate polls.
 
 ## Decision summary
 
@@ -35,6 +36,7 @@ ADR-0026 is proposed after the ADR-0024 batch exposed that the dispatch loop sti
 - Retry has a modest fixed cooldown (~60s) off the marker timestamp.
 - Mid-retry notifications are suppressed; notify only on final block after the cap.
 - Auto-land can re-drive when a branch becomes clean/FF-able after rebase or wiki claim renumbering.
+- Startup pi probe timeouts should use bounded retry or per-binding fail-soft behavior instead of crashing the scheduler process.
 - Claim-ID collision is now part of the unattended landing problem: branch-local "next free C-ID" is not concurrency-safe.
 
 ## Status
