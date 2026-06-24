@@ -1,7 +1,7 @@
 ---
 id: 108
 title: Isolation — worktree-per-run default-ON for local bindings
-status: in-progress
+status: review
 blocked_by: []
 locks: [scheduler]
 priority: 1
