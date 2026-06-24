@@ -227,6 +227,54 @@ async def test_podium_candidates_wait_for_dependencies(tmp_path: Path, caplog) -
     assert str(waiting) in {candidate.id for candidate in candidates}
 
 
+@pytest.mark.asyncio
+async def test_podium_candidate_dependency_snapshot_is_not_page_capped(
+    tmp_path: Path,
+) -> None:
+    from tracker_podium import MAX_PAGES_PER_TICK, PAGE_SIZE, PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+
+        def insert_issue(title: str, state: str = "todo", blocked_by=()) -> int:
+            cursor = connection.execute(
+                """
+                INSERT INTO issue(
+                  binding_name, title, description, state, preferred_agent,
+                  comments_md, context_md, blocked_by, created_at, updated_at
+                ) VALUES ('test', ?, '', ?, 'pi', '', '', ?,
+                          '2026-06-11T00:00:00+00:00',
+                          '2026-06-11T00:00:00+00:00')
+                """,
+                (title, state, json.dumps(list(blocked_by))),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+        waiting = insert_issue("waiting")
+        for idx in range(PAGE_SIZE * MAX_PAGES_PER_TICK):
+            insert_issue(f"closed {idx}", "done")
+        running = insert_issue("running blocker", "running")
+        late_independent = insert_issue("late independent")
+        connection.execute(
+            "UPDATE issue SET blocked_by = ? WHERE id = ?",
+            (json.dumps([running]), waiting),
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+    ).list_candidates()
+    candidate_ids = {candidate.id for candidate in candidates}
+
+    assert str(waiting) not in candidate_ids
+    assert str(late_independent) in candidate_ids
+
+
 def _write_plan(repo: Path, issue_identifier: str) -> Path:
     slug = issue_identifier.lower()
     plan_dir = repo / "plans"

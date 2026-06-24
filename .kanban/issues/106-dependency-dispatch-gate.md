@@ -42,4 +42,4 @@ it converts "all todo issues run in parallel" into "independent issues paralleli
 
 ## Implementation Notes
 
-`tracker_podium.list_candidates` now loads the binding's issue states once per tick, filters `todo` candidates with unfinished dependencies, leaves withheld issues in `todo`, and warns while allowing unresolved blocker ids. Added scheduler-suite coverage for unsatisfied, satisfied, independent, and unresolved dependency cases.
+`tracker_podium.list_candidates` now loads the binding's issue states once per tick, filters `todo` candidates with unfinished dependencies, leaves withheld issues in `todo`, and warns while allowing unresolved blocker ids. Review repair made that dependency snapshot unbounded so page-capped terminal issues cannot hide candidates or blockers. Added scheduler-suite coverage for unsatisfied, satisfied, independent, unresolved, and page-cap dependency cases.

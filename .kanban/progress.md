@@ -17,5 +17,5 @@ This file tracks implementation notes across Ralph iterations.
 **Files:** `tracker_podium.py`, `tests/test_scheduler.py`
 **Decisions:** Dependency resolution uses one per-binding issue-state snapshot per candidate scan; unresolved blocker ids warn but do not wedge dispatch.
 **Conventions established:** `blocked_by` gates scheduling only; `blocked` remains reserved for agent failures.
-**Verification:** `uv run pytest tests/test_scheduler.py -q` and `uv run python -m py_compile tracker_podium.py tests/test_scheduler.py` passed; LSP diagnostics found 0 issues in touched Python files.
-**Action review:** 2026-06-24 fresh review diffed `32b7a1576a3840a8df773d12e1e19e0a4c595728..HEAD`, read all changed files, reran verification, and passed.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed; LSP diagnostics found 0 issues in touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `32b7a1576a3840a8df773d12e1e19e0a4c595728..HEAD`, read all changed files, found and repaired a page-cap dependency snapshot gap, reran verification, and passed.

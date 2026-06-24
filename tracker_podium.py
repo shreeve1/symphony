@@ -18,13 +18,13 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from skill_mode_map import mode_for_skill
-from tracker_types import CandidateIssue
 from tracker_contract import (
     DEFAULT_CONTRACT,
     RoleBinding,
@@ -35,6 +35,7 @@ from tracker_contract import (
     coerce_label_role,
     coerce_state_role,
 )
+from tracker_types import CandidateIssue
 from web.api.db import resolve_db_path
 
 PAGE_SIZE = 50
@@ -153,7 +154,7 @@ class PodiumTrackerAdapter:
 
     async def list_candidates(self) -> list[CandidateIssue]:
         candidates = []
-        issues = await self.list_issues()
+        issues = await self._list_candidate_snapshot()
         state_by_id = {str(issue["id"]): str(issue.get("state") or "") for issue in issues}
         for issue in issues:
             if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
@@ -185,6 +186,26 @@ class PodiumTrackerAdapter:
                 )
             )
         return candidates
+
+    async def _list_candidate_snapshot(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            if self.binding_name is not None:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM issue
+                    WHERE binding_name = ?
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (self.binding_name,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM issue
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ).fetchall()
+        return [self._row_to_issue(row) for row in rows]
 
     def _dependencies_satisfied(
         self, issue: dict[str, Any], state_by_id: dict[str, str]
@@ -694,10 +715,8 @@ def _json_list(value: Any, item_type: type) -> list[Any]:
         return []
     items: list[Any] = []
     for item in parsed:
-        try:
+        with suppress(TypeError, ValueError):
             items.append(item_type(item))
-        except (TypeError, ValueError):
-            pass
     return items
 
 
