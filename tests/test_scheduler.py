@@ -2732,9 +2732,7 @@ async def test_review_terminal_skips_non_review_dispatch_run(
     handled = await scheduler._handle_review_terminal_done(
         _adapter(transport),
         _config(tmp_path),
-        replace(
-            _candidate("issue-1"), binding_name="homelab", review_dispatch=False
-        ),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=False),
         result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
         run_id=None,
         run_log_path=None,
@@ -2770,8 +2768,9 @@ async def test_review_terminal_passing_backstop_proceeds_to_auto_land(
     monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
     monkeypatch.setattr(
         "worktree_facade.land_worktree",
-        lambda repo, binding, issue, base: land_calls.append((binding, issue, base))
-        or None,
+        lambda repo, binding, issue, base: (
+            land_calls.append((binding, issue, base)) or None
+        ),
     )
 
     await scheduler._handle_review_terminal_done(
@@ -2886,6 +2885,84 @@ async def test_review_terminal_auto_land_marks_done_and_lands_worktree(
 
     assert handled is True
     assert calls == [("homelab", "issue-1", "main")]
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_remote_auto_land_uses_remote_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    remote = RemotePolicy(host="remote", user="itadmin")
+    binding = ProjectBinding(
+        name="n8n",
+        plane_project_id="n8n",
+        repo_path=Path("/home/itadmin/itastack"),
+        base_branch="main",
+        tracker_contract=DEFAULT_CONTRACT,
+        binding_type="coding",
+        tracker="podium",
+        remote=remote,
+    )
+    config = _config(tmp_path, bindings=(binding,), homelab_repo_path=binding.repo_path)
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "remote_worktree.run_verification",
+        lambda r, cwd, command: calls.append(("verify", str(cwd), command)) or 0,
+    )
+    monkeypatch.setattr(
+        "remote_worktree.worktree_is_dirty",
+        lambda r, repo, binding_name, issue_id: (
+            calls.append(("dirty", binding_name, issue_id)) and False
+        ),
+    )
+    monkeypatch.setattr(
+        "remote_worktree.land_worktree",
+        lambda r, repo, binding_name, issue_id, base: (
+            calls.append(("land", binding_name, issue_id)) or None
+        ),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.worktree_is_dirty",
+        lambda *a: pytest.fail("remote review must not touch local worktree"),
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        config,
+        replace(
+            _candidate("issue-1"),
+            binding_name="n8n",
+            base_branch="main",
+            review_dispatch=True,
+        ),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+        binding=binding,
+    )
+
+    assert handled is True
+    assert calls == [
+        ("verify", "/home/itadmin/itastack/worktrees/n8n/issue-1", "true"),
+        ("dirty", "n8n", "issue-1"),
+        ("land", "n8n", "issue-1"),
+    ]
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
@@ -4392,15 +4469,15 @@ def test_new_dispatch_state_uses_config_poll_interval(tmp_path: Path) -> None:
     assert state.poll_interval == 5.0
 
 
-# --- _effective_run_cap tests (remote-binding serialization, C-0251) ---
+# --- _effective_run_cap tests ---
 
 
-def test_effective_run_cap_remote_is_one(tmp_path: Path) -> None:
+def test_effective_run_cap_remote_coding_uses_run_cap(tmp_path: Path) -> None:
     config = _config(tmp_path, run_cap=3)
     remote_binding = _remote_binding(config)
 
     assert remote_binding.is_remote
-    assert scheduler._effective_run_cap(config, remote_binding) == 1
+    assert scheduler._effective_run_cap(config, remote_binding) == config.run_cap
 
 
 def test_effective_run_cap_local_uses_run_cap(tmp_path: Path) -> None:
@@ -4412,14 +4489,14 @@ def test_effective_run_cap_local_uses_run_cap(tmp_path: Path) -> None:
     assert scheduler._effective_run_cap(config, None) == config.run_cap
 
 
-def test_new_dispatch_state_remote_semaphore_serializes(tmp_path: Path) -> None:
+def test_new_dispatch_state_remote_coding_semaphore_allows_run_cap(tmp_path: Path) -> None:
     config = _config(tmp_path, run_cap=3)
     remote_binding = _remote_binding(config)
 
     state = scheduler._new_dispatch_state(config, binding=remote_binding)
 
     assert state.semaphore.locked() is False
-    assert asyncio.run(_acquire_then_locked(state.semaphore)) is True
+    assert asyncio.run(_acquire_then_locked(state.semaphore)) is False
 
 
 def test_new_dispatch_state_local_semaphore_allows_run_cap(tmp_path: Path) -> None:
@@ -5086,12 +5163,10 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
 
 
 @pytest.mark.asyncio
-async def test_run_loop_remote_clamps_concurrent_tasks(
+async def test_run_loop_remote_non_coding_clamps_concurrent_tasks(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A remote binding clamps slots_available to 1: a second cycle must not
-    start a second _dispatch_one task while the first remote Run is in-flight,
-    even though run_cap >= 2 (exercises task [3.1])."""
+    """A remote non-coding binding stays serialized because it has no worktree isolation."""
 
     class StopLoop(Exception):
         pass
@@ -5127,7 +5202,7 @@ async def test_run_loop_remote_clamps_concurrent_tasks(
         return set(), set(tasks), False
 
     config = _config(tmp_path, run_cap=2, poll_interval_ms=1)
-    remote_binding = _remote_binding(config)
+    remote_binding = replace(_remote_binding(config), binding_type="infra")
     config = config.for_binding(remote_binding)
 
     monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
@@ -5804,13 +5879,17 @@ async def test_prepare_resume_candidate_remote_claude_is_cold_refeed(
 
 
 # T.6.2
-def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
+def test_worktree_run_fields_present_for_remote_coding(tmp_path: Path) -> None:
     config = _config(tmp_path)
     binding = _remote_binding(config)
     candidate = replace(_candidate("issue-1"), worktree_active=True)
-    assert (
-        scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
-    )
+    assert scheduler._worktree_run_fields(
+        config, candidate, "main", binding=binding
+    ) == {
+        "worktree_path": str(tmp_path / "worktrees" / "n8n" / "issue-1"),
+        "branch_name": "podium/n8n/issue-1",
+        "base_branch": "main",
+    }
 
 
 def test_worktree_run_fields_default_for_local_coding(tmp_path: Path) -> None:

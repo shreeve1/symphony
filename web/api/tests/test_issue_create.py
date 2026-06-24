@@ -336,11 +336,10 @@ def test_options_branches_degrade_to_empty_on_bad_repo(
     assert response.json()["branches"] == []
 
 
-def test_create_coerces_worktree_active_off_for_remote_binding(
+def test_create_allows_worktree_active_for_remote_binding(
     client: TestClient, monkeypatch
 ) -> None:
-    # Remote bindings (ADR-0012) defer worktrees: worktree_active is forced
-    # False at create even when the client asks for it.
+    # Remote coding bindings use SSH-created per-issue worktrees too.
     from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
 
     with main.connect(Path(os.environ["PODIUM_DB_PATH"])) as connection:
@@ -354,7 +353,7 @@ def test_create_coerces_worktree_active_off_for_remote_binding(
         json={"title": "remote", "worktree_active": True},
     )
     assert response.status_code == 201
-    assert response.json()["worktree_active"] is False
+    assert response.json()["worktree_active"] is True
 
 
 @pytest.mark.parametrize(("body", "expected_status"), FAILURE_CASES)

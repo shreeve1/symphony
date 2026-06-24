@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+from config import RemotePolicy
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from pydantic import (
     BaseModel,
@@ -973,11 +974,6 @@ async def create_binding_issue(
     if issue.schedule is not None and _binding_type_for(name) != "infra":
         raise HTTPException(status_code=400, detail="scheduling is infra-only")
 
-    # Remote bindings (ADR-0012) defer worktrees: the agent runs directly in the
-    # remote repo_path over SSH, so worktree_active is forced False at the source.
-    if issue.worktree_active and _is_remote_binding(name):
-        issue.worktree_active = False
-
     now_dt = datetime.now(UTC)
     now = now_dt.isoformat()
     comments_md = ""
@@ -1212,14 +1208,6 @@ async def patch_issue(
         connection, issue_id, fields["blocked_by"]
     ):
         raise HTTPException(status_code=400, detail="blocked_by cycle detected")
-
-    # Remote bindings (ADR-0012) defer worktrees: a patch attempting to enable a
-    # worktree on a remote binding is coerced to False so the worktree machinery
-    # is never engaged against the remote repo_path.
-    if fields.get("worktree_active") and _is_remote_binding(
-        str(current.get("binding_name") or "")
-    ):
-        fields["worktree_active"] = False
 
     # No-op guard: an empty body or a patch echoing stored values must not bump
     # updated_at — the board orders by it, so a blind bump reorders cards.
@@ -1653,38 +1641,6 @@ async def steer_issue(
     return result
 
 
-async def _clear_worktree_active_remote(
-    issue_id: int,
-    current: dict[str, Any],
-    connection: sqlite3.Connection,
-) -> dict[str, Any]:
-    """Remote-binding worktree-path shortcut (ADR-0012).
-
-    Remote bindings have no local worktree, so the done-merge / archive-teardown
-    / toggle-off helpers must skip all local git/Path ops. They still clear and
-    publish ``worktree_active`` for any pre-existing remote row (defense against
-    rows that predate the API create/patch coercion), mirroring the column clear
-    in ``_maybe_teardown_archived_worktree``."""
-    if current.get("worktree_active") is True:
-        connection.execute(
-            "UPDATE issue SET worktree_active = FALSE, updated_at = ? WHERE id = ?",
-            (_next_updated_at(current.get("updated_at")), issue_id),
-        )
-        connection.commit()
-        row = connection.execute(
-            "SELECT * FROM issue WHERE id = ?", (issue_id,)
-        ).fetchone()
-        result = _row(row)
-        await websocket_hub.publish(
-            {"type": "issue.updated", "id": issue_id, "row": result}
-        )
-        return result
-
-    return _row(
-        connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
-    )
-
-
 async def _maybe_merge_worktree(
     issue_id: int,
     current: dict[str, Any],
@@ -1720,12 +1676,6 @@ async def _maybe_merge_worktree(
     issue_str = str(issue_id)
     base_branch = current.get("base_branch") or "main"
 
-    # Remote bindings (ADR-0012) have no local worktree to merge — the remote
-    # agent commits directly in repo_path over SSH. Skip every local git/Path op,
-    # but still clear/publish worktree_active for any pre-existing remote row.
-    if _is_remote_binding(binding_name):
-        return await _clear_worktree_active_remote(issue_id, current, connection)
-
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
         return await _append_blocked_and_publish(
@@ -1733,6 +1683,72 @@ async def _maybe_merge_worktree(
             issue_id,
             current,
             f"Auto-merge halted: unknown repo_path for binding {binding_name}.",
+        )
+
+    remote = _remote_for_binding(binding_name)
+    if remote is not None:
+        remote_worktree = import_module("remote_worktree")
+        if not await asyncio.to_thread(
+            remote_worktree.worktree_exists,
+            remote,
+            repo_path,
+            binding_name,
+            issue_str,
+        ):
+            return _row(
+                connection.execute(
+                    "SELECT * FROM issue WHERE id = ?", (issue_id,)
+                ).fetchone()
+            )
+        if await asyncio.to_thread(
+            remote_worktree.worktree_is_dirty,
+            remote,
+            repo_path,
+            binding_name,
+            issue_str,
+        ):
+            comments_row = connection.execute(
+                "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+            prior = _count_commit_redispatches(comments_row["comments_md"])
+            if prior >= MAX_COMMIT_REDISPATCH:
+                msg = (
+                    f"Auto-commit re-dispatch halted: remote worktree at "
+                    f"{worktree_dir(repo_path, binding_name, issue_str)} is still "
+                    f"uncommitted after {MAX_COMMIT_REDISPATCH} re-dispatches. "
+                    f"Branch {branch_name(binding_name, issue_str)} is unmerged and "
+                    f"the worktree is intact for manual handling."
+                )
+                return await _append_blocked_and_publish(
+                    connection, issue_id, current, msg
+                )
+            return await _redispatch_to_commit(
+                connection, issue_id, current, repo_path, binding_name, issue_str
+            )
+        if await asyncio.to_thread(remote_worktree.base_repo_dirty, remote, repo_path):
+            msg = (
+                f"Auto-merge halted: remote base checkout has uncommitted changes. "
+                f"Branch {branch_name(binding_name, issue_str)} is unmerged. "
+                f"Worktree at {worktree_dir(repo_path, binding_name, issue_str)} is intact."
+            )
+            return await _append_blocked_and_publish(connection, issue_id, current, msg)
+
+        error = await asyncio.to_thread(
+            remote_worktree.land_worktree,
+            remote,
+            repo_path,
+            binding_name,
+            issue_str,
+            base_branch,
+        )
+        if error is not None:
+            return await _append_blocked_and_publish(
+                connection, issue_id, current, error
+            )
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
         )
 
     if not await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
@@ -1797,13 +1813,47 @@ async def _maybe_teardown_archived_worktree(
 
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
-    # Remote bindings (ADR-0012): no local worktree to tear down. Skip the local
-    # probe/removal, still clear/publish worktree_active for pre-existing rows.
-    if _is_remote_binding(binding_name):
-        return await _clear_worktree_active_remote(issue_id, current, connection)
-
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
+        return _row(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )
+
+    remote = _remote_for_binding(binding_name)
+    if remote is not None:
+        remote_worktree = import_module("remote_worktree")
+        removed = False
+        if await asyncio.to_thread(
+            remote_worktree.worktree_exists,
+            remote,
+            repo_path,
+            binding_name,
+            issue_str,
+        ):
+            await asyncio.to_thread(
+                remote_worktree.remove_worktree,
+                remote,
+                repo_path,
+                binding_name,
+                issue_str,
+            )
+            removed = True
+        if removed or current.get("worktree_active") is True:
+            connection.execute(
+                "UPDATE issue SET worktree_active = FALSE, updated_at = ? WHERE id = ?",
+                (_next_updated_at(current.get("updated_at")), issue_id),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+            result = _row(row)
+            await websocket_hub.publish(
+                {"type": "issue.updated", "id": issue_id, "row": result}
+            )
+            return result
         return _row(
             connection.execute(
                 "SELECT * FROM issue WHERE id = ?", (issue_id,)
@@ -1854,12 +1904,6 @@ async def _maybe_archive_worktree(
 
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
-    # Remote bindings (ADR-0012): no local worktree exists, so there is nothing
-    # to archive and no archive comment to append. Skip local probe, still
-    # clear/publish worktree_active for pre-existing rows.
-    if _is_remote_binding(binding_name):
-        return await _clear_worktree_active_remote(issue_id, current, connection)
-
     repo_path = _repo_path_for_binding(binding_name)
     if not repo_path:
         return _row(
@@ -1868,7 +1912,22 @@ async def _maybe_archive_worktree(
             ).fetchone()
         )
 
-    if await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
+    remote = _remote_for_binding(binding_name)
+    if remote is not None:
+        remote_worktree = import_module("remote_worktree")
+        exists = await asyncio.to_thread(
+            remote_worktree.worktree_exists,
+            remote,
+            repo_path,
+            binding_name,
+            issue_str,
+        )
+    else:
+        exists = await asyncio.to_thread(
+            worktree_exists, repo_path, binding_name, issue_str
+        )
+
+    if exists:
         wt_path = worktree_dir(repo_path, binding_name, issue_str)
         wt_branch = branch_name(binding_name, issue_str)
         archive_note = (
@@ -2016,16 +2075,9 @@ async def _redispatch_to_commit(
 _bindings_override: list[dict[str, Any]] | None = None
 
 
-def _repo_path_for_binding(name: str) -> Path | None:
-    """Return the repo_path for a binding name from bindings.yml, or None.
-
-    Uses ``_bindings_override`` when set (test hook); otherwise reads
-    ``BINDINGS_PATH`` from disk.
-    """
-    import yaml
-
+def _binding_entry_for(name: str) -> dict[str, Any] | None:
     if _bindings_override is not None:
-        raw = _bindings_override
+        raw: Any = _bindings_override
     else:
         try:
             raw = _load_bindings(BINDINGS_PATH)
@@ -2033,32 +2085,37 @@ def _repo_path_for_binding(name: str) -> Path | None:
             return None
     for binding in raw if isinstance(raw, list) else raw.get("bindings", []):
         if binding.get("name") == name:
-            repo = binding.get("repo_path")
-            return Path(repo) if repo else None
+            return binding
     return None
 
 
+def _remote_for_binding(name: str) -> RemotePolicy | None:
+    binding = _binding_entry_for(name)
+    remote = binding.get("remote") if binding else None
+    if not isinstance(remote, dict):
+        return None
+    return RemotePolicy(
+        host=str(remote.get("host") or ""),
+        user=str(remote.get("user") or ""),
+        identity=remote.get("identity"),
+    )
+
+
+def _repo_path_for_binding(name: str) -> Path | None:
+    """Return the repo_path for a binding name from bindings.yml, or None.
+
+    Uses ``_bindings_override`` when set (test hook); otherwise reads
+    ``BINDINGS_PATH`` from disk.
+    """
+    binding = _binding_entry_for(name)
+    repo = binding.get("repo_path") if binding else None
+    return Path(repo) if repo else None
+
+
 def _is_remote_binding(name: str) -> bool:
-    """True when the binding has a truthy ``remote:`` key in bindings.yml.
-
-    Remote bindings (ADR-0012) run the agent over SSH against a non-local
-    ``repo_path``, so every local worktree/git/Path operation must be skipped
-    for them. Honors ``_bindings_override`` (test hook) like
-    ``_repo_path_for_binding``; any read failure degrades to ``False`` (treat
-    as local — the conservative default that preserves existing behavior)."""
-    import yaml
-
-    if _bindings_override is not None:
-        raw: Any = _bindings_override
-    else:
-        try:
-            raw = _load_bindings(BINDINGS_PATH)
-        except (OSError, yaml.YAMLError):
-            return False
-    for binding in raw if isinstance(raw, list) else raw.get("bindings", []):
-        if binding.get("name") == name:
-            return bool(binding.get("remote"))
-    return False
+    """True when the binding has a truthy ``remote:`` key in bindings.yml."""
+    binding = _binding_entry_for(name)
+    return bool(binding and binding.get("remote"))
 
 
 def _purge_archived_issues(connection: sqlite3.Connection) -> None:

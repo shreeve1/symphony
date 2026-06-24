@@ -177,12 +177,9 @@ class _DispatchState:
     Operators must size ``run_cap`` accordingly — the cap is per-project, not
     per-host.
 
-    **Remote-binding cap:** remote bindings (``binding.is_remote``) disable
-    worktree isolation, so every Run for one such binding ``cd``s into the same
-    ``repo_path`` on the remote host. To prevent concurrent writers on one git
-    working tree, ``_effective_run_cap`` clamps the semaphore to 1 for remote
-    bindings regardless of ``run_cap``, so a remote binding runs at most one Run
-    at a time.
+    **Remote-binding cap:** remote coding bindings use per-issue worktrees over
+    SSH and can share the normal ``run_cap``. Other remote bindings still run in
+    the shared remote checkout, so ``_effective_run_cap`` clamps them to 1.
     """
 
     semaphore: asyncio.Semaphore
@@ -197,13 +194,16 @@ class _DispatchState:
 
 
 def _effective_run_cap(config: SymphonyConfig, binding: ProjectBinding | None) -> int:
-    """Per-binding concurrency cap: 1 for remote bindings, else ``run_cap``.
+    """Per-binding concurrency cap.
 
-    Remote bindings have no worktree isolation (``_worktree_run_fields``
-    returns ``{}`` for ``binding.is_remote``), so concurrent Runs would share
-    one git working tree on the remote host. Capping at 1 serializes them.
+    Remote coding bindings use per-issue worktrees and can run in parallel;
+    other remote bindings still share one checkout and stay serialized.
     """
-    if binding is not None and binding.is_remote:
+    if (
+        binding is not None
+        and binding.is_remote
+        and not (config.worktree_default and binding.binding_type == "coding")
+    ):
         return 1
     return config.run_cap
 
@@ -389,8 +389,6 @@ def _worktree_enabled(
     if not config.worktree_default:
         return False
     resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    if resolved_binding is not None and resolved_binding.is_remote:
-        return False
     if getattr(candidate, "worktree_active", False):
         return True
     return resolved_binding is not None and resolved_binding.binding_type == "coding"
@@ -629,6 +627,69 @@ def _run_runnable_verification(command: str, cwd: Path) -> int:
             completed.stderr[-1000:],
         )
     return completed.returncode
+
+
+def _run_review_verification(
+    command: str,
+    cwd: Path,
+    *,
+    binding: ProjectBinding | None,
+) -> int:
+    if binding is not None and binding.is_remote:
+        remote_worktree = import_module("remote_worktree")
+        return cast(int, remote_worktree.run_verification(binding.remote, cwd, command))
+    return _run_runnable_verification(command, cwd)
+
+
+def _review_worktree_is_dirty(
+    config: SymphonyConfig,
+    binding: ProjectBinding | None,
+    binding_name: str,
+    issue_id: str,
+) -> bool:
+    if binding is not None and binding.is_remote:
+        remote_worktree = import_module("remote_worktree")
+        return cast(
+            bool,
+            remote_worktree.worktree_is_dirty(
+                binding.remote, config.homelab_repo_path, binding_name, issue_id
+            ),
+        )
+    worktree_helpers = import_module("worktree_facade")
+    return cast(
+        bool,
+        worktree_helpers.worktree_is_dirty(
+            config.homelab_repo_path, binding_name, issue_id
+        ),
+    )
+
+
+def _land_review_worktree(
+    config: SymphonyConfig,
+    binding: ProjectBinding | None,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str,
+) -> str | None:
+    if binding is not None and binding.is_remote:
+        remote_worktree = import_module("remote_worktree")
+        return cast(
+            str | None,
+            remote_worktree.land_worktree(
+                binding.remote,
+                config.homelab_repo_path,
+                binding_name,
+                issue_id,
+                base_branch,
+            ),
+        )
+    worktree_helpers = import_module("worktree_facade")
+    return cast(
+        str | None,
+        worktree_helpers.land_worktree(
+            config.homelab_repo_path, binding_name, issue_id, base_branch
+        ),
+    )
 
 
 def _apply_dispatch_gate(
@@ -873,17 +934,28 @@ async def _handle_archived_terminal(
     if not binding_name:
         return True
 
-    # Remote bindings have no local worktree (ADR-0012); the worktree_exists /
-    # remove_worktree helpers run local git/Path ops against
-    # config.homelab_repo_path, which is the remote path for a remote binding
-    # (→ PermissionError). Skip them but still clear the worktree_active column.
-    is_remote = resolved_binding is not None and resolved_binding.is_remote
-    if not is_remote:
+    issue_id = str(candidate.id)
+    if resolved_binding is not None and resolved_binding.is_remote:
+        remote_worktree = import_module("remote_worktree")
+        if await asyncio.to_thread(
+            remote_worktree.worktree_exists,
+            resolved_binding.remote,
+            config.homelab_repo_path,
+            binding_name,
+            issue_id,
+        ):
+            await asyncio.to_thread(
+                remote_worktree.remove_worktree,
+                resolved_binding.remote,
+                config.homelab_repo_path,
+                binding_name,
+                issue_id,
+            )
+    else:
         worktree_helpers = import_module("worktree_facade")
         remove_worktree = worktree_helpers.remove_worktree
         worktree_exists = worktree_helpers.worktree_exists
 
-        issue_id = str(candidate.id)
         if await asyncio.to_thread(
             worktree_exists, config.homelab_repo_path, binding_name, issue_id
         ):
@@ -3244,7 +3316,10 @@ async def _handle_review_terminal_done(
             config, candidate, binding=resolved_binding
         )
         returncode = await asyncio.to_thread(
-            _run_runnable_verification, verification_command, verification_cwd
+            _run_review_verification,
+            verification_command,
+            verification_cwd,
+            binding=resolved_binding,
         )
         if returncode != 0:
             backstop_summary = (
@@ -3296,11 +3371,10 @@ async def _handle_review_terminal_done(
     ):
         return True
 
-    worktree_helpers = import_module("worktree_facade")
-
     if binding_name and await asyncio.to_thread(
-        worktree_helpers.worktree_is_dirty,
-        config.homelab_repo_path,
+        _review_worktree_is_dirty,
+        config,
+        resolved_binding,
         binding_name,
         issue_id,
     ):
@@ -3339,8 +3413,9 @@ async def _handle_review_terminal_done(
 
     base_branch = candidate.base_branch or config.base_branch
     error = await asyncio.to_thread(
-        worktree_helpers.land_worktree,
-        config.homelab_repo_path,
+        _land_review_worktree,
+        config,
+        resolved_binding,
         binding_name,
         issue_id,
         base_branch,

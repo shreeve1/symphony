@@ -260,8 +260,10 @@ def test_combined_done_and_worktree_off_does_not_archive_after_merge_block(
     assert wt_path.is_dir()
 
 
-def test_merge_on_done_aborts_on_conflict(repo_and_db: tuple[Path, Path]) -> None:
-    """Diverged base (commit on main after worktree creation) halts merge."""
+def test_merge_on_done_rebases_non_conflicting_diverged_base(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """Diverged base with non-overlapping edits rebases, merges, and cleans up."""
     repo, db_path = repo_and_db
     from web.api.worktree import create_worktree
 
@@ -286,11 +288,10 @@ def test_merge_on_done_aborts_on_conflict(repo_and_db: tuple[Path, Path]) -> Non
         )
     assert response.status_code == 200
     body = response.json()
-    assert body["state"] == "blocked"
-    assert "Auto-merge halted" in body["comments_md"]
+    assert body["state"] == "done"
 
-    # Worktree intact.
-    assert wt_path.is_dir()
+    # Worktree cleaned up after successful rebase retry.
+    assert not wt_path.exists()
 
 
 def test_merge_on_done_aborts_on_force_pushed_base(
@@ -642,7 +643,7 @@ def test_toggle_worktree_off_no_worktree_no_comment(
     assert "Worktree archived" not in (body["comments_md"] or "")
 
 
-# --- remote-binding worktree-skip tests (ADR-0012) ---
+# --- remote-binding worktree parity tests ---
 
 
 def _no_local_worktree_ops(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -662,12 +663,33 @@ def _no_local_worktree_ops(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(wt, fn, _boom)
 
 
-def test_remote_done_merge_skips_local_worktree_ops(
+def test_remote_done_merge_uses_remote_worktree_ops(
     remote_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """State→done on a remote issue with a stray worktree_active row skips the
-    local merge entirely and clears worktree_active."""
     _no_local_worktree_ops(monkeypatch)
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "remote_worktree.worktree_exists",
+        lambda remote, repo, binding, issue: (
+            calls.append(("exists", binding, issue)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        "remote_worktree.worktree_is_dirty",
+        lambda remote, repo, binding, issue: (
+            calls.append(("dirty", binding, issue)) and False
+        ),
+    )
+    monkeypatch.setattr(
+        "remote_worktree.base_repo_dirty",
+        lambda remote, repo: calls.append(("base", "n8n", "")) and False,
+    )
+    monkeypatch.setattr(
+        "remote_worktree.land_worktree",
+        lambda remote, repo, binding, issue, base: (
+            calls.append(("land", binding, issue)) or None
+        ),
+    )
     issue = _seed_podium(remote_db, "n8n")
     issue_id = issue["id"]
 
@@ -675,17 +697,54 @@ def test_remote_done_merge_skips_local_worktree_ops(
         login(client)
         response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
     assert response.status_code == 200, response.json()
-    body = response.json()
-    assert body["state"] == "done"
-    assert body["worktree_active"] is False
+    assert response.json()["state"] == "done"
+    assert calls == [
+        ("exists", "n8n", str(issue_id)),
+        ("dirty", "n8n", str(issue_id)),
+        ("base", "n8n", ""),
+        ("land", "n8n", str(issue_id)),
+    ]
 
 
-def test_remote_archive_teardown_skips_local_worktree_ops(
+def test_remote_done_merge_blocks_on_dirty_remote_base(
     remote_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """State→archived on a remote idle issue skips local teardown and clears
-    worktree_active."""
     _no_local_worktree_ops(monkeypatch)
+    monkeypatch.setattr("remote_worktree.worktree_exists", lambda *a: True)
+    monkeypatch.setattr("remote_worktree.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr("remote_worktree.base_repo_dirty", lambda *a: True)
+    monkeypatch.setattr(
+        "remote_worktree.land_worktree",
+        lambda *a: pytest.fail("dirty remote base must not land"),
+    )
+    issue = _seed_podium(remote_db, "n8n")
+    issue_id = issue["id"]
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["state"] == "blocked"
+    assert "remote base checkout has uncommitted changes" in body["comments_md"]
+
+
+def test_remote_archive_teardown_uses_remote_worktree_ops(
+    remote_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_local_worktree_ops(monkeypatch)
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "remote_worktree.worktree_exists",
+        lambda remote, repo, binding, issue: (
+            calls.append(("exists", binding, issue)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        "remote_worktree.remove_worktree",
+        lambda remote, repo, binding, issue: calls.append(("remove", binding, issue)),
+    )
     issue = _seed_podium(remote_db, "n8n")
     issue_id = issue["id"]
 
@@ -696,14 +755,14 @@ def test_remote_archive_teardown_skips_local_worktree_ops(
     body = response.json()
     assert body["state"] == "archived"
     assert body["worktree_active"] is False
+    assert calls == [("exists", "n8n", str(issue_id)), ("remove", "n8n", str(issue_id))]
 
 
-def test_remote_toggle_off_skips_local_worktree_ops(
+def test_remote_toggle_off_archives_remote_worktree(
     remote_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Toggling worktree_active off on a remote issue skips the local probe and
-    appends no archive comment."""
     _no_local_worktree_ops(monkeypatch)
+    monkeypatch.setattr("remote_worktree.worktree_exists", lambda *a: True)
     issue = _seed_podium(remote_db, "n8n")
     issue_id = issue["id"]
 
@@ -715,4 +774,4 @@ def test_remote_toggle_off_skips_local_worktree_ops(
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["worktree_active"] is False
-    assert "Worktree archived" not in (body["comments_md"] or "")
+    assert "Worktree archived" in (body["comments_md"] or "")

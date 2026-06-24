@@ -615,8 +615,20 @@ def run_remote_agent(
     )
 
     port = _remote_callback_port(config.plane_api_url)
+    dispatch_repo_path = binding.repo_path
+    if getattr(issue, "worktree_active", False):
+        remote_worktree = import_module("remote_worktree")
+        dispatch_repo_path = remote_worktree.create_worktree(
+            remote,
+            binding.repo_path,
+            binding.name,
+            issue.id,
+            getattr(issue, "base_branch", "") or binding.base_branch,
+            run_func=run_func,
+        )
+
     remote_command = _build_remote_command(
-        repo_path=str(binding.repo_path),
+        repo_path=str(dispatch_repo_path),
         exports=_remote_exports(config, issue, binding=binding),
         pi_command=pi_command,
         helper_dir=remote_tmp if ship_plane_helper else "",

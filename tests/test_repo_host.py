@@ -138,7 +138,7 @@ def test_repo_host_for_routes_by_remoteness(tmp_path: Path) -> None:
 
 
 # T.3.4
-def test_repo_host_for_binds_local_to_cwd_remote_ignores_cwd(tmp_path: Path) -> None:
+def test_repo_host_for_binds_local_and_remote_to_cwd(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     base = tmp_path / "base"
     local = repo_host_for(_local_binding(base), cwd=worktree)
@@ -148,4 +148,4 @@ def test_repo_host_for_binds_local_to_cwd_remote_ignores_cwd(tmp_path: Path) -> 
     remote_binding = _remote_binding("/home/itadmin/itastack")
     remote = repo_host_for(remote_binding, cwd=worktree)
     assert isinstance(remote, SshRepoHost)
-    assert remote.repo_path == Path("/home/itadmin/itastack")
+    assert remote.repo_path == worktree

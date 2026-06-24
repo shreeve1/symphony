@@ -175,11 +175,10 @@ def test_patch_rejects_blocked_by_cycle(client: TestClient, issue_id: int) -> No
     assert client.get(f"/api/issues/{issue_id}").json() == before
 
 
-def test_patch_coerces_worktree_active_off_for_remote_binding(
+def test_patch_allows_worktree_active_for_remote_binding(
     client: TestClient, monkeypatch
 ) -> None:
-    # Remote bindings (ADR-0012) defer worktrees: a PATCH setting
-    # worktree_active=true on a remote binding's issue is coerced to False.
+    # Remote coding bindings use SSH-created per-issue worktrees too.
     import os
     from pathlib import Path
 
@@ -209,10 +208,9 @@ def test_patch_coerces_worktree_active_off_for_remote_binding(
         f"/api/issues/{remote_issue_id}", json={"worktree_active": True}
     )
     assert response.status_code == 200
-    assert response.json()["worktree_active"] is False
-    # Round-trip: nothing written through.
+    assert response.json()["worktree_active"] is True
     fetched = client.get(f"/api/issues/{remote_issue_id}").json()
-    assert fetched["worktree_active"] is False
+    assert fetched["worktree_active"] is True
 
 
 def test_list_skills_returns_catalog(client: TestClient) -> None:

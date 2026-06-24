@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Protocol
 
 import ssh_support
 from code_version import UNKNOWN, resolve_code_sha
@@ -44,8 +45,8 @@ class LocalRepoHost:
 class SshRepoHost:
     """Resolve the code sha of a remote checkout via ``git`` over SSH.
 
-    Worktrees are disabled for remote bindings, so ``repo_path`` is used
-    directly. Never raises: maps non-zero exit / ``OSError`` /
+    ``repo_path`` is the dispatch cwd: either the remote base checkout or the
+    remote per-issue worktree. Never raises: maps non-zero exit / ``OSError`` /
     ``subprocess.TimeoutExpired`` to ``"unknown"`` with a bounded 5s timeout
     matching ``resolve_code_sha``.
     """
@@ -54,7 +55,7 @@ class SshRepoHost:
         self,
         remote: RemotePolicy,
         repo_path: Path,
-        run_func: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+        run_func: Callable[..., Any] = subprocess.run,
     ) -> None:
         self.remote = remote
         self.repo_path = repo_path
@@ -85,16 +86,15 @@ def repo_host_for(
     binding,
     *,
     cwd: Path | None = None,
-    run_func: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    run_func: Callable[..., Any] = subprocess.run,
 ) -> RepoHost:
     """Return the right ``RepoHost`` for ``binding``.
 
-    Remote bindings get an ``SshRepoHost`` bound to ``binding.repo_path`` (cwd
-    ignored — worktrees are off remotely). Local bindings get a
-    ``LocalRepoHost`` bound to ``cwd or binding.repo_path``, preserving local
-    worktree-HEAD sha semantics.
+    Remote bindings get an ``SshRepoHost`` bound to ``cwd or binding.repo_path``.
+    Local bindings get a ``LocalRepoHost`` bound to ``cwd or binding.repo_path``,
+    preserving worktree-HEAD sha semantics.
     """
 
     if binding.is_remote:
-        return SshRepoHost(binding.remote, binding.repo_path, run_func)
+        return SshRepoHost(binding.remote, cwd or binding.repo_path, run_func)
     return LocalRepoHost(cwd or binding.repo_path)

@@ -125,6 +125,38 @@ def test_build_remote_command_quotes_and_orders() -> None:
     assert "'a prompt; rm -rf /'" in cmd
 
 
+def test_run_remote_agent_creates_remote_worktree_when_active(tmp_path: Path) -> None:
+    run_calls: list[tuple[list[str], dict]] = []
+    popen_calls: list[tuple[list[str], dict]] = []
+    issue = replace(
+        _issue(), worktree_active=True, binding_name="n8n", base_branch="main"
+    )
+
+    def fake_run(command, **kwargs):
+        run_calls.append((command, kwargs))
+        return Completed(returncode=0)
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append((command, kwargs))
+        return FakeRpcProcess(_rpc_done("done"))
+
+    result = run_remote_agent(
+        _config(tmp_path),
+        issue,
+        "do the work",
+        binding=_remote_binding(),
+        run_func=fake_run,
+        popen_factory=fake_popen,
+    )
+
+    assert result.exit_code == 0
+    assert "worktree add" in run_calls[0][0][-1]
+    remote_command = popen_calls[0][0][-1]
+    assert remote_command.startswith(
+        "cd /home/itadmin/symphony/worktrees/n8n/issue-27 &&"
+    )
+
+
 def test_run_remote_agent_omits_plane_env_and_helper_for_podium(tmp_path: Path) -> None:
     run_calls: list[tuple[list[str], dict]] = []
     popen_calls: list[tuple[list[str], dict]] = []
