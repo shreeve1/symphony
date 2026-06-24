@@ -1423,3 +1423,10 @@ Append entries with this format:
 - Inputs: `.kanban/issues/107-blocked-by-write-paths.md`; `web/api/main.py`; `web/api/tests/test_issue_create.py`; `web/api/tests/test_issue_patch.py`; issue verification command.
 - Outputs: marked `.kanban/issues/107-blocked-by-write-paths.md` done; updated `.kanban/progress.md`; updated `wiki/concepts/podium-tracker.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0315); added `wiki/eval/podium-api.eval`; this log entry.
 - Notes: #107 carries `blocked_by` and `locks` through Podium create/patch API as JSON-backed typed lists, returns omitted values as `[]`, and rejects `blocked_by` cycles with HTTP 400. Verification passed exactly as issue-specified (`uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q`, 90 passed); touched-file LSP diagnostics were clean; fresh review returned `RALPH_REVIEW: PASS`.
+
+## [2026-06-24] session-update | Issue #108 local coding worktree default
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/108-worktree-per-run-default.md`; `config.py`; `scheduler/__init__.py`; `tests/test_config.py`; `tests/test_scheduler.py`; issue verification command.
+- Outputs: marked `.kanban/issues/108-worktree-per-run-default.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/analysis-session-worktree-done-commit-redispatch.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0316, C-0249 dormant subfact superseded); this log entry.
+- Notes: #108 makes local coding bindings default to deterministic per-issue worktrees via `SymphonyConfig.worktree_default` / `SYMPHONY_WORKTREE_DEFAULT` while remote bindings remain shared-repo. Dispatch marks Podium rows `worktree_active=True` so existing merge/cleanup handles terminal removal. Verification passed exactly as issue-specified (`uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`, 203 passed); touched-file LSP diagnostics were clean; fresh review returned `RALPH_REVIEW: PASS`.

@@ -3,7 +3,7 @@ title: Worktree done-time commit-redispatch (ADR-0014, accepted/implemented)
 type: analysis
 status: promoted
 created: 2026-06-18
-updated: 2026-06-18
+updated: 2026-06-24
 sources:
   - docs/adr/0014-worktree-done-commit-redispatch.md
   - web/api/worktree.py
@@ -15,6 +15,7 @@ sources:
   - web/api/tests/test_worktree_api.py
   - wiki/raw/sessions/2026-06-18-worktree-done-commit-redispatch-design.md
   - wiki/raw/sessions/2026-06-18-worktree-done-commit-redispatch-build.md
+  - .kanban/issues/108-worktree-per-run-default.md
 confidence: high
 tags: [podium, worktree, landing, ff-merge, redispatch, operator-reply, adr-0014, self-binding]
 ---
@@ -66,8 +67,10 @@ Built from `plans/feature-worktree-done-commit-redispatch.md` via `/dev-build`. 
 
 ## Status
 
-Feature currently dormant (no `worktree_active=1` issues, no `worktrees/` dir as of 2026-06-18). **ADR-0014 `accepted` and implemented 2026-06-18 (C-0250); enabling worktrees on the `symphony` self-binding is now unblocked.**
+Issue #108 (2026-06-24) flips local coding bindings to default worktree isolation: `SymphonyConfig.worktree_default` / `SYMPHONY_WORKTREE_DEFAULT` defaults true, `_worktree_enabled` excludes remote bindings, local coding candidates are marked `worktree_active=True` during resume/dispatch, and Podium rows are updated so the existing done-time merge/cleanup path still owns terminal removal. The old explicit `worktree_active=true` opt-in still works; `SYMPHONY_WORKTREE_DEFAULT=false` is the kill switch [source: .kanban/issues/108-worktree-per-run-default.md; source: config.py; source: scheduler/__init__.py; source: tests/test_scheduler.py].
+
+Feature is no longer designed as dormant/opt-in for local coding dispatch. **ADR-0014 `accepted` and implemented 2026-06-18 (C-0250); issue #108 makes the `symphony` self-binding isolation default-on for local coding runs (C-0316).**
 
 ## Claims
 
-C-0246, C-0249 active; **C-0247 superseded (gap closed), C-0248 superseded (predicate refined), C-0250 (implemented)** — see [CLAIMS.md](../CLAIMS.md).
+C-0246, C-0249 active but C-0249's "feature dormant" observation is superseded for local coding dispatch by C-0316; **C-0247 superseded (gap closed), C-0248 superseded (predicate refined), C-0250 (implemented), C-0316 (default-on local coding isolation)** — see [CLAIMS.md](../CLAIMS.md).
