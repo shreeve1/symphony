@@ -1530,3 +1530,10 @@ Append entries with this format:
 - Fix (commits 76d5d0d, 06fbe2b): decorate both endpoints via `_decorate_issue_gates`; harden `GateHints` to default fields to []; regression `test_reply_response_carries_gate_fields`. Deployed: `podium-api` restart + `web/frontend/deploy.sh` (NOT symphony-host).
 - Outputs: raw session `wiki/raw/sessions/2026-06-24-reply-comment-undecorated-gate-fields-crash.md`; new section in `wiki/analyses/podium-issue-dispatch-contract.md` (Issue-payload gate-field decoration contract); `wiki/CLAIMS.md` C-0325; `wiki/index.md`, `wiki/ROUTING.md`, this log.
 - Note: C-0324 was already taken by the ralph loop (ADR-0023 review-terminal provenance bug, 2026-06-25); this claim is C-0325.
+
+## [2026-06-24] session-update | ADR-0024 landed + ADR-0026 retry follow-up
+
+- Actor: agent (Pi/Claude), observing and manually recovering Podium issues #128-#132 after ADR-0024 slicing.
+- Inputs: Podium issues #128-#132, run rows #389-#401, `podium.db`, issue comments, worktrees `worktrees/symphony/{130,131}`, `docs/adr/0024-review-mode-gate-and-dirty-commit-redispatch.md`, `docs/adr/0026-transient-failure-retry-not-block.md`.
+- Outputs: committed `2450d83` adding ADR-0024 and ADR-0026 docs; added raw session `wiki/raw/sessions/2026-06-24-adr-0024-babysitting-roadblocks.md`; created `wiki/analyses/adr-0026-transient-failure-retry.md`; updated `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md` (C-0331), and this log entry.
+- Notes: All ADR-0024 slices #128-#132 landed through `712469c`, but multiple recoveries were manual: Codex `server_is_overloaded` blocked #128/#129/#131; #130/#131 passed review but blocked during auto-land after `main` advanced and needed rebase/land re-drive; #131 hit a C-0327 claim-ID collision and was renumbered to C-0328. ADR-0026 captures the proposed retry/re-drive follow-up. Live restart intentionally deferred until the dirty base checkout (`.claude/skills` deletions + frontend edits) is understood/resolved.
