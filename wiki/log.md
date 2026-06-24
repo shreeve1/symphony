@@ -16,7 +16,7 @@ Append entries with this format:
 - Actor: agent (Pi), Ralph implementation + fresh review.
 - Inputs: `.kanban/issues/120-review-verification-backstop.md`; `git diff ea6ddd644cf16f46fa0c33e923482e5042cfd28a HEAD`; `scheduler/__init__.py`; `tests/test_scheduler.py`; issue verification command.
 - Outputs: implemented the Python runnable-verification extractor and review-terminal backstop; marked `.kanban/issues/120-review-verification-backstop.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0322); updated `wiki/eval/podium-api.eval`; this log entry.
-- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_scheduler.py -q`, 194 passed). Ruff, py_compile, and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. No env files read; no service restart, live DB mutation, or outward notification.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_scheduler.py -q`, 195 passed after adding missing passing-backstop coverage). Ruff, py_compile, and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. No env files read; no service restart, live DB mutation, or outward notification.
 
 ## [2026-06-24] session-update | Ralph issue #116 REVIEW_PREAMBLE renderer
 

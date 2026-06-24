@@ -141,5 +141,5 @@ This file tracks implementation notes across Ralph iterations.
 **Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `.kanban/issues/120-review-verification-backstop.md`
 **Decisions:** Backstop failures finish the Run as `failed`/`blocked`, append review output context, block the Issue with the failing command, and never call the landing path; prose-only verification still relies on the review agent mandate.
 **Conventions established:** Cleanly runnable verification means backtick-quoted command segments joined only by connective text, returned as `cmd1 && cmd2` for multi-command sections.
-**Verification:** `uv run pytest tests/test_scheduler.py -q` passed (194 tests); `uv run ruff check scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile scheduler/__init__.py tests/test_scheduler.py`, and touched-file LSP diagnostics passed.
-**Action review:** 2026-06-24 fresh review diffed `ea6ddd644cf16f46fa0c33e923482e5042cfd28a..HEAD`, read every changed file, reran exact verification, checked ruff/LSP equivalents, and passed.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed (195 tests); `uv run ruff check scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile scheduler/__init__.py tests/test_scheduler.py`, and touched-file LSP diagnostics passed.
+**Action review:** 2026-06-24 fresh review diffed `ea6ddd644cf16f46fa0c33e923482e5042cfd28a..HEAD`, read every changed file, added missing passing-backstop coverage, reran exact verification, checked touched-file LSP diagnostics, and passed.

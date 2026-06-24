@@ -2661,6 +2661,12 @@ async def test_review_terminal_backstop_failure_blocks_without_landing(
         "comments_md": "### Symphony Review (1)",
         "auto_land": True,
     }
+    calls: list[str] = []
+    monkeypatch.setattr(
+        scheduler,
+        "_run_runnable_verification",
+        lambda command, cwd: calls.append(command) or 1,
+    )
     monkeypatch.setattr(
         "worktree_facade.worktree_is_dirty",
         lambda *a: pytest.fail("dirty gate must not run after backstop failure"),
@@ -2686,6 +2692,7 @@ async def test_review_terminal_backstop_failure_blocks_without_landing(
     )
 
     assert handled is True
+    assert calls == ["false"]
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
@@ -2693,6 +2700,59 @@ async def test_review_terminal_backstop_failure_blocks_without_landing(
     assert (
         "verification backstop failed"
         in transport.comments["issue-1"][-1]["comment_html"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_passing_backstop_proceeds_to_auto_land(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    verification_calls: list[str] = []
+    land_calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        scheduler,
+        "_run_runnable_verification",
+        lambda command, cwd: verification_calls.append(command) or 0,
+    )
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda repo, binding, issue, base: land_calls.append((binding, issue, base))
+        or None,
+    )
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            base_branch="main",
+            review_dispatch=True,
+        ),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert verification_calls == ["true"]
+    assert land_calls == [("homelab", "issue-1", "main")]
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
     )
 
 
