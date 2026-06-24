@@ -67,10 +67,10 @@ This file tracks implementation notes across Ralph iterations.
 
 ## #111 MANUAL deploy P2 conflict-free parallel dispatch — 2026-06-24
 
-**What changed:** Marked the issue blocked without touching live services.
+**What changed:** Re-reviewed the blocked manual deploy; all dependencies are done, but live services were not touched.
 **Files:** `.kanban/issues/111-MANUAL-deploy-dependencies.md`
-**Blocker:** The issue's Verification section is prose-only live-host calibration, but this unattended run requires an exact verification command that exits 0 before DONE/PASS.
-**Notes for next iteration:** Add an executable verification wrapper or run this as an operator-led manual deployment/calibration.
+**Blocker:** The remaining gate is not confirmation friction: the target combines hard-to-reverse live migration/restarts with prose-only concurrent-dispatch observation, so there is no exact executable verification command that can exit 0 for unattended DONE.
+**Notes for next iteration:** Run as operator-led live calibration, or split deterministic deploy checks into an executable wrapper and keep concurrency observation as manual evidence.
 
 ## #112 Skill /podium-issues plan slicer — 2026-06-24
 

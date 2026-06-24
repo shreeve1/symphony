@@ -55,10 +55,12 @@ lock; clean `symphony-host` restart; no orphan worktrees.
 
 ## Blocker
 
-This issue cannot be completed by this unattended Ralph worker under the run
-contract: before any DONE/PASS outcome, the worker must run the issue's
-Verification command exactly as written and receive exit code 0. This issue's
-Verification section is prose-only live-host calibration, not an executable
-command, so there is no exact command that can produce the required exit status.
-The live deployment/calibration should be rerun with an executable verification
-wrapper or handled by an operator-led/manual workflow.
+Review confirmed all dependencies (106, 107, 108, 109, 110, 113) are done, but
+this target remains manual-blocked: it asks for a hard-to-reverse live DB
+migration/restarts and its Verification section is prose-only live concurrency
+calibration, not an executable command that can exit 0 under the unattended Ralph
+DONE gate.
+
+Path forward: run it as an operator-led live deployment/calibration, or split out
+an executable wrapper for the deterministic checks (backup, Alembic head parity,
+service health) and keep the concurrent-dispatch observation as manual evidence.
