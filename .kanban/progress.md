@@ -74,7 +74,9 @@ This file tracks implementation notes across Ralph iterations.
 
 ## #112 Skill /podium-issues plan slicer — 2026-06-24
 
-**What changed:** Marked the issue blocked without editing the skill.
-**Files:** `.kanban/issues/112-podium-issues-plan-slicer-skill.md`
-**Blocker:** The issue's Verification section is prose-only and creates live Podium issues, but this unattended run requires an exact verification command that exits 0 before DONE/PASS.
-**Notes for next iteration:** Add an executable verification wrapper/test fixture or run the skill calibration operator-led, then implement/review the slicer.
+**What changed:** Repurposed `/podium-issues` into a direct plan-slice-to-Podium workflow backed by `web.cli.podium issues create-from-plan`; the CLI resolves the binding from cwd, creates slices in dependency order, maps dependent `blocked_by` keys to real Podium ids, and writes `locks` inline. Retired the old `.kanban` folder mirror behavior.
+**Files:** `.claude/skills/podium-issues/SKILL.md`, `web/cli/podium.py`, `web/cli/podium_issues.py`, `web/cli/tests/test_podium_issues.py`, `.kanban/issues/112-podium-issues-plan-slicer-skill.md`
+**Decisions:** Keep LLM slicing/operator approval in the skill text; keep Python as the boring sink that consumes an approved YAML slice spec and writes Podium rows directly.
+**Conventions established:** Podium plan slicing uses slice keys only inside the YAML spec; persisted dependencies are real Podium ids.
+**Verification:** `PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q` passed; LSP diagnostics found 0 issues in touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `a9f20d03c149d3953345cac213f184aa77a88443..HEAD`, reran verification, ran ruff, checked criteria, and passed.
