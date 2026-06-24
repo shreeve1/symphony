@@ -125,3 +125,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** `### Symphony Review (n)` in `comments_md` is the idempotency marker for scheduler-owned review dispatch selection.
 **Verification:** `uv run pytest tests/test_scheduler.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics found 0 touched-file errors.
 **Action review:** 2026-06-24 fresh review diffed `5142877c6ff95cc70f94a489233d75dab81ddc83..HEAD`, read every changed file, tightened review-marker matching to line-anchored headings, reran verification, checked ruff/LSP, and passed.
+
+## #119 Review-run terminal outcomes — 2026-06-24
+
+**What changed:** Review runs that pass now branch by provenance: `auto_land=true` clean worktrees are landed and marked done, while manual-provenance issues stay in review; dirty review worktrees and land conflicts block.
+**Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `.kanban/issues/119-review-terminal-provenance-gated.md`
+**Decisions:** The `### Symphony Review` marker is the review-terminal discriminator; dirty review worktrees are terminal review failures, not commit re-dispatches.
+**Conventions established:** Trusted slicer-authored issues use `auto_land=true` for unattended merge; operator-authored/default issues remain `in_review` after review pass for manual merge.
+**Verification:** `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q` passed; ruff, py_compile, and LSP diagnostics passed for touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `ec4a5e24dba2018d568acd9fc3674ff8bbbad4d5..HEAD`, read every changed file, reran verification, checked ruff/syntax, and passed.
