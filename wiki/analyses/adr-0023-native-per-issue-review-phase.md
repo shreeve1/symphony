@@ -10,6 +10,8 @@ sources:
   - prompt_renderer.py
   - tests/test_prompt_renderer.py
   - tests/test_scheduler.py
+  - agent_runner.py
+  - tests/test_agent_runner.py
   - .kanban/issues/116-review-preamble-renderer-constant.md
   - .kanban/issues/120-review-verification-backstop.md
   - web/api/main.py
@@ -21,12 +23,12 @@ sources:
   - "~/.claude/skills/ralph/SKILL.md"
   - "~/.claude/skills/dev-review-pi/SKILL.md"
 confidence: high
-tags: [adr, review-phase, tralph, ralph, auto-land, worktree, in-review, merge, coding-binding, REVIEW_PREAMBLE, render_review_prompt, proposed, partially-built]
+tags: [adr, review-phase, tralph, ralph, auto-land, worktree, in-review, merge, coding-binding, REVIEW_PREAMBLE, render_review_prompt, implemented, deployed]
 ---
 
 # ADR-0023 — Native per-issue review phase + provenance-gated auto-land
 
-**Status: proposed (2026-06-24). Partially built: slices #114 (`auto_land` schema/read-path), #116 (`REVIEW_PREAMBLE` + `render_review_prompt`), and #120 (driver verification backstop) landed; remaining review-phase slices are not built or deployed.** Trigger model + merge
+**Status: accepted + deployed (2026-06-24).** Slices #114–#122 landed and live verification passed on the `symphony` binding. Deploy applied Alembic `0011`, restarted `podium-api`, `podium-web`, and `symphony-host`, and live-smoked slicer auto-land, operator-gated review, backstop override, dirty-worktree blocking, same-worktree review dispatch, and worktree teardown. During the first smoke, Pi RPC dispatch was found to ignore `worktree_active` and run in the base repo; #122 fixed `run_pi_rpc_agent` to create/reuse the issue worktree and use it as cwd, with regression coverage [source: agent_runner.py] [source: tests/test_agent_runner.py]. Trigger model + merge
 mechanism corrected after a `dev-review-claude` (opus) pass found the original
 "keep it `running` + dispatch inline" and "scheduler calls `_maybe_merge_worktree`"
 mechanics unimplementable. Companion to ADR-0021 (P2 conflict-free parallel
@@ -117,11 +119,13 @@ gate, provenance-gated pass, fail→blocked) · 120 driver backstop (Python veri
 extractor) **landed** · 121 slicer stamps `auto_land=true` · 122 MANUAL deploy. Depends on
 ADR-0021 slices 105/108/112/113.
 
-## Status / follow-ups
+## Status / live verification
 
-- Slice #114 landed the `issue.auto_land` schema/migration/tracker read-path and passed fresh review.
-- Slice #116 landed the review renderer foundation (`REVIEW_PREAMBLE` + `render_review_prompt`) and passed fresh review. It does not dispatch reviews yet; that remains #118.
-- Slice #120 landed the Python runnable-verification extractor and review-terminal backstop; it passed exact issue verification and fresh review.
-- Slices #117-119 and #121-122 remain pending.
-- Deploy precondition: ADR-0021 slice 108 (worktree default-ON) must be live so review-phase issues carry `worktree_active=true`.
-- Promote ADR to `accepted` once built + deployed.
+- Slices #114–#121 landed via Ralph and passed fresh review.
+- Slice #122 deployed the stack to the live repo and services: DB backup written, Alembic upgraded to `0011_issue_auto_land`, frontend rebuilt with `web/frontend/deploy.sh`, `podium-api`/`podium-web`/`symphony-host` restarted, and `symphony-host` came up on code `60c9634`.
+- Initial smoke #116 exposed the Pi RPC worktree-cwd gap: the issue recorded a worktree path but `pi_rpc_dispatch` ran from `/home/james/symphony`, so the review backstop blocked. #122 fixed this in `agent_runner.run_pi_rpc_agent`; after restart, journal showed both implement and review runs for #117/#118/#119 dispatching with cwd `/home/james/symphony/worktrees/symphony/<id>`.
+- Slicer-authored auto-land smoke #117 passed: implement parked `in_review`, review ran in the same worktree, backstop verification passed, `merge_succeeded` landed branch `podium/symphony/117` to `main`, and `worktree_removed` cleaned the worktree.
+- Operator-authored smoke #118 passed: implement + review succeeded, but `auto_land=false` kept the issue `in_review` with reason `review-passed-awaiting-operator-merge` and no merge.
+- Dirty-worktree smoke #119 passed: review emitted done and runnable verification passed, but an intentional untracked file left the worktree dirty; terminal handling blocked the issue with “Review auto-land halted: review worktree has uncommitted changes” instead of landing or redispatching to `todo`.
+- Existing Issue #102 review after deploy exercised the fail path: a malformed/unreviewable issue was flipped to `blocked` by the review run.
+- Throwaway smoke issues #116–#119 were archived after verification; #118/#119 throwaway worktrees were manually removed after recording evidence.

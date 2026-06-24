@@ -152,3 +152,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** `/podium-issues` creates trusted auto-land slices; operator/API-created issues remain `auto_land=false` by default.
 **Verification:** Prose verification was exercised against a temp Podium DB/binding sample; `PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q`, `uv run pytest web/api/tests/test_issue_create.py -q`, ruff, py_compile, and touched-file LSP diagnostics passed.
 **Action review:** 2026-06-24 fresh review diffed `7288681fcc08327521634efc2a22648fc86acbe7..HEAD`, read all changed files, reran verification/lint, and passed.
+
+## #122 MANUAL deploy ADR-0023 review phase — 2026-06-24
+
+**What changed:** Deployed ADR-0023 review phase live, applied Alembic 0011, restarted Podium/Symphony services, fixed the Pi RPC worktree cwd gap found by live smoke, and completed live calibration.
+**Files:** `agent_runner.py`, `tests/test_agent_runner.py`, `.kanban/issues/122-MANUAL-deploy-review-phase.md`, `wiki/analyses/adr-0023-native-per-issue-review-phase.md`, `wiki/CLAIMS.md`, `wiki/index.md`, `wiki/log.md`
+**Decisions:** Native review phase is now accepted/deployed; local Pi RPC dispatch must honor `worktree_active` the same way `run_agent` does.
+**Conventions established:** Review smoke evidence uses archived throwaway Podium issues plus journal markers (`worktree_prepared`, `pi_rpc_dispatch cwd=worktrees/...`, `merge_succeeded`, `worktree_removed`, `review-passed-awaiting-operator-merge`).
+**Verification:** Live prose verification passed: DB backup + Alembic 0011 parity, clean service restarts, auto-land issue #117 merged/removed its worktree, operator-authored issue #118 stayed `in_review`, backstop/dirty/fail paths blocked, and touched-file tests/LSP passed.
+**Notes for next iteration:** Issue #102 remains a real blocked operator issue from the live review fail-path; throwaway issues #116–#119 were archived.

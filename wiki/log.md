@@ -2,6 +2,12 @@
 
 Append entries with this format:
 
+## 2026-06-24 — ADR-0023 deploy + live review-phase verification
+
+- Action: update.
+- Inputs: Ralph issue #122 live deploy/verification session.
+- Outputs: deployed review phase to live Symphony, fixed Pi RPC worktree cwd drift, verified auto-land/operator-gate/backstop/dirty-guard live smokes, updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`, `wiki/index.md`, `wiki/CLAIMS.md` (C-0316 superseded by C-0323), and this log entry.
+
 ## [YYYY-MM-DD] type | Title
 
 - Actor: agent or human
