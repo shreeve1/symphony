@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0010_issue_blocked_by_locks"
+INITIAL_REVISION = "0011_issue_auto_land"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS issue(
   external_id TEXT,
   blocked_by TEXT,
   locks TEXT,
+  auto_land BOOLEAN NOT NULL DEFAULT FALSE,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 

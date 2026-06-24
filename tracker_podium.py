@@ -102,6 +102,7 @@ class PodiumTrackerAdapter:
         issue["name"] = issue.get("title") or ""
         issue["description_html"] = issue.get("description") or ""
         issue["description"] = issue.get("description") or ""
+        issue["auto_land"] = bool(issue.get("auto_land") or False)
         issue["blocked_by"] = _json_list(issue.get("blocked_by"), int)
         issue["locks"] = _json_list(issue.get("locks"), str)
         issue["labels"] = list(self.issue_labels(issue))
