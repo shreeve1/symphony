@@ -2,6 +2,13 @@
 
 Append entries with this format:
 
+## [2026-06-24] session-update | Podium flyout markdown overflow fix
+
+- Actor: agent (Pi), direct diagnosis + deploy.
+- Inputs: operator report of horizontal scroll when opening issue flyout; `podium.db` issue 66 copied for local UI probe; `web/frontend/components/Markdown.tsx`; `web/frontend/tests/flyout-tabs.spec.ts`; `web/frontend/deploy.sh`.
+- Outputs: committed `24d80f4` to wrap markdown `<pre>` diagnostic blocks; added e2e regression for patrol-style fenced JSON markers; deployed via `web/frontend/deploy.sh`; updated `wiki/analyses/podium-run-log-cap-and-flyout-dedup.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0327); added `wiki/eval/podium-ui.eval`; this log entry.
+- Notes: Playwright probe against a copied live DB showed `view-comments_md` horizontal overflow fell from 4003px to 0px. Verification passed: touched-file LSP diagnostics, `pnpm exec tsc --noEmit`, `PYTHONPATH=../.. pnpm exec playwright test tests/flyout-tabs.spec.ts --project=chromium`, copy-of-live-DB probe, and deploy root=200. No env file or secret read; live DB not mutated.
+
 ## 2026-06-24 — ADR-0023 deploy + live review-phase verification
 
 - Action: update.

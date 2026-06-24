@@ -3,11 +3,12 @@ title: Run-log size decouple + fly-out comments/context/run-summary dedup
 type: analysis
 status: promoted
 created: 2026-06-14
-updated: 2026-06-16
+updated: 2026-06-24
 sources:
   - scheduler.py
   - agent_runner.py
   - web/frontend/components/IssueFlyout.tsx
+  - web/frontend/components/Markdown.tsx
   - web/frontend/components/RunDetailPanel.tsx
   - web/frontend/tests/flyout-tabs.spec.ts
   - web/frontend/tests/steer-flyout.spec.ts
@@ -77,8 +78,15 @@ Fix (display-only, `IssueFlyout.tsx`): render `comments_md` as a single `<Markdo
 
 Migrating those specs onto `homelab` was rejected: the mutating specs use `trading` as a board **isolated** from the homelab specs that share the persistent dev DB under `fullyParallel` (dashboard roll-up counts, dnd/archive state assertions would collide). Fix (commit `b3e0f58`): `global-setup.mjs` synthesizes a stable fixture-only `trading` binding — deep-copy a local binding, force `type=coding`, drop any `remote:` block — so the e2e suite is decoupled from live-binding churn. `type=coding` matters: the flyout's 7-chip layout is the coding layout; infra bindings add 3 chips (`IssueFlyout.tsx:314`). No spec edits; full suite 47 passed (one unrelated `new-issue` combobox keyboard flake, green in isolation) [source: wiki/raw/sessions/2026-06-16-flyout-comment-ordering.md].
 
+## Follow-on (2026-06-24) — patrol diagnostic blocks caused flyout horizontal overflow
+
+Live homelab patrol comments introduced long fenced diagnostic dumps and compact JSON-ish patrol markers. The shared markdown renderer did not wrap `<pre>` blocks, so the flyout comments pane (`view-comments_md`) could become horizontally scrollable even though the outer dialog stayed within the viewport. A Playwright probe against a copy of live `podium.db` issue 66 measured `commentsOverflow: 4003` before the fix and `0` after it [source: web/frontend/components/Markdown.tsx] [source: web/frontend/tests/flyout-tabs.spec.ts].
+
+Fix (`24d80f4`): `Markdown.tsx` now applies `break-words` plus `<pre>` `max-w-full`, `whitespace-pre-wrap`, and `break-words`, favoring wrapped diagnostic readability over preserving one very long line. `flyout-tabs.spec.ts` now seeds a patrol-style fenced JSON marker and asserts the comments pane has no horizontal overflow. Verification: touched-file LSP diagnostics clean, `pnpm exec tsc --noEmit`, `PYTHONPATH=../.. pnpm exec playwright test tests/flyout-tabs.spec.ts --project=chromium`, and a copy-of-live-DB probe all passed. Deployed with `web/frontend/deploy.sh` so `.next` was staged then swapped safely [source: web/frontend/deploy.sh].
+
 ## Follow-ups
 
+- Frontend changes from the 2026-06-24 overflow fix are committed and deployed; earlier 2026-06-16 note below is historical.
 - Frontend changes uncommitted at capture; Podium frontend needs `next build` + restart (or dev hot-reload) to show them; `npm run test:e2e` not yet run.
 - ADR-0007 (`agent-summary-as-human-comment`) has no promoted wiki analysis page — candidate ingest opportunity.
 - (2026-06-16) ~~The `trading`-bound e2e specs are broken by the trading offboarding~~ — **resolved** (commit `b3e0f58`): `global-setup.mjs` synthesizes a fixture-only `trading` binding; full suite green. See the e2e-drift section above and C-0221.
