@@ -73,6 +73,7 @@ def test_from_env_loads_legacy_plane_env_values_with_optional_defaults():
     assert config.claude_persist_max_live == 8
     assert config.blocked_reconciler_interval_ms == 1_800_000
     assert config.issue_telegram_notifications_enabled is False
+    assert config.worktree_default is True
     assert config.lock_path == Path("/home/james/homelab/.symphony.lock")
 
 
@@ -138,6 +139,12 @@ def test_from_env_loads_issue_telegram_notifications_opt_in():
     config = SymphonyConfig.from_env(_env(SYMPHONY_ISSUE_TELEGRAM_NOTIFICATIONS="true"))
 
     assert config.issue_telegram_notifications_enabled is True
+
+
+def test_from_env_loads_worktree_default_opt_out():
+    config = SymphonyConfig.from_env(_env(SYMPHONY_WORKTREE_DEFAULT="false"))
+
+    assert config.worktree_default is False
 
 
 def test_from_env_loads_pi_provider_override():

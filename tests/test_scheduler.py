@@ -5033,6 +5033,16 @@ def _local_binding(config: SymphonyConfig) -> ProjectBinding:
     return config.bindings[0]
 
 
+def _local_coding_binding(config: SymphonyConfig) -> ProjectBinding:
+    return replace(
+        config.bindings[0],
+        name="symphony",
+        binding_type="coding",
+        tracker="podium",
+        default_agent="pi",
+    )
+
+
 def _remote_binding(config: SymphonyConfig) -> ProjectBinding:
     return replace(
         config.bindings[0],
@@ -5166,6 +5176,28 @@ def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
     )
 
 
+def test_worktree_run_fields_default_for_local_coding(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    binding = _local_coding_binding(config)
+    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+
+    fields = scheduler._worktree_run_fields(config, candidate, "main", binding=binding)
+
+    assert fields["worktree_path"].endswith("worktrees/symphony/issue-1")
+    assert fields["branch_name"] == "podium/symphony/issue-1"
+    assert fields["base_branch"] == "main"
+
+
+def test_worktree_run_fields_default_can_be_disabled(tmp_path: Path) -> None:
+    config = _config(tmp_path, worktree_default=False)
+    binding = _local_coding_binding(config)
+    candidate = replace(
+        _candidate("issue-1"), worktree_active=True, binding_name=binding.name
+    )
+
+    assert scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
+
+
 # T.6.4
 @pytest.mark.asyncio
 async def test_prepare_resume_candidate_local_unchanged(
@@ -5225,6 +5257,34 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
     assert captured["cwd"] == expected_cwd
     assert expected_cwd != config.homelab_repo_path
     assert result.agent_session_sha == "worktreehead"
+    assert result.worktree_active is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_local_coding_defaults_to_worktree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _local_coding_binding(config)
+    captured: dict[str, Any] = {}
+
+    def fake_repo_host_for(b, *, cwd=None, **kwargs):
+        captured["cwd"] = cwd
+        return _RecordingRepoHost("worktreehead")
+
+    monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
+    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+    result, _ = await scheduler._prepare_resume_candidate(
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        config,
+        candidate,
+        {},
+        binding=binding,  # pyright: ignore[reportArgumentType]
+    )
+
+    assert captured["cwd"] == scheduler._dispatch_cwd(config, result, binding=binding)
+    assert captured["cwd"] != config.homelab_repo_path
+    assert result.worktree_active is True
 
 
 # T.8.1

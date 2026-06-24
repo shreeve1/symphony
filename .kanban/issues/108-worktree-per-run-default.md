@@ -1,11 +1,13 @@
 ---
 id: 108
 title: Isolation — worktree-per-run default-ON for local bindings
-status: pending
+status: in-progress
 blocked_by: []
 locks: [scheduler]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -41,4 +43,4 @@ Flip the default so local runs are isolated.
 
 ## Verification
 
-`uv run pytest tests/test_scheduler.py tests/test_worktree.py -q`
+`uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`
