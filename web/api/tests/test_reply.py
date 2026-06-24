@@ -41,9 +41,7 @@ def test_reply_on_in_review_returns_todo(client: TestClient, issue_id: int) -> N
     assert "please retry the migration" in payload["comments_md"]
 
 
-def test_reply_response_carries_gate_fields(
-    client: TestClient, issue_id: int
-) -> None:
+def test_reply_response_carries_gate_fields(client: TestClient, issue_id: int) -> None:
     # Regression: the reply response (and its websocket payload) must include
     # the decorated gate fields. The reply flips state to 'todo', where the
     # flyout renders GateHints; a missing unsatisfied_blocked_by/lock_conflicts
