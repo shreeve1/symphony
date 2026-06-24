@@ -42,6 +42,7 @@ PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
 LOGGER = logging.getLogger(__name__)
 DEPENDENCY_DONE_STATES = {"done", "archived"}
+REVIEW_MARKER = "### Symphony Review"
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -158,9 +159,13 @@ class PodiumTrackerAdapter:
         issues = await self._list_candidate_snapshot()
         state_by_id = {str(issue["id"]): str(issue.get("state") or "") for issue in issues}
         for issue in issues:
-            if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
+            is_todo = self.issue_is_state(issue, TrackerRole.STATE_TODO)
+            is_review = self.issue_is_state(issue, TrackerRole.STATE_IN_REVIEW)
+            comments_md = str(issue.get("comments_md") or "")
+            review_dispatch = is_review and REVIEW_MARKER not in comments_md
+            if not is_todo and not review_dispatch:
                 continue
-            if not self._dependencies_satisfied(issue, state_by_id):
+            if is_todo and not self._dependencies_satisfied(issue, state_by_id):
                 continue
             preferred_skill = issue.get("preferred_skill")
             candidates.append(
@@ -171,7 +176,7 @@ class PodiumTrackerAdapter:
                     description=str(issue.get("description") or ""),
                     labels=tuple(issue.get("labels") or ()),
                     created_at=str(issue.get("created_at") or ""),
-                    comments_md=str(issue.get("comments_md") or ""),
+                    comments_md=comments_md,
                     context_md=str(issue.get("context_md") or ""),
                     preferred_skill=preferred_skill,
                     worktree_active=bool(issue.get("worktree_active") or False),
@@ -185,6 +190,7 @@ class PodiumTrackerAdapter:
                         else ""
                     ),
                     locks=tuple(issue.get("locks") or ()),
+                    review_dispatch=review_dispatch,
                 )
             )
         return candidates

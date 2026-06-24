@@ -1,7 +1,7 @@
 ---
 id: 118
 title: Review-phase selection + dispatch (in_review coding issues, marker-gated)
-status: pending
+status: in-progress
 blocked_by: [108, 116]
 locks: [scheduler]
 priority: 1

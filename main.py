@@ -32,7 +32,7 @@ from config import ProjectBinding, SymphonyConfig
 from model_catalog import load_models, resolve_model
 from notifier import TelegramNotifier
 from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, build_adapter
-from prompt_renderer import IssueData, render_prompt
+from prompt_renderer import IssueData, render_prompt, render_review_prompt
 from repo_host import repo_host_for
 from scheduler import _resolve_mode, reconcile_startup, run_loop
 from tracker_adapter import TrackerAdapter
@@ -103,6 +103,8 @@ def _render_candidate_prompt(
         preferred_skill=getattr(issue, "preferred_skill", None),
     )
     if tracker_kind == "podium":
+        if getattr(issue, "review_dispatch", False):
+            return render_review_prompt(issue_data)
         return render_prompt(
             issue_data,
             binding_type=binding_type,

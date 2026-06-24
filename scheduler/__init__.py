@@ -138,6 +138,9 @@ BUILD_PLAN_MISSING_GRACE_ATTEMPTS = 3
 # Stable substring of the return-to-plan recovery comment, counted in
 # comments_md to track how many grace attempts have already been spent.
 _BUILD_PLAN_RETURN_MARKER = "Returning this issue to Plan mode"
+_REVIEW_DISPATCH_MARKER_RE = re.compile(
+    r"^### Symphony Review(?: \((\d+)\))?", re.MULTILINE
+)
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
 # from agent stderr so failure comments are readable on Plane, which renders
 # fenced code as plain text.
@@ -549,6 +552,11 @@ async def _render_for_dispatch(
     if comments_text and not getattr(candidate, "resumed", False):
         prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
     return candidate, prompt
+
+
+def _next_review_dispatch_marker(comments_md: str) -> str:
+    prior = len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
+    return f"### Symphony Review ({prior + 1})\n\nReview run dispatched."
 
 
 def _apply_dispatch_gate(
@@ -1235,6 +1243,8 @@ async def _select_run_tick_candidate(
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
     _clear_rate_limit(dispatch_state)
+    if not is_coding:
+        candidates = [c for c in candidates if not getattr(c, "review_dispatch", False)]
 
     approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
     if candidate is None:
@@ -1273,11 +1283,19 @@ async def _gate_run_tick_candidate(
 
     mode = _resolve_mode(candidate.labels, adapter.contract)
 
+    if getattr(candidate, "review_dispatch", False) and not is_coding:
+        return TickResult(False, "state-changed", candidate.id)
+
+    expected_state = (
+        TrackerRole.STATE_IN_REVIEW
+        if getattr(candidate, "review_dispatch", False)
+        else TrackerRole.STATE_TODO
+    )
     fresh = await _fetch_issue(adapter, candidate.id)
     if not _is_state(
         fresh,
-        adapter.contract.state_name_for_role(TrackerRole.STATE_TODO),
-        adapter.contract.state_value_for_role(TrackerRole.STATE_TODO),
+        adapter.contract.state_name_for_role(expected_state),
+        adapter.contract.state_value_for_role(expected_state),
     ):
         return TickResult(False, "state-changed", candidate.id)
     label_ids = adapter.contract.label_ids if adapter.contract else None
@@ -1451,6 +1469,11 @@ async def _prepare_run_tick_dispatch(
             binding=binding,
             comments_text=comments_text,
         )
+        if getattr(candidate, "review_dispatch", False):
+            await adapter.add_comment(
+                candidate.id,
+                CommentPayload(body=_next_review_dispatch_marker(comments_text)),
+            )
     except OSError as exc:
         _iu, _du = _build_urls(config, candidate.id)
         await _block_issue(

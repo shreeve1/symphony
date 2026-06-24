@@ -269,6 +269,48 @@ async def test_podium_candidates_include_locks(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_podium_candidates_include_unmarked_review_issue(tmp_path: Path) -> None:
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, worktree_active, created_at, updated_at
+            ) VALUES ('test', 'needs review', '', 'in_review', 'pi', '', '', 1,
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'already reviewed', '', 'in_review', 'pi',
+                      '### Symphony Review (1)', '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+    ).list_candidates()
+
+    assert [candidate.name for candidate in candidates] == ["needs review"]
+    assert candidates[0].review_dispatch is True
+    assert candidates[0].worktree_active is True
+
+
+@pytest.mark.asyncio
 async def test_podium_candidate_dependency_snapshot_is_not_page_capped(
     tmp_path: Path,
 ) -> None:
@@ -4379,6 +4421,110 @@ async def test_dispatch_state_per_binding_is_isolated(tmp_path: Path) -> None:
 
     # Independent poll intervals.
     assert state_a.poll_interval != state_b.poll_interval
+
+
+@pytest.mark.asyncio
+async def test_coding_review_candidate_dispatches_with_marker_and_worktree(
+    tmp_path: Path,
+) -> None:
+    from main import _render_candidate_prompt
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+    from worktree_facade import worktree_dir
+
+    repo = tmp_path / "repo"
+    _init_tmp_repo(repo)
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              preferred_model, reasoning_effort, comments_md, context_md,
+              worktree_active, created_at, updated_at
+            ) VALUES ('test', 'needs review', 'Body', 'in_review', 'pi',
+                      NULL, 'high', '', '', 1,
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """
+        )
+        issue_id = str(cursor.lastrowid)
+        connection.commit()
+
+    base_config = _config(repo, run_cap=1)
+    binding = replace(
+        base_config.bindings[0],
+        name="test",
+        binding_type="coding",
+        tracker="podium",
+        repo_path=repo,
+    )
+    config = base_config.for_binding(binding)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    prompts: list[str] = []
+    seen_worktree_flags: list[bool] = []
+
+    def agent(issue: CandidateIssue, prompt: str) -> AgentResult:
+        prompts.append(prompt)
+        seen_worktree_flags.append(issue.worktree_active)
+        return AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: review\n")
+
+    result = await run_tick(
+        config,
+        adapter,
+        agent_runner=agent,
+        render_prompt=lambda issue: _render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        run_blocked_reconciler=False,
+        binding=binding,
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert seen_worktree_flags == [True]
+    assert "You are a Symphony review agent" in prompts[0]
+    issue = await adapter.get_issue(issue_id)
+    assert issue["state"] == "in_review"
+    assert "### Symphony Review (1)" in issue["comments_md"]
+    assert (await adapter.list_candidates()) == []
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        run = connection.execute("SELECT * FROM run").fetchone()
+    assert run is not None
+    assert run["worktree_path"] == str(worktree_dir(repo, "test", issue_id))
+
+
+@pytest.mark.asyncio
+async def test_infra_binding_does_not_dispatch_review_candidate(tmp_path: Path) -> None:
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(1),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "identifier": "issue-1",
+    }
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-1"), review_dispatch=True)],
+        run_blocked_reconciler=False,
+        dispatch_state=state,
+    )
+
+    assert result.reason == "no-candidates"
+    assert transport.issues["issue-1"]["state"] == PlaneState.IN_REVIEW.value
 
 
 @pytest.mark.asyncio
