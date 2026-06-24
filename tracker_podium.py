@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -42,7 +43,9 @@ PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
 LOGGER = logging.getLogger(__name__)
 DEPENDENCY_DONE_STATES = {"done", "archived"}
-REVIEW_MARKER = "### Symphony Review"
+REVIEW_MARKER_RE = re.compile(
+    r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
+)
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -157,12 +160,14 @@ class PodiumTrackerAdapter:
     async def list_candidates(self) -> list[CandidateIssue]:
         candidates = []
         issues = await self._list_candidate_snapshot()
-        state_by_id = {str(issue["id"]): str(issue.get("state") or "") for issue in issues}
+        state_by_id = {
+            str(issue["id"]): str(issue.get("state") or "") for issue in issues
+        }
         for issue in issues:
             is_todo = self.issue_is_state(issue, TrackerRole.STATE_TODO)
             is_review = self.issue_is_state(issue, TrackerRole.STATE_IN_REVIEW)
             comments_md = str(issue.get("comments_md") or "")
-            review_dispatch = is_review and REVIEW_MARKER not in comments_md
+            review_dispatch = is_review and not REVIEW_MARKER_RE.search(comments_md)
             if not is_todo and not review_dispatch:
                 continue
             if is_todo and not self._dependencies_satisfied(issue, state_by_id):

@@ -124,4 +124,4 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Represent review dispatch as a `CandidateIssue.review_dispatch` flag; terminal outcome handling stays unchanged for #119.
 **Conventions established:** `### Symphony Review (n)` in `comments_md` is the idempotency marker for scheduler-owned review dispatch selection.
 **Verification:** `uv run pytest tests/test_scheduler.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics found 0 touched-file errors.
-**Action review:** 2026-06-24 fresh review diffed `5142877c6ff95cc70f94a489233d75dab81ddc83..HEAD`, read every changed file, reran verification, checked ruff/LSP, and passed.
+**Action review:** 2026-06-24 fresh review diffed `5142877c6ff95cc70f94a489233d75dab81ddc83..HEAD`, read every changed file, tightened review-marker matching to line-anchored headings, reran verification, checked ruff/LSP, and passed.

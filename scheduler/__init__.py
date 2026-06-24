@@ -139,7 +139,7 @@ BUILD_PLAN_MISSING_GRACE_ATTEMPTS = 3
 # comments_md to track how many grace attempts have already been spent.
 _BUILD_PLAN_RETURN_MARKER = "Returning this issue to Plan mode"
 _REVIEW_DISPATCH_MARKER_RE = re.compile(
-    r"^### Symphony Review(?: \((\d+)\))?", re.MULTILINE
+    r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
 )
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
 # from agent stderr so failure comments are readable on Plane, which renders

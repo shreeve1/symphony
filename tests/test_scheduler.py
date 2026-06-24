@@ -298,6 +298,17 @@ async def test_podium_candidates_include_unmarked_review_issue(tmp_path: Path) -
                       '2026-06-11T00:00:00+00:00')
             """
         )
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'mentions marker', '', 'in_review', 'pi',
+                      'Operator mentioned `### Symphony Review` inline.', '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """
+        )
         connection.commit()
 
     candidates = await PodiumTrackerAdapter(
@@ -305,8 +316,11 @@ async def test_podium_candidates_include_unmarked_review_issue(tmp_path: Path) -
         binding_name="test",
     ).list_candidates()
 
-    assert [candidate.name for candidate in candidates] == ["needs review"]
-    assert candidates[0].review_dispatch is True
+    assert [candidate.name for candidate in candidates] == [
+        "needs review",
+        "mentions marker",
+    ]
+    assert all(candidate.review_dispatch is True for candidate in candidates)
     assert candidates[0].worktree_active is True
 
 
@@ -4608,7 +4622,9 @@ async def test_reserve_specific_candidate_rejects_lock_conflict() -> None:
     conflict = _candidate("conflict", locks=("scheduler",))
 
     assert await scheduler._reserve_specific_candidate(first, dispatch_state=state)
-    assert not await scheduler._reserve_specific_candidate(conflict, dispatch_state=state)
+    assert not await scheduler._reserve_specific_candidate(
+        conflict, dispatch_state=state
+    )
     assert "conflict" not in state.in_flight_ids
 
 
@@ -5440,7 +5456,9 @@ def test_worktree_run_fields_default_can_be_disabled(tmp_path: Path) -> None:
         _candidate("issue-1"), worktree_active=True, binding_name=binding.name
     )
 
-    assert scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
+    assert (
+        scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
+    )
 
 
 # T.6.4
