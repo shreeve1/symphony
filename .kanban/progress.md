@@ -116,3 +116,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Scheduler/importer-facing worktree helpers go through `worktree_facade.py`.
 **Verification:** `uv run pytest web/api/tests/test_worktree.py -q` and `uv run python -m py_compile web/api/worktree.py web/api/main.py worktree_facade.py` passed; ruff and LSP diagnostics found 0 touched-file errors.
 **Action review:** 2026-06-24 fresh review diffed `ca648d25735927929a4df53a8d452f10674e56d1..HEAD`, read all changed files, reran verification, and passed with notes about formatting-only hunks.
+
+## #118 Review-phase selection + dispatch — 2026-06-24
+
+**What changed:** Podium `in_review` coding issues without a `### Symphony Review` marker now enter normal dispatch as review runs, render with `REVIEW_PREAMBLE`, reuse the deterministic worktree, and stamp a review marker before agent launch.
+**Files:** `tracker_types.py`, `tracker_podium.py`, `scheduler/__init__.py`, `main.py`, `tests/test_scheduler.py`, `.kanban/issues/118-review-selection-dispatch.md`
+**Decisions:** Represent review dispatch as a `CandidateIssue.review_dispatch` flag; terminal outcome handling stays unchanged for #119.
+**Conventions established:** `### Symphony Review (n)` in `comments_md` is the idempotency marker for scheduler-owned review dispatch selection.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics found 0 touched-file errors.
+**Action review:** 2026-06-24 fresh review diffed `5142877c6ff95cc70f94a489233d75dab81ddc83..HEAD`, read every changed file, reran verification, checked ruff/LSP, and passed.
