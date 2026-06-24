@@ -1,11 +1,14 @@
 ---
 id: 105
 title: Add issue.blocked_by + issue.locks columns (schema + Alembic 0010)
-status: pending
+status: done
 blocked_by: []
 locks: [schema]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -27,12 +30,16 @@ mutual-exclusion on the Podium `issue` row, as two JSON columns in one migration
 
 ## Acceptance criteria
 
-- [ ] `issue.blocked_by` and `issue.locks` exist in `schema.py`; NULL allowed.
-- [ ] Migration 0010 applies and reverts cleanly; runtime schema == migration schema.
-- [ ] Tracker reads `blocked_by` as `list[int]` and `locks` as `list[str]`;
+- [x] `issue.blocked_by` and `issue.locks` exist in `schema.py`; NULL allowed.
+- [x] Migration 0010 applies and reverts cleanly; runtime schema == migration schema.
+- [x] Tracker reads `blocked_by` as `list[int]` and `locks` as `list[str]`;
       NULL/blank/invalid → `[]`.
 
 ## Verification
 
 `uv run pytest web/api/tests/test_alembic_baseline.py tests/test_alembic_baseline.py -q`
 and `uv run python -m py_compile web/api/schema.py tracker_podium.py`
+
+## Implementation Notes
+
+Added nullable JSON-backed `issue.blocked_by` and `issue.locks` columns to runtime schema and Alembic head 0010. Podium issue reads now coerce dependency ids to `list[int]` and locks to `list[str]`, defaulting malformed or missing values to `[]`.

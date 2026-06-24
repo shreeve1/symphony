@@ -1,11 +1,13 @@
 ---
 id: 108
 title: Isolation — worktree-per-run default-ON for local bindings
-status: pending
+status: done
 blocked_by: []
 locks: [scheduler]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -33,12 +35,16 @@ Flip the default so local runs are isolated.
 
 ## Acceptance criteria
 
-- [ ] A local-binding `todo` issue dispatched with no explicit `worktree_active`
+- [x] A local-binding `todo` issue dispatched with no explicit `worktree_active`
       runs in its own worktree (cwd = `worktree_dir(...)`), not the shared repo.
-- [ ] Remote bindings still run in `binding.repo_path` (no worktree fields).
-- [ ] Worktree is removed on terminal outcome; FF landing still applies the work.
-- [ ] An explicit opt-out (disabled flag) falls back to the shared repo.
+- [x] Remote bindings still run in `binding.repo_path` (no worktree fields).
+- [x] Worktree is removed on terminal outcome; FF landing still applies the work.
+- [x] An explicit opt-out (disabled flag) falls back to the shared repo.
 
 ## Verification
 
-`uv run pytest tests/test_scheduler.py tests/test_worktree.py -q`
+`uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`
+
+## Implementation Notes
+
+Added `SymphonyConfig.worktree_default` (env `SYMPHONY_WORKTREE_DEFAULT`, default true) as the opt-out switch. Local coding bindings now default candidates into deterministic worktrees for dispatch/resume, remote bindings stay shared-repo, and Podium rows are marked `worktree_active=True` on dispatch so existing merge/cleanup paths still remove worktrees on terminal outcomes.

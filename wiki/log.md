@@ -11,6 +11,13 @@ Append entries with this format:
 
 ---
 
+## [2026-06-24] session-update | Ralph issue #113 FF merge rebase retry
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/113-ff-merge-rebase-retry.md`; `git diff 38d2e4452016fb8b924fc70cc81858374ddfc640 HEAD`; `web/api/worktree.py`; `web/api/tests/test_worktree.py`; issue verification command.
+- Outputs: implemented one local rebase+FF retry for non-conflicting diverged-base worktree merges; marked `.kanban/issues/113-ff-merge-rebase-retry.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/analysis-session-worktree-done-commit-redispatch.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0319, C-0087 superseded); updated `wiki/eval/worktree.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest web/api/tests/test_worktree.py -q`, 24 passed). Ruff, py_compile, and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. Initial non-login shell lacked `uv` on PATH, so verification used `PATH=/home/james/.local/bin:$PATH` while running the exact issue command. No secrets/env files read; no service restart, live DB mutation, or outward notification.
+
 ## [2026-06-24] session-update | Issue #105 remote Claude edit+commit landing smoke
 
 - Actor: agent (Pi), direct live smoke harness.
@@ -1438,3 +1445,17 @@ Append entries with this format:
 - Findings: 4 Critical (scheduler can't trigger merge via transition; cross-process `_maybe_merge_worktree` call; nothing re-dispatches a `running` issue; dirty-worktree redispatch-to-`todo` breaks the never-todo invariant), 5 Warning, 6 Note. No working-tree drift.
 - Outputs: deleted old slices 117-120; wrote reworked slices `.kanban/issues/117-122` (117 land_worktree extraction, 118 in_review-driven review selection, 119 provenance-gated terminal, 120 driver backstop, 121 slicer stamp, 122 MANUAL); patched `docs/adr/0023-...md` (trigger model, land_worktree, dirty-worktree guard, no-retry, slice plan, ADR-0021 105 path note); updated `wiki/index.md`, `wiki/analyses/adr-0023-native-per-issue-review-phase.md`, `wiki/CLAIMS.md` (C-0316 rewritten), `wiki/ROUTING.md`, raw session revision note, this log entry.
 - Notes: Design still PROPOSED, not built. Schema/API/preamble/slicer slices (114/115/116/121) unchanged in intent; rework concentrated in trigger (in_review selection) + merge seam (land_worktree).
+
+## [2026-06-24] session-update | Issue #107 blocked_by/locks API write path
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/107-blocked-by-write-paths.md`; `web/api/main.py`; `web/api/tests/test_issue_create.py`; `web/api/tests/test_issue_patch.py`; issue verification command.
+- Outputs: marked `.kanban/issues/107-blocked-by-write-paths.md` done; updated `.kanban/progress.md`; updated `wiki/concepts/podium-tracker.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0317); added `wiki/eval/podium-api.eval`; this log entry.
+- Notes: #107 carries `blocked_by` and `locks` through Podium create/patch API as JSON-backed typed lists, returns omitted values as `[]`, and rejects `blocked_by` cycles with HTTP 400. Verification passed exactly as issue-specified (`uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q`, 90 passed); touched-file LSP diagnostics were clean; fresh review returned `RALPH_REVIEW: PASS`.
+
+## [2026-06-24] session-update | Issue #108 local coding worktree default
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/108-worktree-per-run-default.md`; `config.py`; `scheduler/__init__.py`; `tests/test_config.py`; `tests/test_scheduler.py`; issue verification command.
+- Outputs: marked `.kanban/issues/108-worktree-per-run-default.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/analysis-session-worktree-done-commit-redispatch.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0318, C-0249 dormant subfact superseded); this log entry.
+- Notes: #108 makes local coding bindings default to deterministic per-issue worktrees via `SymphonyConfig.worktree_default` / `SYMPHONY_WORKTREE_DEFAULT` while remote bindings remain shared-repo. Dispatch marks Podium rows `worktree_active=True` so existing merge/cleanup handles terminal removal. Verification passed exactly as issue-specified (`uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`, 203 passed); touched-file LSP diagnostics were clean; fresh review returned `RALPH_REVIEW: PASS`.

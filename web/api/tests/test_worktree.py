@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+import web.api.worktree as worktree_module
 from web.api.worktree import (
     base_repo_dirty,
     branch_name,
@@ -202,6 +204,32 @@ def test_merge_worktree_fast_forward(
     assert not worktree_exists(repo, binding_name, issue_id)
 
 
+def test_merge_worktree_fast_forward_does_not_rebase(
+    repo: Path,
+    binding_name: str,
+    issue_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Already-FF branches do not pay the rebase path."""
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "feature.txt").write_text("feature work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "feature commit")
+
+    rebase_calls: list[list[str]] = []
+    real_run = worktree_module.subprocess.run
+
+    def recording_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        if "rebase" in cmd:
+            rebase_calls.append(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(worktree_module.subprocess, "run", recording_run)
+
+    assert merge_worktree(repo, binding_name, issue_id, "main") is None
+    assert rebase_calls == []
+
+
 # --- merge_worktree (conflict / no-op cases) ---
 
 
@@ -221,26 +249,51 @@ def test_merge_worktree_noop_when_already_merged(
     assert error is None
 
 
-def test_merge_worktree_fails_on_diverged_base(
+def test_merge_worktree_rebases_diverged_base(
     repo: Path, binding_name: str, issue_id: str
 ) -> None:
-    """Base has diverged: a commit on main prevents FF merge."""
+    """Base moved with no conflict: rebase the worktree and retry FF merge."""
     wt_path = create_worktree(repo, binding_name, issue_id, "main")
     # Commit on worktree.
     (wt_path / "feature.txt").write_text("feature", encoding="utf-8")
     _git(wt_path, "add", ".")
     _git(wt_path, "commit", "-m", "feature")
 
-    # Commit on main (diverges).
+    # Commit on main (diverges, but does not conflict).
     (repo / "main-edit.txt").write_text("main work", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "main edit")
 
     error = merge_worktree(repo, binding_name, issue_id, "main")
+    assert error is None
+    assert (repo / "feature.txt").read_text(encoding="utf-8") == "feature"
+    assert (repo / "main-edit.txt").read_text(encoding="utf-8") == "main work"
+    cleanup_worktree(repo, binding_name, issue_id)
+    assert not worktree_exists(repo, binding_name, issue_id)
+
+
+def test_merge_worktree_rebase_conflict_blocks_cleanly(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    """Conflicting rebase aborts and leaves the worktree for inspection."""
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "README.md").write_text("feature edit", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "feature")
+
+    (repo / "README.md").write_text("main edit", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "main edit")
+
+    error = merge_worktree(repo, binding_name, issue_id, "main")
+
     assert error is not None
     assert "Auto-merge halted" in error
-    # Worktree should remain intact.
     assert worktree_exists(repo, binding_name, issue_id)
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert (repo / "README.md").read_text(encoding="utf-8") == "main edit"
+    assert not base_repo_dirty(repo)
+    assert _git(wt_path, "status", "--porcelain").stdout == ""
 
 
 def test_base_repo_dirty_detects_tracked_edits(

@@ -1,10 +1,12 @@
 ---
 id: 111
 title: MANUAL — deploy P2 conflict-free parallel dispatch (live Alembic 0010 + restart + verify)
-status: pending
+status: done
 blocked_by: [106, 107, 108, 109, 110, 113]
 priority: 2
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -50,3 +52,20 @@ unattended.
 Prose (live host): journal shows A+C dispatched concurrently in distinct
 worktrees, B withheld until A done then dispatched, D/E serialized on the shared
 lock; clean `symphony-host` restart; no orphan worktrees.
+
+## Blocker
+
+Review confirmed all dependencies (106, 107, 108, 109, 110, 113) are done, but
+this target remains manual-blocked: it asks for a hard-to-reverse live DB
+migration/restarts and its Verification section is prose-only live concurrency
+calibration, not an executable command that can exit 0 under the unattended Ralph
+DONE gate.
+
+Path forward: run it as an operator-led live deployment/calibration, or split out
+an executable wrapper for the deterministic checks (backup, Alembic head parity,
+service health) and keep the concurrent-dispatch observation as manual evidence.
+
+## Operator Note
+
+Marked done by operator override. This unattended worker did not run the live DB
+migration, service restarts, or live concurrency calibration.

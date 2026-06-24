@@ -1,11 +1,14 @@
 ---
 id: 106
 title: Gate dispatch on dependencies (todo eligible only when blockers done)
-status: pending
+status: done
 blocked_by: [105]
 locks: [scheduler]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -28,11 +31,15 @@ it converts "all todo issues run in parallel" into "independent issues paralleli
 
 ## Acceptance criteria
 
-- [ ] A `todo` issue with an unsatisfied blocker is not returned as a candidate and stays `todo`.
-- [ ] Once all blockers are `done`/`archived`, it becomes a candidate next tick.
-- [ ] Independent `todo` issues still dispatch in parallel up to `run_cap`.
-- [ ] Unresolved blocker id → issue is eligible + a warning is logged.
+- [x] A `todo` issue with an unsatisfied blocker is not returned as a candidate and stays `todo`.
+- [x] Once all blockers are `done`/`archived`, it becomes a candidate next tick.
+- [x] Independent `todo` issues still dispatch in parallel up to `run_cap`.
+- [x] Unresolved blocker id → issue is eligible + a warning is logged.
 
 ## Verification
 
 `uv run pytest tests/test_scheduler.py -q`
+
+## Implementation Notes
+
+`tracker_podium.list_candidates` now loads the binding's issue states once per tick, filters `todo` candidates with unfinished dependencies, leaves withheld issues in `todo`, and warns while allowing unresolved blocker ids. Review repair made that dependency snapshot unbounded so page-capped terminal issues cannot hide candidates or blockers. Added scheduler-suite coverage for unsatisfied, satisfied, independent, unresolved, and page-cap dependency cases.

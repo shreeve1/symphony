@@ -174,7 +174,7 @@ def merge_worktree(
             base_branch,
             exc.stderr,
         )
-        # Abort the failed merge to leave a clean checkout.
+        # Abort the failed merge to leave a clean checkout before retrying.
         subprocess.run(
             ["git", "-C", str(repo_path), "merge", "--abort"],
             capture_output=True,
@@ -182,10 +182,61 @@ def merge_worktree(
             timeout=30,
             check=False,
         )
-        return (
-            f"Auto-merge halted: FF-only merge of {branch} into "
-            f"{base_branch} failed. Inspect worktree at {wt_path}."
+
+        rebase = subprocess.run(
+            ["git", "-C", str(wt_path), "rebase", base_branch],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
+        if rebase.returncode != 0:
+            LOGGER.warning(
+                "merge_rebase_failed branch=%s base=%s stderr=%s",
+                branch,
+                base_branch,
+                rebase.stderr,
+            )
+            subprocess.run(
+                ["git", "-C", str(wt_path), "rebase", "--abort"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            return (
+                f"Auto-merge halted: FF-only merge of {branch} into "
+                f"{base_branch} failed. Inspect worktree at {wt_path}."
+            )
+
+        try:
+            subprocess.run(
+                ["git", "-C", str(repo_path), "merge", "--ff-only", branch],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            LOGGER.info("merge_rebase_retry_succeeded branch=%s base=%s", branch, base_branch)
+            return None
+        except subprocess.CalledProcessError as retry_exc:
+            LOGGER.warning(
+                "merge_retry_failed branch=%s base=%s stderr=%s",
+                branch,
+                base_branch,
+                retry_exc.stderr,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo_path), "merge", "--abort"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            return (
+                f"Auto-merge halted: FF-only merge of {branch} into "
+                f"{base_branch} failed. Inspect worktree at {wt_path}."
+            )
 
 
 def cleanup_worktree(repo_path: Path, binding_name: str, issue_id: str) -> None:

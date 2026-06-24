@@ -189,6 +189,7 @@ class _DispatchState:
     cooldown_attempts: int = 0
     pending_review_issue_ids: set[str] = field(default_factory=set)
     pending_completion_bodies: dict[str, str] = field(default_factory=dict)
+    in_flight_locks: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 def _effective_run_cap(config: SymphonyConfig, binding: ProjectBinding | None) -> int:
@@ -375,6 +376,22 @@ def _binding_for_issue(
     return _binding_from_config(config)
 
 
+def _worktree_enabled(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None = None,
+) -> bool:
+    if not config.worktree_default:
+        return False
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    if resolved_binding is not None and resolved_binding.is_remote:
+        return False
+    if getattr(candidate, "worktree_active", False):
+        return True
+    return resolved_binding is not None and resolved_binding.binding_type == "coding"
+
+
 def _worktree_run_fields(
     config: SymphonyConfig,
     candidate: CandidateIssue,
@@ -382,14 +399,9 @@ def _worktree_run_fields(
     *,
     binding: ProjectBinding | None = None,
 ) -> dict[str, str]:
-    if not getattr(candidate, "worktree_active", False):
+    if not _worktree_enabled(config, candidate, binding=binding):
         return {}
     resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    if resolved_binding is not None and resolved_binding.is_remote:
-        # Worktrees are disabled for remote bindings (ADR-0012): the remote
-        # agent runs directly in binding.repo_path. Return no worktree fields so
-        # no local git/Path op is driven against the remote path.
-        return {}
     worktree_helpers = import_module("worktree_facade")
     branch_name = worktree_helpers.branch_name
     worktree_dir = worktree_helpers.worktree_dir
@@ -465,6 +477,7 @@ async def _prepare_resume_candidate(
         agent_session_id=session_id,
         agent_session_sha=current_sha,
         resumed=False,
+        worktree_active=_worktree_enabled(config, candidate, binding=binding),
     )
     supports_resume = agent == "claude" or (
         agent == "pi" and getattr(binding, "pi_mode", "one-shot") == "rpc"
@@ -1461,6 +1474,9 @@ async def _prepare_run_tick_dispatch(
         consume = getattr(adapter, "consume_preferred_skill", None)
         if callable(consume):
             await _maybe_await(consume(candidate.id, consumed_skill))
+    update_columns = getattr(adapter, "_update_issue_columns", None)
+    if getattr(candidate, "worktree_active", False) and callable(update_columns):
+        await _maybe_await(update_columns(candidate.id, {"worktree_active": True}))
     await adapter.transition_state(candidate.id, TrackerRole.STATE_RUNNING)
     claim_time = now().isoformat()
     await _mark_run_record_running(
@@ -2680,10 +2696,16 @@ async def _reserve_candidate(
     if dispatch_state is None:
         raise SchedulerError("dispatch_state is required")
     async with dispatch_state.in_flight_lock:
+        held_locks = (
+            set().union(*dispatch_state.in_flight_locks.values())
+            if dispatch_state.in_flight_locks
+            else set()
+        )
         available = [
             candidate
             for candidate in candidates
             if candidate.id not in dispatch_state.in_flight_ids
+            and set(candidate.locks).isdisjoint(held_locks)
         ]
         selected = _oldest_candidate(
             available,
@@ -2692,6 +2714,7 @@ async def _reserve_candidate(
         )
         if selected is not None:
             dispatch_state.in_flight_ids.add(selected.id)
+            dispatch_state.in_flight_locks[selected.id] = frozenset(selected.locks)
         return selected
 
 
@@ -2703,9 +2726,17 @@ async def _reserve_specific_candidate(
     if dispatch_state is None:
         raise SchedulerError("dispatch_state is required")
     async with dispatch_state.in_flight_lock:
+        held_locks = (
+            set().union(*dispatch_state.in_flight_locks.values())
+            if dispatch_state.in_flight_locks
+            else set()
+        )
         if candidate.id in dispatch_state.in_flight_ids:
             return False
+        if not set(candidate.locks).isdisjoint(held_locks):
+            return False
         dispatch_state.in_flight_ids.add(candidate.id)
+        dispatch_state.in_flight_locks[candidate.id] = frozenset(candidate.locks)
         return True
 
 
@@ -2718,6 +2749,7 @@ async def _release_candidate(
         raise SchedulerError("dispatch_state is required")
     async with dispatch_state.in_flight_lock:
         dispatch_state.in_flight_ids.discard(issue_id)
+        dispatch_state.in_flight_locks.pop(issue_id, None)
 
 
 def _oldest_candidate(

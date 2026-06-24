@@ -15,14 +15,16 @@ issue row.
 
 from __future__ import annotations
 
+import json
+import logging
 import sqlite3
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from skill_mode_map import mode_for_skill
-from tracker_types import CandidateIssue
 from tracker_contract import (
     DEFAULT_CONTRACT,
     RoleBinding,
@@ -33,10 +35,13 @@ from tracker_contract import (
     coerce_label_role,
     coerce_state_role,
 )
+from tracker_types import CandidateIssue
 from web.api.db import resolve_db_path
 
 PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
+LOGGER = logging.getLogger(__name__)
+DEPENDENCY_DONE_STATES = {"done", "archived"}
 
 
 PODIUM_STATE_BY_ROLE: dict[TrackerRole, str] = {
@@ -97,6 +102,8 @@ class PodiumTrackerAdapter:
         issue["name"] = issue.get("title") or ""
         issue["description_html"] = issue.get("description") or ""
         issue["description"] = issue.get("description") or ""
+        issue["blocked_by"] = _json_list(issue.get("blocked_by"), int)
+        issue["locks"] = _json_list(issue.get("locks"), str)
         issue["labels"] = list(self.issue_labels(issue))
         return issue
 
@@ -147,7 +154,13 @@ class PodiumTrackerAdapter:
 
     async def list_candidates(self) -> list[CandidateIssue]:
         candidates = []
-        for issue in await self.list_issues_by_state(TrackerRole.STATE_TODO):
+        issues = await self._list_candidate_snapshot()
+        state_by_id = {str(issue["id"]): str(issue.get("state") or "") for issue in issues}
+        for issue in issues:
+            if not self.issue_is_state(issue, TrackerRole.STATE_TODO):
+                continue
+            if not self._dependencies_satisfied(issue, state_by_id):
+                continue
             preferred_skill = issue.get("preferred_skill")
             candidates.append(
                 CandidateIssue(
@@ -170,9 +183,46 @@ class PodiumTrackerAdapter:
                         if preferred_skill
                         else ""
                     ),
+                    locks=tuple(issue.get("locks") or ()),
                 )
             )
         return candidates
+
+    async def _list_candidate_snapshot(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            if self.binding_name is not None:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM issue
+                    WHERE binding_name = ?
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (self.binding_name,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM issue
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ).fetchall()
+        return [self._row_to_issue(row) for row in rows]
+
+    def _dependencies_satisfied(
+        self, issue: dict[str, Any], state_by_id: dict[str, str]
+    ) -> bool:
+        for blocker_id in issue.get("blocked_by") or []:
+            blocker_state = state_by_id.get(str(blocker_id))
+            if blocker_state is None:
+                LOGGER.warning(
+                    "dependency_blocker_unresolved issue=%s blocker=%s",
+                    issue["id"],
+                    blocker_id,
+                )
+                continue
+            if blocker_state not in DEPENDENCY_DONE_STATES:
+                return False
+        return True
 
     async def list_issues(
         self,
@@ -653,6 +703,22 @@ def _scheduled_due(value: Any) -> bool:
 
 def _append_block(title: str, body: str) -> str:
     return f"{title}\n\n{body.strip()}".strip()
+
+
+def _json_list(value: Any, item_type: type) -> list[Any]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    items: list[Any] = []
+    for item in parsed:
+        with suppress(TypeError, ValueError):
+            items.append(item_type(item))
+    return items
 
 
 def _now() -> str:

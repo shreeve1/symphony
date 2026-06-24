@@ -17,6 +17,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { patchIssue, type Issue } from "@/lib/api";
 import { STATES, type StateKey } from "@/lib/issues";
+import { isActiveRunState } from "@/lib/polling";
 import { cn } from "@/lib/utils";
 import { IssueCard } from "@/components/IssueCard";
 import { IssueFlyout } from "@/components/IssueFlyout";
@@ -26,9 +27,13 @@ import { IssueFlyout } from "@/components/IssueFlyout";
 function DraggableCard({
 	issue,
 	onClick,
+	waitingOn,
+	lockConflicts,
 }: {
 	issue: Issue;
 	onClick: () => void;
+	waitingOn: number[];
+	lockConflicts: string[];
 }) {
 	const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
 		id: issue.id,
@@ -41,6 +46,8 @@ function DraggableCard({
 			dragListeners={listeners}
 			dragAttributes={attributes}
 			isDragging={isDragging}
+			waitingOn={waitingOn}
+			lockConflicts={lockConflicts}
 		/>
 	);
 }
@@ -53,12 +60,16 @@ function Column({
 	isCollapsed,
 	onToggle,
 	onSelect,
+	waitingOn,
+	lockConflicts,
 }: {
 	col: (typeof STATES)[number];
 	cards: Issue[];
 	isCollapsed: boolean;
 	onToggle: (key: string) => void;
 	onSelect: (id: number) => void;
+	waitingOn: (issue: Issue) => number[];
+	lockConflicts: (issue: Issue) => string[];
 }) {
 	const { setNodeRef, isOver } = useDroppable({ id: col.key });
 
@@ -126,6 +137,8 @@ function Column({
 						key={issue.id}
 						issue={issue}
 						onClick={() => onSelect(issue.id)}
+						waitingOn={waitingOn(issue)}
+						lockConflicts={lockConflicts(issue)}
 					/>
 				))}
 				{!cards.length && (
@@ -258,6 +271,27 @@ export function KanbanBoard({
 		[issues, move],
 	);
 
+	const issueById = new Map(issues.map((issue) => [issue.id, issue]));
+	const activeLocks = new Set(
+		issues
+			.filter(
+				(issue) =>
+					issue.state === "running" || isActiveRunState(issue.latest_run_state),
+			)
+			.flatMap((issue) => issue.locks),
+	);
+	const waitingOn = (issue: Issue) =>
+		issue.state === "todo"
+			? issue.blocked_by.filter((id) => {
+					const blocker = issueById.get(id);
+					return blocker != null && !["done", "archived"].includes(blocker.state);
+				})
+			: [];
+	const lockConflicts = (issue: Issue) =>
+		issue.state === "todo"
+			? issue.locks.filter((lock) => activeLocks.has(lock))
+			: [];
+
 	const activeIssue =
 		activeId != null ? issues.find((i) => i.id === activeId) : null;
 
@@ -278,6 +312,8 @@ export function KanbanBoard({
 							isCollapsed={collapsed.has(col.key)}
 							onToggle={toggleCollapse}
 							onSelect={setSelected}
+							waitingOn={waitingOn}
+							lockConflicts={lockConflicts}
 						/>
 					))}
 				</div>
@@ -286,7 +322,13 @@ export function KanbanBoard({
 			</div>
 
 			<DragOverlay>
-				{activeIssue ? <IssueCard issue={activeIssue} /> : null}
+				{activeIssue ? (
+					<IssueCard
+						issue={activeIssue}
+						waitingOn={waitingOn(activeIssue)}
+						lockConflicts={lockConflicts(activeIssue)}
+					/>
+				) : null}
 			</DragOverlay>
 		</DndContext>
 	);

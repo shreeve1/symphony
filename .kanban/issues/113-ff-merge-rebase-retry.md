@@ -1,11 +1,14 @@
 ---
 id: 113
 title: Merge-contention fix — FF-fail rebase-onto-base + retry, then block
-status: pending
+status: done
 blocked_by: []
 locks: [web-api]
 priority: 1
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -39,13 +42,17 @@ common: re-dispatch the agent to resolve, capped like `MAX_COMMIT_REDISPATCH`.
 
 ## Acceptance criteria
 
-- [ ] Two branches off the same base: land the first; the second's FF-fail is
+- [x] Two branches off the same base: land the first; the second's FF-fail is
       rescued by rebase-onto-base + FF retry and lands cleanly (worktree removed).
-- [ ] A genuine rebase conflict aborts the rebase and returns the block error;
+- [x] A genuine rebase conflict aborts the rebase and returns the block error;
       worktree left intact, no partial merge in the base checkout.
-- [ ] Success path unchanged when the first FF already fast-forwards (no rebase
+- [x] Success path unchanged when the first FF already fast-forwards (no rebase
       attempted).
 
 ## Verification
 
 `uv run pytest web/api/tests/test_worktree.py -q`
+
+## Implementation Notes
+
+Implemented one in-process rebase retry when `merge_worktree` hits a non-FF merge. Clean rebases retry the fast-forward merge; rebase conflicts abort and return the existing block message while leaving the worktree intact.

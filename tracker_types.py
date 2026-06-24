@@ -41,6 +41,7 @@ class CandidateIssue:
     agent_session_sha: str = ""
     resumed: bool = False
     active_run_id: str = ""
+    locks: tuple[str, ...] = ()
 
 
 @dataclass
@@ -206,6 +207,7 @@ def _candidate_from_issue(
         ),
         labels=labels if labels is not None else _extract_labels(issue),
         created_at=str(issue.get("created_at") or ""),
+        locks=tuple(str(lock) for lock in (issue.get("locks") or ())),
     )
 
 

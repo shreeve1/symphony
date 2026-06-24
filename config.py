@@ -182,6 +182,7 @@ class SymphonyConfig:
     plane_frontend_url: str = ""
     plane_dashboard_url: str = ""
     worktrees_root: Path | None = None
+    worktree_default: bool = True
     blocked_reconciler_enabled: bool = True
     blocked_reconciler_apply: bool = False
     blocked_reconciler_interval_ms: int = 1_800_000
@@ -311,6 +312,11 @@ class SymphonyConfig:
                 Path(source["SYMPHONY_WORKTREES_ROOT"])
                 if source.get("SYMPHONY_WORKTREES_ROOT")
                 else None
+            ),
+            worktree_default=_truthy(
+                source.get("SYMPHONY_WORKTREE_DEFAULT"),
+                default=True,
+                name="SYMPHONY_WORKTREE_DEFAULT",
             ),
             blocked_reconciler_enabled=_truthy(
                 source.get("SYMPHONY_BLOCKED_RECONCILER_ENABLED"),

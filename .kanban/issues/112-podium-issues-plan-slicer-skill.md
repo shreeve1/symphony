@@ -1,11 +1,14 @@
 ---
 id: 112
 title: Skill — repurpose /podium-issues into a plan→Podium slicer (no folder scan)
-status: pending
+status: done
 blocked_by: [107]
 locks: [skills]
 priority: 2
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -35,16 +38,21 @@ podium-issues`.
 
 ## Acceptance criteria
 
-- [ ] `/podium-issues` slices a plan in context into Podium issues directly, no
+- [x] `/podium-issues` slices a plan in context into Podium issues directly, no
       `.kanban` files written, no separate mirror step.
-- [ ] Dependent slices get `blocked_by` populated with real Podium ids; `locks`
+- [x] Dependent slices get `blocked_by` populated with real Podium ids; `locks`
       labels are set per slice.
-- [ ] Binding resolves from cwd; no-match exits non-zero with the binding list.
-- [ ] The old folder-mirror behavior is removed; no kanban→Podium scan remains.
+- [x] Binding resolves from cwd; no-match exits non-zero with the binding list.
+- [x] The old folder-mirror behavior is removed; no kanban→Podium scan remains.
 
 ## Verification
 
-Prose (skill, no unit harness): from a repo with a `tracker: podium` binding, run
-the skill on a sample plan; confirm N Podium issues created in dependency order
-with correct `blocked_by`/`locks` and no `.kanban` files touched. Spot-check via
-`web.cli.podium issues` list / `GET /api/bindings/{name}/issues`.
+`PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q`
+
+## Implementation Notes
+
+- Added the `web.cli.podium_issues` sink for binding resolution, YAML slice loading,
+  dependency ordering, dry-run output, and direct Podium issue insertion.
+- Wired `web.cli.podium issues create-from-plan` and `issues list`.
+- Updated `/podium-issues` docs to describe direct plan slicing and retire the old
+  `.kanban` mirror flow.

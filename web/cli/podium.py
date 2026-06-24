@@ -13,7 +13,8 @@ _issues = cast(Any, import_module("web.cli.podium_issues"))
 DEFAULT_SOURCE = _skills.DEFAULT_SOURCE
 hash_password = _auth.hash_password
 refresh_skills = _skills.refresh_skills
-import_kanban_issues = _issues.import_kanban_issues
+create_plan_issues = _issues.create_plan_issues
+list_podium_issues = _issues.list_issues
 ISSUES_BINDINGS_PATH = _issues.BINDINGS_PATH
 PodiumIssuesError = _issues.PodiumIssuesError
 
@@ -38,21 +39,26 @@ def build_parser() -> argparse.ArgumentParser:
     issues = subcommands.add_parser("issues")
     issue_commands = issues.add_subparsers(dest="issue_command", required=True)
 
-    import_kanban = issue_commands.add_parser("import-kanban")
-    import_kanban.add_argument(
+    create = issue_commands.add_parser("create-from-plan")
+    create.add_argument("plan", type=Path, help="YAML plan-slice spec to create.")
+    create.add_argument(
         "--cwd",
         type=Path,
         default=Path.cwd(),
-        help="Binding repo whose .kanban/issues/ are mirrored into Podium.",
+        help="Binding repo used to resolve the Podium binding.",
     )
-    import_kanban.add_argument(
+    create.add_argument(
         "--bindings",
         type=Path,
         default=ISSUES_BINDINGS_PATH,
         help="Path to bindings.yml.",
     )
-    import_kanban.add_argument("--dry-run", action="store_true")
-    import_kanban.set_defaults(func=_issues_import_kanban)
+    create.add_argument("--dry-run", action="store_true")
+    create.set_defaults(func=_issues_create_from_plan)
+
+    list_cmd = issue_commands.add_parser("list")
+    list_cmd.add_argument("--binding", default=None)
+    list_cmd.set_defaults(func=_issues_list)
 
     set_password = subcommands.add_parser("set-password")
     set_password.set_defaults(func=_set_password)
@@ -65,15 +71,21 @@ def _skills_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
-def _issues_import_kanban(args: argparse.Namespace) -> int:
+def _issues_create_from_plan(args: argparse.Namespace) -> int:
     try:
-        for line in import_kanban_issues(
-            args.cwd, bindings_path=args.bindings, dry_run=args.dry_run
+        for line in create_plan_issues(
+            args.cwd, args.plan, bindings_path=args.bindings, dry_run=args.dry_run
         ):
             print(line)
     except PodiumIssuesError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    return 0
+
+
+def _issues_list(args: argparse.Namespace) -> int:
+    for line in list_podium_issues(args.binding):
+        print(line)
     return 0
 
 

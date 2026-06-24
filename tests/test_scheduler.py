@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import json
+import logging
+import sqlite3
 import threading
 from collections import defaultdict
 from dataclasses import replace
@@ -26,6 +29,7 @@ from scheduler import (
     _record_rate_limit,
     _release_candidate,
     _reserve_candidate,
+    _reserve_specific_candidate,
     _resolve_mode,
     _validated_fallback_plan_path,
     reconcile_pending_review,
@@ -151,10 +155,20 @@ def _issue(
 
 
 def _candidate(
-    issue_id: str, *, labels=(), created_at="2026-05-04T00:00:00+00:00"
+    issue_id: str,
+    *,
+    labels=(),
+    created_at="2026-05-04T00:00:00+00:00",
+    locks=(),
 ) -> CandidateIssue:
     return CandidateIssue(
-        issue_id, issue_id, f"Issue {issue_id}", "", tuple(labels), created_at
+        issue_id,
+        issue_id,
+        f"Issue {issue_id}",
+        "",
+        tuple(labels),
+        created_at,
+        locks=tuple(locks),
     )
 
 
@@ -169,6 +183,137 @@ def _schedule_comment(
         "created_at": created_at,
         "comment_html": format_schedule_comment(not_before=not_before, reason=reason),
     }
+
+
+@pytest.mark.asyncio
+async def test_podium_candidates_wait_for_dependencies(tmp_path: Path, caplog) -> None:
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+
+        def insert_issue(title: str, state: str = "todo", blocked_by=()) -> int:
+            cursor = connection.execute(
+                """
+                INSERT INTO issue(
+                  binding_name, title, description, state, preferred_agent,
+                  comments_md, context_md, blocked_by, created_at, updated_at
+                ) VALUES ('test', ?, '', ?, 'pi', '', '', ?,
+                          '2026-06-11T00:00:00+00:00',
+                          '2026-06-11T00:00:00+00:00')
+                """,
+                (title, state, json.dumps(list(blocked_by))),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+        running = insert_issue("running blocker", "running")
+        done = insert_issue("done blocker", "done")
+        waiting = insert_issue("waiting", blocked_by=[running])
+        ready_after_done = insert_issue("ready after done", blocked_by=[done])
+        independent = insert_issue("independent")
+        unresolved = insert_issue("unresolved", blocked_by=[9999])
+        connection.commit()
+
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    with caplog.at_level(logging.WARNING, logger="tracker_podium"):
+        candidates = await adapter.list_candidates()
+
+    candidate_ids = {candidate.id for candidate in candidates}
+    assert str(waiting) not in candidate_ids
+    assert {str(ready_after_done), str(independent), str(unresolved)} <= candidate_ids
+    assert (await adapter.get_issue(str(waiting)))["state"] == "todo"
+    assert "dependency_blocker_unresolved issue=" in caplog.text
+    assert "blocker=9999" in caplog.text
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE issue SET state = 'done' WHERE id = ?", (running,))
+        connection.commit()
+
+    candidates = await adapter.list_candidates()
+    assert str(waiting) in {candidate.id for candidate in candidates}
+
+
+@pytest.mark.asyncio
+async def test_podium_candidates_include_locks(tmp_path: Path) -> None:
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, locks, created_at, updated_at
+            ) VALUES ('test', 'locked', '', 'todo', 'pi', '', '', ?,
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """,
+            (json.dumps(["scheduler"]),),
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+    ).list_candidates()
+
+    assert candidates[0].locks == ("scheduler",)
+
+
+@pytest.mark.asyncio
+async def test_podium_candidate_dependency_snapshot_is_not_page_capped(
+    tmp_path: Path,
+) -> None:
+    from tracker_podium import MAX_PAGES_PER_TICK, PAGE_SIZE, PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+
+        def insert_issue(title: str, state: str = "todo", blocked_by=()) -> int:
+            cursor = connection.execute(
+                """
+                INSERT INTO issue(
+                  binding_name, title, description, state, preferred_agent,
+                  comments_md, context_md, blocked_by, created_at, updated_at
+                ) VALUES ('test', ?, '', ?, 'pi', '', '', ?,
+                          '2026-06-11T00:00:00+00:00',
+                          '2026-06-11T00:00:00+00:00')
+                """,
+                (title, state, json.dumps(list(blocked_by))),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+        waiting = insert_issue("waiting")
+        for idx in range(PAGE_SIZE * MAX_PAGES_PER_TICK):
+            insert_issue(f"closed {idx}", "done")
+        running = insert_issue("running blocker", "running")
+        late_independent = insert_issue("late independent")
+        connection.execute(
+            "UPDATE issue SET blocked_by = ? WHERE id = ?",
+            (json.dumps([running]), waiting),
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+    ).list_candidates()
+    candidate_ids = {candidate.id for candidate in candidates}
+
+    assert str(waiting) not in candidate_ids
+    assert str(late_independent) in candidate_ids
 
 
 def _write_plan(repo: Path, issue_identifier: str) -> Path:
@@ -4264,9 +4409,67 @@ async def test_reserve_candidate_uses_dispatch_state_in_flight_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reserve_candidate_skips_locked_in_flight_conflicts() -> None:
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(2),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    first = _candidate("first", locks=("scheduler",))
+    blocked_by_lock = _candidate("blocked-by-lock", locks=("scheduler",))
+    disjoint = _candidate("disjoint", locks=("web-api",))
+
+    assert (
+        await _reserve_candidate(
+            [first, blocked_by_lock, disjoint],
+            DEFAULT_CONTRACT,
+            approval_policy_enabled=False,
+            dispatch_state=state,
+        )
+    ) == first
+    assert (
+        await _reserve_candidate(
+            [blocked_by_lock, disjoint],
+            DEFAULT_CONTRACT,
+            approval_policy_enabled=False,
+            dispatch_state=state,
+        )
+    ) == disjoint
+
+    await _release_candidate("first", dispatch_state=state)
+    assert (
+        await _reserve_candidate(
+            [blocked_by_lock],
+            DEFAULT_CONTRACT,
+            approval_policy_enabled=False,
+            dispatch_state=state,
+        )
+    ) == blocked_by_lock
+
+
+@pytest.mark.asyncio
+async def test_reserve_specific_candidate_rejects_lock_conflict() -> None:
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(2),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    first = _candidate("first", locks=("scheduler",))
+    conflict = _candidate("conflict", locks=("scheduler",))
+
+    assert await scheduler._reserve_specific_candidate(first, dispatch_state=state)
+    assert not await scheduler._reserve_specific_candidate(conflict, dispatch_state=state)
+    assert "conflict" not in state.in_flight_ids
+
+
+@pytest.mark.asyncio
 async def test_reserve_specific_candidate_uses_dispatch_state() -> None:
     """_reserve_specific_candidate must check the dispatch_state's in-flight set."""
-    from scheduler import _DispatchState, _reserve_specific_candidate
+    from scheduler import _DispatchState
 
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),
@@ -4929,6 +5132,16 @@ def _local_binding(config: SymphonyConfig) -> ProjectBinding:
     return config.bindings[0]
 
 
+def _local_coding_binding(config: SymphonyConfig) -> ProjectBinding:
+    return replace(
+        config.bindings[0],
+        name="symphony",
+        binding_type="coding",
+        tracker="podium",
+        default_agent="pi",
+    )
+
+
 def _remote_binding(config: SymphonyConfig) -> ProjectBinding:
     return replace(
         config.bindings[0],
@@ -5062,6 +5275,28 @@ def test_worktree_run_fields_empty_for_remote(tmp_path: Path) -> None:
     )
 
 
+def test_worktree_run_fields_default_for_local_coding(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    binding = _local_coding_binding(config)
+    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+
+    fields = scheduler._worktree_run_fields(config, candidate, "main", binding=binding)
+
+    assert fields["worktree_path"].endswith("worktrees/symphony/issue-1")
+    assert fields["branch_name"] == "podium/symphony/issue-1"
+    assert fields["base_branch"] == "main"
+
+
+def test_worktree_run_fields_default_can_be_disabled(tmp_path: Path) -> None:
+    config = _config(tmp_path, worktree_default=False)
+    binding = _local_coding_binding(config)
+    candidate = replace(
+        _candidate("issue-1"), worktree_active=True, binding_name=binding.name
+    )
+
+    assert scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
+
+
 # T.6.4
 @pytest.mark.asyncio
 async def test_prepare_resume_candidate_local_unchanged(
@@ -5121,6 +5356,34 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
     assert captured["cwd"] == expected_cwd
     assert expected_cwd != config.homelab_repo_path
     assert result.agent_session_sha == "worktreehead"
+    assert result.worktree_active is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_resume_candidate_local_coding_defaults_to_worktree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = _local_coding_binding(config)
+    captured: dict[str, Any] = {}
+
+    def fake_repo_host_for(b, *, cwd=None, **kwargs):
+        captured["cwd"] = cwd
+        return _RecordingRepoHost("worktreehead")
+
+    monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
+    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+    result, _ = await scheduler._prepare_resume_candidate(
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        config,
+        candidate,
+        {},
+        binding=binding,  # pyright: ignore[reportArgumentType]
+    )
+
+    assert captured["cwd"] == scheduler._dispatch_cwd(config, result, binding=binding)
+    assert captured["cwd"] != config.homelab_repo_path
+    assert result.worktree_active is True
 
 
 # T.8.1

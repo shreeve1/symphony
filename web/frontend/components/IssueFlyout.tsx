@@ -349,6 +349,30 @@ function ScheduleChip({
 const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 const STATE_KEYS = STATES.map((s) => s.key);
 
+function GateHints({ issue }: { issue: IssueDetail }) {
+	if (issue.state !== "todo") return null;
+	return (
+		<div className="flex flex-wrap gap-1.5">
+			{issue.unsatisfied_blocked_by.length > 0 && (
+				<span
+					data-testid="waiting-chip"
+					className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800"
+				>
+					Waiting on {issue.unsatisfied_blocked_by.map((id) => `#${id}`).join(", ")}
+				</span>
+			)}
+			{issue.lock_conflicts.length > 0 && (
+				<span
+					data-testid="lock-chip"
+					className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-700"
+				>
+					Locked: {issue.lock_conflicts.join(", ")}
+				</span>
+			)}
+		</div>
+	);
+}
+
 function MetadataChips({
 	issue,
 	skillNames,
@@ -380,6 +404,7 @@ function MetadataChips({
 	const approvedStaged = staged.approved != null;
 	return (
 		<div className="space-y-1.5">
+			<GateHints issue={issue} />
 			<div className="flex flex-wrap gap-1.5" data-testid="metadata-chips">
 				<ChipSelect
 					label="state"

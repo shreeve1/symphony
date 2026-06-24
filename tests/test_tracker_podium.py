@@ -201,6 +201,47 @@ async def test_run_roundtrip(tmp_path: Path) -> None:
     assert issue["latest_run_state"] == "succeeded"
 
 
+@pytest.mark.asyncio
+async def test_issue_dependency_fields_parse_json_lists(tmp_path: Path) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET blocked_by = ?, locks = ? WHERE id = ?",
+            ('[1, "2", "bad"]', '["schema", 3]', issue_id),
+        )
+        connection.commit()
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    issue = await adapter.get_issue(str(issue_id))
+
+    assert issue["blocked_by"] == [1, 2]
+    assert issue["locks"] == ["schema", "3"]
+
+
+@pytest.mark.asyncio
+async def test_issue_dependency_fields_default_to_empty_lists(tmp_path: Path) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    issue = await adapter.get_issue(str(issue_id))
+
+    assert issue["blocked_by"] == []
+    assert issue["locks"] == []
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET blocked_by = ?, locks = ? WHERE id = ?",
+            ("not-json", '{"not": "a list"}', issue_id),
+        )
+        connection.commit()
+
+    issue = await adapter.get_issue(str(issue_id))
+    assert issue["blocked_by"] == []
+    assert issue["locks"] == []
+
+
 def test_connections_enable_wal_and_busy_timeout(tmp_path: Path) -> None:
     adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
 

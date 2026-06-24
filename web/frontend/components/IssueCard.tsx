@@ -68,6 +68,36 @@ function AgentTag({
   );
 }
 
+function GateTags({
+  waitingOn = [],
+  lockConflicts = [],
+}: {
+  waitingOn?: number[];
+  lockConflicts?: string[];
+}) {
+  if (!waitingOn.length && !lockConflicts.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {waitingOn.length > 0 && (
+        <span
+          data-testid="waiting-chip"
+          className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+        >
+          Waiting on {waitingOn.map((id) => `#${id}`).join(", ")}
+        </span>
+      )}
+      {lockConflicts.length > 0 && (
+        <span
+          data-testid="lock-chip"
+          className="rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700"
+        >
+          Locked: {lockConflicts.join(", ")}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // A single board card: title, agent/model quick-view, age. The drag props are
 // supplied by KanbanBoard's useDraggable wrapper; when omitted (e.g. the
 // DragOverlay clone) the card renders as a plain clickable button.
@@ -78,6 +108,8 @@ export function IssueCard({
   dragListeners,
   dragAttributes,
   isDragging,
+  waitingOn,
+  lockConflicts,
 }: {
   issue: Issue;
   onClick?: () => void;
@@ -85,6 +117,8 @@ export function IssueCard({
   dragListeners?: DraggableSyntheticListeners;
   dragAttributes?: DraggableAttributes;
   isDragging?: boolean;
+  waitingOn?: number[];
+  lockConflicts?: string[];
 }) {
   return (
     <button
@@ -100,6 +134,7 @@ export function IssueCard({
       {...dragListeners}
     >
       <p className="text-sm font-medium leading-snug">{issue.title}</p>
+      <GateTags waitingOn={waitingOn} lockConflicts={lockConflicts} />
       <div className="mt-2 flex items-center justify-between gap-2">
         <AgentTag agent={issue.preferred_agent} model={issue.preferred_model} />
         <span className="shrink-0 text-[11px] text-muted-foreground">

@@ -1,110 +1,87 @@
 ---
 name: podium-issues
-description: "Mirror local kanban issues into Podium as one Issue per .kanban file, in the binding that matches the current working directory. Runs after /to-issues; auto-chains when cwd is a Podium binding. DB-direct, no Plane."
+description: "Slice an approved plan directly into Podium Issues for the binding matching cwd. No .kanban scan or mirror; creates issues in dependency order with real blocked_by ids and locks."
 ---
 
 # Podium Issues
 
-Push the kanban issues `/to-issues` just created into Podium, one Podium Issue
-per `.kanban/issues/*.md` file, in the `tracker: podium` binding whose
-`repo_path` matches the current working directory.
+Turn an approved plan into Podium issues directly. This replaces the old
+`.kanban` folder mirror: **do not scan or write `.kanban/` files**.
 
-DB-direct by design: the Podium HTTP API requires a session cookie and only the
-bcrypt password hash lives in the environment, so this writes through
-`web.api.db` (the same database the running API uses) via the
-`web.cli.podium issues import-kanban` command.
+## When to use
+
+Use after `grill-me` / `dev-plan` when the operator wants the plan queued in
+Podium instead of Ralph's local kanban.
 
 ## Prerequisites
 
-- Symphony repo at `/home/james/symphony`. Run the CLI from this directory.
-- cwd (the binding repo where `.kanban/` lives) must match a `tracker: podium`
-  binding in `/home/james/symphony/bindings.yml`. No match → the command exits
-  non-zero with the list of available podium bindings. There is no fallback.
-- A `.kanban/issues/` directory exists in that repo (produced by `/to-issues`).
-- **Ralph worktree caveat.** If `/to-issues` targeted an active Ralph worktree
-  (its `.kanban/` lives under `~/<repo>-ralph` on `ralph/run`), the worktree's
-  git toplevel does not equal the binding's `repo_path`, so binding resolution
-  fails and the mirror is skipped. Mirror from the main repo checkout, or after
-  the batch lands. Auto-chaining from `/to-issues` therefore does not mirror
-  mid-batch worktree boards.
-- Writable Podium DB. With no `PODIUM_DB_PATH` set and `/var/lib/symphony`
-  absent, `web.api.db.resolve_db_path()` resolves to the live
-  `/home/james/symphony/podium.db`.
-
-## What each issue becomes
-
-- One Podium Issue per kanban file, inserted in **ascending kanban `id`**.
-  Podium dispatches todo issues `ORDER BY created_at ASC, id ASC`, so insertion
-  order is the dispatch order — issues run chronologically.
-- `title` = `[k#NNN] <kanban title>` (the `k#NNN` ties it back to the file).
-- `description` = the full kanban body (What to build / Acceptance criteria /
-  Verification / Blocked by). `blocked_by` is **advisory text only** — Podium
-  has no dependency field and will not gate on it.
-- `priority` left NULL (the kanban `priority` integer is intentionally
-  dropped); `state` server-set to `todo`; `base_branch`, `preferred_agent`,
-  and `approval_required` taken from the binding.
-- After each insert the kanban file's frontmatter gains
-  `podium_issue_id: <id>` and `podium_binding: <name>`. Files that already carry
-  `podium_issue_id` are skipped, so re-runs never duplicate.
-
-## Scope and dispatch consequences — read before a live run
-
-- **Scope is every unmarked file, not just the ones `/to-issues` just created.**
-  The command pushes all `.kanban/issues/*.md` lacking a `podium_issue_id`,
-  which can include pre-existing issues left on the board. Always dry-run first
-  and read the printed list; the count is the number of Podium issues that will
-  be created.
-- **A live push makes the issues dispatchable immediately.** They land as
-  `state=todo`; the scheduler's next poll selects todo issues per binding
-  (`tracker_podium.py` `list_issues`) and, for approval-disabled bindings (e.g.
-  `homelab`, `approval.enabled: false`), runs them with no gate. Pushing N
-  issues queues up to N pi runs. Do not push more than you intend to run.
+- Run from `/home/james/symphony` or pass `--cwd <binding-repo>` to the CLI.
+- cwd must resolve to a `tracker: podium` binding in `bindings.yml` by matching
+  the binding `repo_path`.
+- No Plane calls. Do not read or print `/home/james/symphony-host.env`.
 
 ## Workflow
 
-1. Dry-run (no DB writes, no file mutation):
+1. Read the plan from the conversation or the file the operator names.
+2. Draft vertical tracer-bullet slices using the `/to-issues` rules:
+   - each slice is end-to-end and independently useful;
+   - acceptance criteria are objective;
+   - verification is a repo-correct command, not prose;
+   - blockers are explicit;
+   - `locks` labels identify resources that must not co-run.
+3. Show the proposed slices and ask the operator to approve granularity,
+   dependencies, locks, and verification commands. This skill is
+   authoring-time; do not use it inside unattended dispatch.
+4. Write a temporary YAML slice spec, e.g. `/tmp/podium-slices.yml`:
 
-   ```bash
-   cd /home/james/symphony && uv run python -m web.cli.podium issues import-kanban \
-     --cwd <binding-repo> --dry-run
+   ```yaml
+   slices:
+     - key: schema
+       title: Add dependency columns
+       description: Add the columns and read-path coercion.
+       acceptance:
+         - issue rows expose blocked_by and locks as typed lists
+       verification: uv run pytest web/api/tests/test_alembic_baseline.py -q
+       locks: [schema]
+     - key: api
+       title: Carry dependencies through API
+       description: Create/patch accepts blocked_by and locks.
+       acceptance:
+         - create response includes blocked_by and locks
+       verification: uv run pytest web/api/tests/test_issue_create.py -q
+       blocked_by: [schema]
+       locks: [web-api]
    ```
 
-   `--cwd` is the binding repo holding `.kanban/`; defaults to the process cwd.
-
-2. **Standalone invocation** (James runs `/podium-issues` directly): show the
-   resolved binding, the planned `k#NNN → title` list, count, and order, and
-   call out that every listed issue becomes a `todo` Podium issue that the
-   scheduler may dispatch immediately. Confirm with James before the live run.
-
-   **Auto-chained invocation** (called at the end of `/to-issues`): the
-   breakdown was already approved in that run, so the just-created issues need
-   no re-confirm. But because scope is *all* unmarked files, first compare the
-   dry-run pending count against the number `/to-issues` just created. If they
-   match, proceed straight to the live run. If pending is larger (a pre-existing
-   unmirrored backlog exists), stop and confirm with James before pushing — do
-   not silently mirror the backlog.
-
-3. Live run — drop `--dry-run`:
+5. Dry-run:
 
    ```bash
-   cd /home/james/symphony && uv run python -m web.cli.podium issues import-kanban \
-     --cwd <binding-repo>
+   cd /home/james/symphony && uv run python -m web.cli.podium issues create-from-plan /tmp/podium-slices.yml --cwd <binding-repo> --dry-run
    ```
 
-4. Report the `k#NNN → podium #<id>` mapping. Remind that Podium dispatches by
-   creation order and does not enforce `blocked_by`.
+6. Live create after approval:
+
+   ```bash
+   cd /home/james/symphony && uv run python -m web.cli.podium issues create-from-plan /tmp/podium-slices.yml --cwd <binding-repo>
+   ```
+
+7. Spot-check:
+
+   ```bash
+   cd /home/james/symphony && uv run python -m web.cli.podium issues list --binding <binding-name>
+   ```
 
 ## Safety rules
 
-- No Plane API calls. No `plane_adapter` imports.
-- Do not read or print `/home/james/symphony-host.env`.
-- The live run mutates the running infrastructure's `podium.db` and queues real
-  scheduler dispatches. Confirm with James for standalone runs; auto-chained
-  runs inherit the `/to-issues` approval. When in doubt, dry-run only.
-- Leave created Podium issues in place as audit evidence.
+- The live command creates `todo` Podium issues and may make them dispatchable on
+  the next scheduler poll. Dry-run first.
+- Dependencies are created blocker-first; dependent `blocked_by` uses the real
+  Podium ids returned by earlier inserts.
+- The old `issues import-kanban` mirror is retired. If you need Ralph local
+  issues, use `/to-issues`; if you need Podium issues, use this skill.
 
 ## Verification
 
 ```bash
-cd /home/james/symphony && uv run pytest web/cli/tests/test_podium_issues.py
+PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q
 ```

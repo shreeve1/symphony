@@ -1,11 +1,14 @@
 ---
 id: 110
 title: UI — read-only "waiting on #N" / "locked: <label>" chip on gated todo cards
-status: pending
+status: done
 blocked_by: [105, 107]
 locks: [web-frontend]
 priority: 2
 created: 2026-06-23
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -24,15 +27,19 @@ start/stop/control) — display only.
 
 ## Acceptance criteria
 
-- [ ] A dependency-gated `todo` issue shows a "Waiting on #N" chip listing unmet
+- [x] A dependency-gated `todo` issue shows a "Waiting on #N" chip listing unmet
       blockers.
-- [ ] A lock-gated `todo` issue (locks intersect a running issue) shows a
+- [x] A lock-gated `todo` issue (locks intersect a running issue) shows a
       "Locked: <label>" chip.
-- [ ] When blockers close / the lock holder finishes, the chip clears (live via
+- [x] When blockers close / the lock holder finishes, the chip clears (live via
       existing WS refresh).
-- [ ] No edit/control affordance is added.
+- [x] No edit/control affordance is added.
 
 ## Verification
 
 `pnpm -C web/frontend exec playwright test dependency-chip.spec.ts`
 (add the spec as part of this slice)
+
+## Implementation Notes
+
+Added dependency/lock gate decoration to Podium issue payloads, rendered read-only waiting/locked chips on cards and flyouts, and covered live chip clearing with `dependency-chip.spec.ts`.
