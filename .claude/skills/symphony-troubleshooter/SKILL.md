@@ -16,6 +16,7 @@ Diagnose Symphony dispatch incidents without mutating live state. Use when the s
 - Startup reconcile and orphan Run reconcile evidence.
 - Podium API/web reachability when needed for read-only context.
 - Agent runner failures, silent exits, timeouts, blocked/review verdicts.
+- Review-phase runs, dependency/lock dispatch gating, and worktree auto-land (ADR-0021/0023).
 - Preparing a future-session handoff.
 
 ### Out of scope
@@ -139,6 +140,21 @@ journalctl -u symphony-host.service --since=30m --no-pager \
   | tail -160
 ```
 
+### Review phase, dependency/lock gating, auto-land markers (ADR-0021/0023, coding bindings)
+
+```bash
+journalctl -u symphony-host.service --since=2h --no-pager \
+  | grep -E 'review_dispatch|review_verification_failed|review_verification_exec_error|dependency_blocker_unresolved|lock_conflicts|merge_succeeded|merge_failed|merge_rebase_retry_succeeded|merge_rebase_failed|merge_retry_failed' \
+  | tail -80
+```
+
+- `review_dispatch issue_id=...` — a coding Issue in `in_review` got its second (review) run; the `### Symphony Review (n)` comment marker gates it so it dispatches at most once. Expect TWO runs per coding Issue (implement + review).
+- A `todo` Issue that simply isn't dispatching may be **intentionally gated**, NOT failed: an unmet `blocked_by` (waits for blockers to reach `done`/`archived`) or a `locks` overlap with an in-flight Issue. Gated Issues STAY `todo` — they are NOT flipped to `blocked` (that state means agent-failure). Do not report a withheld `todo` as a fault.
+- `dependency_blocker_unresolved issue=... blocker=...` — a `blocked_by` id resolves to no Issue; treated as satisfied (won't wedge), logged as a warning. Likely a typo/cross-binding ref in authoring.
+- `merge_succeeded` / `merge_rebase_retry_succeeded` — worktree landed into base (auto-land on a passing review for an `auto_land=true` Issue, or operator merge). `merge_failed`/`merge_rebase_failed`/`merge_retry_failed` — FF+rebase-retry exhausted → Issue blocked, worktree left for inspection.
+- `review_verification_failed`/`review_verification_exec_error` — the driver backstop re-ran the Issue's `## Verification` and it failed / errored, overriding an over-optimistic review `done` to `blocked`.
+- An unattended merge to `main` is EXPECTED for an `auto_land=true` (slicer-authored) Issue on a passing review — verify the Issue's `auto_land` before treating a `main` merge as anomalous.
+
 ### pi RPC dispatch markers (ADR-0010, `pi_mode: rpc` bindings)
 
 ```bash
@@ -192,6 +208,12 @@ Evidence: latest Run has `state=failed`, `verdict=blocked`, timeout, nonzero exi
 
 Action: inspect Run summary/log path if readable; report root failure. Do not edit Issue state. Recommend operator reply, code diagnosis, or smoke depending on evidence.
 
+### Review phase / dependency-lock gating misread as a fault
+
+Evidence: a `todo` Issue not dispatching, or a coding Issue running "twice", or a `main` merge with no operator action.
+
+Action: distinguish intended behavior from a bug. A non-dispatching `todo` is usually an unmet `blocked_by` or a `locks` overlap (selection-only filter; stays `todo`, not `blocked`). A second run on a coding Issue is the review phase (`review_dispatch`, `### Symphony Review` marker). An unattended `main` merge is auto-land for an `auto_land=true` Issue. Only escalate when `review_verification_failed`, `merge_*failed`, or a genuinely stuck gate (blocker never closing) is present.
+
 ### Archived terminal behavior
 
 Evidence: `archived_terminal` log or Issue state `archived` while Run finishes.
@@ -225,6 +247,8 @@ key_evidence:
 hypotheses:
   1. <hypothesis> evidence=<...> next_check=<...>
   2. <hypothesis> evidence=<...> next_check=<...>
+review_phase: <implement-only|review-dispatched|review-passed|review-blocked|n/a>
+dispatch_gate: <none|blocked_by-unmet|lock-conflict|n/a>
 recommended_next: <wait|symphony-restart|symphony-binding-smoke|symphony-workflow-author|symphony-binding-scaffold|symphony-plane-recover|diagnose|operator reply>
 safety_boundary: read-only; no env, service, DB, tracker, or worktree mutation performed
 ```

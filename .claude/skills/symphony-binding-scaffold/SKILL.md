@@ -56,6 +56,9 @@ Create a new Symphony binding for the Podium era.
 3. Do not create any tracker-side project. Podium treats the binding itself as the project.
 4. The written `bindings.yml` entry includes `plane_project_id: <name>` (transitional `ProjectBinding`/`config.py` compatibility only — not a Plane call and not a real Plane project) and, for `pi` bindings, `pi_mode: rpc` (ADR-0010 accepted; the `pi --mode rpc` dispatch path the live bindings use).
 5. New binding is not live until `symphony-host.service` reloads `bindings.yml`. Restart via the `symphony-restart` skill (ask James) when ready, or let `symphony-onboard-project` chain it.
+6. **Runtime behavior a new coding binding inherits (no per-binding config needed):**
+   - **Worktree-per-run is default-ON for local coding bindings** (ADR-0021 slice 108): each run executes in its own `worktree_dir(repo, binding, issue_id)`, so up to `run_cap` (`SYMPHONY_RUN_CAP`, default 2) independent Issues run in parallel without colliding. Global kill-switch is `SYMPHONY_WORKTREE_DEFAULT` (`config.worktree_default`, default `True`) — not a `bindings.yml` field. Remote bindings keep running in `repo_path` (cap 1; no worktree).
+   - **Per-issue review phase + auto-land** (ADR-0023): every coding Issue gets a second (review) run after implement; a passing review on an `auto_land=true` (slicer-authored) Issue merges to base unattended, while operator/UI-created Issues (default `auto_land=false`) park in `in_review` for a manual merge. Infra bindings are excluded from the review phase.
 
 ## Safety rules
 
