@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sqlite3
@@ -527,6 +528,8 @@ class IssuePatch(BaseModel):
     comments_md: str | None = None
     context_md: str | None = None
     external_id: str | None = None
+    blocked_by: list[int] | None = None
+    locks: list[str] | None = None
 
 
 class ScheduleRequest(BaseModel):
@@ -570,6 +573,8 @@ class IssueCreate(BaseModel):
     schedule: ScheduleRequest | None = None
     base_branch: str | None = None
     external_id: str | None = None
+    blocked_by: list[int] | None = None
+    locks: list[str] | None = None
 
 
 class ReplyCreate(BaseModel):
@@ -635,11 +640,58 @@ NON_NULLABLE_FIELDS = (
 )
 
 
+def _json_list(value: Any, item_type: type) -> list[Any]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        parsed = value
+    else:
+        try:
+            parsed = json.loads(str(value))
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(parsed, list):
+        return []
+    items: list[Any] = []
+    for item in parsed:
+        try:
+            items.append(item_type(item))
+        except (TypeError, ValueError):
+            continue
+    return items
+
+
+def _blocked_by_has_cycle(
+    connection: sqlite3.Connection, issue_id: int, blocked_by: list[int]
+) -> bool:
+    edges = {
+        int(row["id"]): _json_list(row["blocked_by"], int)
+        for row in connection.execute("SELECT id, blocked_by FROM issue").fetchall()
+    }
+    edges[issue_id] = blocked_by
+
+    seen: set[int] = set()
+
+    def visit(node: int) -> bool:
+        if node == issue_id:
+            return True
+        if node in seen:
+            return False
+        seen.add(node)
+        return any(visit(parent) for parent in edges.get(node, []))
+
+    return any(visit(parent) for parent in blocked_by)
+
+
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
     for key in ("archived", "worktree_active", "approval_required", "approved"):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
+    if "blocked_by" in result:
+        result["blocked_by"] = _json_list(result["blocked_by"], int)
+    if "locks" in result:
+        result["locks"] = _json_list(result["locks"], str)
     if "binding_name" in result and "id" in result:
         binding_name = str(result["binding_name"])
         result.update(_worktree_metadata(binding_name, str(result["id"])))
@@ -742,7 +794,7 @@ def list_binding_issues(
           approval_required, approved, scheduled_for,
           base_branch, created_at, updated_at,
           latest_run_id, latest_verdict, latest_run_state, last_event_at,
-          external_id
+          external_id, blocked_by, locks
         FROM issue
         WHERE {" AND ".join(clauses)}
         ORDER BY updated_at DESC, id DESC
@@ -765,7 +817,7 @@ def list_inbox_issues(
           i.approval_required, i.approved, i.scheduled_for,
           i.base_branch, i.created_at, i.updated_at,
           i.latest_run_id, i.latest_verdict, i.latest_run_state, i.last_event_at,
-          i.inbox_dismissed_at
+          i.inbox_dismissed_at, i.blocked_by, i.locks
         FROM issue i
         INNER JOIN binding b ON b.name = i.binding_name
         WHERE i.state IN ('in_review', 'blocked')
@@ -881,6 +933,8 @@ async def create_binding_issue(
         not_before, reason = _resolve_schedule_request(issue.schedule, now_dt)
         comments_md = format_schedule_comment(not_before=not_before, reason=reason)
         scheduled_for = now
+    blocked_by = issue.blocked_by or []
+    locks = issue.locks or []
     try:
         cursor = connection.execute(
             """
@@ -888,8 +942,8 @@ async def create_binding_issue(
               binding_name, title, description, state, priority, preferred_agent,
               preferred_model, preferred_skill, reasoning_effort, worktree_active,
               approval_required, approved, scheduled_for, base_branch, comments_md,
-              context_md, external_id, created_at, updated_at
-            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+              context_md, external_id, blocked_by, locks, created_at, updated_at
+            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -907,19 +961,25 @@ async def create_binding_issue(
                 issue.base_branch or _base_branch_for(name),
                 comments_md,
                 issue.external_id,
+                json.dumps(blocked_by),
+                json.dumps(locks),
                 now,
                 now,
             ),
         )
+        issue_id = cursor.lastrowid
+        if issue_id is None:
+            raise RuntimeError("insert did not return an issue id")
+        if _blocked_by_has_cycle(connection, issue_id, blocked_by):
+            connection.rollback()
+            raise HTTPException(status_code=400, detail="blocked_by cycle detected")
     except sqlite3.IntegrityError as exc:
         # Global UNIQUE(external_id) (ADR-0015): a duplicate external_id is the
         # adapter's dedup signal, surfaced as a conflict so the caller can fall
         # back to find_by_external_id + update rather than create.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     connection.commit()
-    row = connection.execute(
-        "SELECT * FROM issue WHERE id = ?", (cursor.lastrowid,)
-    ).fetchone()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     result = _row(row)
     await websocket_hub.publish(
         {"type": "issue.created", "binding_name": name, "row": result}
@@ -1087,8 +1147,17 @@ async def patch_issue(
             status_code=422, detail=f"fields cannot be null: {', '.join(nulled)}"
         )
 
+    for key in ("blocked_by", "locks"):
+        if key in fields and fields[key] is None:
+            fields[key] = []
+
     if fields.get("preferred_skill") is not None:
         _require_known_skill(connection, fields["preferred_skill"])
+
+    if "blocked_by" in fields and _blocked_by_has_cycle(
+        connection, issue_id, fields["blocked_by"]
+    ):
+        raise HTTPException(status_code=400, detail="blocked_by cycle detected")
 
     # Remote bindings (ADR-0012) defer worktrees: a patch attempting to enable a
     # worktree on a remote binding is coerced to False so the worktree machinery
@@ -1110,11 +1179,15 @@ async def patch_issue(
         return current
 
     changed["updated_at"] = _next_updated_at(current["updated_at"])
-    assignments = ", ".join(f"{name} = ?" for name in changed)
+    stored_changed = changed.copy()
+    for key in ("blocked_by", "locks"):
+        if key in stored_changed:
+            stored_changed[key] = json.dumps(stored_changed[key])
+    assignments = ", ".join(f"{name} = ?" for name in stored_changed)
     try:
         connection.execute(
             f"UPDATE issue SET {assignments} WHERE id = ?",
-            (*changed.values(), issue_id),
+            (*stored_changed.values(), issue_id),
         )
     except sqlite3.IntegrityError as exc:
         # Mirrors create: a duplicate external_id (global UNIQUE, ADR-0015) is a

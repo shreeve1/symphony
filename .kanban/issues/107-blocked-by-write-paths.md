@@ -1,7 +1,7 @@
 ---
 id: 107
 title: Carry blocked_by + locks through the create/patch API (cycle reject)
-status: pending
+status: in-progress
 blocked_by: [105]
 locks: [web-api]
 priority: 1

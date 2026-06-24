@@ -50,6 +50,8 @@ def test_create_minimal_issue_applies_server_defaults(client: TestClient) -> Non
     assert body["reasoning_effort"] == "high"
     assert body["worktree_active"] is False
     assert body["base_branch"] == "main"  # symphony base_branch in bindings.yml
+    assert body["blocked_by"] == []
+    assert body["locks"] == []
     assert body["created_at"] is not None
     assert body["updated_at"] is not None
 
@@ -108,6 +110,27 @@ def test_created_issue_appears_in_binding_list(client: TestClient) -> None:
     assert created["id"] in [issue["id"] for issue in listed]
     # Freshly created issue has the newest updated_at, so it sorts first.
     assert listed[0]["id"] == created["id"]
+
+
+def test_create_dependency_fields_round_trip(client: TestClient) -> None:
+    parent = client.post(
+        "/api/bindings/symphony/issues", json={"title": "parent"}
+    ).json()
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={"title": "child", "blocked_by": [parent["id"]], "locks": ["web-api"]},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["blocked_by"] == [parent["id"]]
+    assert body["locks"] == ["web-api"]
+
+    fetched = client.get(f"/api/issues/{body['id']}").json()
+    listed = client.get("/api/bindings/symphony/issues").json()
+    assert fetched["blocked_by"] == [parent["id"]]
+    assert fetched["locks"] == ["web-api"]
+    assert listed[0]["blocked_by"] == [parent["id"]]
+    assert listed[0]["locks"] == ["web-api"]
 
 
 def test_create_missing_title_returns_422(client: TestClient) -> None:

@@ -29,6 +29,8 @@ HAPPY_CASES = [
     ("base_branch", None),
     ("comments_md", "# Updated comments\n\nNew thread."),
     ("context_md", "# Updated context\n\nNew session log."),
+    ("blocked_by", [1]),
+    ("locks", ["web-api"]),
 ]
 
 # (field, invalid value, expected status) — one validation failure per field.
@@ -153,6 +155,21 @@ def test_patch_noop_does_not_bump_updated_at(client: TestClient, issue_id: int) 
     echo = client.patch(f"/api/issues/{issue_id}", json={"state": before["state"]})
     assert echo.status_code == 200
     assert echo.json()["updated_at"] == before["updated_at"]
+
+
+def test_patch_rejects_blocked_by_cycle(client: TestClient, issue_id: int) -> None:
+    child = client.post(
+        "/api/bindings/symphony/issues",
+        json={"title": "child", "blocked_by": [issue_id]},
+    ).json()
+    before = client.get(f"/api/issues/{issue_id}").json()
+
+    response = client.patch(
+        f"/api/issues/{issue_id}", json={"blocked_by": [child["id"]]}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "blocked_by cycle detected"
+    assert client.get(f"/api/issues/{issue_id}").json() == before
 
 
 def test_patch_coerces_worktree_active_off_for_remote_binding(
