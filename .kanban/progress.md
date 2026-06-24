@@ -160,4 +160,5 @@ This file tracks implementation notes across Ralph iterations.
 **Decisions:** Native review phase is now accepted/deployed; local Pi RPC dispatch must honor `worktree_active` the same way `run_agent` does.
 **Conventions established:** Review smoke evidence uses archived throwaway Podium issues plus journal markers (`worktree_prepared`, `pi_rpc_dispatch cwd=worktrees/...`, `merge_succeeded`, `worktree_removed`, `review-passed-awaiting-operator-merge`).
 **Verification:** Live prose verification passed: DB backup + Alembic 0011 parity, clean service restarts, auto-land issue #117 merged/removed its worktree, operator-authored issue #118 stayed `in_review`, backstop/dirty/fail paths blocked, and touched-file tests/LSP passed.
+**Action review:** 2026-06-24 diffed `347753233a79e4ef47210d8082b22eb79f7201bb..HEAD`, read every changed file, reran live prose journal/service checks, reran `PATH="$HOME/.local/bin:$PATH" uv run pytest tests/test_agent_runner.py -q`, and checked touched-file LSP diagnostics; passed.
 **Notes for next iteration:** Issue #102 remains a real blocked operator issue from the live review fail-path; throwaway issues #116–#119 were archived.
