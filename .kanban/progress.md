@@ -55,3 +55,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Worktree landing stays deterministic and local-ref-only: one in-process rebase retry on non-FF, block on conflict.
 **Verification:** `uv run pytest web/api/tests/test_worktree.py -q` passed; `uv run ruff check web/api/worktree.py web/api/tests/test_worktree.py` and `uv run python -m py_compile web/api/worktree.py web/api/tests/test_worktree.py` passed; LSP diagnostics found 0 errors in touched files.
 **Action review:** 2026-06-24 fresh review diffed `38d2e4452016fb8b924fc70cc81858374ddfc640..HEAD`, read all changed files, reran verification, and passed.
+
+## #110 UI dependency/lock gate chips — 2026-06-24
+
+**What changed:** Podium issue payloads now include dependency/lock gate metadata, and the board card plus flyout render read-only `Waiting on #N` / `Locked: <label>` chips for gated `todo` issues.
+**Files:** `web/api/main.py`, `web/frontend/lib/api.ts`, `web/frontend/components/IssueCard.tsx`, `web/frontend/components/KanbanBoard.tsx`, `web/frontend/components/IssueFlyout.tsx`, `web/frontend/components/NewIssueModal.tsx`, `web/frontend/tests/dependency-chip.spec.ts`
+**Decisions:** Missing blocker ids stay treated as satisfied to match the scheduler gate; card chips derive live state from the current board list while flyout chips use API-derived detail fields.
+**Conventions established:** Gate chips are display-only spans; dependency and lock gates never add a new issue state or operator control.
+**Verification:** `pnpm -C web/frontend exec playwright test dependency-chip.spec.ts` passed; `pnpm -C web/frontend exec tsc --noEmit`, `uv run ruff check web/api/main.py`, and `uv run python -m py_compile web/api/main.py` passed; LSP found 0 critical diagnostics in touched files.
+**Action review:** 2026-06-24 fresh review diffed `db09ac745b6162601ffa5e0fba0644eb371f1960..HEAD`, read all changed files, reran verification, and passed.
