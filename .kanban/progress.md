@@ -71,3 +71,10 @@ This file tracks implementation notes across Ralph iterations.
 **Files:** `.kanban/issues/111-MANUAL-deploy-dependencies.md`
 **Blocker:** The issue's Verification section is prose-only live-host calibration, but this unattended run requires an exact verification command that exits 0 before DONE/PASS.
 **Notes for next iteration:** Add an executable verification wrapper or run this as an operator-led manual deployment/calibration.
+
+## #112 Skill /podium-issues plan slicer — 2026-06-24
+
+**What changed:** Marked the issue blocked without editing the skill.
+**Files:** `.kanban/issues/112-podium-issues-plan-slicer-skill.md`
+**Blocker:** The issue's Verification section is prose-only and creates live Podium issues, but this unattended run requires an exact verification command that exits 0 before DONE/PASS.
+**Notes for next iteration:** Add an executable verification wrapper/test fixture or run the skill calibration operator-led, then implement/review the slicer.
