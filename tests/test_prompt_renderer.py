@@ -112,6 +112,7 @@ def test_render_review_prompt_uses_unattended_review_preamble() -> None:
     assert "You are a Symphony review agent" in prompt
     assert "Run the issue's `## Verification` command exactly as written" in prompt
     assert "fix it in place" in prompt
+    assert "validation review agent" not in prompt
     assert "`SYMPHONY_RESULT: done`" in prompt
     assert "`SYMPHONY_RESULT: blocked`" in prompt
     assert "## Verification" in prompt
@@ -120,3 +121,21 @@ def test_render_review_prompt_uses_unattended_review_preamble() -> None:
     assert "WORKFLOW.md" not in prompt
     assert "ask the user" not in prompt.lower()
     assert "verify scope with user" not in prompt.lower()
+
+
+def test_render_review_prompt_uses_validation_preamble_without_verification() -> None:
+    prompt = render_review_prompt(
+        IssueData(
+            identifier="AUTO-3",
+            name="Validate me",
+            description="Confirm ADR still matches the codebase.",
+            preferred_skill="dev-review-pi",
+        )
+    )
+
+    assert "You are a Symphony validation review agent" in prompt
+    assert "Write no code, change no files" in prompt
+    assert "invent no verification command" in prompt
+    assert "genuine contradiction" in prompt
+    assert "Run the issue's `## Verification` command" not in prompt
+    assert "## Symphony output contract" in prompt

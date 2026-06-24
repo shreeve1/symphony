@@ -2748,6 +2748,54 @@ async def test_review_terminal_skips_non_review_dispatch_run(
 
 
 @pytest.mark.asyncio
+async def test_review_terminal_validation_done_stays_in_review_without_backstop_or_land(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "Confirm ADR still matches the codebase.",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    monkeypatch.setattr(
+        scheduler,
+        "_run_runnable_verification",
+        lambda *a: pytest.fail("validation review must not run backstop"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.worktree_is_dirty",
+        lambda *a: pytest.fail("validation review must not run dirty gate"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("validation review must not land worktree"),
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Still holds.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+    assert "Still holds." in transport.comments["issue-1"][-1]["comment_html"]
+
+
+@pytest.mark.asyncio
 async def test_review_terminal_passing_backstop_proceeds_to_auto_land(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2853,6 +2901,7 @@ async def test_review_terminal_auto_land_marks_done_and_lands_worktree(
     transport = FakeTransport()
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
         "comments_md": "### Symphony Review (1)",
         "auto_land": True,
     }
@@ -2976,6 +3025,7 @@ async def test_review_terminal_without_auto_land_stays_in_review(
     transport = FakeTransport()
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
         "comments_md": "### Symphony Review (1)",
         "auto_land": False,
     }
@@ -3014,6 +3064,7 @@ async def test_review_terminal_dirty_worktree_blocks(
     transport = FakeTransport()
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
         "comments_md": "### Symphony Review (1)",
         "auto_land": False,
     }
@@ -3048,6 +3099,7 @@ async def test_review_terminal_land_conflict_blocks(
     transport = FakeTransport()
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
         "comments_md": "### Symphony Review (1)",
         "auto_land": True,
     }
@@ -4911,7 +4963,7 @@ async def test_coding_review_candidate_dispatches_with_marker_and_worktree(
               binding_name, title, description, state, preferred_agent,
               preferred_model, reasoning_effort, comments_md, context_md,
               worktree_active, created_at, updated_at
-            ) VALUES ('test', 'needs review', 'Body', 'in_review', 'pi',
+            ) VALUES ('test', 'needs review', 'Body\n\n## Verification\n\n`true`', 'in_review', 'pi',
                       NULL, 'high', '', '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')

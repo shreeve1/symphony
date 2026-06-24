@@ -27,7 +27,7 @@ from notifier import (
     format_review_message,
 )
 from plane_adapter import PlaneRateLimitError
-from prompt_renderer import render_previous_comments_block
+from prompt_renderer import render_previous_comments_block, review_mode
 from repo_host import repo_host_for
 from schedule import (
     CandidateComment,
@@ -3310,6 +3310,35 @@ async def _handle_review_terminal_done(
     )
     issue_id = str(candidate.id)
     issue_body = str(issue.get("description") or candidate.description or "")
+    if review_mode(issue_body) == "validation":
+        if summary:
+            completion_body = f"**Symphony review passed:**\n\n{summary}"
+        else:
+            completion_body = "**Symphony review passed:** Validation held."
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="succeeded",
+            verdict="done",
+            summary=summary,
+            ended_at=now().isoformat(),
+        )
+        await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        if await _handle_archived_terminal(
+            adapter, config, candidate, run_id, binding=binding
+        ):
+            return True
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=in-review reason=review-validation-passed",
+            candidate.id,
+        )
+        return True
+
     verification_command = _extract_runnable_verification(issue_body)
     if verification_command:
         verification_cwd = _review_verification_cwd(

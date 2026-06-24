@@ -52,8 +52,8 @@ this block verbatim as the issue comment, so write it for a human reader
 
 Keep summaries and questions focused; they are bounded to ~4000 characters when posted."""
 
-# Engine-owned review preamble (ADR-0023). Review runs are unattended native
-# service work, not an operator-facing catalog skill.
+# Engine-owned review preambles (ADR-0023/ADR-0024). Review runs are unattended
+# native service work, not an operator-facing catalog skill.
 REVIEW_PREAMBLE = """\
 You are a Symphony review agent for a completed coding issue. Run in the issue's
 worktree and independently review the implementation diff against its base.
@@ -70,6 +70,23 @@ worktree and independently review the implementation diff against its base.
    emit `SYMPHONY_RESULT: blocked` with the blocker in the summary.
 6. If all criteria are satisfied and verification passes, emit
    `SYMPHONY_RESULT: done`.
+
+End with exactly one terminal `SYMPHONY_RESULT: done` or
+`SYMPHONY_RESULT: blocked` marker plus the appended Symphony summary block.
+"""
+
+VALIDATION_REVIEW_PREAMBLE = """\
+You are a Symphony validation review agent for a completed discussion or decision.
+Confirm whether the discussed outcome still holds against the repository as it
+exists now.
+
+## Validation Duties
+
+1. Read only the context needed to compare the outcome/decision to repo reality.
+2. Write no code, change no files, and invent no verification command.
+3. Emit `SYMPHONY_RESULT: done` if the outcome still holds.
+4. Emit `SYMPHONY_RESULT: blocked` only when you find a genuine contradiction
+   between the outcome and the repository.
 
 End with exactly one terminal `SYMPHONY_RESULT: done` or
 `SYMPHONY_RESULT: blocked` marker plus the appended Symphony summary block.
@@ -398,7 +415,12 @@ def render_review_prompt(issue: IssueData) -> str:
         f"{_escape_issue_content(issue.description)}\n"
         f"</issue>"
     )
-    return f"{REVIEW_PREAMBLE.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
+    preamble = (
+        REVIEW_PREAMBLE
+        if review_mode(issue.description) == "coding"
+        else VALIDATION_REVIEW_PREAMBLE
+    )
+    return f"{preamble.strip()}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
 
 
 def review_mode(description: str) -> Literal["coding", "validation"]:

@@ -8,6 +8,13 @@ Append entries with this format:
 - Inputs: Ralph issue #122 live deploy/verification session.
 - Outputs: deployed review phase to live Symphony, fixed Pi RPC worktree cwd drift, verified auto-land/operator-gate/backstop/dirty-guard live smokes, updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`, `wiki/index.md`, `wiki/CLAIMS.md` (C-0316 superseded by C-0323), and this log entry.
 
+## [2026-06-24] session-update | Issue #130 ADR-0024 validation review branch
+
+- Actor: agent (Pi), direct implementation.
+- Inputs: Podium Issue #130 / ADR-0024 slice 3; `prompt_renderer.py`; `scheduler/__init__.py`; `tests/test_prompt_renderer.py`; `tests/test_scheduler.py`; issue verification command.
+- Outputs: added `VALIDATION_REVIEW_PREAMBLE` and `render_review_prompt` branching by `review_mode`; added validation-mode review terminal handling after the `candidate.review_dispatch` provenance gate; updated coding-path scheduler fixtures; added renderer and scheduler regression tests; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0326); updated `wiki/eval/podium-api.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_prompt_renderer.py tests/test_scheduler.py -q`, 208 passed) after installing the dev extra into the local uv venv. Ruff and LSP diagnostics passed. Wiki gate audit required normalizing pre-existing C-0324 kind from `root-cause` to `gotcha`. No secrets/env files read; no service restart, live DB mutation, or outward notification.
+
 ## [YYYY-MM-DD] type | Title
 
 - Actor: agent or human

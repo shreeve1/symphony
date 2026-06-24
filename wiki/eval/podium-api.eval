@@ -2,3 +2,4 @@ How does Podium create/patch API persist issue dependencies and locks? ||| block
 What does Podium issue.auto_land store and how is it read by the tracker? ||| BOOLEAN NOT NULL DEFAULT FALSE
 How is the ADR-0023 review preamble rendered after issue 116? ||| render_review_prompt
 How does ADR-0023 prevent a review DONE from bypassing a failing runnable Verification command? ||| verification backstop
+How does ADR-0024 split validation reviews from coding reviews? ||| VALIDATION_REVIEW_PREAMBLE
