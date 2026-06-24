@@ -39,7 +39,7 @@ The startup reaper (ADR-0005) sweeps `run.state IN (queued,running)` → synthet
 
 - `binding(name PK, display_name, color, sort_order, archived)` — Binding *is* the Project; no Project table.
 - `skill(name PK, description, source)` — CLI-refreshable catalog.
-- `issue(...)` — operator intent + latest-Run projection. Typed operator levers: `preferred_agent`, `preferred_model`, `preferred_skill` (FK→skill.name), `reasoning_effort` DEFAULT `'high'`, `worktree_active` DEFAULT FALSE, dependency fields `blocked_by` (list of issue ids, JSON text) and `locks` (list of lock labels, JSON text), infra role columns `approval_required` DEFAULT FALSE, `approved` DEFAULT FALSE, `scheduled_for` TIMESTAMP NULL, `base_branch`. Two blobs: `comments_md` (human↔AI), `context_md` (AI-only). Projection cols: `latest_run_id` (FK→run.id), `latest_verdict`, `latest_run_state`, `last_event_at`.
+- `issue(...)` — operator intent + latest-Run projection. Typed operator levers: `preferred_agent`, `preferred_model`, `preferred_skill` (FK→skill.name), `reasoning_effort` DEFAULT `'high'`, `worktree_active` DEFAULT FALSE, `auto_land` BOOLEAN NOT NULL DEFAULT FALSE (slicer/review provenance), dependency fields `blocked_by` (list of issue ids, JSON text) and `locks` (list of lock labels, JSON text), infra role columns `approval_required` DEFAULT FALSE, `approved` DEFAULT FALSE, `scheduled_for` TIMESTAMP NULL, `base_branch`. Two blobs: `comments_md` (human↔AI), `context_md` (AI-only). Projection cols: `latest_run_id` (FK→run.id), `latest_verdict`, `latest_run_state`, `last_event_at`.
 - `run(...)` — first-class per-dispatch row: `agent, provider, model, state, verdict, summary, exit_code, cost_usd, input_tokens, output_tokens, worktree_path, branch_name, base_branch, log_path, skill_invoked, started_at, ended_at`. No event-log table v1.
 [source: web/api/schema.py:6-65]
 
@@ -72,6 +72,7 @@ Scheduler success handling appends the concise completion summary to `comments_m
 - **no-op guard**: only fields whose value differs from stored are `changed`; empty/echoing body returns `current` unchanged and does **not** bump `updated_at` — the board orders by `updated_at`, so a blind bump would reorder cards [source: web/api/main.py:342-346].
 - **monotonic updated_at**: `_next_updated_at` returns a value strictly greater than the stored one even when two PATCHes land within clock resolution [source: web/api/main.py].
 - **dependency fields**: `blocked_by` and `locks` are accepted on create and patch. API rows return omitted/malformed stored values as `[]`; writes store JSON text. `blocked_by` is cycle-checked and a dependency cycle returns HTTP 400; `locks` are labels and have no cycle check (C-0317) [source: web/api/main.py; web/api/tests/test_issue_create.py; web/api/tests/test_issue_patch.py].
+- **auto-land provenance**: `issue.auto_land` landed in Alembic `0011_issue_auto_land` and `SCHEMA_SQL` as `BOOLEAN NOT NULL DEFAULT FALSE`; `PodiumTrackerAdapter._row_to_issue` exposes it as a Python bool defaulting `False` (C-0320) [source: web/api/schema.py; web/api/migrations/versions/0011_issue_auto_land.py; tracker_podium.py; tests/test_tracker_podium.py].
 
 POST `/api/bindings/{name}/issues` uses the same `model_validate` 400/422 split; unknown binding → 404 checked **before** body validation (C-0054). Board list orders `BY updated_at DESC, id DESC` [source: web/api/main.py].
 
@@ -96,4 +97,4 @@ Both Podium ports bind localhost in production; external access via Authelia rev
 
 ## Claims
 
-C-0059 .. C-0067, C-0079 .. C-0081, C-0104 .. C-0106, and C-0317 in [CLAIMS.md](../CLAIMS.md).
+C-0059 .. C-0067, C-0079 .. C-0081, C-0104 .. C-0106, C-0317, and C-0320 in [CLAIMS.md](../CLAIMS.md).

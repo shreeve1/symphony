@@ -1,11 +1,14 @@
 ---
 id: 116
 title: REVIEW_PREAMBLE renderer constant (unattended fork of dev-review-pi)
-status: pending
+status: done
 blocked_by: []
 locks: [renderer]
 priority: 1
 created: 2026-06-24
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -36,14 +39,18 @@ phase is a native service feature, NOT a selectable catalog skill. Sibling to
 
 ## Acceptance criteria
 
-- [ ] `REVIEW_PREAMBLE` exists in `prompt_renderer.py`; no interactive/operator-in-
+- [x] `REVIEW_PREAMBLE` exists in `prompt_renderer.py`; no interactive/operator-in-
       the-loop instructions remain (review runs unattended).
-- [ ] The preamble mandates running the issue's `## Verification` and emitting one
+- [x] The preamble mandates running the issue's `## Verification` and emitting one
       `SYMPHONY_RESULT: done|blocked` marker; permits in-place fix.
-- [ ] A review-phase render produces `REVIEW_PREAMBLE` + verification + the output
+- [x] A review-phase render produces `REVIEW_PREAMBLE` + verification + the output
       contract, with no skill/WORKFLOW.md load.
 
 ## Verification
 
 `uv run pytest tests/test_prompt_renderer.py -q`
 and `uv run python -m py_compile prompt_renderer.py`
+
+## Implementation Notes
+
+Added `REVIEW_PREAMBLE` plus `render_review_prompt(issue)` so review dispatch can render the review contract, issue body, and centralized output contract without skill or WORKFLOW loading. Covered the unattended review path in `tests/test_prompt_renderer.py`.

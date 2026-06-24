@@ -80,3 +80,75 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** Podium plan slicing uses slice keys only inside the YAML spec; persisted dependencies are real Podium ids.
 **Verification:** `PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q` passed; LSP diagnostics found 0 issues in touched Python files.
 **Action review:** 2026-06-24 fresh review diffed `a9f20d03c149d3953345cac213f184aa77a88443..HEAD`, reran verification, ran ruff, checked criteria, and passed.
+
+## #114 Add issue.auto_land column — 2026-06-24
+
+**What changed:** Added `issue.auto_land` with `BOOLEAN NOT NULL DEFAULT FALSE`, Alembic migration 0011, `INITIAL_REVISION` bump, and tracker bool coercion for the read path.
+**Files:** `web/api/schema.py`, `web/api/migrations/versions/0011_issue_auto_land.py`, `tracker_podium.py`, `tests/test_tracker_podium.py`, `.kanban/issues/114-issue-auto-land-column.md`
+**Decisions:** Keep `auto_land` false by default; only future slicer/write-path work should set it true.
+**Conventions established:** `auto_land` is exposed from `PodiumTrackerAdapter` as a Python `bool`; NULL/missing values read as `False`.
+**Verification:** `uv run pytest tests/test_alembic_baseline.py -q` and `uv run python -m py_compile web/api/schema.py tracker_podium.py` passed; `tests/test_tracker_podium.py` and an upgrade/downgrade smoke for 0011 also passed. LSP diagnostics only reported environment-only missing imports for Alembic/SQLAlchemy in the migration.
+**Action review:** 2026-06-24 fresh review diffed `d5bd697adf9f6976ac6ae0f92461a5eb6309a023..HEAD`, read all changed files, reran verification, and passed.
+
+## #115 Carry auto_land through create/patch API — 2026-06-24
+
+**What changed:** Added `auto_land` to Podium issue create/patch payloads, persisted it on insert/update, returned it from list/detail payloads, and coerced row values to booleans.
+**Files:** `web/api/main.py`, `web/api/tests/test_issue_create.py`, `web/api/tests/test_issue_patch.py`, `.kanban/issues/115-auto-land-write-path.md`
+**Decisions:** Keep `auto_land` false unless explicitly set by trusted creator paths; operator/UI-created issues remain non-auto-landing by omission.
+**Conventions established:** API `auto_land` follows existing boolean-field behavior (`worktree_active`, `approval_required`): create defaults false, patch accepts explicit bool and rejects null.
+**Verification:** `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics passed for touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `a795b80fef512771fae8a5d9d7c25f5963a85219..HEAD`, read changed files, reran verification, ran ruff, checked criteria, and passed.
+
+## #116 REVIEW_PREAMBLE renderer constant — 2026-06-24
+
+**What changed:** Added `REVIEW_PREAMBLE` and `render_review_prompt(issue)` so review dispatch can render the review contract, issue body, and centralized output contract without skill or WORKFLOW loading.
+**Files:** `prompt_renderer.py`, `tests/test_prompt_renderer.py`, `.kanban/issues/116-review-preamble-renderer-constant.md`
+**Decisions:** Keep review prompting as an engine-owned renderer constant; expose it through a sibling render helper rather than overloading normal implement dispatch.
+**Conventions established:** Review prompts must mandate exact `## Verification`, permit in-place fixes, and end with one `SYMPHONY_RESULT: done|blocked` marker.
+**Verification:** `uv run pytest tests/test_prompt_renderer.py -q` and `uv run python -m py_compile prompt_renderer.py` passed; ruff and LSP diagnostics passed for touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `5fc06962b3bbc71ba22bacfb9fd6735bc574d47c..HEAD`, read all changed files, reran verification, ran ruff, checked criteria, and passed.
+
+## #117 Extract process-neutral land_worktree — 2026-06-24
+
+**What changed:** Added `land_worktree` as a process-neutral merge-and-cleanup helper, refactored `_maybe_merge_worktree` to call it, and re-exported it through `worktree_facade.py`.
+**Files:** `web/api/worktree.py`, `web/api/main.py`, `worktree_facade.py`, `web/api/tests/test_worktree.py`, `.kanban/issues/117-land-worktree-process-neutral.md`
+**Decisions:** Keep issue-state mutation and dirty-worktree redispatch in the API wrapper; `land_worktree` only runs git merge/rebase-retry/cleanup and returns a block reason.
+**Conventions established:** Scheduler/importer-facing worktree helpers go through `worktree_facade.py`.
+**Verification:** `uv run pytest web/api/tests/test_worktree.py -q` and `uv run python -m py_compile web/api/worktree.py web/api/main.py worktree_facade.py` passed; ruff and LSP diagnostics found 0 touched-file errors.
+**Action review:** 2026-06-24 fresh review diffed `ca648d25735927929a4df53a8d452f10674e56d1..HEAD`, read all changed files, reran verification, and passed with notes about formatting-only hunks.
+
+## #118 Review-phase selection + dispatch — 2026-06-24
+
+**What changed:** Podium `in_review` coding issues without a `### Symphony Review` marker now enter normal dispatch as review runs, render with `REVIEW_PREAMBLE`, reuse the deterministic worktree, and stamp a review marker before agent launch.
+**Files:** `tracker_types.py`, `tracker_podium.py`, `scheduler/__init__.py`, `main.py`, `tests/test_scheduler.py`, `.kanban/issues/118-review-selection-dispatch.md`
+**Decisions:** Represent review dispatch as a `CandidateIssue.review_dispatch` flag; terminal outcome handling stays unchanged for #119.
+**Conventions established:** `### Symphony Review (n)` in `comments_md` is the idempotency marker for scheduler-owned review dispatch selection.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics found 0 touched-file errors.
+**Action review:** 2026-06-24 fresh review diffed `5142877c6ff95cc70f94a489233d75dab81ddc83..HEAD`, read every changed file, tightened review-marker matching to line-anchored headings, reran verification, checked ruff/LSP, and passed.
+
+## #119 Review-run terminal outcomes — 2026-06-24
+
+**What changed:** Review runs that pass now branch by provenance: `auto_land=true` clean worktrees are landed and marked done, while manual-provenance issues stay in review; dirty review worktrees and land conflicts block.
+**Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `.kanban/issues/119-review-terminal-provenance-gated.md`
+**Decisions:** The `### Symphony Review` marker is the review-terminal discriminator; dirty review worktrees are terminal review failures, not commit re-dispatches.
+**Conventions established:** Trusted slicer-authored issues use `auto_land=true` for unattended merge; operator-authored/default issues remain `in_review` after review pass for manual merge.
+**Verification:** `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q` passed; ruff, py_compile, and LSP diagnostics passed for touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `ec4a5e24dba2018d568acd9fc3674ff8bbbad4d5..HEAD`, read every changed file, reran verification, checked ruff/syntax, and passed.
+
+## #120 Driver backstop — 2026-06-24
+
+**What changed:** Added a Python runnable-verification extractor and a review-terminal backstop that re-runs cleanly backticked `## Verification` commands before dirty-worktree or auto-land handling.
+**Files:** `scheduler/__init__.py`, `tests/test_scheduler.py`, `.kanban/issues/120-review-verification-backstop.md`
+**Decisions:** Backstop failures finish the Run as `failed`/`blocked`, append review output context, block the Issue with the failing command, and never call the landing path; prose-only verification still relies on the review agent mandate.
+**Conventions established:** Cleanly runnable verification means backtick-quoted command segments joined only by connective text, returned as `cmd1 && cmd2` for multi-command sections.
+**Verification:** `uv run pytest tests/test_scheduler.py -q` passed (195 tests); `uv run ruff check scheduler/__init__.py tests/test_scheduler.py`, `uv run python -m py_compile scheduler/__init__.py tests/test_scheduler.py`, and touched-file LSP diagnostics passed.
+**Action review:** 2026-06-24 fresh review diffed `ea6ddd644cf16f46fa0c33e923482e5042cfd28a..HEAD`, read every changed file, added missing passing-backstop coverage, reran exact verification, checked touched-file LSP diagnostics, and passed.
+
+## #121 Skill /podium-issues auto-land stamp — 2026-06-24
+
+**What changed:** `web.cli.podium issues create-from-plan` now stamps every slicer-created Podium issue with `auto_land=true`, and `issues list` shows the flag for spot checks.
+**Files:** `.claude/skills/podium-issues/SKILL.md`, `web/cli/podium_issues.py`, `web/cli/tests/test_podium_issues.py`, `.kanban/issues/121-slicer-stamp-auto-land.md`
+**Decisions:** Keep auto-land provenance in the slicer sink rather than requiring YAML authors to set it; slicer-authored issues must carry runnable verification commands because review backstop re-runs them.
+**Conventions established:** `/podium-issues` creates trusted auto-land slices; operator/API-created issues remain `auto_land=false` by default.
+**Verification:** Prose verification was exercised against a temp Podium DB/binding sample; `PATH="$HOME/.local/bin:$PATH" uv run pytest web/cli/tests/test_podium_issues.py -q`, `uv run pytest web/api/tests/test_issue_create.py -q`, ruff, py_compile, and touched-file LSP diagnostics passed.
+**Action review:** 2026-06-24 fresh review diffed `7288681fcc08327521634efc2a22648fc86acbe7..HEAD`, read all changed files, reran verification/lint, and passed.

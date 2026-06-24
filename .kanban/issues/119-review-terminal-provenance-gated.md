@@ -1,11 +1,14 @@
 ---
 id: 119
 title: Review-run terminal — provenance-gated auto-land + fail→blocked
-status: pending
+status: done
 blocked_by: [114, 117, 118]
 locks: [scheduler]
 priority: 1
 created: 2026-06-24
+updated: 2026-06-24
+action_reviewed: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -44,17 +47,23 @@ Pass-terminal is provenance-gated by `auto_land` (114); fail-terminal is uniform
 
 ## Acceptance criteria
 
-- [ ] Review pass + `auto_land=true` + clean worktree → `in_review`→`done` and
+- [x] Review pass + `auto_land=true` + clean worktree → `in_review`→`done` and
       `land_worktree` lands the branch (113 rebase-retry applies); worktree removed;
       merge notified.
-- [ ] Review pass + `auto_land=false` → issue stays `in_review` (no auto-merge, no
+- [x] Review pass + `auto_land=false` → issue stays `in_review` (no auto-merge, no
       state change).
-- [ ] Review pass but dirty worktree → `blocked` (NOT redispatched to `todo`).
-- [ ] Review fail (either provenance) → `in_review`→`blocked`; downstream `blocked_by`
+- [x] Review pass but dirty worktree → `blocked` (NOT redispatched to `todo`).
+- [x] Review fail (either provenance) → `in_review`→`blocked`; downstream `blocked_by`
       issues stay gated.
-- [ ] A `land_worktree` rebase conflict → `blocked` with the reason; no partial merge
+- [x] A `land_worktree` rebase conflict → `blocked` with the reason; no partial merge
       in base.
 
 ## Verification
 
 `uv run pytest tests/test_scheduler.py web/api/tests/test_worktree.py -q`
+
+## Implementation Notes
+
+- Added review-terminal handling for `SYMPHONY_RESULT: done` when a `### Symphony Review` marker is present.
+- Auto-landed trusted (`auto_land=true`) clean review worktrees via `land_worktree`, clearing `worktree_active` and notifying after merge.
+- Kept manual-provenance reviews in `in_review`; dirty review worktrees and land conflicts now block instead of re-dispatching.

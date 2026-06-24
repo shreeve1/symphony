@@ -1,11 +1,14 @@
 ---
 id: 114
 title: Add issue.auto_land column (schema + Alembic 0011)
-status: pending
+status: done
 blocked_by: [105]
 locks: [schema]
 priority: 1
 created: 2026-06-24
+updated: 2026-06-24
+action_reviewed: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -29,12 +32,16 @@ everything else (`false`) keeps the operator merge gate.
 
 ## Acceptance criteria
 
-- [ ] `issue.auto_land` exists in `schema.py` with a `FALSE` default.
-- [ ] Migration 0011 (revises 0010) applies and reverts cleanly; runtime schema ==
+- [x] `issue.auto_land` exists in `schema.py` with a `FALSE` default.
+- [x] Migration 0011 (revises 0010) applies and reverts cleanly; runtime schema ==
       migration schema.
-- [ ] Tracker reads `auto_land` as `bool`; NULL → `False`.
+- [x] Tracker reads `auto_land` as `bool`; NULL → `False`.
 
 ## Verification
 
 `uv run pytest tests/test_alembic_baseline.py -q`
 and `uv run python -m py_compile web/api/schema.py tracker_podium.py`
+
+## Implementation Notes
+
+Added `issue.auto_land` to runtime schema and Alembic head `0011`, bumped `INITIAL_REVISION`, and coerced the tracker read path to a bool defaulting false. Added a regression assertion for the default false read-path.

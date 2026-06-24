@@ -1,11 +1,14 @@
 ---
 id: 118
 title: Review-phase selection + dispatch (in_review coding issues, marker-gated)
-status: pending
+status: done
 blocked_by: [108, 116]
 locks: [scheduler]
 priority: 1
 created: 2026-06-24
+updated: 2026-06-24
+action_reviewed: 2026-06-24
+actor: ralph
 ---
 
 ## What to build
@@ -41,13 +44,19 @@ dispatch machinery. This slice is selection + dispatch only; the terminal outcom
 
 ## Acceptance criteria
 
-- [ ] A coding issue in `in_review` with no `### Symphony Review` marker is selected
+- [x] A coding issue in `in_review` with no `### Symphony Review` marker is selected
       and dispatched as a review run (REVIEW_PREAMBLE, same `worktree_dir`).
-- [ ] After dispatch the issue carries a `### Symphony Review (n)` marker and is not
+- [x] After dispatch the issue carries a `### Symphony Review (n)` marker and is not
       re-selected for review on the next tick.
-- [ ] Infra issues in `in_review` are never review-dispatched.
-- [ ] The review run uses the normal semaphore/lock path (not a held inline phase).
+- [x] Infra issues in `in_review` are never review-dispatched.
+- [x] The review run uses the normal semaphore/lock path (not a held inline phase).
 
 ## Verification
 
 `uv run pytest tests/test_scheduler.py -q`
+
+## Implementation Notes
+
+- Added review-dispatch candidates for Podium `in_review` issues without a `### Symphony Review` marker.
+- Routed review candidates through `render_review_prompt`, the normal dispatch gate, run record, semaphore, and lock reservation path.
+- Added dispatch-time `### Symphony Review (n)` marker comments so review selection is idempotent.

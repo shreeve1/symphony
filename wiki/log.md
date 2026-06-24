@@ -11,6 +11,27 @@ Append entries with this format:
 
 ---
 
+## [2026-06-24] session-update | Ralph issue #120 review verification backstop
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/120-review-verification-backstop.md`; `git diff ea6ddd644cf16f46fa0c33e923482e5042cfd28a HEAD`; `scheduler/__init__.py`; `tests/test_scheduler.py`; issue verification command.
+- Outputs: implemented the Python runnable-verification extractor and review-terminal backstop; marked `.kanban/issues/120-review-verification-backstop.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0322); updated `wiki/eval/podium-api.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_scheduler.py -q`, 195 passed after adding missing passing-backstop coverage). Ruff, py_compile, and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. No env files read; no service restart, live DB mutation, or outward notification.
+
+## [2026-06-24] session-update | Ralph issue #116 REVIEW_PREAMBLE renderer
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/116-review-preamble-renderer-constant.md`; `git diff 5fc06962b3bbc71ba22bacfb9fd6735bc574d47c HEAD`; `prompt_renderer.py`; `tests/test_prompt_renderer.py`; issue verification command.
+- Outputs: implemented `REVIEW_PREAMBLE` and `render_review_prompt(issue)`; marked `.kanban/issues/116-review-preamble-renderer-constant.md` done; updated `.kanban/progress.md`; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0321); updated `wiki/eval/podium-api.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_prompt_renderer.py -q` and `uv run python -m py_compile prompt_renderer.py`). Ruff and touched-file LSP diagnostics passed; fresh review returned `RALPH_REVIEW: PASS`. No env files read; no service restart, live DB mutation, or outward notification.
+
+## [2026-06-24] session-update | Ralph issue #114 auto_land schema/read path
+
+- Actor: agent (Pi), Ralph implementation + fresh review.
+- Inputs: `.kanban/issues/114-issue-auto-land-column.md`; `git diff d5bd697adf9f6976ac6ae0f92461a5eb6309a023 HEAD`; `web/api/schema.py`; `web/api/migrations/versions/0011_issue_auto_land.py`; `tracker_podium.py`; `tests/test_tracker_podium.py`; issue verification command.
+- Outputs: implemented `issue.auto_land` schema/Alembic/read-path slice; marked `.kanban/issues/114-issue-auto-land-column.md` done; updated `.kanban/progress.md`; updated `wiki/concepts/podium-tracker.md`; updated `wiki/analyses/adr-0023-native-per-issue-review-phase.md`; updated `wiki/index.md`; updated `wiki/ROUTING.md`; updated `wiki/CLAIMS.md` (C-0320; normalized pre-existing C-0316 kind to pass audit); updated `wiki/eval/podium-api.eval`; this log entry.
+- Notes: Verification passed exactly as issue-specified (`uv run pytest tests/test_alembic_baseline.py -q` and `uv run python -m py_compile web/api/schema.py tracker_podium.py`). `tests/test_tracker_podium.py` and an 0011 upgrade/downgrade smoke also passed; touched-file LSP diagnostics only reported environment-only Alembic/SQLAlchemy import noise in the migration. No secrets/env files read; no service restart, live DB migration, or outward notification.
+
 ## [2026-06-24] session-update | Ralph issue #113 FF merge rebase retry
 
 - Actor: agent (Pi), Ralph implementation + fresh review.

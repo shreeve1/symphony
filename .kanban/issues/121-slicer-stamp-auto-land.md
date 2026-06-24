@@ -1,11 +1,14 @@
 ---
 id: 121
 title: Skill — /podium-issues slicer stamps auto_land=true on created issues
-status: pending
+status: done
 blocked_by: [112, 115]
 locks: [skills]
 priority: 2
 created: 2026-06-24
+updated: 2026-06-24
+actor: ralph
+action_reviewed: 2026-06-24
 ---
 
 ## What to build
@@ -26,10 +29,10 @@ a passing review. This ties "slicer-authored ⇒ guaranteed runnable `## Verific
 
 ## Acceptance criteria
 
-- [ ] Issues created by `/podium-issues` carry `auto_land = true` (verify via the GET
+- [x] Issues created by `/podium-issues` carry `auto_land = true` (verify via the GET
       payload / `web.cli.podium issues`).
-- [ ] The skill prose ties auto-land to a mandatory runnable `## Verification`.
-- [ ] Operator/UI-created issues remain `auto_land = false`.
+- [x] The skill prose ties auto-land to a mandatory runnable `## Verification`.
+- [x] Operator/UI-created issues remain `auto_land = false`.
 
 ## Verification
 
@@ -37,3 +40,12 @@ Prose (skill, no unit harness): run the slicer on a sample plan from a repo with
 `tracker: podium` binding; confirm created Podium issues have `auto_land = true`
 (`GET /api/bindings/{name}/issues` or `python -m web.cli.podium issues`), and a
 manually UI-created issue is `false`.
+
+## Implementation Notes
+
+- `web.cli.podium issues create-from-plan` now inserts slicer-created issues with
+  `auto_land = true` and shows the flag in `issues list` output.
+- `/podium-issues` prose now requires runnable verification commands because
+  slicer-authored issues are auto-land eligible and the review backstop re-runs
+  those commands.
+- Operator/API-created issues keep the existing default `auto_land = false`.

@@ -217,7 +217,9 @@ def merge_worktree(
                 timeout=30,
                 check=True,
             )
-            LOGGER.info("merge_rebase_retry_succeeded branch=%s base=%s", branch, base_branch)
+            LOGGER.info(
+                "merge_rebase_retry_succeeded branch=%s base=%s", branch, base_branch
+            )
             return None
         except subprocess.CalledProcessError as retry_exc:
             LOGGER.warning(
@@ -237,6 +239,24 @@ def merge_worktree(
                 f"Auto-merge halted: FF-only merge of {branch} into "
                 f"{base_branch} failed. Inspect worktree at {wt_path}."
             )
+
+
+def land_worktree(
+    repo_path: Path,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str,
+) -> str | None:
+    """Merge an issue worktree and clean it up on success.
+
+    Returns ``None`` on success, or the merge block reason on failure. This is
+    intentionally process-neutral: no issue-state mutation and no redispatch.
+    """
+    error = merge_worktree(repo_path, binding_name, issue_id, base_branch)
+    if error is not None:
+        return error
+    cleanup_worktree(repo_path, binding_name, issue_id)
+    return None
 
 
 def cleanup_worktree(repo_path: Path, binding_name: str, issue_id: str) -> None:

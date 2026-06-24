@@ -7,6 +7,7 @@ import inspect
 import logging
 import random
 import re
+import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -138,6 +139,9 @@ BUILD_PLAN_MISSING_GRACE_ATTEMPTS = 3
 # Stable substring of the return-to-plan recovery comment, counted in
 # comments_md to track how many grace attempts have already been spent.
 _BUILD_PLAN_RETURN_MARKER = "Returning this issue to Plan mode"
+_REVIEW_DISPATCH_MARKER_RE = re.compile(
+    r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
+)
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
 # from agent stderr so failure comments are readable on Plane, which renders
 # fenced code as plain text.
@@ -549,6 +553,82 @@ async def _render_for_dispatch(
     if comments_text and not getattr(candidate, "resumed", False):
         prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
     return candidate, prompt
+
+
+def _next_review_dispatch_marker(comments_md: str) -> str:
+    prior = len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
+    return f"### Symphony Review ({prior + 1})\n\nReview run dispatched."
+
+
+def _extract_runnable_verification(issue_body: str) -> str:
+    """Return a shell command from a cleanly-runnable ## Verification section."""
+    heading = re.search(r"^##[ \t]+Verification[ \t]*$", issue_body, re.MULTILINE)
+    if heading is None:
+        return ""
+    next_heading = re.search(r"^##[ \t]+", issue_body[heading.end() :], re.MULTILINE)
+    end = heading.end() + next_heading.start() if next_heading else len(issue_body)
+    section = issue_body[heading.end() : end]
+    parts = section.split("`")
+    if len(parts) < 3 or len(parts) % 2 == 0:
+        return ""
+    commands: list[str] = []
+    for index, part in enumerate(parts):
+        if index % 2:
+            command = part.strip()
+            if not command:
+                return ""
+            commands.append(command)
+            continue
+        if re.sub(r"\b(?:and|then)\b|[\s,.;:]", "", part, flags=re.IGNORECASE):
+            return ""
+    return " && ".join(commands)
+
+
+def _review_verification_cwd(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None,
+) -> Path:
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    if _worktree_enabled(config, candidate, binding=resolved_binding):
+        binding_name = candidate.binding_name or (
+            resolved_binding.name if resolved_binding is not None else ""
+        )
+        if binding_name:
+            worktree_helpers = import_module("worktree_facade")
+            return cast(
+                Path,
+                worktree_helpers.worktree_dir(
+                    config.homelab_repo_path,
+                    binding_name,
+                    str(candidate.id),
+                ),
+            )
+    return config.homelab_repo_path
+
+
+def _run_runnable_verification(command: str, cwd: Path) -> int:
+    try:
+        completed = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        LOGGER.warning("review_verification_exec_error cwd=%s error=%s", cwd, exc)
+        return 127
+    if completed.returncode != 0:
+        LOGGER.warning(
+            "review_verification_failed cwd=%s returncode=%s stdout=%r stderr=%r",
+            cwd,
+            completed.returncode,
+            completed.stdout[-1000:],
+            completed.stderr[-1000:],
+        )
+    return completed.returncode
 
 
 def _apply_dispatch_gate(
@@ -1235,6 +1315,8 @@ async def _select_run_tick_candidate(
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
     _clear_rate_limit(dispatch_state)
+    if not is_coding:
+        candidates = [c for c in candidates if not getattr(c, "review_dispatch", False)]
 
     approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
     if candidate is None:
@@ -1273,11 +1355,19 @@ async def _gate_run_tick_candidate(
 
     mode = _resolve_mode(candidate.labels, adapter.contract)
 
+    if getattr(candidate, "review_dispatch", False) and not is_coding:
+        return TickResult(False, "state-changed", candidate.id)
+
+    expected_state = (
+        TrackerRole.STATE_IN_REVIEW
+        if getattr(candidate, "review_dispatch", False)
+        else TrackerRole.STATE_TODO
+    )
     fresh = await _fetch_issue(adapter, candidate.id)
     if not _is_state(
         fresh,
-        adapter.contract.state_name_for_role(TrackerRole.STATE_TODO),
-        adapter.contract.state_value_for_role(TrackerRole.STATE_TODO),
+        adapter.contract.state_name_for_role(expected_state),
+        adapter.contract.state_value_for_role(expected_state),
     ):
         return TickResult(False, "state-changed", candidate.id)
     label_ids = adapter.contract.label_ids if adapter.contract else None
@@ -1451,6 +1541,11 @@ async def _prepare_run_tick_dispatch(
             binding=binding,
             comments_text=comments_text,
         )
+        if getattr(candidate, "review_dispatch", False):
+            await adapter.add_comment(
+                candidate.id,
+                CommentPayload(body=_next_review_dispatch_marker(comments_text)),
+            )
     except OSError as exc:
         _iu, _du = _build_urls(config, candidate.id)
         await _block_issue(
@@ -2049,6 +2144,23 @@ async def _classify_terminal(
             candidate.id,
         )
         return TickResult(True, "agent-verified-close", candidate.id, mode=mode)
+
+    if verdict == "done" and await _handle_review_terminal_done(
+        adapter,
+        config,
+        candidate,
+        result=result,
+        run_id=run_id,
+        run_log_path=run_log_path,
+        secrets=secrets,
+        summary=summary or "",
+        stdout=stdout,
+        stderr=stderr,
+        now=now,
+        notifier=notifier,
+        binding=binding,
+    ):
+        return TickResult(True, "review-terminal-done", candidate.id, mode=mode)
 
     reason_code = (
         "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
@@ -3091,6 +3203,173 @@ def _build_urls(config: SymphonyConfig | None, issue_id: str) -> tuple[str, str]
     if config is None:
         return "", ""
     return config.issue_url(issue_id), config.plane_dashboard_url
+
+
+async def _handle_review_terminal_done(
+    adapter: TrackerAdapter,
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    result: AgentResult,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    summary: str,
+    stdout: str,
+    stderr: str,
+    now: Callable[[], datetime],
+    notifier: TelegramNotifier | None,
+    binding: ProjectBinding | None = None,
+) -> bool:
+    issue = await _fetch_issue(adapter, candidate.id)
+    comments_md = str(issue.get("comments_md") or candidate.comments_md or "")
+    if not _REVIEW_DISPATCH_MARKER_RE.search(comments_md):
+        return False
+
+    _iu, _du = _build_urls(config, candidate.id)
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    binding_name = candidate.binding_name or (
+        resolved_binding.name if resolved_binding is not None else ""
+    )
+    issue_id = str(candidate.id)
+    issue_body = str(issue.get("description") or candidate.description or "")
+    verification_command = _extract_runnable_verification(issue_body)
+    if verification_command:
+        verification_cwd = _review_verification_cwd(
+            config, candidate, binding=resolved_binding
+        )
+        returncode = await asyncio.to_thread(
+            _run_runnable_verification, verification_command, verification_cwd
+        )
+        if returncode != 0:
+            backstop_summary = (
+                f"Review verification backstop failed: `{verification_command}`"
+            )
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                secrets=secrets,
+                state="failed",
+                verdict="blocked",
+                summary=backstop_summary,
+                ended_at=now().isoformat(),
+            )
+            await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                f"Review verification backstop failed: `{verification_command}` exited {returncode}.",
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return True
+
+    if summary:
+        completion_body = f"**Symphony review passed:**\n\n{summary}"
+    else:
+        completion_body = "**Symphony review passed:** Reviewer reported success."
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="succeeded",
+        verdict="done",
+        summary=summary,
+        ended_at=now().isoformat(),
+    )
+    await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+    await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+    if await _handle_archived_terminal(
+        adapter, config, candidate, run_id, binding=binding
+    ):
+        return True
+
+    worktree_helpers = import_module("worktree_facade")
+
+    if binding_name and await asyncio.to_thread(
+        worktree_helpers.worktree_is_dirty,
+        config.homelab_repo_path,
+        binding_name,
+        issue_id,
+    ):
+        await _block_issue(
+            adapter,
+            candidate.id,
+            "Review auto-land halted: review worktree has uncommitted changes.",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    if not bool(issue.get("auto_land") or False):
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=in-review reason=review-passed-awaiting-operator-merge",
+            candidate.id,
+        )
+        return True
+
+    if not binding_name:
+        await _block_issue(
+            adapter,
+            candidate.id,
+            "Review auto-land halted: missing binding name.",
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    base_branch = candidate.base_branch or config.base_branch
+    error = await asyncio.to_thread(
+        worktree_helpers.land_worktree,
+        config.homelab_repo_path,
+        binding_name,
+        issue_id,
+        base_branch,
+    )
+    if error is not None:
+        await _block_issue(
+            adapter,
+            candidate.id,
+            error,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    update_columns = getattr(adapter, "_update_issue_columns", None)
+    if callable(update_columns):
+        await _maybe_await(update_columns(candidate.id, {"worktree_active": False}))
+    await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
+    LOGGER.info(
+        "state_transitioned issue_id=%s state=done reason=review-auto-landed",
+        candidate.id,
+    )
+    await _notify_review(
+        notifier,
+        candidate.name,
+        candidate.identifier,
+        reason="Review passed; worktree auto-landed",
+        issue_url=_iu,
+        dashboard_url=_du,
+    )
+    return True
 
 
 async def _notify_review(

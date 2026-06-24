@@ -227,6 +227,7 @@ async def test_issue_dependency_fields_default_to_empty_lists(tmp_path: Path) ->
 
     issue = await adapter.get_issue(str(issue_id))
 
+    assert issue["auto_land"] is False
     assert issue["blocked_by"] == []
     assert issue["locks"] == []
 
@@ -238,6 +239,7 @@ async def test_issue_dependency_fields_default_to_empty_lists(tmp_path: Path) ->
         connection.commit()
 
     issue = await adapter.get_issue(str(issue_id))
+    assert issue["auto_land"] is False
     assert issue["blocked_by"] == []
     assert issue["locks"] == []
 

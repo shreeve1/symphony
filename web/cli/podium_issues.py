@@ -2,7 +2,9 @@
 
 The /podium-issues skill does the natural-language slicing. This module is the
 boring sink: resolve the Podium binding for cwd, then insert the already-sliced
-issues in dependency order so blocked_by contains real Podium ids.
+issues in dependency order so blocked_by contains real Podium ids. Slicer-created
+issues are auto-land eligible because each slice is required to carry a runnable
+verification command.
 """
 
 from __future__ import annotations
@@ -151,9 +153,9 @@ def _insert_issue(
         INSERT INTO issue(
           binding_name, title, description, state, priority, preferred_agent,
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
-          approval_required, approved, scheduled_for, base_branch, comments_md,
+          approval_required, approved, auto_land, scheduled_for, base_branch, comments_md,
           context_md, external_id, blocked_by, locks, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, NULL, NULL, 'high', 0, ?, 0, NULL, ?, '', '', NULL, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'todo', ?, ?, NULL, NULL, 'high', 0, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
         """,
         (
             str(binding["name"]),
@@ -216,7 +218,7 @@ def list_issues(binding_name: str | None = None) -> list[str]:
         if binding_name:
             rows = connection.execute(
                 """
-                SELECT id, binding_name, title, state, blocked_by, locks
+                SELECT id, binding_name, title, state, blocked_by, locks, auto_land
                 FROM issue WHERE binding_name = ? ORDER BY id
                 """,
                 (binding_name,),
@@ -224,7 +226,7 @@ def list_issues(binding_name: str | None = None) -> list[str]:
         else:
             rows = connection.execute(
                 """
-                SELECT id, binding_name, title, state, blocked_by, locks
+                SELECT id, binding_name, title, state, blocked_by, locks, auto_land
                 FROM issue ORDER BY id
                 """
             ).fetchall()
@@ -235,6 +237,6 @@ def list_issues(binding_name: str | None = None) -> list[str]:
         blocked_by = json.loads(row[4] or "[]")
         locks = json.loads(row[5] or "[]")
         lines.append(
-            f"#{row[0]} {row[1]} {row[3]} blocked_by={blocked_by} locks={locks} {row[2]}"
+            f"#{row[0]} {row[1]} {row[3]} auto_land={bool(row[6])} blocked_by={blocked_by} locks={locks} {row[2]}"
         )
     return lines or ["no issues"]

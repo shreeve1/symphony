@@ -42,6 +42,7 @@ class CandidateIssue:
     resumed: bool = False
     active_run_id: str = ""
     locks: tuple[str, ...] = ()
+    review_dispatch: bool = False
 
 
 @dataclass
