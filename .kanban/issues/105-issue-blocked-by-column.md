@@ -37,7 +37,7 @@ mutual-exclusion on the Podium `issue` row, as two JSON columns in one migration
 
 ## Verification
 
-`uv run pytest web/api/tests/test_alembic_baseline.py tests/test_alembic_baseline.py -q`
+`uv run pytest tests/test_alembic_baseline.py -q`
 and `uv run python -m py_compile web/api/schema.py tracker_podium.py`
 
 ## Implementation Notes
