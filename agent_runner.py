@@ -788,6 +788,29 @@ def run_pi_rpc_agent(
     process: RpcProcessLike | None = None
     pidfile: Path | None = None
     run_id = str(getattr(issue, "active_run_id", "") or "")
+    worktree_path: Path | None = None
+    if getattr(issue, "worktree_active", False):
+        create_worktree = import_module("worktree_facade").create_worktree
+        binding_name = getattr(issue, "binding_name", "") or (
+            config.bindings[0].name if config.bindings else ""
+        )
+        base_branch = getattr(issue, "base_branch", "") or config.base_branch
+        try:
+            worktree_path = create_worktree(
+                config.homelab_repo_path,
+                binding_name,
+                issue.id,
+                base_branch or "main",
+            )
+            LOGGER.info(
+                "worktree_prepared issue_id=%s binding=%s path=%s",
+                issue.id,
+                binding_name,
+                worktree_path,
+            )
+        except Exception as exc:
+            LOGGER.error("worktree_create_failed issue_id=%s error=%s", issue.id, exc)
+            raise AgentRunnerError(f"Worktree creation failed: {exc}") from exc
 
     try:
         Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -811,7 +834,7 @@ def run_pi_rpc_agent(
             skill_source=skill_source,
             session_id=session_id,
         )
-        cwd = str(config.homelab_repo_path)
+        cwd = str(worktree_path or config.homelab_repo_path)
         LOGGER.info(
             "pi_rpc_dispatch issue_id=%s provider=%s model=%s session_id=%s cwd=%s",
             issue.id,
