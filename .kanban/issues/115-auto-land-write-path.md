@@ -1,7 +1,7 @@
 ---
 id: 115
 title: Carry auto_land through the create/patch API
-status: review
+status: done
 blocked_by: [114]
 locks: [web-api]
 priority: 1
@@ -25,10 +25,14 @@ Per ADR-0023, persist `issue.auto_land` through the create/patch API — the pat
 
 ## Acceptance criteria
 
-- [ ] `POST`/patch accept and persist `auto_land`; omitted → `False`.
-- [ ] GET issue payload includes `auto_land`.
-- [ ] An operator/UI-created issue (no `auto_land` in the body) is `False`.
+- [x] `POST`/patch accept and persist `auto_land`; omitted → `False`.
+- [x] GET issue payload includes `auto_land`.
+- [x] An operator/UI-created issue (no `auto_land` in the body) is `False`.
 
 ## Verification
 
 `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q`
+
+## Implementation Notes
+
+Added `auto_land` to the create/patch API models, insert/update path, row boolean coercion, and list payload SELECTs. Covered omitted-default, explicit create, patch round-trip, and invalid-value cases in API tests.

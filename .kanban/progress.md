@@ -89,3 +89,12 @@ This file tracks implementation notes across Ralph iterations.
 **Conventions established:** `auto_land` is exposed from `PodiumTrackerAdapter` as a Python `bool`; NULL/missing values read as `False`.
 **Verification:** `uv run pytest tests/test_alembic_baseline.py -q` and `uv run python -m py_compile web/api/schema.py tracker_podium.py` passed; `tests/test_tracker_podium.py` and an upgrade/downgrade smoke for 0011 also passed. LSP diagnostics only reported environment-only missing imports for Alembic/SQLAlchemy in the migration.
 **Action review:** 2026-06-24 fresh review diffed `d5bd697adf9f6976ac6ae0f92461a5eb6309a023..HEAD`, read all changed files, reran verification, and passed.
+
+## #115 Carry auto_land through create/patch API — 2026-06-24
+
+**What changed:** Added `auto_land` to Podium issue create/patch payloads, persisted it on insert/update, returned it from list/detail payloads, and coerced row values to booleans.
+**Files:** `web/api/main.py`, `web/api/tests/test_issue_create.py`, `web/api/tests/test_issue_patch.py`, `.kanban/issues/115-auto-land-write-path.md`
+**Decisions:** Keep `auto_land` false unless explicitly set by trusted creator paths; operator/UI-created issues remain non-auto-landing by omission.
+**Conventions established:** API `auto_land` follows existing boolean-field behavior (`worktree_active`, `approval_required`): create defaults false, patch accepts explicit bool and rejects null.
+**Verification:** `uv run pytest web/api/tests/test_issue_create.py web/api/tests/test_issue_patch.py -q` passed with PATH including `$HOME/.local/bin`; ruff, py_compile, and LSP diagnostics passed for touched Python files.
+**Action review:** 2026-06-24 fresh review diffed `a795b80fef512771fae8a5d9d7c25f5963a85219..HEAD`, read changed files, reran verification, ran ruff, checked criteria, and passed.
