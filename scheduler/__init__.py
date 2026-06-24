@@ -189,6 +189,7 @@ class _DispatchState:
     cooldown_attempts: int = 0
     pending_review_issue_ids: set[str] = field(default_factory=set)
     pending_completion_bodies: dict[str, str] = field(default_factory=dict)
+    in_flight_locks: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 def _effective_run_cap(config: SymphonyConfig, binding: ProjectBinding | None) -> int:
@@ -2695,10 +2696,16 @@ async def _reserve_candidate(
     if dispatch_state is None:
         raise SchedulerError("dispatch_state is required")
     async with dispatch_state.in_flight_lock:
+        held_locks = (
+            set().union(*dispatch_state.in_flight_locks.values())
+            if dispatch_state.in_flight_locks
+            else set()
+        )
         available = [
             candidate
             for candidate in candidates
             if candidate.id not in dispatch_state.in_flight_ids
+            and set(candidate.locks).isdisjoint(held_locks)
         ]
         selected = _oldest_candidate(
             available,
@@ -2707,6 +2714,7 @@ async def _reserve_candidate(
         )
         if selected is not None:
             dispatch_state.in_flight_ids.add(selected.id)
+            dispatch_state.in_flight_locks[selected.id] = frozenset(selected.locks)
         return selected
 
 
@@ -2718,9 +2726,17 @@ async def _reserve_specific_candidate(
     if dispatch_state is None:
         raise SchedulerError("dispatch_state is required")
     async with dispatch_state.in_flight_lock:
+        held_locks = (
+            set().union(*dispatch_state.in_flight_locks.values())
+            if dispatch_state.in_flight_locks
+            else set()
+        )
         if candidate.id in dispatch_state.in_flight_ids:
             return False
+        if not set(candidate.locks).isdisjoint(held_locks):
+            return False
         dispatch_state.in_flight_ids.add(candidate.id)
+        dispatch_state.in_flight_locks[candidate.id] = frozenset(candidate.locks)
         return True
 
 
@@ -2733,6 +2749,7 @@ async def _release_candidate(
         raise SchedulerError("dispatch_state is required")
     async with dispatch_state.in_flight_lock:
         dispatch_state.in_flight_ids.discard(issue_id)
+        dispatch_state.in_flight_locks.pop(issue_id, None)
 
 
 def _oldest_candidate(

@@ -183,6 +183,7 @@ class PodiumTrackerAdapter:
                         if preferred_skill
                         else ""
                     ),
+                    locks=tuple(issue.get("locks") or ()),
                 )
             )
         return candidates

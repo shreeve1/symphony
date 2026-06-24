@@ -29,6 +29,7 @@ from scheduler import (
     _record_rate_limit,
     _release_candidate,
     _reserve_candidate,
+    _reserve_specific_candidate,
     _resolve_mode,
     _validated_fallback_plan_path,
     reconcile_pending_review,
@@ -154,10 +155,20 @@ def _issue(
 
 
 def _candidate(
-    issue_id: str, *, labels=(), created_at="2026-05-04T00:00:00+00:00"
+    issue_id: str,
+    *,
+    labels=(),
+    created_at="2026-05-04T00:00:00+00:00",
+    locks=(),
 ) -> CandidateIssue:
     return CandidateIssue(
-        issue_id, issue_id, f"Issue {issue_id}", "", tuple(labels), created_at
+        issue_id,
+        issue_id,
+        f"Issue {issue_id}",
+        "",
+        tuple(labels),
+        created_at,
+        locks=tuple(locks),
     )
 
 
@@ -225,6 +236,36 @@ async def test_podium_candidates_wait_for_dependencies(tmp_path: Path, caplog) -
 
     candidates = await adapter.list_candidates()
     assert str(waiting) in {candidate.id for candidate in candidates}
+
+
+@pytest.mark.asyncio
+async def test_podium_candidates_include_locks(tmp_path: Path) -> None:
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, locks, created_at, updated_at
+            ) VALUES ('test', 'locked', '', 'todo', 'pi', '', '', ?,
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """,
+            (json.dumps(["scheduler"]),),
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+    ).list_candidates()
+
+    assert candidates[0].locks == ("scheduler",)
 
 
 @pytest.mark.asyncio
@@ -4368,9 +4409,67 @@ async def test_reserve_candidate_uses_dispatch_state_in_flight_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reserve_candidate_skips_locked_in_flight_conflicts() -> None:
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(2),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    first = _candidate("first", locks=("scheduler",))
+    blocked_by_lock = _candidate("blocked-by-lock", locks=("scheduler",))
+    disjoint = _candidate("disjoint", locks=("web-api",))
+
+    assert (
+        await _reserve_candidate(
+            [first, blocked_by_lock, disjoint],
+            DEFAULT_CONTRACT,
+            approval_policy_enabled=False,
+            dispatch_state=state,
+        )
+    ) == first
+    assert (
+        await _reserve_candidate(
+            [blocked_by_lock, disjoint],
+            DEFAULT_CONTRACT,
+            approval_policy_enabled=False,
+            dispatch_state=state,
+        )
+    ) == disjoint
+
+    await _release_candidate("first", dispatch_state=state)
+    assert (
+        await _reserve_candidate(
+            [blocked_by_lock],
+            DEFAULT_CONTRACT,
+            approval_policy_enabled=False,
+            dispatch_state=state,
+        )
+    ) == blocked_by_lock
+
+
+@pytest.mark.asyncio
+async def test_reserve_specific_candidate_rejects_lock_conflict() -> None:
+    state = _DispatchState(
+        semaphore=asyncio.Semaphore(2),
+        in_flight_ids=set(),
+        in_flight_lock=asyncio.Lock(),
+        poll_interval=1.0,
+    )
+
+    first = _candidate("first", locks=("scheduler",))
+    conflict = _candidate("conflict", locks=("scheduler",))
+
+    assert await scheduler._reserve_specific_candidate(first, dispatch_state=state)
+    assert not await scheduler._reserve_specific_candidate(conflict, dispatch_state=state)
+    assert "conflict" not in state.in_flight_ids
+
+
+@pytest.mark.asyncio
 async def test_reserve_specific_candidate_uses_dispatch_state() -> None:
     """_reserve_specific_candidate must check the dispatch_state's in-flight set."""
-    from scheduler import _DispatchState, _reserve_specific_candidate
+    from scheduler import _DispatchState
 
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),
