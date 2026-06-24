@@ -1,7 +1,7 @@
 ---
 id: 109
 title: Mutual exclusion — co-run lock gate on candidate selection
-status: in-progress
+status: review
 blocked_by: [105, 108]
 locks: [scheduler]
 priority: 1
