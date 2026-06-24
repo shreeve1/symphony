@@ -15,6 +15,7 @@ issue row.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -97,6 +98,8 @@ class PodiumTrackerAdapter:
         issue["name"] = issue.get("title") or ""
         issue["description_html"] = issue.get("description") or ""
         issue["description"] = issue.get("description") or ""
+        issue["blocked_by"] = _json_list(issue.get("blocked_by"), int)
+        issue["locks"] = _json_list(issue.get("locks"), str)
         issue["labels"] = list(self.issue_labels(issue))
         return issue
 
@@ -653,6 +656,24 @@ def _scheduled_due(value: Any) -> bool:
 
 def _append_block(title: str, body: str) -> str:
     return f"{title}\n\n{body.strip()}".strip()
+
+
+def _json_list(value: Any, item_type: type) -> list[Any]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    items: list[Any] = []
+    for item in parsed:
+        try:
+            items.append(item_type(item))
+        except (TypeError, ValueError):
+            pass
+    return items
 
 
 def _now() -> str:

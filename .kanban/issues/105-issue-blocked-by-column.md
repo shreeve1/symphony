@@ -1,7 +1,7 @@
 ---
 id: 105
 title: Add issue.blocked_by + issue.locks columns (schema + Alembic 0010)
-status: pending
+status: in-progress
 blocked_by: []
 locks: [schema]
 priority: 1

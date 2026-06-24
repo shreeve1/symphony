@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0009_issue_external_id"
+INITIAL_REVISION = "0010_issue_blocked_by_locks"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS issue(
   -- NULL; SQLite treats NULLs as distinct so many NULL rows coexist under the
   -- global UNIQUE index below.
   external_id TEXT,
+  blocked_by TEXT,
+  locks TEXT,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 
