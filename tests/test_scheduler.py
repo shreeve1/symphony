@@ -2704,6 +2704,52 @@ async def test_review_terminal_backstop_failure_blocks_without_landing(
 
 
 @pytest.mark.asyncio
+async def test_review_terminal_skips_non_review_dispatch_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: an issue reopened via /reply (in_review -> todo) still carries
+    # the stale `### Symphony Review` marker in comments_md. The subsequent
+    # implement run is NOT a review dispatch (review_dispatch=False) and must
+    # NOT terminate through the review-land path — the marker alone must not
+    # trigger a second review/auto-land.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    monkeypatch.setattr(
+        scheduler,
+        "_run_runnable_verification",
+        lambda command, cwd: pytest.fail("non-review run must not run backstop"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("non-review run must not land worktree"),
+    )
+
+    handled = await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"), binding_name="homelab", review_dispatch=False
+        ),
+        result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="Looks good.",
+        stdout="SYMPHONY_RESULT: done\n",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is False
+
+
+@pytest.mark.asyncio
 async def test_review_terminal_passing_backstop_proceeds_to_auto_land(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

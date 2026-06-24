@@ -3221,10 +3221,15 @@ async def _handle_review_terminal_done(
     notifier: TelegramNotifier | None,
     binding: ProjectBinding | None = None,
 ) -> bool:
-    issue = await _fetch_issue(adapter, candidate.id)
-    comments_md = str(issue.get("comments_md") or candidate.comments_md or "")
-    if not _REVIEW_DISPATCH_MARKER_RE.search(comments_md):
+    # Provenance gate: only a run that was itself dispatched as the review
+    # (candidate.review_dispatch, set at selection when the issue was in_review
+    # with NO marker) terminates through this path. The `### Symphony Review`
+    # marker persists in comments_md forever, so it cannot distinguish a review
+    # run from a later implement run on the SAME issue reopened via /reply
+    # (in_review -> todo): that reopened run must park in_review, not re-land.
+    if not getattr(candidate, "review_dispatch", False):
         return False
+    issue = await _fetch_issue(adapter, candidate.id)
 
     _iu, _du = _build_urls(config, candidate.id)
     resolved_binding = _binding_for_issue(config, candidate, binding=binding)
