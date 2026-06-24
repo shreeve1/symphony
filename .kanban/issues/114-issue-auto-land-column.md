@@ -1,7 +1,7 @@
 ---
 id: 114
 title: Add issue.auto_land column (schema + Alembic 0011)
-status: in-progress
+status: review
 blocked_by: [105]
 locks: [schema]
 priority: 1
