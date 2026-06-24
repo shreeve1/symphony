@@ -1,7 +1,7 @@
 ---
 id: 112
 title: Skill — repurpose /podium-issues into a plan→Podium slicer (no folder scan)
-status: in-progress
+status: review
 blocked_by: [107]
 locks: [skills]
 priority: 2
