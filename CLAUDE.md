@@ -57,6 +57,8 @@ Use `/wiki-update` during or after meaningful sessions to capture durable decisi
 
 The wiki is a standing obligation, not an opt-in step. Before reporting any task complete, run the end-of-session wiki check. This is mandatory, not advisory.
 
+**Exception — Podium slice runs (ADR-0028):** If you are running as a dispatched Podium slice (an issue run), do **not** run `/wiki-update` and do **not** edit any `wiki/` file. Capture your "why" in the issue comment (ADR-0022) only. Per-slice wiki edits collide at land time and cannot dedupe/allocate claim IDs across parallel branches (C-0335). Wiki capture for slice work is a single consolidated, operator-driven `/wiki-update` pass run after a batch of slices lands. This exemption applies to every slice, including a slice running solo. The obligation below applies to interactive sessions, not slice runs.
+
 A task produces durable project knowledge — and therefore requires a `/wiki-update` pass before it is reported done — when it includes any of:
 
 - A decision that sets or reverses project direction, scope, or ownership.

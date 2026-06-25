@@ -55,3 +55,11 @@ Fully implemented and live as of restart to `code_sha=fb799be` (2026-06-25 05:09
 ## Allowlist expansion (2026-06-25)
 
 The original allowlist (`server_is_overloaded`, `service_unavailable`, rate-limit/429, 502/503/504, connection reset/error) did not match observed Codex provider failures, which surface as `exit_code=1, timed_out=false` with stderr like `Codex SSE response headers timed out after 20000ms` or bare `terminated`. These blocked even after the retry machinery landed. The allowlist was expanded to add `timed out`, `timeout`, `\bsse\b`, and `\bterminated\b` (commit `a35f327`) [source: scheduler/transient_retry.py; tests/test_transient_retry.py; run #409 stderr]. A remaining gap: ADR-0026's retry handles terminated agents, not frozen/stalled ones (see stall-detection follow-up).
+
+## Follow-ups resolved by grill (2026-06-25)
+
+The three open follow-ups left after ADR-0026 shipped were grilled and resolved into three accepted ADRs:
+
+- **Stall watchdog (C-0336) → [ADR-0027](../../docs/adr/0027-agent-stall-watchdog.md):** kill a frozen agent after 15min of session-jsonl silence; new stall retry class distinct from the transient allowlist (a frozen agent has no stderr signature). See C-0337.
+- **Parallel-slice land friction (C-0335) → [ADR-0028](../../docs/adr/0028-slice-runs-exempt-from-wiki-obligation.md)** (wiki-churn: slices exempt from the wiki obligation; one consolidated post-land pass) **+ slicer `locks: [migrations]` convention** (duplicate-migration: reuse existing dispatch lock enforcement). See C-0338.
+- **Contract gate drift + markers.py → [ADR-0029](../../docs/adr/0029-contract-gate-frozen-corpus.md):** freeze the scoring corpus to a checked-in fixture (drift was DB hygiene, not parser regression); the markers.py `retry` gap is rejected by design (retry is machine-set, never agent-declared). See C-0339.

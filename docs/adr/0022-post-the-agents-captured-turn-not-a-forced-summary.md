@@ -1,6 +1,6 @@
 # Post the agent's captured turn, not a forced summary block
 
-Status: **proposed** (design locked in a grilling session 2026-06-23; not yet built)
+Status: **accepted** (design locked in a grilling session 2026-06-23; accepted 2026-06-25 after #127 corroborated the failure; implementation pending)
 
 ## Context
 
@@ -20,6 +20,15 @@ breaks the first:
 2. **Content delivery** — the human-readable comment. Forcing this through a
    *self-summary* makes the agent compress, and worse, makes it treat the block
    as a status recap rather than the delivery envelope.
+
+Two issues expose the failure. Symphony Issue #127 / Run #433 is the
+*interactive* variant: a grill-me/podium-issues turn ended with a substantive
+two-slice breakdown and three operator questions in the natural turn (preserved
+in `runs/433.log`) but emitted **neither** a `SYMPHONY_SUMMARY` block nor a
+`SYMPHONY_QUESTION` block, so every conversational turn (runs 372/376/382/433)
+posted the `"Agent finished without a summary."` placeholder while the real
+content sat in the log. The implementer must cover this no-marker conversational
+path, not only the artifact-delivery case below.
 
 dotfiles Issue #105 / Run #310 exposed the failure cleanly. The operator asked
 "give me a prompt I can use to migrate/reconcile a wiki." The agent produced the
