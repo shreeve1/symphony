@@ -334,7 +334,9 @@ def test_verify_pi_support_wraps_probe_timeout(tmp_path: Path) -> None:
         verify_pi_support("pi", "zai", "glm-5.1:high", tmp_path, run_func=fake_run)
 
 
-def test_probe_binding_retries_pi_timeout_then_succeeds(monkeypatch, tmp_path: Path) -> None:
+def test_probe_binding_retries_pi_timeout_then_succeeds(
+    monkeypatch, tmp_path: Path
+) -> None:
     calls = []
     sleeps = []
     config = _config(tmp_path)
