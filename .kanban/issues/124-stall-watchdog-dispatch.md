@@ -1,7 +1,7 @@
 ---
 id: 124
 title: Stall watchdog in _drain_rpc_events + dispatch wiring
-status: review
+status: done
 blocked_by: [123]
 updated: 2026-06-25
 actor: ralph
@@ -29,13 +29,13 @@ Install a silence watchdog inside `_drain_rpc_events` and wire stall detection t
 
 ## Acceptance criteria
 
-- [ ] Silence > `stall_timeout_s` → abort+kill path fires, `_DrainResult.stalled == True`
-- [ ] Sparse events within `stall_timeout_s` → `stalled == False`, normal completion
-- [ ] Stall check runs after 2h deadline check (2h fires first if both expired)
-- [ ] `run_pi_rpc_agent` returns `AgentResult(exit_code=-1, timed_out=False, stderr starts with STALL_WATCHDOG_SENTINEL)` on stall
-- [ ] `run_remote_agent` returns same sentinel contract on stall
-- [ ] `stall_timeout_s` parameter is keyword-only (doesn't break existing callers)
-- [ ] All existing tests in `tests/test_agent_runner.py` still pass
+- [x] Silence > `stall_timeout_s` → abort+kill path fires, `_DrainResult.stalled == True`
+- [x] Sparse events within `stall_timeout_s` → `stalled == False`, normal completion
+- [x] Stall check runs after 2h deadline check (2h fires first if both expired)
+- [x] `run_pi_rpc_agent` returns `AgentResult(exit_code=-1, timed_out=False, stderr starts with STALL_WATCHDOG_SENTINEL)` on stall
+- [x] `run_remote_agent` returns same sentinel contract on stall
+- [x] `stall_timeout_s` parameter is keyword-only (doesn't break existing callers)
+- [x] All existing tests in `tests/test_agent_runner.py` still pass
 
 ## Verification
 
@@ -46,3 +46,7 @@ Install a silence watchdog inside `_drain_rpc_events` and wire stall detection t
 ## Blocked by
 
 - Blocked by #123
+
+## Implementation Notes
+
+Added the RPC silence watchdog in `_drain_rpc_events`, wired `config.stall_timeout_ms` through local and remote Pi RPC dispatch, and return `SYMPHONY_STALL_WATCHDOG` stderr sentinels with `timed_out=False` on stalls. Added direct drain tests plus local/remote dispatch sentinel coverage.
