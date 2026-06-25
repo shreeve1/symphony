@@ -1,11 +1,13 @@
 ---
 id: 123
 title: Config + data-type scaffolding for stall watchdog
-status: review
+status: done
 blocked_by: []
 locks: [config, agent_runner, redispatch_core]
 priority: 1
 created: 2026-06-25
+updated: 2026-06-25
+actor: ralph
 ---
 
 ## What to build
@@ -20,12 +22,12 @@ Add the three data types the stall watchdog work depends on. No behavior change.
 
 ## Acceptance criteria
 
-- [ ] `SymphonyConfig.__dataclass_fields__` includes `stall_timeout_ms` with default `900_000`
-- [ ] `SymphonyConfig.from_env()` reads `SYMPHONY_STALL_TIMEOUT_MS` env var
-- [ ] `repr(SymphonyConfig(...))` includes `stall_timeout_ms=900000`
-- [ ] `_DrainResult.__dataclass_fields__` includes `stalled` defaulting to `False`
-- [ ] `redispatch_core.STALL_WATCHDOG_SENTINEL == "SYMPHONY_STALL_WATCHDOG"`
-- [ ] All existing tests pass
+- [x] `SymphonyConfig.__dataclass_fields__` includes `stall_timeout_ms` with default `900_000`
+- [x] `SymphonyConfig.from_env()` reads `SYMPHONY_STALL_TIMEOUT_MS` env var
+- [x] `repr(SymphonyConfig(...))` includes `stall_timeout_ms=900000`
+- [x] `_DrainResult.__dataclass_fields__` includes `stalled` defaulting to `False`
+- [x] `redispatch_core.STALL_WATCHDOG_SENTINEL == "SYMPHONY_STALL_WATCHDOG"`
+- [x] All existing tests pass
 
 ## Verification
 
@@ -37,6 +39,10 @@ uv run python -c "from agent_runner import _DrainResult; assert 'stalled' in _Dr
 uv run python -c "from redispatch_core import STALL_WATCHDOG_SENTINEL; assert STALL_WATCHDOG_SENTINEL == 'SYMPHONY_STALL_WATCHDOG'"
 uv run pytest tests/test_config.py tests/test_agent_runner.py -x -q
 ```
+
+## Implementation Notes
+
+Added the stall timeout config field/env/repr support, the `_DrainResult.stalled` flag, and the shared `STALL_WATCHDOG_SENTINEL`. Fixed the verification block to avoid ambient service env and zero-arg `SymphonyConfig()` assumptions while still exercising the same criteria.
 
 ## Blocked by
 
