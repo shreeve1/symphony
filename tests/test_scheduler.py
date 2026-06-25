@@ -785,10 +785,9 @@ async def test_run_tick_accepts_explicit_agent_terminal_state(
 
 
 @pytest.mark.asyncio
-async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> None:
+async def test_run_tick_non_transient_nonzero_moves_to_blocked(tmp_path: Path) -> None:
     for result, reason in [
         (AgentResult(2, 10, False), "nonzero"),
-        (AgentResult(-1, 20, True), "timeout"),
     ]:
         transport = FakeTransport()
         transport.issues["issue-1"] = _issue("issue-1")
@@ -808,6 +807,234 @@ async def test_run_tick_nonzero_and_timeout_move_to_blocked(tmp_path: Path) -> N
             == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
         )
         assert len(transport.comments["issue-1"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_tick_transient_nonzero_requeues_to_todo_with_retry_marker(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    adapter = RunStoreAdapter(transport, tmp_path / "podium.db")
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        tick = await run_tick(
+            _config(tmp_path),
+            adapter,
+            agent_runner=lambda issue, prompt: AgentResult(
+                1, 10, False, stderr="server_is_overloaded"
+            ),
+            render_prompt=lambda issue: "prompt",
+            poller=lambda adapter: [_candidate("issue-1")],
+            repo_dirty=lambda path: False,
+            now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+            notifier=notifier,
+        )
+
+    mock_send.assert_not_called()
+
+    assert tick.reason == "transient-retry-implement"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    marker = transport.comments["issue-1"][0]["comment_html"]
+    assert marker == "### Symphony Retry (transient · 1) · 2026-06-25T12:00:00+00:00"
+    assert adapter.runs["run-1"]["state"] == "failed"
+    assert adapter.runs["run-1"]["verdict"] == "retry"
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_then_success_completes(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    attempts = iter(
+        [
+            AgentResult(1, 10, False, stderr="server_is_overloaded"),
+            AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: review\n"),
+        ]
+    )
+
+    first = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: next(attempts),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+    )
+    comments_md = "\n\n".join(
+        comment["comment_html"] for comment in transport.comments["issue-1"]
+    )
+    second = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: next(attempts),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [
+            replace(_candidate("issue-1"), comments_md=comments_md)
+        ],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 6, 25, 12, 2, tzinfo=UTC),
+    )
+
+    assert first.reason == "transient-retry-implement"
+    assert second.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_marker_cools_down_reselection(tmp_path: Path) -> None:
+    from scheduler.transient_retry import format_retry_marker
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    marker = format_retry_marker(
+        1, "overloaded", datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    )
+    called = False
+
+    def runner(issue, prompt):
+        nonlocal called
+        called = True
+        return AgentResult(0, 10, False)
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=runner,
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-1"), comments_md=marker)],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 6, 25, 12, 0, 30, tzinfo=UTC),
+    )
+
+    assert tick.reason == "no-candidates"
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_third_overload_failure_blocks_and_notifies_once(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from scheduler.transient_retry import format_retry_marker
+
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    comments_md = "\n".join(
+        [
+            format_retry_marker(1, "overloaded", now.replace(hour=11, minute=0)),
+            format_retry_marker(2, "overloaded", now.replace(hour=11, minute=30)),
+        ]
+    )
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    notifier = TelegramNotifier(bot_token="b", chat_id="c")
+
+    with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
+        tick = await run_tick(
+            _config(tmp_path),
+            _adapter(transport),
+            agent_runner=lambda issue, prompt: AgentResult(
+                1, 10, False, stderr="server_is_overloaded"
+            ),
+            render_prompt=lambda issue: "prompt",
+            poller=lambda adapter: [
+                replace(_candidate("issue-1"), comments_md=comments_md)
+            ],
+            repo_dirty=lambda path: False,
+            now=lambda: now,
+            notifier=notifier,
+        )
+
+    assert tick.reason == "nonzero"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert not any(
+        "Symphony Retry" in c["comment_html"] for c in transport.comments["issue-1"]
+    )
+    mock_send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_non_transient_stderr_blocks_without_retry(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            1,
+            10,
+            False,
+            stderr="Traceback (most recent call last):\nValueError: bad",
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert tick.reason == "nonzero"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert not any(
+        "Symphony Retry" in c["comment_html"] for c in transport.comments["issue-1"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_timeout_retries_once_then_blocks(tmp_path: Path) -> None:
+    from scheduler.transient_retry import format_retry_marker
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    adapter = RunStoreAdapter(transport, tmp_path / "podium.db")
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+
+    first = await run_tick(
+        _config(tmp_path),
+        adapter,
+        agent_runner=lambda issue, prompt: AgentResult(-1, 20, True),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: now,
+    )
+
+    exhausted = FakeTransport()
+    exhausted.issues["issue-2"] = _issue("issue-2")
+    old_marker = format_retry_marker(1, "timeout", now.replace(hour=11))
+    second = await run_tick(
+        _config(tmp_path),
+        _adapter(exhausted),
+        agent_runner=lambda issue, prompt: AgentResult(-1, 20, True),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-2"), comments_md=old_marker)],
+        repo_dirty=lambda path: False,
+        now=lambda: now,
+    )
+
+    assert first.reason == "transient-retry-implement"
+    assert adapter.runs["run-1"]["state"] == "failed"
+    assert adapter.runs["run-1"]["verdict"] == "retry"
+    assert second.reason == "timeout"
+    assert (
+        exhausted.issues["issue-2"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
 
 
 @pytest.mark.asyncio
@@ -1811,8 +2038,13 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(
 async def test_run_tick_stderr_appears_in_blocked_timeout_comment(
     tmp_path: Path,
 ) -> None:
+    from scheduler.transient_retry import format_retry_marker
+
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
+    retry_marker = format_retry_marker(
+        1, "timeout", datetime(2026, 5, 4, 1, 0, tzinfo=UTC)
+    )
 
     await run_tick(
         _config(tmp_path),
@@ -1821,8 +2053,11 @@ async def test_run_tick_stderr_appears_in_blocked_timeout_comment(
             -1, 20, True, stdout="partial", stderr="timeout error detail"
         ),
         render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
+        poller=lambda adapter: [
+            replace(_candidate("issue-1"), comments_md=retry_marker)
+        ],
         repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
     )
 
     blocked_comment = transport.comments["issue-1"][0]["comment_html"]

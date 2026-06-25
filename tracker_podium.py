@@ -576,12 +576,15 @@ class PodiumTrackerAdapter:
         issue_id = row["issue_id"]
         if issue_id is None:
             return
+        verdict = (
+            row["verdict"] if row["verdict"] in {"done", "review", "blocked"} else None
+        )
         connection.execute(
             "UPDATE issue SET latest_run_id = ?, latest_run_state = ?, latest_verdict = ?, last_event_at = ?, updated_at = ? WHERE id = ?",
             (
                 row["id"],
                 row["state"],
-                row["verdict"],
+                verdict,
                 row["ended_at"] or row["started_at"] or _now(),
                 _now(),
                 issue_id,

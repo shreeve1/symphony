@@ -23,7 +23,10 @@ def _seed_db(
         connection.executescript(SCHEMA_SQL)
         connection.execute("INSERT INTO binding(name) VALUES ('test')")
         if preferred_skill is not None:
-            connection.execute("INSERT INTO skill(name, description, source) VALUES (?, '', 'test')", (preferred_skill,))
+            connection.execute(
+                "INSERT INTO skill(name, description, source) VALUES (?, '', 'test')",
+                (preferred_skill,),
+            )
         cursor = connection.execute(
             """
             INSERT INTO issue(
@@ -59,7 +62,9 @@ async def test_list_issues_candidates_and_state_helpers(tmp_path: Path) -> None:
     assert adapter.issue_is_state(issues[0], TrackerRole.STATE_TODO)
     assert adapter.issue_labels(issues[0]) == ("build", "agent:pi")
     assert adapter.labels_contain_role(candidates[0].labels, TrackerRole.MODE_BUILD)
-    assert not adapter.labels_contain_role(candidates[0].labels, TrackerRole.APPROVAL_REQUIRED)
+    assert not adapter.labels_contain_role(
+        candidates[0].labels, TrackerRole.APPROVAL_REQUIRED
+    )
     assert candidates[0].preferred_skill == "/dev-build"
 
 
@@ -143,7 +148,9 @@ async def test_comments_context_and_comment_listing(tmp_path: Path) -> None:
     issue_id = _seed_db(tmp_path / "podium.db")
     adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
 
-    await adapter.add_comment(str(issue_id), CommentPayload(body="summary", outcome="done"))
+    await adapter.add_comment(
+        str(issue_id), CommentPayload(body="summary", outcome="done")
+    )
     await adapter.post_comment(str(issue_id), "second summary")
     await adapter.append_context(str(issue_id), "full output blob")
     comments = await adapter.list_comments(str(issue_id))
@@ -163,7 +170,9 @@ async def test_claimed_at_reads_run_record_started_at(tmp_path: Path) -> None:
     issue_id = _seed_db(tmp_path / "podium.db", state="running")
     adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
 
-    run = await adapter.record_run({"issue_id": issue_id, "agent": "pi", "state": "queued"})
+    run = await adapter.record_run(
+        {"issue_id": issue_id, "agent": "pi", "state": "queued"}
+    )
     await adapter.update_run(
         run["id"], {"state": "running", "started_at": "2026-06-11T01:02:03+00:00"}
     )
@@ -199,6 +208,31 @@ async def test_run_roundtrip(tmp_path: Path) -> None:
     assert fetched["summary"] == "ok"
     assert issue["latest_run_id"] == run["id"]
     assert issue["latest_run_state"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_run_retry_verdict_roundtrip_leaves_latest_verdict_empty(
+    tmp_path: Path,
+) -> None:
+    issue_id = _seed_db(tmp_path / "podium.db")
+    adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")
+
+    run = await adapter.record_run(
+        {
+            "issue_id": issue_id,
+            "agent": "pi",
+            "state": "failed",
+            "verdict": "retry",
+            "summary": "transient",
+            "exit_code": 1,
+        }
+    )
+    issue = await adapter.get_issue(str(issue_id))
+
+    assert run["verdict"] == "retry"
+    assert issue["latest_run_id"] == run["id"]
+    assert issue["latest_run_state"] == "failed"
+    assert issue["latest_verdict"] is None
 
 
 @pytest.mark.asyncio

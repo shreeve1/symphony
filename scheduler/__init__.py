@@ -134,6 +134,7 @@ from .transient_retry import (
     count_retries,
     format_retry_marker,
     is_transient,
+    retry_cooldown_expired,
 )
 
 _wake_signal = import_module("web.api.wake_signal")
@@ -1470,6 +1471,15 @@ async def _select_run_tick_candidate(
     _clear_rate_limit(dispatch_state)
     if not is_coding:
         candidates = [c for c in candidates if not getattr(c, "review_dispatch", False)]
+    now_dt = now()
+    candidates = [
+        c
+        for c in candidates
+        if getattr(c, "review_dispatch", False)
+        or not c.comments_md
+        or count_retries(c.comments_md) == 0
+        or retry_cooldown_expired(c.comments_md, now_dt)
+    ]
 
     approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
     if candidate is None:
@@ -1966,6 +1976,79 @@ async def _maybe_transient_review_retry(
     return None
 
 
+async def _retry_comments_text(
+    adapter: TrackerAdapter, candidate: CandidateIssue
+) -> str:
+    if candidate.comments_md:
+        return candidate.comments_md
+    issue = await _fetch_issue(adapter, candidate.id)
+    if issue.get("comments_md"):
+        return str(issue.get("comments_md") or "")
+    comments = await adapter.list_comments(candidate.id)
+    return "\n\n".join(
+        str(comment.get("body") or comment.get("comment_html") or "")
+        for comment in comments
+    )
+
+
+async def _maybe_retry_transient_implement(
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    result: AgentResult,
+    *,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    parse_stderr: bool,
+    now: Callable[[], datetime],
+    mode: str,
+) -> TickResult | None:
+    if getattr(candidate, "review_dispatch", False):
+        return None
+    if not result.timed_out and result.exit_code == 0:
+        return None
+    if not is_transient(result.stderr, result.exit_code, result.timed_out):
+        return None
+
+    comments_md = await _retry_comments_text(adapter, candidate)
+    retry_count = count_retries(comments_md)
+    retry_cap = MAX_TIMEOUT_RETRIES if result.timed_out else MAX_OVERLOAD_RETRIES
+    retry_at = now()
+    if retry_count >= retry_cap or not retry_cooldown_expired(comments_md, retry_at):
+        return None
+
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="failed",
+        verdict="retry",
+        summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
+        or "Transient agent failure; retrying.",
+        ended_at=retry_at.isoformat(),
+    )
+    await adapter.add_comment(
+        candidate.id,
+        CommentPayload(
+            body=format_retry_marker(
+                retry_count + 1,
+                "timeout" if result.timed_out else "overloaded",
+                retry_at,
+            )
+        ),
+    )
+    await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+    LOGGER.info(
+        "transient_retry_implement issue_id=%s attempt=%s cap=%s",
+        candidate.id,
+        retry_count + 1,
+        retry_cap,
+    )
+    return TickResult(True, "transient-retry-implement", candidate.id, mode=mode)
+
+
 async def _classify_terminal(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -2002,6 +2085,19 @@ async def _classify_terminal(
         )
         if transient_retry is not None:
             return transient_retry
+        retry = await _maybe_retry_transient_implement(
+            adapter,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
+            secrets=secrets,
+            parse_stderr=parse_stderr,
+            now=now,
+            mode=mode,
+        )
+        if retry is not None:
+            return retry
 
     if result.timed_out:
         msg = f"Agent timed out after {result.duration_ms} ms"

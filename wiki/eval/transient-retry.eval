@@ -1,0 +1,1 @@
+ADR-0026 implement-run transient retry behavior ||| verdict=retry

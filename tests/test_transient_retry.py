@@ -30,6 +30,7 @@ def test_is_transient_matches_http_and_rate_limit_markers() -> None:
 def test_is_transient_matches_connection_errors() -> None:
     assert is_transient("connection reset by peer", 1, False)
     assert is_transient("connection error", 1, False)
+    assert is_transient("Codex SSE response headers timed out after 20000ms", 1, False)
 
 
 def test_is_transient_matches_provider_timeouts_and_termination() -> None:
