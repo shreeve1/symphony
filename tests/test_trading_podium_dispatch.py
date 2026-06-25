@@ -60,7 +60,11 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _seed_db(
-    path: Path, *, worktree_active: bool = False, preferred_agent: str = "pi"
+    path: Path,
+    *,
+    worktree_active: bool = False,
+    preferred_agent: str = "pi",
+    preferred_model: str | None = None,
 ) -> int:
     skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
     skill_file.parent.mkdir(parents=True, exist_ok=True)
@@ -77,11 +81,11 @@ def _seed_db(
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              preferred_skill, worktree_active, base_branch, comments_md,
+              preferred_model, preferred_skill, worktree_active, base_branch, comments_md,
               context_md, created_at, updated_at
-            ) VALUES ('trading', 'Smoke cutover', 'Exercise trading dispatch', 'todo', ?, '/dev-build', ?, 'main', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            ) VALUES ('trading', 'Smoke cutover', 'Exercise trading dispatch', 'todo', ?, ?, '/dev-build', ?, 'main', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
             """,
-            (preferred_agent, worktree_active),
+            (preferred_agent, preferred_model, worktree_active),
         )
         connection.commit()
         assert cursor.lastrowid is not None
@@ -95,7 +99,7 @@ async def test_trading_podium_dispatch_records_run_log_and_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = tmp_path / "podium.db"
-    issue_id = _seed_db(db_path)
+    issue_id = _seed_db(db_path, preferred_model="gpt-5.5")
     (tmp_path / "WORKFLOW.md").write_text(
         "Repo policy. mode={{issue.mode}}", encoding="utf-8"
     )
