@@ -20,6 +20,12 @@ TRANSIENT_PATTERNS = [
         r"connection reset",
         r"connection error",
         r"rate[._-]?limit",
+        # Provider/stream timeouts and process kills surface as exit_code=1 with
+        # timed_out=False (observed: Codex SSE header timeout, bare "terminated").
+        r"timed out",
+        r"timeout",
+        r"\bsse\b",
+        r"\bterminated\b",
     )
 ]
 

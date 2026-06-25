@@ -32,6 +32,14 @@ def test_is_transient_matches_connection_errors() -> None:
     assert is_transient("connection error", 1, False)
 
 
+def test_is_transient_matches_provider_timeouts_and_termination() -> None:
+    # Observed Codex provider failures (issues #134/#136) exit 1 with timed_out=False.
+    assert is_transient("Codex SSE response headers timed out after 20000ms", 1, False)
+    assert is_transient("terminated", 1, False)
+    assert is_transient("read timeout", 1, False)
+    assert is_transient("upstream SSE response dropped", 1, False)
+
+
 def test_is_transient_honors_timeout() -> None:
     assert is_transient("", 0, True)
 
