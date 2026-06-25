@@ -128,6 +128,13 @@ from .sanitize import (
 from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
+from .transient_retry import (
+    MAX_OVERLOAD_RETRIES,
+    MAX_TIMEOUT_RETRIES,
+    count_retries,
+    format_retry_marker,
+    is_transient,
+)
 
 _wake_signal = import_module("web.api.wake_signal")
 consume_wake_sentinel = _wake_signal.consume_wake_sentinel
@@ -1881,6 +1888,82 @@ async def _append_terminal_output_context(
         await adapter.append_context(candidate.id, "\n\n".join(context_parts))
 
 
+async def _maybe_transient_review_retry(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    result: AgentResult,
+    *,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    parse_stderr: bool,
+    notifier: TelegramNotifier | None,
+    now: Callable[[], datetime],
+    mode: str,
+) -> TickResult | None:
+    if not getattr(candidate, "review_dispatch", False):
+        return None
+    if not is_transient(result.stderr, result.exit_code, result.timed_out):
+        return None
+
+    now_dt = now()
+    comments_md = getattr(candidate, "comments_md", "") or ""
+    prior = count_retries(comments_md)
+    cap = MAX_TIMEOUT_RETRIES if result.timed_out else MAX_OVERLOAD_RETRIES
+    retry_summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+    if prior < cap:
+        marker = format_retry_marker(
+            prior + 1, "timeout" if result.timed_out else "transient", now_dt
+        )
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="retry",
+            summary=retry_summary or "Transient review failure; retry queued.",
+            ended_at=now_dt.isoformat(),
+        )
+        await adapter.add_comment(
+            candidate.id,
+            CommentPayload(
+                body=f"{marker}\n\n{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}"
+            ),
+        )
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
+        return TickResult(True, "transient-retry-review", candidate.id, mode=mode)
+
+    if prior >= cap:
+        msg = f"Transient review failure retry cap exhausted after {prior} retries."
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=retry_summary or msg,
+            ended_at=now_dt.isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(True, "transient-retry-exhausted-review", candidate.id, mode=mode)
+    return None
+
+
 async def _classify_terminal(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -1900,6 +1983,23 @@ async def _classify_terminal(
     binding: ProjectBinding | None,
 ) -> TickResult:
     """Classify terminal agent output and apply final tracker/run transitions."""
+
+    if result.timed_out or result.exit_code != 0:
+        transient_retry = await _maybe_transient_review_retry(
+            config,
+            adapter,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
+            secrets=secrets,
+            parse_stderr=parse_stderr,
+            notifier=notifier,
+            now=now,
+            mode=mode,
+        )
+        if transient_retry is not None:
+            return transient_retry
 
     if result.timed_out:
         msg = f"Agent timed out after {result.duration_ms} ms"

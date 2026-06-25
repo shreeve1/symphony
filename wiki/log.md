@@ -1,5 +1,12 @@
 # Wiki Log
 
+## [2026-06-25] session-update | Issue #137 ADR-0026 review-run transient retry
+
+- Actor: agent (Pi), direct implementation.
+- Inputs: Podium Issue #137 / ADR-0026 review retry slice; `scheduler/__init__.py`; `scheduler/transient_retry.py`; `redispatch_core.py`; `tracker_podium.py`; `web/api/schema.py`; `web/api/migrations/versions/0012_retry_verdict.py`; `tests/test_scheduler.py`; issue verification command.
+- Outputs: added review-run transient retry in `_classify_terminal`, writing `retry` Run verdict plus retry/reland-pending markers and returning the Issue to `in_review`; preserved review re-entry through `candidate.review_dispatch` after the retry cooldown; added cap-exhaustion block+notify behavior; added Podium schema revision `0012_retry_verdict`; updated `wiki/analyses/adr-0026-transient-failure-retry.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md` (C-0333), `wiki/eval/worktree.eval`, and this log entry.
+- Notes: Verification passed as issue-specified (`uv run pytest tests/test_scheduler.py tests/test_tracker_podium.py -q`, 219 passed). Additional checks passed: `uv run pytest tests/test_alembic_baseline.py -q`, `uv run ruff check redispatch_core.py scheduler/transient_retry.py scheduler/__init__.py tracker_podium.py tests/test_scheduler.py web/api/schema.py web/api/migrations/versions/0012_retry_verdict.py`, `git diff --check`, and touched-file LSP diagnostics. No secrets/env files read; no service restart, live DB migration, or outward notification.
+
 ## [2026-06-25] session-update | Issue #135 ADR-0026 auto-land re-drive
 
 - Actor: agent (Pi), direct implementation.

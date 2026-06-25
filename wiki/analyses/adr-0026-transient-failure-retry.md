@@ -11,6 +11,8 @@ sources:
   - tracker_podium.py
   - web/api/worktree.py
   - worktree_facade.py
+  - web/api/schema.py
+  - web/api/migrations/versions/0012_retry_verdict.py
   - wiki/raw/sessions/2026-06-24-adr-0024-babysitting-roadblocks.md
 confidence: high
 tags: [adr, transient-failure, retry, auto-land, review-retry, blocked, Codex, server_is_overloaded, claim-id-collision]
@@ -44,4 +46,6 @@ ADR-0026 is proposed after the ADR-0024 batch exposed that the dispatch loop sti
 
 Partially implemented. Issue #135 landed the auto-land re-drive slice: `_handle_review_terminal_done` retries `_land_review_worktree` exactly once after `asyncio.sleep(2.0)` on any land error, with no error-string narrowing. Retry success proceeds to normal `done` landing; a second failure blocks with the final land error. Tests cover fail-then-success, fail-twice, and the 2s sleep seam [source: scheduler/__init__.py; tests/test_scheduler.py].
 
-The broader terminal-classifier retry, review-run transient retry, retry-marker cooldown, and startup probe retry/fail-soft portions remain proposed/unimplemented [source: docs/adr/0026-transient-failure-retry-not-block.md#shippable-in-two-independent-pieces].
+Issue #137 landed the review-run terminal retry slice: `_classify_terminal` now catches known-transient nonzero/timeout results for `candidate.review_dispatch`, finishes the Run as `failed` with `verdict="retry"`, appends a `### Symphony Retry (transient · N)` marker plus `### Symphony Reland Pending`, transitions the Issue back to `in_review`, and returns `transient-retry-review`; `tracker_podium.list_candidates` then treats the unconsumed reland marker as another review dispatch only after the retry-marker cooldown expires, preserving the C-0324 `candidate.review_dispatch` provenance gate without immediate retry churn. Exhausting the transient cap blocks and notifies. Podium schema revision `0012_retry_verdict` allows `retry` in `run.verdict` / `issue.latest_verdict`, because the retry Run is projected like other Run completions [source: scheduler/__init__.py; tracker_podium.py; web/api/schema.py; web/api/migrations/versions/0012_retry_verdict.py; tests/test_scheduler.py].
+
+The implement-run terminal-classifier retry and startup probe retry/fail-soft portions remain proposed/unimplemented [source: docs/adr/0026-transient-failure-retry-not-block.md#shippable-in-two-independent-pieces].

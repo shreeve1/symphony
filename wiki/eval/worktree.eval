@@ -1,3 +1,4 @@
 What happens when Podium worktree FF merge fails because base advanced without conflict? ||| rebase
 How does ADR-0024 handle a dirty but passing coding review before auto-land? ||| RELAND_PENDING
 How does ADR-0026 auto-land handle a first land_worktree failure after issue 135? ||| REVIEW_LAND_RETRY_DELAY_S
+How does ADR-0026 review-run transient retry preserve review provenance? ||| transient-retry-review

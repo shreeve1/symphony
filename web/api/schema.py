@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0011_issue_auto_land"
+INITIAL_REVISION = "0012_retry_verdict"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS issue(
   created_at TIMESTAMP,
   updated_at TIMESTAMP,
   latest_run_id INTEGER,
-  latest_verdict TEXT CHECK (latest_verdict IS NULL OR latest_verdict IN ('done','review','blocked')),
+  latest_verdict TEXT CHECK (latest_verdict IS NULL OR latest_verdict IN ('done','review','blocked','retry')),
   latest_run_state TEXT CHECK (latest_run_state IS NULL OR latest_run_state IN ('queued','running','succeeded','failed')),
   last_event_at TIMESTAMP,
   approval_required BOOLEAN DEFAULT FALSE,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS run(
   provider TEXT,
   model TEXT,
   state TEXT NOT NULL CHECK (state IN ('queued','running','succeeded','failed')),
-  verdict TEXT CHECK (verdict IS NULL OR verdict IN ('done','review','blocked')),
+  verdict TEXT CHECK (verdict IS NULL OR verdict IN ('done','review','blocked','retry')),
   summary TEXT,
   exit_code INTEGER,
   cost_usd NUMERIC,

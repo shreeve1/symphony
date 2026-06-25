@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE
+from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
 from skill_mode_map import mode_for_skill
 from tracker_contract import (
     DEFAULT_CONTRACT,
@@ -172,7 +172,11 @@ class PodiumTrackerAdapter:
                 RELAND_DONE_RE.findall(comments_md)
             )
             review_dispatch = is_review and (
-                not REVIEW_MARKER_RE.search(comments_md) or reland_unconsumed
+                not REVIEW_MARKER_RE.search(comments_md)
+                or (
+                    reland_unconsumed
+                    and retry_cooldown_expired(comments_md, datetime.now(UTC))
+                )
             )
             if not is_todo and not review_dispatch:
                 continue

@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from collections import defaultdict
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -2621,6 +2621,201 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
     assert "Health check OK" not in completion_comment
+
+
+@pytest.mark.asyncio
+async def test_transient_review_failure_relands_review_dispatch(tmp_path: Path) -> None:
+    from redispatch_core import RELAND_PENDING_PREFIX
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    repo = tmp_path / "repo"
+    _init_tmp_repo(repo)
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'needs review retry', '', 'in_review', 'pi', '', '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """
+        )
+        issue_id = str(cursor.lastrowid)
+        connection.commit()
+
+    base_config = _config(repo)
+    binding = replace(
+        base_config.bindings[0],
+        name="test",
+        binding_type="coding",
+        tracker="podium",
+        repo_path=repo,
+    )
+    config = base_config.for_binding(binding)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    seen_review_dispatch: list[bool] = []
+
+    def fail_once(issue: CandidateIssue, prompt: str) -> AgentResult:
+        seen_review_dispatch.append(issue.review_dispatch)
+        return AgentResult(1, 10, False, stderr="server_is_overloaded")
+
+    result = await run_tick(
+        config,
+        adapter,
+        agent_runner=fail_once,
+        render_prompt=lambda issue: "prompt",
+        run_blocked_reconciler=False,
+        binding=binding,
+        now=lambda: datetime.now(UTC) - timedelta(minutes=2),
+    )
+
+    assert result.reason == "transient-retry-review"
+    issue = await adapter.get_issue(issue_id)
+    assert issue["state"] == "in_review"
+    assert "### Symphony Retry (transient · 1)" in issue["comments_md"]
+    assert RELAND_PENDING_PREFIX in issue["comments_md"]
+    assert seen_review_dispatch == [True]
+    with sqlite3.connect(db_path) as connection:
+        run = connection.execute("SELECT state, verdict FROM run").fetchone()
+    assert run == ("failed", "retry")
+
+    def succeed(issue: CandidateIssue, prompt: str) -> AgentResult:
+        seen_review_dispatch.append(issue.review_dispatch)
+        return AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: review")
+
+    result = await run_tick(
+        config,
+        adapter,
+        agent_runner=succeed,
+        render_prompt=lambda issue: "prompt",
+        run_blocked_reconciler=False,
+        binding=binding,
+        now=lambda: datetime.now(UTC),
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert seen_review_dispatch == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_transient_review_retry_cooldown_hides_reland_candidate(
+    tmp_path: Path,
+) -> None:
+    from redispatch_core import RELAND_PENDING_PREFIX
+    from scheduler.transient_retry import format_retry_marker
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    now_dt = datetime.now(UTC)
+    comments_md = "\n".join(
+        [
+            "### Symphony Review (1)",
+            format_retry_marker(1, "transient", now_dt),
+            f"{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}",
+        ]
+    )
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'cooling down', '', 'in_review', 'pi', ?, '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """,
+            (comments_md,),
+        )
+        connection.commit()
+
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    assert await adapter.list_candidates() == []
+
+
+@pytest.mark.asyncio
+async def test_transient_review_retry_cap_blocks_and_notifies(tmp_path: Path) -> None:
+    from redispatch_core import RELAND_PENDING_PREFIX
+    from scheduler.transient_retry import format_retry_marker
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        async def send(self, message: str) -> None:
+            self.messages.append(message)
+
+    now_dt = datetime.now(UTC) - timedelta(minutes=2)
+    comments_md = "\n".join(
+        [
+            "### Symphony Review (1)",
+            format_retry_marker(1, "transient", now_dt),
+            f"{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}",
+            format_retry_marker(2, "transient", now_dt),
+            f"{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}",
+        ]
+    )
+    repo = tmp_path / "repo"
+    _init_tmp_repo(repo)
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'needs review retry cap', '', 'in_review', 'pi', ?, '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """,
+            (comments_md,),
+        )
+        issue_id = str(cursor.lastrowid)
+        connection.commit()
+
+    base_config = _config(repo)
+    binding = replace(
+        base_config.bindings[0],
+        name="test",
+        binding_type="coding",
+        tracker="podium",
+        repo_path=repo,
+    )
+    config = base_config.for_binding(binding)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    notifier = FakeNotifier()
+    seen_review_dispatch: list[bool] = []
+
+    result = await run_tick(
+        config,
+        adapter,
+        agent_runner=lambda issue, prompt: seen_review_dispatch.append(issue.review_dispatch)
+        or AgentResult(1, 10, False, stderr="service_unavailable"),
+        render_prompt=lambda issue: "prompt",
+        run_blocked_reconciler=False,
+        binding=binding,
+        notifier=notifier,  # type: ignore[arg-type]
+        now=lambda: datetime.now(UTC),
+    )
+
+    assert result.reason == "transient-retry-exhausted-review"
+    issue = await adapter.get_issue(issue_id)
+    assert issue["state"] == "blocked"
+    assert "retry cap exhausted after 2 retries" in issue["comments_md"]
+    assert seen_review_dispatch == [True]
+    assert notifier.messages
 
 
 def test_extract_runnable_verification() -> None:

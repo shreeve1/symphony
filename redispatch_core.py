@@ -7,6 +7,7 @@ without importing each other's scaffolding.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 from os import PathLike
 from typing import Any
 
@@ -24,6 +25,37 @@ RELAND_PENDING_RE = re.compile(
     rf"^{re.escape(RELAND_PENDING_PREFIX)}(?:\s|$)", re.MULTILINE
 )
 RELAND_DONE_RE = re.compile(rf"^{re.escape(RELAND_DONE_PREFIX)}(?:\s|$)", re.MULTILINE)
+_RETRY_MARKER_PATTERN = (
+    rf"^{re.escape(RETRY_MARKER_PREFIX)}\s+·\s+(?P<attempt>\d+)\)"
+    rf"\s+·\s+(?P<timestamp>\S+)$"
+)
+RETRY_MARKER_RE = re.compile(_RETRY_MARKER_PATTERN, re.MULTILINE)
+RETRY_MARKER_TIMESTAMP_RE = re.compile(_RETRY_MARKER_PATTERN, re.MULTILINE)
+
+
+def format_retry_marker(attempt: int, reason: str, now: datetime) -> str:
+    return f"{RETRY_MARKER_PREFIX} · {attempt}) · {now.isoformat()}"
+
+
+def count_retries(comments_md: str | None) -> int:
+    if not comments_md:
+        return 0
+    attempts = [
+        int(match.group("attempt")) for match in RETRY_MARKER_RE.finditer(comments_md)
+    ]
+    return max(attempts, default=0)
+
+
+def retry_cooldown_expired(
+    comments_md: str | None, now: datetime, cooldown_s: int = 60
+) -> bool:
+    timestamps = [
+        datetime.fromisoformat(match.group("timestamp"))
+        for match in RETRY_MARKER_TIMESTAMP_RE.finditer(comments_md or "")
+    ]
+    if not timestamps:
+        return True
+    return now - max(timestamps) >= timedelta(seconds=cooldown_s)
 
 
 def count_commit_redispatches(comments_md: str | None) -> int:
