@@ -1,7 +1,7 @@
 ---
 id: 123
 title: Config + data-type scaffolding for stall watchdog
-status: in-progress
+status: review
 blocked_by: []
 locks: [config, agent_runner, redispatch_core]
 priority: 1
