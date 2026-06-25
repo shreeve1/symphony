@@ -46,7 +46,9 @@ def format_retry_marker(attempt: int, reason: str, now: datetime) -> str:
 def count_retries(comments_md: str | None) -> int:
     if not comments_md:
         return 0
-    attempts = [int(match.group("attempt")) for match in RETRY_MARKER_RE.finditer(comments_md)]
+    attempts = [
+        int(match.group("attempt")) for match in RETRY_MARKER_RE.finditer(comments_md)
+    ]
     return max(attempts, default=0)
 
 

@@ -37,7 +37,9 @@ def test_is_transient_honors_timeout() -> None:
 
 
 def test_is_transient_rejects_non_transient_failures() -> None:
-    traceback = "Traceback (most recent call last):\n  File \"x.py\", line 1\nValueError: bad"
+    traceback = (
+        'Traceback (most recent call last):\n  File "x.py", line 1\nValueError: bad'
+    )
     assert not is_transient(traceback, 1, False)
     assert not is_transient("", 1, False)
 
@@ -61,7 +63,9 @@ def test_retry_cooldown_expired_uses_latest_marker_timestamp() -> None:
     old_marker = format_retry_marker(1, "overloaded", now - timedelta(seconds=120))
     latest_marker = format_retry_marker(2, "overloaded", now - timedelta(seconds=30))
 
-    assert not retry_cooldown_expired(f"{latest_marker}\n{old_marker}", now, cooldown_s=60)
+    assert not retry_cooldown_expired(
+        f"{latest_marker}\n{old_marker}", now, cooldown_s=60
+    )
     assert retry_cooldown_expired(old_marker, now, cooldown_s=60)
 
 
