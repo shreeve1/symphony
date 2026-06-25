@@ -15,6 +15,7 @@ models:
   - id: deepseek-v4-pro
     agent: pi
     provider: deepseek
+    default: true
   - id: gpt-5.3-codex-spark
     agent: pi
     provider: openai-codex
@@ -32,7 +33,6 @@ models:
     # letting the provider fail the run. Models without an `efforts:` list are
     # not effort-validated (back-compat).
     efforts: [none, low, medium, high, xhigh]
-    default: true
   - id: claude-haiku-4-5-20251001
     agent: pi
     provider: cliproxy
