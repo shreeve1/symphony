@@ -13,6 +13,7 @@ from typing import Any
 
 MAX_COMMIT_REDISPATCH = 2
 RETRY_MARKER_PREFIX = "### Symphony Retry (transient"
+STALL_WATCHDOG_SENTINEL = "SYMPHONY_STALL_WATCHDOG"
 
 # Substring used both as the synthetic operator-reply header and as the marker
 # counted to enforce MAX_COMMIT_REDISPATCH. Must keep the `### Operator Reply (`

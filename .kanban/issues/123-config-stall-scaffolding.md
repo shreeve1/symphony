@@ -1,7 +1,7 @@
 ---
 id: 123
 title: Config + data-type scaffolding for stall watchdog
-status: pending
+status: in-progress
 blocked_by: []
 locks: [config, agent_runner, redispatch_core]
 priority: 1
@@ -31,8 +31,8 @@ Add the three data types the stall watchdog work depends on. No behavior change.
 
 ```bash
 uv run python -c "from config import SymphonyConfig; c = SymphonyConfig.__dataclass_fields__; assert 'stall_timeout_ms' in c"
-uv run python -c "from config import SymphonyConfig; import os; os.environ['SYMPHONY_STALL_TIMEOUT_MS']='600000'; c = SymphonyConfig.from_env(); assert c.stall_timeout_ms == 600000"
-uv run python -c "from config import SymphonyConfig; assert 'stall_timeout_ms=900000' in repr(SymphonyConfig())"
+uv run python -c "from config import SymphonyConfig; env={'SYMPHONY_BINDINGS_PATH':'/nonexistent','PLANE_API_URL':'http://x','PLANE_API_KEY':'k','PLANE_WORKSPACE_SLUG':'w','PLANE_PROJECT_ID':'p','HOMELAB_REPO_PATH':'/tmp','PI_BIN':'/bin/true','SYMPHONY_STALL_TIMEOUT_MS':'600000'}; c = SymphonyConfig.from_env(env); assert c.stall_timeout_ms == 600000"
+uv run python -c "from config import SymphonyConfig; from pathlib import Path; assert 'stall_timeout_ms=900000' in repr(SymphonyConfig(plane_api_url='x', plane_api_key='k', plane_workspace_slug='w', plane_project_id='p', homelab_repo_path=Path('/tmp'), pi_bin='/bin/true'))"
 uv run python -c "from agent_runner import _DrainResult; assert 'stalled' in _DrainResult.__dataclass_fields__; d = _DrainResult([], [], False, 0, False, 0); assert d.stalled == False"
 uv run python -c "from redispatch_core import STALL_WATCHDOG_SENTINEL; assert STALL_WATCHDOG_SENTINEL == 'SYMPHONY_STALL_WATCHDOG'"
 uv run pytest tests/test_config.py tests/test_agent_runner.py -x -q

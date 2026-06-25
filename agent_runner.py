@@ -1331,6 +1331,7 @@ class _DrainResult:
     event_exit_code: int | None
     timed_out: bool
     steer_offset: int
+    stalled: bool = False
 
 
 def _close_rpc_stdin(process: RpcProcessLike) -> None:

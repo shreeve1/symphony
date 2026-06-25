@@ -173,6 +173,7 @@ class SymphonyConfig:
     pi_model: str = "glm-5.1:high"
     poll_interval_ms: int = 30_000
     run_timeout_ms: int = 7_200_000
+    stall_timeout_ms: int = 900_000
     run_cap: int = 2
     claude_persist_idle_ttl_s: int = 2_700
     claude_persist_max_live: int = 8
@@ -293,6 +294,7 @@ class SymphonyConfig:
             pi_model=source.get("SYMPHONY_PI_MODEL", "glm-5.1:high"),
             poll_interval_ms=int(source.get("SYMPHONY_POLL_INTERVAL_MS", "30000")),
             run_timeout_ms=int(source.get("SYMPHONY_RUN_TIMEOUT_MS", "7200000")),
+            stall_timeout_ms=int(source.get("SYMPHONY_STALL_TIMEOUT_MS", "900000")),
             run_cap=int(source.get("SYMPHONY_RUN_CAP", "2")),
             claude_persist_idle_ttl_s=int(
                 source.get("SYMPHONY_CLAUDE_PERSIST_IDLE_TTL_S", "2700")
@@ -385,6 +387,7 @@ class SymphonyConfig:
             f"pi_model={self.pi_model!r}, "
             f"poll_interval_ms={self.poll_interval_ms!r}, "
             f"run_timeout_ms={self.run_timeout_ms!r}, "
+            f"stall_timeout_ms={self.stall_timeout_ms!r}, "
             f"run_cap={self.run_cap!r}, "
             f"lock_path={self.lock_path!r}, "
             f"telegram_chat_id={telegram_chat_id!r}, "
