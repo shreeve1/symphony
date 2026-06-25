@@ -6,6 +6,7 @@ import asyncio
 import fcntl
 import logging
 import os
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib import import_module
@@ -48,6 +49,10 @@ class BindingRuntime:
     agent_adapter: AgentAdapter
     pi_adapter: AgentAdapter | None = None
     binding: ProjectBinding | None = None
+
+
+PI_PROBE_MAX_ATTEMPTS = 2
+PI_PROBE_RETRY_DELAY_SECONDS = 5
 
 
 def _try_acquire_single_instance_lock(lock_path: Path | None) -> TextIO | None:
@@ -114,7 +119,7 @@ def _render_candidate_prompt(
     return render_prompt(issue_data, binding_type=binding_type)
 
 
-def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> None:
+def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> bool:
     binding_config = config.for_binding(binding)
     # Remote bindings dispatch pi over SSH (ADR-0012); the startup probe runs a
     # LOCAL pi in the binding's repo_path, which for a remote binding is a path
@@ -130,12 +135,25 @@ def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> None:
             entry = resolve_model(None, load_models(), agent="pi")
             probe_provider = str(entry["provider"])
             probe_model = str(entry["id"])
-        verify_pi_support(
-            binding_config.pi_bin,
-            probe_provider,
-            probe_model,
-            binding_config.homelab_repo_path,
-        )
+        for attempt in range(PI_PROBE_MAX_ATTEMPTS):
+            try:
+                verify_pi_support(
+                    binding_config.pi_bin,
+                    probe_provider,
+                    probe_model,
+                    binding_config.homelab_repo_path,
+                )
+                return True
+            except Exception as exc:
+                if attempt == PI_PROBE_MAX_ATTEMPTS - 1:
+                    logging.getLogger(__name__).error(
+                        "pi_probe_failed_permanently binding=%s error=%s",
+                        binding.name,
+                        exc,
+                        exc_info=True,
+                    )
+                    return False
+                time.sleep(PI_PROBE_RETRY_DELAY_SECONDS)
     elif binding.is_remote:
         # Non-fatal remote reachability check (ADR-0012): read the remote repo's
         # short SHA over SSH so an unreachable host / bad path surfaces at startup
@@ -164,6 +182,7 @@ def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> None:
                     host,
                     sha,
                 )
+    return True
 
 
 def build_binding_runtime(
@@ -234,7 +253,11 @@ async def run_bindings_loop(
         verify_pi_rpc_support(config.pi_bin, rpc_binding.repo_path)
     runtimes = []
     for binding in config.bindings:
-        _probe_binding(config, binding)
+        if _probe_binding(config, binding) is False:
+            logging.getLogger(__name__).warning(
+                "binding_skipped_after_probe_failure binding=%s", binding.name
+            )
+            continue
         runtimes.append(build_binding_runtime(config, binding))
     try:
         for runtime in runtimes:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -7,10 +8,12 @@ import signal
 import subprocess
 from importlib import import_module
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 import agent_runner as agent_runner_module
+import main
 from agent_runner import (
     AgentResult,
     AgentRunnerError,
@@ -329,6 +332,116 @@ def test_verify_pi_support_wraps_probe_timeout(tmp_path: Path) -> None:
 
     with pytest.raises(AgentRunnerError, match="probe timed out"):
         verify_pi_support("pi", "zai", "glm-5.1:high", tmp_path, run_func=fake_run)
+
+
+def test_probe_binding_retries_pi_timeout_then_succeeds(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+    sleeps = []
+    config = _config(tmp_path)
+
+    def fake_verify(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise AgentRunnerError("timeout")
+
+    monkeypatch.setattr(main, "verify_pi_support", fake_verify)
+    monkeypatch.setattr(main.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert main._probe_binding(config, config.bindings[0]) is True
+    assert len(calls) == 2
+    assert sleeps == [main.PI_PROBE_RETRY_DELAY_SECONDS]
+
+
+def test_probe_binding_permanent_pi_failure_logs_and_skips(
+    monkeypatch, tmp_path: Path, caplog
+) -> None:
+    calls = []
+    config = _config(tmp_path)
+
+    def fake_verify(*args):
+        calls.append(args)
+        raise AgentRunnerError("bad pi")
+
+    monkeypatch.setattr(main, "verify_pi_support", fake_verify)
+    monkeypatch.setattr(main.time, "sleep", lambda seconds: None)
+
+    with caplog.at_level("ERROR", logger=main.__name__):
+        assert main._probe_binding(config, config.bindings[0]) is False
+
+    assert len(calls) == main.PI_PROBE_MAX_ATTEMPTS
+    assert "pi_probe_failed_permanently binding=default" in caplog.text
+
+
+def test_run_bindings_loop_skips_failed_probe_without_blocking_other_binding(
+    monkeypatch, caplog
+) -> None:
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeBinding:
+        pi_mode = "one-shot"
+        binding_type = "infra"
+
+        def __init__(self, name: str):
+            self.name = name
+
+    class FakeConfig:
+        bindings = (FakeBinding("bad"), FakeBinding("good"))
+
+    class FakeRuntimeConfig:
+        homelab_repo_path = Path("/tmp/good")
+
+        @property
+        def bindings(self):
+            return (FakeBinding("good"),)
+
+    class FakeAdapter:
+        contract = None
+
+    def fake_probe(config, binding):
+        calls.append(("probe", binding.name))
+        return binding.name != "bad"
+
+    def fake_build(config, binding):
+        calls.append(("build", binding.name))
+        return main.BindingRuntime(
+            name=binding.name,
+            config=cast(Any, FakeRuntimeConfig()),
+            transport=None,
+            adapter=cast(Any, FakeAdapter()),
+            agent_adapter=cast(Any, "agent"),
+            binding=binding,
+        )
+
+    async def fake_reconcile_startup(config, adapter, *, notifier=None, binding=None):
+        calls.append(("reconcile", cast(Any, binding).name))
+        return 0
+
+    async def fake_run_loop(config, adapter, **kwargs):
+        calls.append(("run-loop", kwargs["binding"].name))
+        raise StopLoop
+
+    monkeypatch.setattr(main, "reap_orphan_claude_sockets", lambda **kwargs: None)
+    monkeypatch.setattr(main, "verify_claude_support", lambda: None)
+    monkeypatch.setattr(main, "reap_orphan_rpc_processes", lambda: None)
+    monkeypatch.setattr(main, "_probe_binding", fake_probe)
+    monkeypatch.setattr(main, "build_binding_runtime", fake_build)
+    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "run_loop", fake_run_loop)
+
+    with caplog.at_level("WARNING", logger=main.__name__), pytest.raises(StopLoop):
+        asyncio.run(main.run_bindings_loop(cast(Any, FakeConfig())))
+
+    assert calls == [
+        ("probe", "bad"),
+        ("probe", "good"),
+        ("build", "good"),
+        ("reconcile", "good"),
+        ("run-loop", "good"),
+    ]
+    assert "binding_skipped_after_probe_failure binding=bad" in caplog.text
 
 
 def test_pi_agent_adapter_delegates_to_pi_runner(monkeypatch, tmp_path: Path) -> None:

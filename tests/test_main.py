@@ -753,7 +753,7 @@ def test_probe_binding_remote_reachability_never_raises(monkeypatch, tmp_path):
     assert runtime.name == "n8n"
 
 
-def test_probe_binding_verifier_failure_aborts_before_transport(monkeypatch, tmp_path):
+def test_probe_binding_verifier_failure_skips_before_transport(monkeypatch, tmp_path):
     calls = {}
     config = main.SymphonyConfig.from_env(
         {
@@ -778,8 +778,7 @@ def test_probe_binding_verifier_failure_aborts_before_transport(monkeypatch, tmp
     monkeypatch.setattr(main, "HttpxPlaneTransport", FakeTransport)
     monkeypatch.setattr(main, "verify_pi_support", fake_verify_pi_support)
 
-    with pytest.raises(AgentRunnerError, match="bad pi"):
-        main._probe_binding(config, config.bindings[0])
+    assert main._probe_binding(config, config.bindings[0]) is False
 
     assert "verify" in calls
     assert "transport" not in calls
