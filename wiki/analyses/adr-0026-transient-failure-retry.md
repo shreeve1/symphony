@@ -3,10 +3,11 @@ title: "ADR-0026 — Transient terminal failures retry / re-drive instead of blo
 type: analysis
 status: promoted
 created: 2026-06-24
-updated: 2026-06-24
+updated: 2026-06-25
 sources:
   - docs/adr/0026-transient-failure-retry-not-block.md
   - scheduler/__init__.py
+  - tests/test_scheduler.py
   - tracker_podium.py
   - web/api/worktree.py
   - worktree_facade.py
@@ -39,6 +40,8 @@ ADR-0026 is proposed after the ADR-0024 batch exposed that the dispatch loop sti
 - Startup pi probe timeouts should use bounded retry or per-binding fail-soft behavior instead of crashing the scheduler process.
 - Claim-ID collision is now part of the unattended landing problem: branch-local "next free C-ID" is not concurrency-safe.
 
-## Status
+## Implementation status
 
-Proposed only. No code implements ADR-0026 yet. ADR-0024 slices #128-#132 are landed, but the observed roadblocks were recovered manually.
+Partially implemented. Issue #135 landed the auto-land re-drive slice: `_handle_review_terminal_done` retries `_land_review_worktree` exactly once after `asyncio.sleep(2.0)` on any land error, with no error-string narrowing. Retry success proceeds to normal `done` landing; a second failure blocks with the final land error. Tests cover fail-then-success, fail-twice, and the 2s sleep seam [source: scheduler/__init__.py; tests/test_scheduler.py].
+
+The broader terminal-classifier retry, review-run transient retry, retry-marker cooldown, and startup probe retry/fail-soft portions remain proposed/unimplemented [source: docs/adr/0026-transient-failure-retry-not-block.md#shippable-in-two-independent-pieces].

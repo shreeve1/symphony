@@ -167,6 +167,7 @@ SCHEDULED_RELEASE_MAX_PAGES_PER_TICK = 3
 RATE_LIMIT_BASE_COOLDOWN_S = 30.0
 RATE_LIMIT_MAX_COOLDOWN_S = 300.0
 RATE_LIMIT_JITTER_FRACTION = 0.2
+REVIEW_LAND_RETRY_DELAY_S = 2.0
 LOG_RETENTION_INTERVAL = timedelta(hours=24)
 WAKE_SENTINEL_CHECK_INTERVAL_S = 1.0
 
@@ -3596,6 +3597,16 @@ async def _handle_review_terminal_done(
         issue_id,
         base_branch,
     )
+    if error is not None:
+        await asyncio.sleep(REVIEW_LAND_RETRY_DELAY_S)
+        error = await asyncio.to_thread(
+            _land_review_worktree,
+            config,
+            resolved_binding,
+            binding_name,
+            issue_id,
+            base_branch,
+        )
     if error is not None:
         await _block_issue(
             adapter,

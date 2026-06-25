@@ -1,5 +1,12 @@
 # Wiki Log
 
+## [2026-06-25] session-update | Issue #135 ADR-0026 auto-land re-drive
+
+- Actor: agent (Pi), direct implementation.
+- Inputs: Podium Issue #135 / ADR-0026 auto-land slice; `scheduler/__init__.py`; `tests/test_scheduler.py`; `docs/adr/0026-transient-failure-retry-not-block.md`; issue verification command.
+- Outputs: added one in-process `_land_review_worktree` retry after `asyncio.sleep(2.0)` for any review-terminal auto-land failure; added scheduler regressions for fail-then-success, fail-twice, and sleep delay; updated `wiki/analyses/adr-0026-transient-failure-retry.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md` (C-0332), `wiki/eval/worktree.eval`, and this log entry.
+- Notes: Verification passed as issue-specified (`uv run pytest tests/test_scheduler.py tests/test_tracker_podium.py -q`, 216 passed) after `uv sync --extra dev` installed the local dev extra. Touched-file LSP diagnostics passed. No secrets/env files read; no service restart, live DB mutation, or outward notification.
+
 ## [2026-06-24] session-update | Issue #132 ADR-0024 dirty reland redispatch
 
 - Actor: agent (Pi), direct implementation.

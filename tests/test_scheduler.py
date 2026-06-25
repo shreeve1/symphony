@@ -3282,7 +3282,7 @@ async def test_review_terminal_clean_auto_land_balances_all_reland_pending(
 
 
 @pytest.mark.asyncio
-async def test_review_terminal_land_conflict_blocks(
+async def test_review_terminal_land_retry_success_marks_done(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     transport = FakeTransport()
@@ -3292,8 +3292,19 @@ async def test_review_terminal_land_conflict_blocks(
         "comments_md": "### Symphony Review (1)",
         "auto_land": True,
     }
+    attempts: list[str] = []
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    def land_once_then_succeed(*a: object) -> str | None:
+        attempts.append("land")
+        return "transient base checkout race" if len(attempts) == 1 else None
+
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
-    monkeypatch.setattr("worktree_facade.land_worktree", lambda *a: "merge conflict")
+    monkeypatch.setattr("worktree_facade.land_worktree", land_once_then_succeed)
 
     await scheduler._handle_review_terminal_done(
         _adapter(transport),
@@ -3310,6 +3321,55 @@ async def test_review_terminal_land_conflict_blocks(
         notifier=None,
     )
 
+    assert attempts == ["land", "land"]
+    assert sleeps == [pytest.approx(2.0)]
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_terminal_land_conflict_blocks_after_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.IN_REVIEW.value),
+        "description": "## Verification\n\n`true`",
+        "comments_md": "### Symphony Review (1)",
+        "auto_land": True,
+    }
+    attempts: list[str] = []
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: attempts.append("land") or "merge conflict",
+    )
+
+    await scheduler._handle_review_terminal_done(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(_candidate("issue-1"), binding_name="homelab", review_dispatch=True),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert attempts == ["land", "land"]
+    assert sleeps == [pytest.approx(2.0)]
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
