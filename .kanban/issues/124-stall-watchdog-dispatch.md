@@ -1,7 +1,7 @@
 ---
 id: 124
 title: Stall watchdog in _drain_rpc_events + dispatch wiring
-status: in-progress
+status: review
 blocked_by: [123]
 updated: 2026-06-25
 actor: ralph
