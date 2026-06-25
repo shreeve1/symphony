@@ -417,7 +417,7 @@ def test_run_remote_agent_timeout_terminates(tmp_path: Path) -> None:
         run_func=lambda *a, **k: Completed(returncode=0),
         popen_factory=lambda *a, **k: proc,
         kill_process_group=lambda pid, sig: kills.append((pid, sig)),
-        clock=iter([0.0, 2.0, 2.1]).__next__,
+        clock=iter([0.0, 0.0, 2.0, 2.1]).__next__,
     )
 
     assert result.timed_out is True

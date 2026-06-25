@@ -34,6 +34,7 @@ from proc_runtime import (
     pid_start_time,
     tail_spool_path,
 )
+from redispatch_core import STALL_WATCHDOG_SENTINEL
 from session_continuity import derive_session_id
 
 LOGGER = logging.getLogger(__name__)
@@ -684,6 +685,7 @@ def run_remote_agent(
         process.stdin.flush()
 
         deadline = started + (config.run_timeout_ms / 1000)
+        stall_timeout_s = config.stall_timeout_ms / 1000
         steer_queue = import_module("web.api.steer_queue") if run_id else None
         read_queued_steers = steer_queue.read_steer_records if steer_queue else None
         read_line, close_reader = _rpc_line_reader(process)
@@ -698,6 +700,7 @@ def run_remote_agent(
             kill_process_group=kill_process_group,
             clock=clock,
             source_env=source_env,
+            stall_timeout_s=stall_timeout_s,
             spool_path=tail_spool_path(run_id, source_env) if run_id else None,
         )
         if drain.timed_out:
@@ -714,6 +717,16 @@ def run_remote_agent(
                 "".join(drain.assistant_parts),
                 "".join(drain.stderr_parts),
             )
+        if drain.stalled:
+            duration_ms = int((clock() - started) * 1000)
+            stdout = "".join(drain.assistant_parts)
+            stderr = STALL_WATCHDOG_SENTINEL + "\n" + "".join(drain.stderr_parts)
+            LOGGER.info(
+                "agent_exited issue_id=%s exit_code=-1 duration_ms=%s timed_out=false stalled=true remote=true",
+                issue.id,
+                duration_ms,
+            )
+            return AgentResult(-1, duration_ms, False, stdout, stderr)
 
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
@@ -881,6 +894,7 @@ def run_pi_rpc_agent(
         process.stdin.flush()
 
         deadline = started + (config.run_timeout_ms / 1000)
+        stall_timeout_s = config.stall_timeout_ms / 1000
         steer_queue = import_module("web.api.steer_queue") if run_id else None
         read_queued_steers = steer_queue.read_steer_records if steer_queue else None
 
@@ -896,6 +910,7 @@ def run_pi_rpc_agent(
             kill_process_group=kill_process_group,
             clock=clock,
             source_env=source_env,
+            stall_timeout_s=stall_timeout_s,
         )
         if drain.timed_out:
             duration_ms = int((clock() - started) * 1000)
@@ -906,6 +921,11 @@ def run_pi_rpc_agent(
                 "".join(drain.assistant_parts),
                 "".join(drain.stderr_parts),
             )
+        if drain.stalled:
+            duration_ms = int((clock() - started) * 1000)
+            stdout = "".join(drain.assistant_parts)
+            stderr = STALL_WATCHDOG_SENTINEL + "\n" + "".join(drain.stderr_parts)
+            return AgentResult(-1, duration_ms, False, stdout, stderr)
 
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
@@ -1186,6 +1206,7 @@ def _drain_rpc_events(
     kill_process_group: Callable[[int, int], object],
     clock: Callable[[], float],
     source_env: Mapping[str, str],
+    stall_timeout_s: float = 900.0,
     spool_path: Path | None = None,
 ) -> _DrainResult:
     """Drain pi RPC JSONL events until timeout, agent_end, or error.
@@ -1209,9 +1230,12 @@ def _drain_rpc_events(
             spool_path.parent.mkdir(parents=True, exist_ok=True)
             spool = spool_path.open("a", encoding="utf-8")
 
+    last_event_time = clock()
+
     try:
         while True:
-            remaining = deadline - clock()
+            now = clock()
+            remaining = deadline - now
             if remaining <= 0:
                 _send_rpc_abort(process)
                 _, stderr = _terminate_process_group(
@@ -1227,6 +1251,23 @@ def _drain_rpc_events(
                     event_exit_code=event_exit_code,
                     timed_out=True,
                     steer_offset=current_steer_offset,
+                )
+            if now - last_event_time > stall_timeout_s:
+                _send_rpc_abort(process)
+                _, stderr = _terminate_process_group(
+                    process,
+                    kill_process_group=kill_process_group,
+                )
+                if stderr:
+                    stderr_parts.append(stderr)
+                return _DrainResult(
+                    assistant_parts=assistant_parts,
+                    stderr_parts=stderr_parts,
+                    error_seen=error_seen,
+                    event_exit_code=event_exit_code,
+                    timed_out=False,
+                    steer_offset=current_steer_offset,
+                    stalled=True,
                 )
 
             if read_queued_steers is not None:
@@ -1246,6 +1287,7 @@ def _drain_rpc_events(
 
             try:
                 event = json.loads(line)
+                last_event_time = clock()
             except json.JSONDecodeError:
                 continue  # banner / non-JSON noise on stdout
 

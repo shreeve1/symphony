@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import subprocess
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
@@ -22,11 +23,13 @@ from agent_runner import (
     reap_orphan_rpc_processes,
     run_agent,
     run_pi_rpc_agent,
+    run_remote_agent,
     verify_pi_rpc_support,
     verify_pi_support,
 )
 from config import ProjectBinding, RemotePolicy, SymphonyConfig
 from plane_poller import CandidateIssue
+from redispatch_core import STALL_WATCHDOG_SENTINEL
 
 steer_queue = import_module("web.api.steer_queue")
 
@@ -58,6 +61,32 @@ class FakeRpcProcess:
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]:
         return self.stdout.read(), self.stderr.read()
+
+
+def _clock(values: list[float]):
+    items = iter(values)
+    last = values[-1]
+
+    def tick() -> float:
+        nonlocal last
+        last = next(items, last)
+        return last
+
+    return tick
+
+
+def _stall_read_line(lines: list[str | None]):
+    index = 0
+
+    def read_line(timeout: float) -> tuple[str | None, bool]:
+        nonlocal index
+        if index >= len(lines):
+            return None, True
+        line = lines[index]
+        index += 1
+        return line, False
+
+    return read_line
 
 
 class FakeProcess:
@@ -785,7 +814,7 @@ def test_run_pi_rpc_agent_uses_worktree_cwd_when_issue_opted_in(tmp_path: Path) 
         plane_cli_source=helper,
         popen_factory=fake_popen,
         mkdtemp=lambda **k: str(temp_dir),
-        clock=iter([10.0, 10.1, 10.2, 10.3]).__next__,
+        clock=lambda: 10.0,
         environ={"PATH": "/usr/bin"},
     )
 
@@ -929,7 +958,7 @@ def test_run_pi_rpc_agent_sends_prompt_and_returns_final_text(tmp_path: Path) ->
         plane_cli_source=helper,
         popen_factory=fake_popen,
         mkdtemp=lambda **k: str(temp_dir),
-        clock=iter([10.0, 10.1, 10.2, 10.3, 10.4]).__next__,
+        clock=lambda: 10.0,
         environ={"PATH": "/usr/bin"},
     )
 
@@ -1099,6 +1128,145 @@ def test_drain_rpc_events_caps_spool_size(monkeypatch, tmp_path: Path) -> None:
     assert "after the cap" in "".join(drain.assistant_parts)
 
 
+def test_drain_rpc_events_stalls_after_silence() -> None:
+    process = FakeRpcProcess([])
+    signals: list[int] = []
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        100.0,
+        "run-1",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=_stall_read_line([None]),
+        close_reader=lambda: None,
+        kill_process_group=lambda pid, sig: signals.append(sig),
+        clock=_clock([0.0, 0.0, 1.1]),
+        source_env={},
+        stall_timeout_s=1.0,
+    )
+
+    assert drain.stalled is True
+    assert drain.timed_out is False
+    assert signals == [signal.SIGTERM]
+    assert json.loads(process.stdin.getvalue().strip()) == {"type": "abort"}
+
+
+def test_drain_rpc_events_sparse_events_do_not_stall() -> None:
+    process = FakeRpcProcess([])
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        100.0,
+        "run-1",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=_stall_read_line(
+            [
+                None,
+                json.dumps({"type": "message_update", "delta": "still here"}),
+                json.dumps({"type": "agent_end", "exit_code": 0}),
+            ]
+        ),
+        close_reader=lambda: None,
+        kill_process_group=lambda pid, sig: None,
+        clock=_clock([0.0, 0.0, 0.9, 0.9, 1.8, 1.8]),
+        source_env={},
+        stall_timeout_s=1.0,
+    )
+
+    assert drain.stalled is False
+    assert drain.event_exit_code == 0
+    assert "".join(drain.assistant_parts) == "still here"
+
+
+def test_drain_rpc_events_deadline_wins_over_stall() -> None:
+    process = FakeRpcProcess([])
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        1.0,
+        "run-1",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=_stall_read_line([None]),
+        close_reader=lambda: None,
+        kill_process_group=lambda pid, sig: None,
+        clock=_clock([0.0, 2.0]),
+        source_env={},
+        stall_timeout_s=1.0,
+    )
+
+    assert drain.timed_out is True
+    assert drain.stalled is False
+
+
+def test_run_pi_rpc_agent_stall_returns_watchdog_sentinel(monkeypatch, tmp_path: Path) -> None:
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    process = FakeRpcProcess([])
+    signals: list[int] = []
+    monkeypatch.setattr(
+        agent_runner_module,
+        "_rpc_line_reader",
+        lambda process: (_stall_read_line([None]), lambda: None),
+    )
+
+    result = run_pi_rpc_agent(
+        replace(_config(tmp_path), stall_timeout_ms=100),
+        _issue(),
+        "prompt",
+        plane_cli_source=helper,
+        popen_factory=lambda *a, **k: process,
+        mkdtemp=lambda **k: str(temp_dir),
+        kill_process_group=lambda pid, sig: signals.append(sig),
+        clock=_clock([0.0, 0.0, 0.0, 0.11, 0.12]),
+        environ={"PATH": "/usr/bin"},
+    )
+
+    assert result.exit_code == -1
+    assert result.timed_out is False
+    assert result.stderr.startswith(STALL_WATCHDOG_SENTINEL + "\n")
+    assert signals == [signal.SIGTERM]
+
+
+def test_run_remote_agent_stall_returns_watchdog_sentinel(monkeypatch, tmp_path: Path) -> None:
+    process = FakeRpcProcess([])
+    signals: list[int] = []
+    config = replace(_config(tmp_path), stall_timeout_ms=100)
+    binding = ProjectBinding(
+        name="remote",
+        plane_project_id="project",
+        repo_path=tmp_path,
+        base_branch="main",
+        tracker_contract=config.bindings[0].tracker_contract,
+        tracker="podium",
+        remote=RemotePolicy(host="host", user="user"),
+    )
+    monkeypatch.setattr(
+        agent_runner_module,
+        "_rpc_line_reader",
+        lambda process: (_stall_read_line([None]), lambda: None),
+    )
+
+    result = run_remote_agent(
+        config,
+        _issue(),
+        "prompt",
+        binding=binding,
+        popen_factory=lambda *a, **k: process,
+        kill_process_group=lambda pid, sig: signals.append(sig),
+        clock=_clock([0.0, 0.0, 0.0, 0.11, 0.12]),
+        environ={"PATH": "/usr/bin", "SYMPHONY_RUNTIME_DIR": str(tmp_path)},
+    )
+
+    assert result.exit_code == -1
+    assert result.timed_out is False
+    assert result.stderr.startswith(STALL_WATCHDOG_SENTINEL + "\n")
+    assert signals == [signal.SIGTERM]
+
+
 def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"
@@ -1114,7 +1282,7 @@ def test_run_pi_rpc_agent_timeout_sends_abort(tmp_path: Path) -> None:
         popen_factory=lambda *a, **k: process,
         mkdtemp=lambda **k: str(temp_dir),
         kill_process_group=lambda pid, sig: signals.append(sig),
-        clock=iter([0.0, 2.0, 2.1]).__next__,
+        clock=_clock([0.0, 0.0, 2.0, 2.1]),
         environ={"PATH": "/usr/bin"},
     )
 
@@ -1276,7 +1444,7 @@ def test_run_pi_rpc_agent_cleans_up_steer_queue_on_timeout(tmp_path: Path) -> No
         popen_factory=lambda *a, **k: process,
         mkdtemp=lambda **k: str(tmp_path / "helper"),
         kill_process_group=lambda pid, sig: None,
-        clock=iter([0.0, 2.0, 2.1]).__next__,
+        clock=_clock([0.0, 0.0, 2.0, 2.1]),
         environ=environ,
     )
 

@@ -1,8 +1,10 @@
 ---
 id: 124
 title: Stall watchdog in _drain_rpc_events + dispatch wiring
-status: pending
+status: in-progress
 blocked_by: [123]
+updated: 2026-06-25
+actor: ralph
 locks: [agent_runner]
 priority: 1
 created: 2026-06-25
@@ -37,9 +39,7 @@ Install a silence watchdog inside `_drain_rpc_events` and wire stall detection t
 
 ## Verification
 
-```bash
-uv run pytest tests/test_agent_runner.py -x -q
-```
+`uv run pytest tests/test_agent_runner.py -x -q`
 
 **Test notes for implementer:** `FakeRpcProcess` (fileless `io.StringIO`) cannot trigger stall because its `read_line` returns `""` (EOF) on exhaustion, never `(None, False)`. Stall tests must pass hand-crafted `read_line` callables that return `(None, False)` repeatedly for the silence interval, then `(event_json, False)` for events. Extract a reusable `_stall_read_line` factory. Custom `clock` (e.g. `iter([0.0, 0.0, 900.0, 900.1]).__next__`) advances past `stall_timeout_s` between `read_line` calls without actual sleep.
 
