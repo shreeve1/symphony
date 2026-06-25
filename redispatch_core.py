@@ -11,6 +11,7 @@ from os import PathLike
 from typing import Any
 
 MAX_COMMIT_REDISPATCH = 2
+RETRY_MARKER_PREFIX = "### Symphony Retry (transient"
 
 # Substring used both as the synthetic operator-reply header and as the marker
 # counted to enforce MAX_COMMIT_REDISPATCH. Must keep the `### Operator Reply (`
