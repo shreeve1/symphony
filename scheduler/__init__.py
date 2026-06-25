@@ -1960,7 +1960,9 @@ async def _maybe_transient_review_retry(
             issue_url=_iu,
             dashboard_url=_du,
         )
-        return TickResult(True, "transient-retry-exhausted-review", candidate.id, mode=mode)
+        return TickResult(
+            True, "transient-retry-exhausted-review", candidate.id, mode=mode
+        )
     return None
 
 

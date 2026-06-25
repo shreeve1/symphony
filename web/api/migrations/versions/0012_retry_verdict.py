@@ -129,13 +129,17 @@ def _rebuild(allowed: str) -> None:
         )
         """
     )
-    op.execute(f"INSERT INTO issue_new ({_ISSUE_COLUMNS}) SELECT {_ISSUE_COLUMNS} FROM issue")
+    op.execute(
+        f"INSERT INTO issue_new ({_ISSUE_COLUMNS}) SELECT {_ISSUE_COLUMNS} FROM issue"
+    )
     op.execute(f"INSERT INTO run_new ({_RUN_COLUMNS}) SELECT {_RUN_COLUMNS} FROM run")
     op.execute("DROP TABLE issue")
     op.execute("DROP TABLE run")
     op.execute("ALTER TABLE issue_new RENAME TO issue")
     op.execute("ALTER TABLE run_new RENAME TO run")
-    op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_issue_external_id ON issue(external_id)")
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_issue_external_id ON issue(external_id)"
+    )
     op.execute("PRAGMA foreign_keys = ON")
 
 

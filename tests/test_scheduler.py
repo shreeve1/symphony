@@ -2801,8 +2801,10 @@ async def test_transient_review_retry_cap_blocks_and_notifies(tmp_path: Path) ->
     result = await run_tick(
         config,
         adapter,
-        agent_runner=lambda issue, prompt: seen_review_dispatch.append(issue.review_dispatch)
-        or AgentResult(1, 10, False, stderr="service_unavailable"),
+        agent_runner=lambda issue, prompt: (
+            seen_review_dispatch.append(issue.review_dispatch)
+            or AgentResult(1, 10, False, stderr="service_unavailable")
+        ),
         render_prompt=lambda issue: "prompt",
         run_blocked_reconciler=False,
         binding=binding,
@@ -3423,9 +3425,10 @@ async def test_review_terminal_dirty_worktree_over_cap_blocks(
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
-    assert "still uncommitted after 2 re-dispatches; worktree intact" in transport.comments[
-        "issue-1"
-    ][-1]["comment_html"]
+    assert (
+        "still uncommitted after 2 re-dispatches; worktree intact"
+        in transport.comments["issue-1"][-1]["comment_html"]
+    )
 
 
 @pytest.mark.asyncio
@@ -4985,7 +4988,9 @@ def test_effective_run_cap_local_uses_run_cap(tmp_path: Path) -> None:
     assert scheduler._effective_run_cap(config, None) == config.run_cap
 
 
-def test_new_dispatch_state_remote_coding_semaphore_allows_run_cap(tmp_path: Path) -> None:
+def test_new_dispatch_state_remote_coding_semaphore_allows_run_cap(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path, run_cap=3)
     remote_binding = _remote_binding(config)
 
