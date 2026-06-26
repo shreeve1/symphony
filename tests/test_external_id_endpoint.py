@@ -29,6 +29,19 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
 
     from web.api import main as web_main
 
+    # Stub pi for title generation: all title generation in tests falls back
+    # to the first line of the description (no live pi binary needed).
+    from web.api.title_generator import generate_issue_title as _real_generate
+
+    class _FakePiResult:
+        returncode = 1
+        stdout = ""
+
+    def _fake_title(description: str, *, run_func=None) -> str:
+        return _real_generate(description, run_func=lambda *a, **kw: _FakePiResult())
+
+    monkeypatch.setattr(web_main._title_generator, "generate_issue_title", _fake_title)
+
     # Bypass the cookie-session auth middleware; this suite tests the issue
     # endpoints, not auth. The middleware calls module-level verify_session.
     monkeypatch.setattr(web_main, "verify_session", lambda *a, **k: True)
@@ -37,8 +50,10 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(web_main.app)
 
 
-def _create(client: TestClient, **body) -> dict:
-    body.setdefault("title", "patrol finding")
+def _create(client: TestClient, **body):
+    body.setdefault("description", "patrol finding")
+    if "title" in body:
+        body["description"] = body.pop("title")
     resp = client.post("/api/bindings/homelab-patrol/issues", json=body)
     return resp
 

@@ -25,6 +25,7 @@ class PodiumApiClient(Protocol):
 
     def get(self, url: str) -> Any: ...
     def post(self, url: str, *, json: Mapping[str, Any]) -> Any: ...
+    def patch(self, url: str, *, json: Mapping[str, Any]) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -222,7 +223,6 @@ def create_podium_smoke_issue(
     """Create a low-risk smoke Issue through Podium, not Plane."""
 
     payload: dict[str, Any] = {
-        "title": title,
         "description": description,
         "preferred_agent": preferred_agent,
         "worktree_active": worktree_active,
@@ -231,7 +231,14 @@ def create_podium_smoke_issue(
         payload["preferred_skill"] = preferred_skill
     response = client.post(f"/api/bindings/{binding_name}/issues", json=payload)
     _raise_for_status(response)
-    return dict(response.json())
+    issue_data = dict(response.json())
+
+    # Patch the title afterward
+    patch_response = client.patch(
+        f"/api/issues/{issue_data['id']}", json={"title": title}
+    )
+    _raise_for_status(patch_response)
+    return dict(patch_response.json())
 
 
 def poll_podium_issue_run(

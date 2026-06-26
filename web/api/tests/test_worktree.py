@@ -189,6 +189,14 @@ def test_base_repo_podium_worktree_dir_not_dirty(repo: Path) -> None:
     (repo / "worktrees/untracked.txt").write_text("not tracked", encoding="utf-8")
     assert not base_repo_dirty(repo)
 
+    # Modified or staged files starting with worktrees/ are also excused
+    # We can't easily trigger a real porcelain staged/modified on temporary repo fixture without git operations,
+    # but we can mock or verify path-anchoring.
+    # To test path-anchoring of nested/false-positive paths:
+    (repo / "docs/worktrees").mkdir(parents=True, exist_ok=True)
+    (repo / "docs/worktrees/untracked.txt").write_text("dirty nested", encoding="utf-8")
+    assert base_repo_dirty(repo)
+
 
 def test_base_repo_other_untracked_dirty(repo: Path) -> None:
     """Other untracked files still block auto-merge."""

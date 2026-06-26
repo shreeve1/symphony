@@ -106,7 +106,7 @@ def base_repo_dirty(repo_path: Path) -> bool:
     result = _run_git(repo_path, ["status", "--porcelain"], check=True)
     assert result is not None  # check=True guarantees str
     for line in result.splitlines():
-        if line.startswith("?? worktrees/"):
+        if len(line) > 3 and line[3:].startswith("worktrees/"):
             continue
         if line.strip():
             return True

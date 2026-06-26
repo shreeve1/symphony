@@ -104,7 +104,7 @@ def base_repo_dirty(
         run_func=run_func,
     )
     for line in result.stdout.splitlines():
-        if line.startswith("?? worktrees/"):
+        if len(line) > 3 and line[3:].startswith("worktrees/"):
             continue
         if line.strip():
             return True
