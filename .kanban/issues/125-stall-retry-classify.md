@@ -1,7 +1,7 @@
 ---
 id: 125
 title: Stall retry markers + counter + combined ceiling + _classify_terminal path
-status: review
+status: done
 blocked_by: [124]
 locks: [redispatch_core, scheduler, transient_retry]
 priority: 1
@@ -33,17 +33,17 @@ Add stall-aware retry classification so frozen-agent runs get one stall retry be
 
 ## Acceptance criteria
 
-- [ ] `format_stall_retry_marker(1, now)` produces `"### Symphony Retry (stall · 1) · <iso>"`
-- [ ] `count_stall_retries()` counts stall markers, ignores transient markers
-- [ ] `count_all_retries()` sums transient + stall counts
-- [ ] Combined ceiling: `count_all_retries() >= 3` blocks when 2 transients + 1 stall present
-- [ ] Stall sentinel triggers retry (cap not exhausted), marker written
-- [ ] Second stall on same issue → cap exhausted → blocked
-- [ ] Combined ceiling pre-check stops ALL retries: 3 of any kind present → blocks
-- [ ] Stall sentinel does NOT match `is_transient()`
-- [ ] Stall during review dispatch → retry, issue stays `in_review`, `RELAND_PENDING` present
-- [ ] Transient retry blocked by combined ceiling: 3 retries of any kind → blocks
-- [ ] All existing transient retry and scheduler tests pass
+- [x] `format_stall_retry_marker(1, now)` produces `"### Symphony Retry (stall · 1) · <iso>"`
+- [x] `count_stall_retries()` counts stall markers, ignores transient markers
+- [x] `count_all_retries()` sums transient + stall counts
+- [x] Combined ceiling: `count_all_retries() >= 3` blocks when 2 transients + 1 stall present
+- [x] Stall sentinel triggers retry (cap not exhausted), marker written
+- [x] Second stall on same issue → cap exhausted → blocked
+- [x] Combined ceiling pre-check stops ALL retries: 3 of any kind present → blocks
+- [x] Stall sentinel does NOT match `is_transient()`
+- [x] Stall during review dispatch → retry, issue stays `in_review`, `RELAND_PENDING` present
+- [x] Transient retry blocked by combined ceiling: 3 retries of any kind → blocks
+- [x] All existing transient retry and scheduler tests pass
 
 ## Verification
 
@@ -54,3 +54,7 @@ uv run pytest tests/test_transient_retry.py tests/test_scheduler.py -x -q
 ## Blocked by
 
 - Blocked by #124
+
+## Implementation Notes
+
+Added stall retry marker/counter exports, combined retry-ceiling classification, and stall retry/review reland handling. Backfilled scheduler tests covering stall retry, stall cap exhaustion, review reland, and the mixed transient+stall combined ceiling.
