@@ -25,7 +25,15 @@ from pydantic import (
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 
-from config import RemotePolicy
+try:
+    _config = import_module("config")
+except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    _config = import_module("config")
+
+RemotePolicy = _config.RemotePolicy
 
 try:
     from proc_runtime import tail_spool_path
