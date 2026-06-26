@@ -921,6 +921,170 @@ async def test_transient_retry_marker_cools_down_reselection(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_stall_watchdog_retry_requeues_with_stall_marker(tmp_path: Path) -> None:
+    from scheduler.transient_retry import STALL_WATCHDOG_SENTINEL
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            -1, 10, False, stderr=STALL_WATCHDOG_SENTINEL
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert tick.reason == "stall-retry-implement"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    assert transport.comments["issue-1"][0]["comment_html"] == (
+        "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_second_stall_watchdog_failure_blocks(tmp_path: Path) -> None:
+    from scheduler.transient_retry import (
+        STALL_WATCHDOG_SENTINEL,
+        format_stall_retry_marker,
+    )
+
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            -1, 10, False, stderr=STALL_WATCHDOG_SENTINEL
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [
+            replace(
+                _candidate("issue-1"),
+                comments_md=format_stall_retry_marker(1, now.replace(hour=11)),
+            )
+        ],
+        repo_dirty=lambda path: False,
+        now=lambda: now,
+    )
+
+    assert tick.reason == "stall-retry-exhausted-implement"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert "Stall retry cap exhausted" in transport.comments["issue-1"][0]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_stall_watchdog_review_retry_keeps_issue_in_review(
+    tmp_path: Path,
+) -> None:
+    from redispatch_core import RELAND_PENDING_PREFIX
+    from scheduler.transient_retry import STALL_WATCHDOG_SENTINEL
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    repo = tmp_path / "repo"
+    _init_tmp_repo(repo)
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              comments_md, context_md, created_at, updated_at
+            ) VALUES ('test', 'needs stall retry', '', 'in_review', 'pi', '', '',
+                      '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """
+        )
+        issue_id = str(cursor.lastrowid)
+        connection.commit()
+
+    base_config = _config(repo)
+    binding = replace(
+        base_config.bindings[0],
+        name="test",
+        binding_type="coding",
+        tracker="podium",
+        repo_path=repo,
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    seen_review_dispatch: list[bool] = []
+
+    def stall(issue: CandidateIssue, prompt: str) -> AgentResult:
+        seen_review_dispatch.append(issue.review_dispatch)
+        return AgentResult(-1, 10, False, stderr=STALL_WATCHDOG_SENTINEL)
+
+    tick = await run_tick(
+        base_config.for_binding(binding),
+        adapter,
+        agent_runner=stall,
+        render_prompt=lambda issue: "prompt",
+        run_blocked_reconciler=False,
+        binding=binding,
+        now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert tick.reason == "stall-retry-review"
+    issue = await adapter.get_issue(issue_id)
+    assert issue["state"] == "in_review"
+    assert "### Symphony Retry (stall · 1)" in issue["comments_md"]
+    assert RELAND_PENDING_PREFIX in issue["comments_md"]
+    assert seen_review_dispatch == [True]
+
+
+@pytest.mark.asyncio
+async def test_combined_retry_ceiling_blocks_before_any_retry(
+    tmp_path: Path,
+) -> None:
+    from scheduler.transient_retry import format_retry_marker, format_stall_retry_marker
+
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    comments_md = "\n".join(
+        [
+            format_retry_marker(2, "overloaded", now.replace(hour=10)),
+            format_stall_retry_marker(1, now.replace(hour=11)),
+        ]
+    )
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            1, 10, False, stderr="server_is_overloaded"
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-1"), comments_md=comments_md)],
+        repo_dirty=lambda path: False,
+        now=lambda: now,
+    )
+
+    assert tick.reason == "combined-ceiling-exhausted"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert not any(
+        "Symphony Retry" in c["comment_html"] for c in transport.comments["issue-1"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_third_overload_failure_blocks_and_notifies_once(
     tmp_path: Path,
 ) -> None:
