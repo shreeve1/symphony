@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	fetchBindings,
 	fetchIssue,
+	fetchIssueOptions,
 	fetchIssueRuns,
 	fetchSkills,
 	patchIssue,
@@ -17,6 +18,7 @@ import {
 	unscheduleIssue,
 	type IssueDetail,
 	type IssuePatch,
+	type ModelOption,
 	type Run,
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
@@ -159,6 +161,8 @@ function useDraft(value: string) {
 
 type OnPatch = (patch: IssuePatch) => void;
 
+type ComboOption = { value: string; label?: string };
+
 function ChipShell({
 	label,
 	children,
@@ -185,10 +189,14 @@ function ChipSelect({
 	label: string;
 	field: keyof IssuePatch;
 	value: string | null;
-	options: readonly string[];
+	options: readonly string[] | readonly ComboOption[];
 	allowEmpty?: boolean;
 	onPatch: OnPatch;
 }) {
+	const entries: ComboOption[] =
+		typeof options[0] === "string"
+			? (options as readonly string[]).map((o) => ({ value: o }))
+			: (options as readonly ComboOption[]);
 	return (
 		<ChipShell label={label}>
 			<select
@@ -202,12 +210,12 @@ function ChipSelect({
 				{allowEmpty && <option value="">—</option>}
 				{/* Keep the current value selectable even when it's missing from
             options (e.g. skill catalog still loading, or a stale name). */}
-				{value != null && !options.includes(value) && (
+				{value != null && !entries.some((o) => o.value === value) && (
 					<option value={value}>{value}</option>
 				)}
-				{options.map((option) => (
-					<option key={option} value={option}>
-						{option}
+				{entries.map((option) => (
+					<option key={option.value} value={option.value}>
+						{option.label ?? option.value}
 					</option>
 				))}
 			</select>
@@ -289,6 +297,34 @@ const EMPTY_STAGED_DISPATCH: StagedDispatchControls = {
 
 function scheduleModeFor(issue: IssueDetail): ScheduleMode {
 	return issue.scheduled_for ? "next_window" : "none";
+}
+
+// modelOptionValue returns the value to store in preferred_model for a
+// catalog entry, disambiguating with provider when the same model id appears
+// under more than one agent (e.g. claude-opus-4-8 for both pi/cliproxy and
+// claude native). Matches the logic in NewIssueModal.modelValue.
+function modelOptionValue(option: ModelOption, models: readonly ModelOption[]) {
+	const duplicateId = models.some(
+		(other) => other !== option && other.id === option.id,
+	);
+	return duplicateId && option.provider
+		? `${option.provider}/${option.id}`
+		: option.id;
+}
+
+function modelOptionsForAgent(
+	models: readonly ModelOption[],
+	agent: string | null,
+): ComboOption[] {
+	return models
+		.filter((m) => !agent || m.agent === agent)
+		.map((m) => {
+			const value = modelOptionValue(m, models);
+			return {
+				value,
+				label: m.label ? `${m.label} (${value})` : value,
+			};
+		});
 }
 
 function hasStagedDispatch(staged: StagedDispatchControls): boolean {
@@ -381,6 +417,7 @@ function GateHints({ issue }: { issue: IssueDetail }) {
 function MetadataChips({
 	issue,
 	skillNames,
+	modelOptions,
 	showEmptySkillHint,
 	onPatch,
 	staged,
@@ -392,6 +429,7 @@ function MetadataChips({
 }: {
 	issue: IssueDetail;
 	skillNames: readonly string[];
+	modelOptions: readonly ComboOption[];
 	showEmptySkillHint: boolean;
 	onPatch: OnPatch;
 	staged: StagedDispatchControls;
@@ -432,10 +470,12 @@ function MetadataChips({
 					value={issue.preferred_agent}
 					onPatch={onPatch}
 				/>
-				<ChipText
+				<ChipSelect
 					label="model"
 					field="preferred_model"
 					value={issue.preferred_model}
+					options={modelOptions}
+					allowEmpty
 					onPatch={onPatch}
 				/>
 				<ChipSelect
@@ -993,7 +1033,16 @@ export function IssueFlyout({
 	// against the FK and silently roll back.
 	const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
 	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
+	// Model catalog feeds the preferred_model picker.
+	const options = useQuery({
+		queryKey: ["issue-options", issue.binding_name],
+		queryFn: () => fetchIssueOptions(issue.binding_name),
+	});
 	const skillNames = (skills.data ?? []).map((s) => s.name);
+	const modelOpts = modelOptionsForAgent(
+		options.data?.models ?? [],
+		issue.preferred_agent,
+	);
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
 	// Reset nested flyout state each time a different issue opens. The maximized
@@ -1134,6 +1183,7 @@ export function IssueFlyout({
 							<MetadataChips
 								issue={issue}
 								skillNames={skillNames}
+								modelOptions={modelOpts}
 								showEmptySkillHint={showEmptySkillHint}
 								onPatch={onPatch}
 								staged={stagedDispatch}
