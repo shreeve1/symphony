@@ -163,7 +163,7 @@ def test_patch_noop_does_not_bump_updated_at(client: TestClient, issue_id: int) 
 def test_patch_rejects_blocked_by_cycle(client: TestClient, issue_id: int) -> None:
     child = client.post(
         "/api/bindings/symphony/issues",
-        json={"title": "child", "blocked_by": [issue_id]},
+        json={"description": "child", "blocked_by": [issue_id]},
     ).json()
     before = client.get(f"/api/issues/{issue_id}").json()
 

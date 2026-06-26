@@ -47,7 +47,7 @@ def test_compact_endpoint_is_retired(client: TestClient) -> None:
     # The manual context-compaction endpoint was retired; the route no longer
     # exists. POSTing to it returns a client error instead of compacting.
     issue = client.post(
-        "/api/bindings/symphony/issues", json={"title": "compact"}
+        "/api/bindings/symphony/issues", json={"description": "compact"}
     ).json()
     response = client.post(f"/api/issues/{issue['id']}/compact")
     assert response.status_code in (404, 405)

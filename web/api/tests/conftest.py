@@ -54,6 +54,16 @@ REMOTE_BINDING_ENTRY: dict[str, Any] = {
 def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
     db_path = tmp_path / "podium.db"
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+
+    # Stub pi for title generation: all title generation in tests falls back
+    # to the first line of the description (no live pi binary needed).
+    from web.api.title_generator import generate_issue_title as _real_generate
+
+    def _fake_title(description: str, *, run_func=None) -> str:
+        return _real_generate(description, run_func=lambda *a, **kw: _FakePiResult())
+
+    monkeypatch.setattr(main._title_generator, "generate_issue_title", _fake_title)
+
     with TestClient(app) as test_client:
         login(test_client)
         with main.connect(db_path) as connection:
@@ -67,6 +77,11 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
             )
             connection.commit()
         yield test_client
+
+
+class _FakePiResult:
+    returncode = 1
+    stdout = ""
 
 
 @pytest.fixture()

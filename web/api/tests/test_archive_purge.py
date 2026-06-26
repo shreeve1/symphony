@@ -226,7 +226,9 @@ def db_and_client(monkeypatch, tmp_path: Path) -> Iterator[tuple[Path, TestClien
         login(client)
         _seed_binding(db_path)
         # create a fresh issue via the API
-        resp = client.post("/api/bindings/trading/issues", json={"title": "test issue"})
+        resp = client.post(
+            "/api/bindings/trading/issues", json={"description": "test issue"}
+        )
         assert resp.status_code == 201
         yield db_path, client
 

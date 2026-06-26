@@ -115,6 +115,17 @@ except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
     _model_catalog = import_module("model_catalog")
     _schedule = import_module("schedule")
 
+try:
+    if __package__:
+        _title_generator = import_module(f"{__package__}.title_generator")
+    else:  # pragma: no cover - uvicorn main:app from web/api
+        _title_generator = import_module("title_generator")
+except ModuleNotFoundError:  # pragma: no cover
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    _title_generator = import_module("web.api.title_generator")
+
 format_cancellation_comment = _schedule.format_cancellation_comment
 format_schedule_comment = _schedule.format_schedule_comment
 next_maintenance_window = _schedule.next_maintenance_window
@@ -571,14 +582,14 @@ class UnscheduleRequest(BaseModel):
 class IssueCreate(BaseModel):
     """New-issue payload (#014). state is exclusively server-set ('todo'), so
     it is not a field here — extra="forbid" rejects it (and any other unknown
-    key) with HTTP 400. Everything else is optional: reasoning_effort and
-    worktree_active are server-defaulted but client-settable, and a null
+    key) with HTTP 400. The title is server-generated from the description;
+    description is required (#138). Everything else is optional: reasoning_effort
+    and worktree_active are server-defaulted but client-settable, and a null
     base_branch falls back to the binding's bindings.yml entry."""
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1)
-    description: str | None = None
+    description: str = Field(min_length=1)
     priority: Literal["low", "med", "high", "urgent"] | None = None
     preferred_skill: str | None = None
     preferred_agent: str | None = None
@@ -928,6 +939,10 @@ def binding_issue_options(
     }
 
 
+def _generate_title(description: str) -> str:
+    return _title_generator.generate_issue_title(description)
+
+
 def _branches_for(name: str) -> list[str]:
     """Local branch names from the binding's repo_path in bindings.yml. Any
     failure (missing yml, no repo_path, not a git repo) degrades to an empty
@@ -994,6 +1009,7 @@ async def create_binding_issue(
         scheduled_for = now
     blocked_by = issue.blocked_by or []
     locks = issue.locks or []
+    title = _generate_title(issue.description)
     try:
         cursor = connection.execute(
             """
@@ -1006,7 +1022,7 @@ async def create_binding_issue(
             """,
             (
                 name,
-                issue.title,
+                title,
                 issue.description,
                 issue.priority,
                 issue.preferred_agent,

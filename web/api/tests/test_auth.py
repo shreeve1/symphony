@@ -67,8 +67,7 @@ def test_rate_limit_after_five_failed_attempts(monkeypatch, tmp_path) -> None:
 
     with TestClient(app) as client:
         failures = [
-            client.post("/api/auth/login", json={"password": "wrong"})
-            for _ in range(5)
+            client.post("/api/auth/login", json={"password": "wrong"}) for _ in range(5)
         ]
         limited = client.post("/api/auth/login", json={"password": "wrong"})
 
@@ -145,7 +144,7 @@ def test_bearer_authenticates_mutating_endpoint(monkeypatch, tmp_path) -> None:
     with TestClient(app) as client:
         response = client.patch(
             "/api/issues/999999",
-            json={"title": "x"},
+            json={"description": "x"},
             headers={"Authorization": "Bearer service-token-xyz"},
         )
 

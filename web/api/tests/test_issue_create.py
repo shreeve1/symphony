@@ -19,6 +19,15 @@ login = cast(Any, import_module("web.api.tests.conftest")).login
 def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
     db_path = tmp_path / "podium.db"
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+
+    # Stub title generation so tests never call a live pi binary.
+    from web.api.title_generator import generate_issue_title as _real_generate
+
+    def _fake_title(description: str, *, run_func=None) -> str:
+        return _real_generate(description, run_func=lambda *a, **kw: _FakePiResult())
+
+    monkeypatch.setattr(main._title_generator, "generate_issue_title", _fake_title)
+
     with TestClient(app) as test_client:
         login(test_client)
         with main.connect(db_path) as connection:
@@ -33,17 +42,23 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
         yield test_client
 
 
+class _FakePiResult:
+    returncode = 1
+    stdout = ""
+
+
 def test_create_minimal_issue_applies_server_defaults(client: TestClient) -> None:
     response = client.post(
         "/api/bindings/symphony/issues",
-        json={"title": "smoke", "preferred_skill": "/diagnose"},
+        json={"description": "smoke", "preferred_skill": "/diagnose"},
     )
     assert response.status_code == 201
     body = response.json()
 
     assert isinstance(body["id"], int)
     assert body["binding_name"] == "symphony"
-    assert body["title"] == "smoke"
+    assert body["title"] == "smoke"  # server-generated from description
+    assert body["description"] == "smoke"
     assert body["preferred_skill"] == "/diagnose"
     # Server-side defaults (#014 spec).
     assert body["state"] == "todo"
@@ -65,8 +80,7 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
     response = client.post(
         "/api/bindings/homelab/issues",
         json={
-            "title": "full payload",
-            "description": "All optional fields set.",
+            "description": "full payload test description",
             "priority": "urgent",
             "preferred_skill": "tdd",
             "preferred_agent": "claude",
@@ -79,7 +93,7 @@ def test_create_with_all_optional_fields(client: TestClient) -> None:
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["description"] == "All optional fields set."
+    assert body["description"] == "full payload test description"
     assert body["priority"] == "urgent"
     assert body["preferred_skill"] == "tdd"
     assert body["preferred_agent"] == "claude"
@@ -99,7 +113,7 @@ def test_create_accepts_model_specific_efforts(client: TestClient, effort: str) 
     # `none`/`xhigh`); per-model validity is enforced at the dispatch gate.
     response = client.post(
         "/api/bindings/homelab/issues",
-        json={"title": f"effort {effort}", "reasoning_effort": effort},
+        json={"description": f"effort {effort}", "reasoning_effort": effort},
     )
     assert response.status_code == 201
     assert response.json()["reasoning_effort"] == effort
@@ -107,7 +121,7 @@ def test_create_accepts_model_specific_efforts(client: TestClient, effort: str) 
 
 def test_created_issue_appears_in_binding_list(client: TestClient) -> None:
     created = client.post(
-        "/api/bindings/symphony/issues", json={"title": "listed"}
+        "/api/bindings/symphony/issues", json={"description": "listed"}
     ).json()
     listed = client.get("/api/bindings/symphony/issues").json()
     assert created["id"] in [issue["id"] for issue in listed]
@@ -117,11 +131,15 @@ def test_created_issue_appears_in_binding_list(client: TestClient) -> None:
 
 def test_create_dependency_fields_round_trip(client: TestClient) -> None:
     parent = client.post(
-        "/api/bindings/symphony/issues", json={"title": "parent"}
+        "/api/bindings/symphony/issues", json={"description": "parent"}
     ).json()
     response = client.post(
         "/api/bindings/symphony/issues",
-        json={"title": "child", "blocked_by": [parent["id"]], "locks": ["web-api"]},
+        json={
+            "description": "child",
+            "blocked_by": [parent["id"]],
+            "locks": ["web-api"],
+        },
     )
     assert response.status_code == 201
     body = response.json()
@@ -136,14 +154,25 @@ def test_create_dependency_fields_round_trip(client: TestClient) -> None:
     assert listed[0]["locks"] == ["web-api"]
 
 
-def test_create_missing_title_returns_422(client: TestClient) -> None:
+def test_create_missing_description_returns_422(client: TestClient) -> None:
     response = client.post("/api/bindings/symphony/issues", json={})
     assert response.status_code == 422
 
 
+def test_create_title_in_body_returns_400(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "something", "title": "overridden"},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail[0]["type"] == "extra_forbidden"
+    assert detail[0]["loc"] == ["title"]
+
+
 def test_create_unknown_binding_returns_404(client: TestClient) -> None:
     response = client.post(
-        "/api/bindings/no-such-binding/issues", json={"title": "smoke"}
+        "/api/bindings/no-such-binding/issues", json={"description": "smoke"}
     )
     assert response.status_code == 404
 
@@ -154,7 +183,7 @@ def test_create_unknown_binding_beats_body_validation(client: TestClient) -> Non
     # an invalid body against an unknown binding is 404, not 400/422.
     response = client.post(
         "/api/bindings/no-such-binding/issues",
-        json={"title": "smoke", "state": "done"},
+        json={"description": "smoke", "state": "done"},
     )
     assert response.status_code == 404
 
@@ -165,7 +194,9 @@ def test_create_base_branch_follows_bindings_yml(
     custom = tmp_path / "bindings.yml"
     custom.write_text("bindings:\n  - name: symphony\n    base_branch: develop\n")
     monkeypatch.setattr(main, "BINDINGS_PATH", custom)
-    response = client.post("/api/bindings/symphony/issues", json={"title": "branched"})
+    response = client.post(
+        "/api/bindings/symphony/issues", json={"description": "branched"}
+    )
     assert response.status_code == 201
     assert response.json()["base_branch"] == "develop"
 
@@ -179,14 +210,16 @@ def test_create_falls_back_to_main_when_bindings_yml_unreadable(
     if content is not None:
         broken.write_text(content)
     monkeypatch.setattr(main, "BINDINGS_PATH", broken)
-    response = client.post("/api/bindings/symphony/issues", json={"title": "fallback"})
+    response = client.post(
+        "/api/bindings/symphony/issues", json={"description": "fallback"}
+    )
     assert response.status_code == 201
     assert response.json()["base_branch"] == "main"
 
 
 def test_create_with_state_field_returns_400(client: TestClient) -> None:
     response = client.post(
-        "/api/bindings/symphony/issues", json={"title": "smoke", "state": "done"}
+        "/api/bindings/symphony/issues", json={"description": "smoke", "state": "done"}
     )
     assert response.status_code == 400
     detail = response.json()["detail"]
@@ -196,20 +229,19 @@ def test_create_with_state_field_returns_400(client: TestClient) -> None:
 
 # (body, expected status) — one validation failure per rule.
 FAILURE_CASES = [
-    ({"title": ""}, 422),
-    ({"title": None}, 422),
-    ({"title": 7}, 422),
-    ({"title": "ok", "description": 123}, 422),
-    ({"title": "ok", "priority": "critical"}, 422),
-    ({"title": "ok", "preferred_skill": "no-such-skill"}, 422),
-    ({"title": "ok", "preferred_agent": 42}, 422),
-    ({"title": "ok", "preferred_model": []}, 422),
-    ({"title": "ok", "worktree_active": "maybe"}, 422),
-    ({"title": "ok", "auto_land": "maybe"}, 422),
-    ({"title": "ok", "reasoning_effort": "max"}, 422),
-    ({"title": "ok", "reasoning_effort": None}, 422),
-    ({"title": "ok", "base_branch": 7}, 422),
-    ({"title": "ok", "flavor": "grape"}, 400),  # unknown field
+    ({"description": ""}, 422),
+    ({"description": None}, 422),
+    ({"description": 7}, 422),
+    ({"description": "ok", "priority": "critical"}, 422),
+    ({"description": "ok", "preferred_skill": "no-such-skill"}, 422),
+    ({"description": "ok", "preferred_agent": 42}, 422),
+    ({"description": "ok", "preferred_model": []}, 422),
+    ({"description": "ok", "worktree_active": "maybe"}, 422),
+    ({"description": "ok", "auto_land": "maybe"}, 422),
+    ({"description": "ok", "reasoning_effort": "max"}, 422),
+    ({"description": "ok", "reasoning_effort": None}, 422),
+    ({"description": "ok", "base_branch": 7}, 422),
+    ({"description": "ok", "flavor": "grape"}, 400),  # unknown field
 ]
 
 
@@ -314,7 +346,7 @@ def test_options_models_degrade_to_empty_on_bad_catalog(
 def test_create_accepts_free_text_model_not_in_catalog(client: TestClient) -> None:
     response = client.post(
         "/api/bindings/symphony/issues",
-        json={"title": "custom model", "preferred_model": "unlisted-model"},
+        json={"description": "custom model", "preferred_model": "unlisted-model"},
     )
     assert response.status_code == 201
     assert response.json()["preferred_model"] == "unlisted-model"
@@ -350,7 +382,7 @@ def test_create_allows_worktree_active_for_remote_binding(
     monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
     response = client.post(
         f"/api/bindings/{REMOTE_BINDING_NAME}/issues",
-        json={"title": "remote", "worktree_active": True},
+        json={"description": "remote", "worktree_active": True},
     )
     assert response.status_code == 201
     assert response.json()["worktree_active"] is True
@@ -368,3 +400,153 @@ def test_create_rejects_invalid_body(
     # Rejected POST must not insert anything.
     after = client.get("/api/bindings/symphony/issues").json()
     assert after == before
+
+
+def test_create_pi_failure_falls_back_to_first_line(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={
+            "description": "line one\nline two\nline three",
+            "preferred_skill": "/diagnose",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    # pi isn't available in tests; fallback = first non-blank line
+    assert body["title"] == "line one"
+    assert body["description"] == "line one\nline two\nline three"
+
+
+def test_create_fallback_truncates_long_first_line(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={
+            "description": "this is a very long first line that exceeds eighty characters by quite a margin and should be truncated at a word boundary",
+            "preferred_skill": "/diagnose",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body["title"]) <= 80
+    # Must be a prefix of the first line.
+    assert "this is a very long first line that exceeds eighty characters by quite a margin and should be truncated at a word boundary".startswith(
+        body["title"]
+    )
+
+
+def test_patch_can_still_rename_title(client: TestClient) -> None:
+    created = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "original"},
+    ).json()
+    response = client.patch(f"/api/issues/{created['id']}", json={"title": "renamed"})
+    assert response.status_code == 200
+    assert response.json()["title"] == "renamed"
+
+
+class TestGenerateIssueTitle:
+    def test_returns_pi_output_when_successful(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 0
+                stdout = "generated title from pi"
+
+            return R()
+
+        assert (
+            generate_issue_title("desc", run_func=fake_run) == "generated title from pi"
+        )
+
+    def test_falls_back_on_nonzero_exit(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 1
+                stdout = "stuff"
+
+            return R()
+
+        assert (
+            generate_issue_title("first line\nsecond line", run_func=fake_run)
+            == "first line"
+        )
+
+    def test_falls_back_on_timeout(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            raise TimeoutError()
+
+        assert generate_issue_title("first line", run_func=fake_run) == "first line"
+
+    def test_falls_back_on_empty_stdout(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 0
+                stdout = "  \n"
+
+            return R()
+
+        assert generate_issue_title("first line", run_func=fake_run) == "first line"
+
+    def test_normalises_quoted_output(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 0
+                stdout = '"quoted title"'
+
+            return R()
+
+        assert generate_issue_title("desc", run_func=fake_run) == "quoted title"
+
+    def test_normalises_markdown_heading(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 0
+                stdout = "## markdown title"
+
+            return R()
+
+        assert generate_issue_title("desc", run_func=fake_run) == "markdown title"
+
+    def test_truncates_long_output(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        # Title with spaces: word boundary truncation cuts at last space within 80.
+        long_title = "a " + "b " * 50  # ~100 chars with spaces
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 0
+                stdout = long_title
+
+            return R()
+
+        result = generate_issue_title("desc", run_func=fake_run)
+        assert len(result) <= 80
+        assert result.endswith("b")
+
+    def test_truncates_long_output_no_spaces(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        # No spaces: truncation returns first 80 chars unchanged.
+        long_title = "x" * 100
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 0
+                stdout = long_title
+
+            return R()
+
+        result = generate_issue_title("desc", run_func=fake_run)
+        assert result == "x" * 80

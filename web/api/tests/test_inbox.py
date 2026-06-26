@@ -269,7 +269,7 @@ def _seed_inbox_issues(
     for binding_name, title, state in specs:
         response = client.post(
             f"/api/bindings/{binding_name}/issues",
-            json={"title": title, "description": f"Inbox test for {title}"},
+            json={"description": title},
         )
         assert response.status_code == 201
         issue_id = response.json()["id"]

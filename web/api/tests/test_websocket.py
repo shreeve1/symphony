@@ -60,7 +60,7 @@ def test_two_clients_receive_issue_updated_within_one_second(
         (
             "post",
             "/api/bindings/symphony/issues",
-            {"title": "websocket created issue"},
+            {"description": "websocket created issue"},
             "issue.created",
         ),
     ],

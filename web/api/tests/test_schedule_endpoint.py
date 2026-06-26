@@ -13,7 +13,7 @@ schedule = cast(Any, import_module("schedule"))
 def _create_issue(client: TestClient, binding: str = "homelab") -> dict[str, Any]:
     response = client.post(
         f"/api/bindings/{binding}/issues",
-        json={"title": "schedule me", "description": "fixture"},
+        json={"description": "schedule me"},
     )
     assert response.status_code == 201
     return response.json()
@@ -123,8 +123,7 @@ def test_create_issue_with_schedule_is_atomic(client: TestClient) -> None:
     response = client.post(
         "/api/bindings/homelab/issues",
         json={
-            "title": "scheduled at create",
-            "description": "fixture",
+            "description": "scheduled at create",
             "schedule": {"not_before": "next_window", "reason": "create held"},
         },
     )
