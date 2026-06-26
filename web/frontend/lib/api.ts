@@ -150,8 +150,7 @@ export interface ScheduleRequest {
 // 400. Omitted reasoning_effort/worktree_active/base_branch fall back to
 // server defaults (high / false / bindings.yml).
 export interface IssueCreate {
-	title: string;
-	description?: string;
+	description: string;
 	priority?: string;
 	preferred_skill?: string;
 	preferred_agent?: string;

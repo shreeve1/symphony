@@ -42,7 +42,7 @@ function useCreateIssue(binding: string, bindingType: Issue["binding_type"]) {
 				id: tempId,
 				binding_name: binding,
 				binding_type: bindingType,
-				title: body.title,
+				title: "Generating title...",
 				description: body.description ?? null,
 				state: "todo",
 				priority: body.priority ?? null,
@@ -122,7 +122,9 @@ function modelValue(option: ModelOption, models: readonly ModelOption[]) {
 	const duplicateId = models.some(
 		(other) => other !== option && other.id === option.id,
 	);
-	return duplicateId && option.provider ? `${option.provider}/${option.id}` : option.id;
+	return duplicateId && option.provider
+		? `${option.provider}/${option.id}`
+		: option.id;
 }
 
 // Searchable zero-dependency combobox. Free-text mode updates the submitted
@@ -167,7 +169,10 @@ function FieldCombobox({
 
 	// Selectable rows shown in the popup: leading empty option + filtered list.
 	const emptyLabel = emptyHint ? `— (${emptyHint})` : "—";
-	const entries: ComboOption[] = [{ value: "", label: emptyLabel }, ...filtered];
+	const entries: ComboOption[] = [
+		{ value: "", label: emptyLabel },
+		...filtered,
+	];
 
 	useEffect(() => {
 		setDraft(labelFor(options, value));
@@ -227,7 +232,9 @@ function FieldCombobox({
 				aria-controls={listId}
 				aria-autocomplete="list"
 				aria-activedescendant={
-					open && activeIndex >= 0 ? `${testid}-option-${activeIndex}` : undefined
+					open && activeIndex >= 0
+						? `${testid}-option-${activeIndex}`
+						: undefined
 				}
 				value={draft}
 				placeholder={emptyLabel}
@@ -293,7 +300,6 @@ function NewIssueModal({
 	binding: string;
 	onClose: () => void;
 }) {
-	const [title, setTitle] = useState("");
 	const [description, setDescription] = useState("");
 	const [skill, setSkill] = useState("");
 	const [agent, setAgent] = useState("");
@@ -303,11 +309,12 @@ function NewIssueModal({
 	const [base, setBase] = useState("");
 	const [scheduleDraft, setScheduleDraft] =
 		useState<ScheduleDraft>(defaultScheduleDraft);
-	const titleRef = useRef<HTMLInputElement | null>(null);
+	const descRef = useRef<HTMLTextAreaElement | null>(null);
 
 	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
 	const bindingType =
-		bindings.data?.find((item) => item.name === binding)?.binding_type ?? "coding";
+		bindings.data?.find((item) => item.name === binding)?.binding_type ??
+		"coding";
 	const isInfra = bindingType === "infra";
 	const create = useCreateIssue(binding, bindingType);
 	// Same catalog feed as the flyout chip: free-text skill would 422 on the FK.
@@ -342,7 +349,7 @@ function NewIssueModal({
 	const effortOptions = effortChoices.map((name) => ({ value: name }));
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
-	useEffect(() => titleRef.current?.focus(), []);
+	useEffect(() => descRef.current?.focus(), []);
 
 	// Agent-aware default preselect (#045): when agent changes or options
 	// load, preselect the default:true model whose agent matches the selected
@@ -369,7 +376,7 @@ function NewIssueModal({
 
 	const submit = (e: React.FormEvent) => {
 		e.preventDefault();
-		const trimmed = title.trim();
+		const trimmed = description.trim();
 		if (!trimmed || create.isPending) return;
 		// The optimistic card carries the board UI immediately, but the modal only
 		// closes on success: on failure the temp card silently rolls back, so the
@@ -379,8 +386,7 @@ function NewIssueModal({
 		const schedule = isInfra ? schedulePayloadFromDraft(scheduleDraft) : null;
 		create.mutate(
 			{
-				title: trimmed,
-				...(description.trim() && { description: description.trim() }),
+				description: trimmed,
 				...(skill && { preferred_skill: skill }),
 				...(agent.trim() && { preferred_agent: agent.trim() }),
 				...(model.trim() && { preferred_model: model.trim() }),
@@ -413,22 +419,10 @@ function NewIssueModal({
 				<form onSubmit={submit} className="space-y-3">
 					<label className="block space-y-1">
 						<span className="text-xs font-medium text-muted-foreground">
-							Title
-						</span>
-						<input
-							ref={titleRef}
-							data-testid="new-issue-title"
-							value={title}
-							onChange={(e) => setTitle(e.target.value)}
-							className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-						/>
-					</label>
-
-					<label className="block space-y-1">
-						<span className="text-xs font-medium text-muted-foreground">
 							Description
 						</span>
 						<textarea
+							ref={descRef}
 							data-testid="new-issue-description"
 							value={description}
 							rows={4}
@@ -534,7 +528,7 @@ function NewIssueModal({
 						<button
 							type="submit"
 							data-testid="new-issue-submit"
-							disabled={!title.trim() || create.isPending}
+							disabled={!description.trim() || create.isPending}
 							className="rounded-md border bg-foreground px-3 py-1.5 text-sm font-medium text-background transition disabled:opacity-40"
 						>
 							Create

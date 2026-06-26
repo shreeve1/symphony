@@ -7,13 +7,13 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
 	problems,
 }) => {
 	seedSkills([{ name: "diagnose", description: "Diagnose e2e fixture" }]);
-	const title = `e2e new issue ${Date.now()}`;
+	const desc = `e2e new issue ${Date.now()}`;
 
 	await page.goto("/homelab");
 	await page.getByTestId("new-issue-button").click();
 	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
 
-	await page.getByTestId("new-issue-title").fill(title);
+	await page.getByTestId("new-issue-description").fill(desc);
 	// Pick a skill from the seeded catalog (FK-validated server side).
 	await page.getByTestId("new-issue-skill").fill("diag");
 	await page
@@ -41,11 +41,9 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
 	const todoCard = page
 		.getByTestId("column-todo")
 		.getByTestId("issue-card")
-		.filter({ hasText: title });
+		.filter({ hasText: desc });
 	await expect(todoCard).toBeVisible();
 	await created;
-
-	// Reload: the card persisted through SQLite, optional fields included.
 	await page.reload();
 	await expect(todoCard).toBeVisible();
 	await todoCard.click();
@@ -60,11 +58,11 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 	page,
 	problems,
 }) => {
-	const title = `e2e custom model ${Date.now()}`;
+	const desc = `e2e custom model ${Date.now()}`;
 
 	await page.goto("/homelab");
 	await page.getByTestId("new-issue-button").click();
-	await page.getByTestId("new-issue-title").fill(title);
+	await page.getByTestId("new-issue-description").fill(desc);
 
 	await page.getByTestId("new-issue-model").click();
 	await expect(
@@ -100,7 +98,7 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 	await page.getByTestId("new-issue-agent").fill("custom-agent");
 	await page.getByTestId("new-issue-model").fill("custom-model");
 	await page.getByTestId("new-issue-skill").fill("not-a-skill");
-	await page.getByTestId("new-issue-title").focus();
+	await page.getByTestId("new-issue-description").focus();
 	await expect(page.getByTestId("new-issue-skill")).toHaveValue("");
 
 	await page.getByTestId("new-issue-submit").click();
@@ -108,7 +106,7 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 	const todoCard = page
 		.getByTestId("column-todo")
 		.getByTestId("issue-card")
-		.filter({ hasText: title });
+		.filter({ hasText: desc });
 	await expect(todoCard).toBeVisible();
 	await todoCard.click();
 	await expect(page.getByTestId("edit-preferred_agent")).toHaveValue(
@@ -137,7 +135,9 @@ test("combobox arrow keys highlight and Enter selects; Escape closes only the po
 	// Open the skill combobox and walk down with the arrow key: index 0 is the
 	// empty "—" row, index 1 is the first real option (alpha).
 	await page.getByTestId("new-issue-skill").click();
-	await expect(page.getByTestId("new-issue-skill-option").first()).toBeVisible();
+	await expect(
+		page.getByTestId("new-issue-skill-option").first(),
+	).toBeVisible();
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Enter");
@@ -146,7 +146,9 @@ test("combobox arrow keys highlight and Enter selects; Escape closes only the po
 	// ArrowDown reopens the closed popup (input keeps focus after selection);
 	// Escape then closes only the popup, leaving the modal open.
 	await page.keyboard.press("ArrowDown");
-	await expect(page.getByTestId("new-issue-skill-option").first()).toBeVisible();
+	await expect(
+		page.getByTestId("new-issue-skill-option").first(),
+	).toBeVisible();
 	await page.keyboard.press("Escape");
 	await expect(page.getByTestId("new-issue-skill-option")).toHaveCount(0);
 	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
@@ -158,7 +160,7 @@ test("create failure rolls back the card and keeps the modal open", async ({
 	page,
 	problems,
 }) => {
-	const title = `e2e doomed issue ${Date.now()}`;
+	const desc = `e2e doomed issue ${Date.now()}`;
 
 	await page.goto("/homelab");
 	await page.route("**/api/bindings/homelab/issues", async (route) => {
@@ -173,14 +175,14 @@ test("create failure rolls back the card and keeps the modal open", async ({
 	});
 
 	await page.getByTestId("new-issue-button").click();
-	await page.getByTestId("new-issue-title").fill(title);
+	await page.getByTestId("new-issue-description").fill(desc);
 	await page.getByTestId("new-issue-submit").click();
 
 	// Optimistic card appears immediately…
 	const doomedCard = page
 		.getByTestId("column-todo")
 		.getByTestId("issue-card")
-		.filter({ hasText: title });
+		.filter({ hasText: desc });
 	await expect(doomedCard).toBeVisible();
 
 	// …then rolls back when the 422 lands; the modal stays open with the typed
@@ -188,7 +190,7 @@ test("create failure rolls back the card and keeps the modal open", async ({
 	await expect(doomedCard).toHaveCount(0);
 	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
 	await expect(page.getByTestId("new-issue-error")).toBeVisible();
-	await expect(page.getByTestId("new-issue-title")).toHaveValue(title);
+	await expect(page.getByTestId("new-issue-description")).toHaveValue(desc);
 
 	expectCleanConsole(problems, { ignore: [/422/] });
 });
@@ -210,19 +212,19 @@ test("agent-aware model preselect switches default with agent", async ({
 
 	// Select pi → model preselects pi default (gpt-5.5).
 	await page.getByTestId("new-issue-agent").fill("pi");
-	await page.getByTestId("new-issue-title").click();
+	await page.getByTestId("new-issue-description").click();
 	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
 
 	// Switch to claude → model preselects claude default (Opus 4.8).
 	await page.getByTestId("new-issue-agent").fill("claude");
-	await page.getByTestId("new-issue-title").click();
+	await page.getByTestId("new-issue-description").click();
 	await expect(page.getByTestId("new-issue-model")).toHaveValue(
 		"Opus 4.8 (claude-opus-4-8)",
 	);
 
 	// Switch back to pi → model restores pi default.
 	await page.getByTestId("new-issue-agent").fill("pi");
-	await page.getByTestId("new-issue-title").click();
+	await page.getByTestId("new-issue-description").click();
 	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
 
 	expectCleanConsole(problems);
@@ -249,17 +251,17 @@ test("model preselect clears when agent has no default", async ({
 
 	// pi has a default → preselects gpt-5.5.
 	await page.getByTestId("new-issue-agent").fill("pi");
-	await page.getByTestId("new-issue-title").click();
+	await page.getByTestId("new-issue-description").click();
 	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
 
 	// claude has no default → model clears to placeholder.
 	await page.getByTestId("new-issue-agent").fill("claude");
-	await page.getByTestId("new-issue-title").click();
+	await page.getByTestId("new-issue-description").click();
 	await expect(page.getByTestId("new-issue-model")).toHaveValue("");
 
 	// Switch back to pi → pi default restores.
 	await page.getByTestId("new-issue-agent").fill("pi");
-	await page.getByTestId("new-issue-title").click();
+	await page.getByTestId("new-issue-description").click();
 	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
 
 	expectCleanConsole(problems);
