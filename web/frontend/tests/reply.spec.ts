@@ -50,11 +50,15 @@ test("composer restores unsent drafts per issue and across reload", async ({
 
 	await page.goto(`/homelab?issue=${issueA}`);
 	await expect(page.getByTestId("flyout-title")).toContainText(titleA);
-	await expect(page.getByTestId("reply-input")).toHaveValue("draft for issue A");
+	await expect(page.getByTestId("reply-input")).toHaveValue(
+		"draft for issue A",
+	);
 
 	await page.reload();
 	await expect(page.getByTestId("flyout-title")).toContainText(titleA);
-	await expect(page.getByTestId("reply-input")).toHaveValue("draft for issue A");
+	await expect(page.getByTestId("reply-input")).toHaveValue(
+		"draft for issue A",
+	);
 
 	const replied = waitForReply(page);
 	await page.getByTestId("reply-send").click();
