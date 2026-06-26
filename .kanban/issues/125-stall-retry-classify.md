@@ -1,7 +1,7 @@
 ---
 id: 125
 title: Stall retry markers + counter + combined ceiling + _classify_terminal path
-status: in-progress
+status: review
 blocked_by: [124]
 locks: [redispatch_core, scheduler, transient_retry]
 priority: 1
