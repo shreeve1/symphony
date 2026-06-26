@@ -30,6 +30,8 @@ Symphony captures your natural turn and posts it as the issue comment — answer
 in plain text or markdown. The ``SYMPHONY_SUMMARY`` block is optional and only
 needed if you want to override what gets posted.
 
+If you changed any files, you must commit your changes before emitting your final verdict. Run the repository tests for your changes, then add and commit only your relevant work with a clear message. Symphony will not create commits for you; uncommitted work cannot be landed.
+
 End every run by emitting exactly one terminal outcome:
 
 - Completed or needs review: emit `SYMPHONY_RESULT: done` or

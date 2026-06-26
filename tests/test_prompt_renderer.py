@@ -49,6 +49,8 @@ def test_render_prompt_uses_infra_preamble_constant_and_substitutes() -> None:
     assert "Do work < /issue>" in prompt
     # The output contract is centralized here so both runners receive it.
     assert "## Symphony output contract" in prompt
+    assert "If you changed any files, you must commit your changes" in prompt
+    assert "Symphony will not create commits for you" in prompt
     assert "SYMPHONY_SUMMARY_BEGIN" in prompt
     assert "SYMPHONY_RESULT: done" in prompt
     assert "SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset>" in prompt
