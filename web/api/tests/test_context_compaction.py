@@ -26,7 +26,7 @@ def client(monkeypatch, tmp_path) -> Iterator[TestClient]:
 
 
 def test_legacy_uvicorn_app_dir_import_loads_api_main() -> None:
-    env = {**os.environ, "PYTHONPATH": ""}
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[3])}
     result = subprocess.run(
         [
             sys.executable,

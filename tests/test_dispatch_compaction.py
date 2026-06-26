@@ -78,6 +78,9 @@ def _seed_db(path: Path, *, preferred_agent: str = "pi") -> int:
         )
         connection.commit()
         assert cursor.lastrowid is not None
+        (path.parent / "worktrees" / "trading" / str(cursor.lastrowid)).mkdir(
+            parents=True, exist_ok=True
+        )
         return cursor.lastrowid
     finally:
         connection.close()
@@ -327,7 +330,9 @@ Please continue Claude from the parked question.
     session_id = derive_session_id(str(issue_id))
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    session_file = session_file_path("claude", tmp_path, session_id)
+    session_file = session_file_path(
+        "claude", tmp_path / "worktrees" / "trading" / str(issue_id), session_id
+    )
     session_file.parent.mkdir(parents=True)
     session_file.write_text("{}\n", encoding="utf-8")
     with sqlite3.connect(db_path) as connection:
@@ -426,7 +431,9 @@ Please continue Claude from the parked question.
     session_id = derive_session_id(str(issue_id))
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    session_file = session_file_path("claude", tmp_path, session_id)
+    session_file = session_file_path(
+        "claude", tmp_path / "worktrees" / "trading" / str(issue_id), session_id
+    )
     session_file.parent.mkdir(parents=True)
     session_file.write_text("{}\n", encoding="utf-8")
     with sqlite3.connect(db_path) as connection:

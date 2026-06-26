@@ -1076,6 +1076,9 @@ def _poll_claude_until_done(
             stderr = _capture_pane_full(
                 host, socket_path, session_name, run_func=run_func
             )
+            natural_turn = _extract_last_assistant_turn(transcript_file)
+            if natural_turn:
+                stdout = f"{natural_turn}\n\n---\n{stdout}"
             duration_ms = int((clock() - started) * 1000)
             return _logged_result(issue, 0, duration_ms, False, stdout, stderr)
 
@@ -1709,3 +1712,63 @@ def _logged_result(
         str(timed_out).lower(),
     )
     return AgentResult(exit_code, duration_ms, timed_out, stdout, stderr)
+
+
+def _extract_last_assistant_turn(transcript_file: Path) -> str | None:
+    """Return the last assistant turn from a Claude session transcript JSONL.
+
+    Finds the last ``role: "user"`` block (the operator prompt), then collects
+    all ``type: "assistant"`` text blocks after it, stripping ``tool_use`` and
+    ``tool_result`` blocks. Returns ``None`` when the transcript is missing,
+    empty, unparseable, or contains no assistant text after the last user turn.
+    """
+
+    try:
+        lines = transcript_file.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    if not lines:
+        return None
+
+    # Find the last user-turn index.
+    last_user_idx: int | None = None
+    parsed: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        parsed.append(obj)
+        role = obj.get("role", "") if isinstance(obj, dict) else ""
+        if role == "user":
+            last_user_idx = len(parsed) - 1
+
+    if last_user_idx is None or last_user_idx >= len(parsed) - 1:
+        return None
+
+    # Collect assistant text blocks after the last user turn.
+    parts: list[str] = []
+    for obj in parsed[last_user_idx + 1 :]:
+        if not isinstance(obj, dict):
+            continue
+        role = obj.get("role", "")
+        if role != "assistant":
+            continue
+        content = obj.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type", "")
+            if block_type in ("tool_use", "tool_result"):
+                continue
+            text = block.get("text", "")
+            if isinstance(text, str) and text.strip():
+                parts.append(text)
+
+    turn = "".join(parts).strip()
+    return turn or None

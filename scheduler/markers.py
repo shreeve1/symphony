@@ -54,6 +54,7 @@ SUMMARY_MAX_CHARS = 500
 SUMMARY_BLOCK_MAX_CHARS = 4000
 SUMMARY_BLOCK_HEAD_CHARS = 2500
 SUMMARY_BLOCK_TAIL_CHARS = 1200
+DISPLAY_MAX_CHARS = 12000
 
 
 def _parse_result_marker(stdout: str) -> str | None:
@@ -122,6 +123,22 @@ def _bound_summary_block(text: str) -> str:
     return (
         f"{head}\n\n"
         f"[Summary truncated from {len(text)} characters for comment readability.]\n\n"
+        f"{tail}"
+    )
+
+
+def _bound_display(text: str, max_chars: int = DISPLAY_MAX_CHARS) -> str:
+    """Bound display text, keeping head and tail on overflow."""
+
+    if len(text) <= max_chars:
+        return text
+    head_chars = int(max_chars * 0.625)
+    tail_chars = int(max_chars * 0.3)
+    head = text[:head_chars].rstrip()
+    tail = text[-tail_chars:].lstrip()
+    return (
+        f"{head}\n\n"
+        f"[Output truncated from {len(text)} characters for comment readability.]\n\n"
         f"{tail}"
     )
 

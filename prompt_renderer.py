@@ -26,14 +26,18 @@ _PREVIOUS_COMMENTS_MAX_CHARS = 12000
 OUTPUT_CONTRACT = """\
 ## Symphony output contract
 
+Symphony captures your natural turn and posts it as the issue comment — answer
+in plain text or markdown. The ``SYMPHONY_SUMMARY`` block is optional and only
+needed if you want to override what gets posted.
+
 End every run by emitting exactly one terminal outcome:
 
 - Completed or needs review: emit `SYMPHONY_RESULT: done` or
-  `SYMPHONY_RESULT: review`, plus a summary block.
-- Blocked on an error: emit `SYMPHONY_RESULT: blocked`, plus a summary block.
+  `SYMPHONY_RESULT: review`.
+- Blocked on an error: emit `SYMPHONY_RESULT: blocked`.
 - Deferring to a maintenance window: emit
-  `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."`,
-  plus a summary block — use `next_window` unless a specific time is required.
+  `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."`
+  — use `next_window` unless a specific time is required.
 - Needs operator clarification: emit a question block instead of
   `SYMPHONY_RESULT`:
 
@@ -41,13 +45,11 @@ End every run by emitting exactly one terminal outcome:
   <one clear question for the operator>
   SYMPHONY_QUESTION_END
 
-For result outcomes, the summary block carries your natural end-of-turn message —
-what you did, what you found, and any decisions for the operator. Symphony posts
-this block verbatim as the issue comment, so write it for a human reader
-(markdown is fine). Emit marker lines at the START of a line (no indentation):
+If you provide a summary block, it overrides your natural turn in the posted
+comment. Emit marker lines at the START of a line (no indentation):
 
   SYMPHONY_SUMMARY_BEGIN
-  <your summary here>
+  <your override summary here>
   SYMPHONY_SUMMARY_END
 
 Keep summaries and questions focused; they are bounded to ~4000 characters when posted."""

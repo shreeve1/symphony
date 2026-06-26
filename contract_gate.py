@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -50,8 +49,7 @@ from scheduler.markers import (
 )
 
 REPO = Path(__file__).resolve().parent
-DB_PATH = REPO / "podium.db"
-RUNS_DIR = REPO / "runs"
+FIXTURE_PATH = REPO / "contract_gate_corpus.json"
 BASELINE_PATH = REPO / "contract_gate_baseline.json"
 
 # Failure -> permanent check. Each entry pins a real run log to the terminal
@@ -78,26 +76,10 @@ class CorpusRow:
     log_text: str
 
 
-def load_corpus(db_path: Path = DB_PATH, runs_dir: Path = RUNS_DIR) -> list[CorpusRow]:
-    """Join podium `run` rows to their persisted logs. Frozen, read-only."""
-
-    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    try:
-        rows = con.execute(
-            "SELECT id, exit_code, state, verdict, log_path FROM run "
-            "WHERE state IN ('succeeded','failed')"
-        ).fetchall()
-    finally:
-        con.close()
-
-    corpus: list[CorpusRow] = []
-    for run_id, exit_code, state, verdict, log_path in rows:
-        path = Path(log_path) if log_path else runs_dir / f"{run_id}.log"
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        corpus.append(CorpusRow(run_id, exit_code, state, verdict, text))
-    return corpus
+def load_corpus(db_path=None, runs_dir=None) -> list[CorpusRow]:
+    """Load the frozen, checked-in corpus fixture."""
+    data = json.loads(FIXTURE_PATH.read_text())
+    return [CorpusRow(**row) for row in data]
 
 
 def terminal_signal(log_text: str) -> str | None:
@@ -153,7 +135,9 @@ def check_locked(corpus: list[CorpusRow]) -> list[str]:
             continue
         got = terminal_signal(row.log_text)
         if got != expected:
-            failures.append(f"locked run {run_id}: signal {got!r} != expected {expected!r}")
+            failures.append(
+                f"locked run {run_id}: signal {got!r} != expected {expected!r}"
+            )
     return failures
 
 

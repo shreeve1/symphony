@@ -1572,3 +1572,20 @@ Append entries with this format:
 - Inputs: docs/adr/0027,0028,0029; agent_runner.py (run_pi_rpc_agent, _drain_rpc_events, run_agent communicate path); bindings.yml; redispatch_core.py count_retries; contract_gate.py; scheduler/markers.py; scheduler/__init__.py.
 - Outputs: reviewer findings cross-checked against code; ADR-0027 REWRITTEN (production path correction); ADR-0028 + ADR-0029 patched; claims C-0337/C-0338/C-0339 updated.
 - Notes: CRITICAL finding (verified): ADR-0027's original premise was wrong — all bindings are pi_mode:rpc, so dispatch runs through `_drain_rpc_events` (agent_runner.py:1177, 0.5s line-poll), NOT the one-shot `process.communicate()` at agent_runner.py:406 the handoff/C-0336 assumed. ADR-0027 reworked: signal = RPC-event silence (richer than session-jsonl mtime, works for remote too); placement = a second silence deadline inside the existing drain loop reusing its abort+kill path (no communicate() surgery); added stall-aware counter + combined retry ceiling (count_retries only matches the transient prefix). Retry-class/sentinel/cap/N decisions survived intact. WARNINGS actioned: ADR-0028 gains a "wiki pass needed" land-finalizer marker to close the forgotten-consolidated-pass hole; ADR-0029 drift narrative softened (drift is a mix — some mid-line SYMPHONY_RESULT markers the ^-anchored regex correctly rejects, not purely empty logs) + fixture must include locked runs 30/39/120 + a mid-line example. CONFIRMED sound: markers.py retry rejection (reviewer traced an independent failure mode), slicer migration-lock, frozen-corpus core decision. Out of scope (pre-existing): reconcile_stale_running transitions tracker state but never SIGKILLs a lingering process — separate follow-up. No secrets read; reviewer modified nothing (git status before==after).
+### session-update 2026-06-26
+- **Inputs**: dev-build + dev-test for ADR-0029 contract gate frozen corpus; raw session capture 
+- **Outputs**: C-0340 (ADR-0029 implemented), C-0341 (mid-line detection gap), C-0339 marked superseded, ROUTING updated
+- **Unresolved**: CI not wired for contract gate tests; mid-line run 9999 detection gap (gate only catches regressions, not false-positives)
+
+
+## 2026-06-26 — ADR-0022 implementation landed
+
+- **C-0308 promoted from `proposed` to `accepted`**: implementation complete per `plans/adr-0022-post-captured-turn.md`.
+- **10 implementation tasks** across 4 phases complete:
+  - Phase 1: `DISPLAY_MAX_CHARS` + `_bound_display` (pre-existing), `_redact_stream` extracted from `_extract_summary`
+  - Phase 2: `_capture_natural_turn` in scheduler; `_extract_summary` as fallback; placeholder removed
+  - Phase 3: `_extract_last_assistant_turn` in claude_runner; wired into `_poll_claude_until_done`; separator handling
+  - Phase 4: `OUTPUT_CONTRACT` updated; `tests/test_captured_turn.py` (13 new tests); wiki updated
+- **896 tests pass** (13 new captured-turn tests + 883 existing, 0 regressions).
+- **C-0161 marked `superseded`** (verbatim-summary posting walked back); C-0160 updated (summary block now fallback).
+- Files changed: `scheduler/sanitize.py`, `scheduler/__init__.py`, `claude_runner.py`, `prompt_renderer.py`, `tests/test_captured_turn.py`, `tests/test_scheduler.py`, `tests/test_dispatch_compaction.py`, `tests/test_trading_podium_dispatch.py`, `wiki/CLAIMS.md`, `wiki/analyses/adr-0022-post-captured-turn-not-forced-summary.md`

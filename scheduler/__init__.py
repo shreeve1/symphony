@@ -108,6 +108,9 @@ from .markers import (
     _parse_summary_marker as _parse_summary_marker,
 )
 from .sanitize import (
+    _capture_natural_turn as _capture_natural_turn,
+)
+from .sanitize import (
     _collect_secrets as _collect_secrets,
 )
 from .sanitize import (
@@ -1925,7 +1928,11 @@ async def _maybe_transient_review_retry(
         return None
 
     now_dt = now()
-    comments_md = comments_md if comments_md is not None else getattr(candidate, "comments_md", "") or ""
+    comments_md = (
+        comments_md
+        if comments_md is not None
+        else getattr(candidate, "comments_md", "") or ""
+    )
     prior = count_retries(comments_md)
     cap = MAX_TIMEOUT_RETRIES if result.timed_out else MAX_OVERLOAD_RETRIES
     retry_summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
@@ -2083,7 +2090,8 @@ async def _maybe_retry_stall(
             secrets=secrets,
             state="failed",
             verdict="blocked",
-            summary=_extract_summary(result, secrets, include_stderr=parse_stderr) or msg,
+            summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
+            or msg,
             ended_at=now_dt.isoformat(),
         )
         _iu, _du = _build_urls(config, candidate.id)
@@ -2097,7 +2105,11 @@ async def _maybe_retry_stall(
             issue_url=_iu,
             dashboard_url=_du,
         )
-        reason = "stall-retry-exhausted-review" if getattr(candidate, "review_dispatch", False) else "stall-retry-exhausted-implement"
+        reason = (
+            "stall-retry-exhausted-review"
+            if getattr(candidate, "review_dispatch", False)
+            else "stall-retry-exhausted-implement"
+        )
         return TickResult(True, reason, candidate.id, mode=mode)
 
     body = format_stall_retry_marker(prior + 1, now_dt)
@@ -2145,7 +2157,11 @@ async def _maybe_retry_transient_implement(
     if not is_transient(result.stderr, result.exit_code, result.timed_out):
         return None
 
-    comments_md = comments_md if comments_md is not None else await _retry_comments_text(adapter, candidate)
+    comments_md = (
+        comments_md
+        if comments_md is not None
+        else await _retry_comments_text(adapter, candidate)
+    )
     retry_count = count_retries(comments_md)
     retry_cap = MAX_TIMEOUT_RETRIES if result.timed_out else MAX_OVERLOAD_RETRIES
     retry_at = now()
@@ -2376,7 +2392,15 @@ async def _classify_terminal(
             return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
     verdict = _parse_result_marker(class_stdout)
-    summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+    summary = _capture_natural_turn(
+        result,
+        secrets,
+        is_coding=is_coding,
+        binding_name=binding.name if binding else "",
+        homelab_repo_path=str(config.homelab_repo_path),
+    )
+    if summary is None:
+        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
     question = _extract_question(result, secrets, include_stderr=parse_stderr)
 
     if _hit_permission_gate(class_stdout, class_stderr):
@@ -2704,7 +2728,7 @@ async def _classify_terminal(
     if summary:
         completion_body = f"**Symphony completed:**\n\n{summary}"
     else:
-        completion_body = "**Symphony completed:** Agent finished without a summary."
+        completion_body = "**Symphony completed:** (no output)"
     await _finish_run_record(
         adapter,
         run_id,

@@ -3,22 +3,23 @@ title: "ADR-0022 — Post the agent's captured turn, not a forced summary block"
 type: analysis
 status: promoted
 created: 2026-06-23
-updated: 2026-06-23
+updated: 2026-06-26
 sources:
   - docs/adr/0022-post-the-agents-captured-turn-not-a-forced-summary.md
-  - prompt_renderer.py
-  - agent_runner.py
+  - plans/adr-0022-post-captured-turn.md
   - claude_runner.py
+  - prompt_renderer.py
   - scheduler/__init__.py
   - scheduler/markers.py
-  - config.py
+  - scheduler/sanitize.py
+  - tests/test_captured_turn.py
 confidence: high
-tags: [adr, output-contract, comments, summary, pi-rpc, claude, assistant-turn, claude-persist, proposed]
+tags: [adr, output-contract, comments, summary, pi-rpc, claude, assistant-turn, accepted]
 ---
 
 # ADR-0022 — Post the agent's captured turn, not a forced summary block
 
-**Status: `proposed`** — design locked in a grilling session 2026-06-23; not yet built. Companion to ADR-0019 ("the orchestrator owns the agent's I/O") applied to the *return* path.
+**Status: `accepted`** — implemented 2026-06-26 per [implementation plan](../../plans/adr-0022-post-captured-turn.md).
 
 ## Problem (dotfiles Issue #105 / Run #310)
 

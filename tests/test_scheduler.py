@@ -639,7 +639,8 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
-    assert "Jellyfin: OK" not in completion_comment
+    # ADR-0022: natural turn is posted — agent stdout content appears in comment.
+    assert "Jellyfin: OK" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -662,9 +663,10 @@ async def test_run_tick_omits_secret_bearing_stdout(tmp_path: Path) -> None:
 
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    # ADR-0022: secret is redacted IN the posted natural turn.
     assert "fake-plane-key-for-tests" not in completion_comment
-    assert "***REDACTED***" not in completion_comment
-    assert "All good" not in completion_comment
+    assert "***REDACTED***" in completion_comment
+    assert "All good" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -697,7 +699,8 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(
         for c in transport.comments["issue-1"]
         if "Symphony completed" in c["comment_html"]
     ][0]
-    assert "Updated config.yaml" not in completion_comment["comment_html"]
+    # ADR-0022: natural turn posted; commit/diff stats are scheduler metadata, not agent output.
+    assert "Updated config.yaml" in completion_comment["comment_html"]
     assert "abc1234" not in completion_comment["comment_html"]
     assert "docs/file.md | 2 ++" not in completion_comment["comment_html"]
 
@@ -982,7 +985,9 @@ async def test_second_stall_watchdog_failure_blocks(tmp_path: Path) -> None:
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
-    assert "Stall retry cap exhausted" in transport.comments["issue-1"][0]["comment_html"]
+    assert (
+        "Stall retry cap exhausted" in transport.comments["issue-1"][0]["comment_html"]
+    )
 
 
 @pytest.mark.asyncio
@@ -1069,7 +1074,9 @@ async def test_combined_retry_ceiling_blocks_before_any_retry(
             1, 10, False, stderr="server_is_overloaded"
         ),
         render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [replace(_candidate("issue-1"), comments_md=comments_md)],
+        poller=lambda adapter: [
+            replace(_candidate("issue-1"), comments_md=comments_md)
+        ],
         repo_dirty=lambda path: False,
         now=lambda: now,
     )
@@ -2193,7 +2200,8 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
-    assert "done output" not in completion_comment
+    # ADR-0022: natural turn posted; stderr still omitted on success.
+    assert "done output" in completion_comment
     assert "Stderr:" not in completion_comment
     assert "warning: minor issue" not in completion_comment
 
@@ -2251,7 +2259,8 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
-    assert "done output" not in completion_comment
+    # ADR-0022: natural turn posted.
+    assert "done output" in completion_comment
     assert "Stderr:" not in completion_comment
 
 
@@ -2394,10 +2403,10 @@ async def test_run_tick_summary_marker_appears_in_success_comment(
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
+    # ADR-0022: full natural turn posted; summary text + surrounding chatter both appear.
     assert "Jellyfin CT106 healthy. HTTP 200, mounts OK." in completion_comment
-    # No raw stdout dump.
-    assert "some chatter" not in completion_comment
-    assert "more chatter" not in completion_comment
+    assert "some chatter" in completion_comment
+    assert "more chatter" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -2421,8 +2430,9 @@ async def test_run_tick_summary_marker_last_occurrence_wins(tmp_path: Path) -> N
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
+    # ADR-0022: full natural turn posted; both draft and final appear.
     assert "final summary" in completion_comment
-    assert "draft summary" not in completion_comment
+    assert "draft summary" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -2449,12 +2459,13 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    # Comment is "**Symphony completed:** <summary>". The single-line summary
-    # fallback is bounded to SUMMARY_MAX_CHARS; no Timeline block is appended.
+    # ADR-0022: full natural turn posted; 5000 chars fits under DISPLAY_MAX_CHARS
+    # so it's not truncated.
     assert completion_comment.startswith("**Symphony completed:**")
     assert "**Timeline**" not in completion_comment
-    assert len(completion_comment) < 1000
-    assert "…" in completion_comment
+    assert "XXXXX" in completion_comment
+    # Not truncated (5000 chars + prefix < 12000 DISPLAY_MAX_CHARS).
+    assert "…" not in completion_comment
 
 
 @pytest.mark.asyncio
@@ -2531,12 +2542,8 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    # No summary marker/block emitted: body falls back to the no-summary line,
-    # with no Timeline block appended.
-    assert (
-        completion_comment
-        == "**Symphony completed:** Agent finished without a summary."
-    )
+    # ADR-0022: natural turn "ok" is posted instead of old placeholder.
+    assert completion_comment == "**Symphony completed:**\n\nok"
     assert "**Timeline**" not in completion_comment
 
 
@@ -2567,7 +2574,9 @@ async def test_run_tick_summary_marker_in_blocked_marker_comment(
     )
 
     blocked_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert blocked_comment == "Backup target offline."
+    # ADR-0022: natural turn posted; SYMPHONY_RESULT stripped, SUMMARY kept.
+    assert "Backup target offline." in blocked_comment
+    assert "SYMPHONY_RESULT" not in blocked_comment
     # Agent summary present, so the raw stderr summary is not appended.
     assert "Stderr summary:" not in blocked_comment
     assert "ssh: connection refused" not in blocked_comment
@@ -2610,10 +2619,10 @@ async def test_summary_block_posted_verbatim_in_completion_comment(
     assert "## What I did" in completion_comment
     assert "- Restarted prowlarr-host.service" in completion_comment
     assert "**Question:** should I enable auto-restart?" in completion_comment
-    # Markers and surrounding chatter are stripped.
+    # ADR-0022: full natural turn posted; markers stripped, chatter stays.
     assert "SYMPHONY_SUMMARY_BEGIN" not in completion_comment
     assert "SYMPHONY_RESULT" not in completion_comment
-    assert "chatter" not in completion_comment
+    assert "chatter" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -2634,9 +2643,11 @@ async def test_summary_block_bounded_on_overflow(tmp_path: Path) -> None:
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "[Summary truncated from 6000 characters" in completion_comment
-    # Bounded well under the raw 6000 chars (head + tail + notice + prefix).
-    assert len(completion_comment) < 4200
+    # ADR-0022: natural turn bounded at DISPLAY_MAX_CHARS (12000).
+    # 6000 chars + summary block markers stripped → still under 12000.
+    # The old SUMMARY_BLOCK_MAX_CHARS (4000) no longer applies.
+    assert len(completion_comment) < 6500
+    assert "XXXXX" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -2718,11 +2729,10 @@ async def test_indented_summary_block_not_matched(tmp_path: Path) -> None:
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "<your summary here>" not in completion_comment
-    assert (
-        completion_comment
-        == "**Symphony completed:** Agent finished without a summary."
-    )
+    # ADR-0022: full natural turn posted. Indented block is not a real marker,
+    # so the full echoed text (minus fences and RESULT/SCHEDULE lines) is posted.
+    assert "<your summary here>" in completion_comment
+    assert "SYMPHONY_SUMMARY_BEGIN" not in completion_comment
 
 
 # --- Config lock_path tests ---
@@ -2985,7 +2995,8 @@ async def test_run_tick_redacts_telegram_bot_token_from_stdout(tmp_path: Path) -
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "secret-telegram-token-12345" not in completion_comment
-    assert "***REDACTED***" not in completion_comment
+    # ADR-0022: full natural turn posted; secret redacted in-place.
+    assert "***REDACTED***" in completion_comment
 
 
 # --- Plan-mode dirty behavior (warning intentionally removed) ---
@@ -3019,7 +3030,8 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony completed" in completion_comment
-    assert "Health check OK" not in completion_comment
+    # ADR-0022: full natural turn posted, not just extracted summary.
+    assert "Health check OK" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -3998,7 +4010,8 @@ async def test_marker_review_transitions_to_in_review(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Found ambiguity" not in completion_comment
+    # ADR-0022: full natural turn posted.
+    assert "Found ambiguity" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -4025,9 +4038,9 @@ async def test_marker_blocked_blocks_issue(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
     blocked_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Agent reported a blocked result" in blocked_comment
+    # ADR-0022: natural turn posted as blocked reason.
+    assert "Cannot proceed: missing dependency." in blocked_comment
     assert "SYMPHONY_RESULT: blocked" not in blocked_comment
-    assert "missing dependency" not in blocked_comment
 
 
 @pytest.mark.asyncio

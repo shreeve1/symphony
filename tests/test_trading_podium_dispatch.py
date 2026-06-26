@@ -161,7 +161,7 @@ async def test_trading_podium_dispatch_records_run_log_and_context(
     assert run is not None
     assert run["state"] == "succeeded"
     assert run["verdict"] == "done"
-    assert run["summary"] == "trading podium dispatch ok"
+    assert run["summary"] == "trading podium dispatch ok\n\nstdout body"
     assert run["agent"] == "pi"
     assert run["provider"] == "openai-codex"
     assert run["model"] == "gpt-5.5:high"
@@ -298,7 +298,8 @@ async def test_claude_podium_dispatch_records_bare_model_and_stdout_only_parsing
     assert run["provider"] == ""
     assert run["model"] == "claude-opus-4-8"
     assert run["verdict"] == "review"
-    assert run["summary"] is None
+    # ADR-0022: natural turn "clean markerless stdout" posted as summary.
+    assert run["summary"] == "clean markerless stdout"
     assert "bogus pane summary" not in issue["comments_md"]
 
 
