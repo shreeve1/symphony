@@ -1,5 +1,13 @@
 # Wiki Log
 
+## [2026-06-26] session-update | Issue 141 worktree gitlink tracking fix
+
+- Actor: agent (Pi), direct investigation + repo configuration fix.
+- Inputs: user question about Issue 141; `podium.db` issue 141; `/etc/systemd/system/podium-api.service`; `.gitignore`; base repo git status.
+- Outputs: updated `.gitignore` to globally ignore `worktrees/`; removed tracked worktree gitlinks from the git index (`git rm --cached -r worktrees/`); updated `wiki/CLAIMS.md` (C-0342); this log entry.
+- Notes: Discovered that worktrees were being tracked as `160000` gitlinks because `worktrees/` was missing from `.gitignore`. When the agent committed work in the worktree, the base repository registered a modified gitlink (` M worktrees/symphony/141`), which caused `base_repo_dirty` to return True and blocked the worktree auto-merge/land during the transition of the issue state to "done". Untracking and ignoring the directory fixed it permanently. No secrets read, no restart needed.
+
+
 ## [2026-06-25] session-update | Issue #137 ADR-0026 review-run transient retry
 
 - Actor: agent (Pi), direct implementation.
