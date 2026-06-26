@@ -305,7 +305,6 @@ function NewIssueModal({
 	const [agent, setAgent] = useState("");
 	const [model, setModel] = useState("");
 	const [effort, setEffort] = useState("");
-	const [worktree, setWorktree] = useState(false);
 	const [base, setBase] = useState("");
 	const [scheduleDraft, setScheduleDraft] =
 		useState<ScheduleDraft>(defaultScheduleDraft);
@@ -391,7 +390,6 @@ function NewIssueModal({
 				...(agent.trim() && { preferred_agent: agent.trim() }),
 				...(model.trim() && { preferred_model: model.trim() }),
 				...(effort && { reasoning_effort: effort }),
-				...(worktree && { worktree_active: true }),
 				...(schedule && { schedule }),
 				...(base.trim() && { base_branch: base.trim() }),
 			},
@@ -489,18 +487,6 @@ function NewIssueModal({
 							emptyHint="bindings.yml default"
 							allowFreeText
 						/>
-						<label className="flex flex-1 items-end gap-2 pb-1.5">
-							<input
-								type="checkbox"
-								data-testid="new-issue-worktree"
-								checked={worktree}
-								onChange={(e) => setWorktree(e.target.checked)}
-								className="size-4 cursor-pointer"
-							/>
-							<span className="text-xs font-medium text-muted-foreground">
-								Worktree
-							</span>
-						</label>
 					</div>
 
 					{isInfra && (

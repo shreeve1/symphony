@@ -132,9 +132,9 @@ with connect() as connection:
         """
         INSERT INTO issue(
           binding_name, title, description, state, priority, preferred_agent,
-          reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+          reasoning_effort, base_branch, comments_md, context_md,
           created_at, updated_at, last_event_at
-        ) VALUES (?, ?, ?, ?, 'med', 'pi', 'high', FALSE, 'main', '', '', ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'med', 'pi', 'high', 'main', '', '', ?, ?, ?)
         """,
         (binding, title, f"E2E polling fixture for {binding}.", state, now, now, now),
     )
@@ -203,9 +203,9 @@ with connect() as connection:
         """
         INSERT INTO issue(
           binding_name, title, description, state, priority, preferred_agent,
-          reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+          reasoning_effort, base_branch, comments_md, context_md,
           created_at, updated_at, last_event_at
-        ) VALUES (?, ?, ?, 'running', 'med', ?, 'high', FALSE, 'main', '', '', ?, ?, ?)
+        ) VALUES (?, ?, ?, 'running', 'med', ?, 'high', 'main', '', '', ?, ?, ?)
         """,
         (binding, title, f"E2E running run fixture for {binding}.", agent, now, now, now),
     )
@@ -214,7 +214,7 @@ with connect() as connection:
         """
         INSERT INTO run(
           issue_id, agent, provider, model, state, verdict, summary, exit_code,
-          cost_usd, input_tokens, output_tokens, worktree_path, branch_name,
+          cost_usd, input_tokens, output_tokens, branch_name,
           base_branch, log_path, skill_invoked, started_at, ended_at
         ) VALUES (?, ?, 'e2e', 'glm-5.1:high', 'running', NULL, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, 'main', NULL, NULL, ?, NULL)

@@ -24,10 +24,7 @@ const waitForPatch = (page: Page) =>
 
 // Edits target whichever value the field does NOT currently hold, so the test
 // is idempotent against a database that already absorbed a previous run.
-test("typed column edits persist across reload", async ({
-	page,
-	problems,
-}) => {
+test("typed column edits persist across reload", async ({ page, problems }) => {
 	seedSkills([
 		{ name: "tdd", description: "TDD e2e fixture" },
 		{ name: "code-review", description: "Review e2e fixture" },
@@ -50,13 +47,6 @@ test("typed column edits persist across reload", async ({
 	await skill.selectOption(nextSkill);
 	await patched;
 
-	// worktree toggle
-	const worktree = page.getByTestId("edit-worktree_active");
-	const wasActive = (await worktree.getAttribute("aria-pressed")) === "true";
-	patched = waitForPatch(page);
-	await worktree.click();
-	await patched;
-
 	// Close, reload, reopen: every edit persisted through SQLite.
 	await page.keyboard.press("Escape");
 	await expect(page.getByTestId("issue-flyout")).toBeHidden();
@@ -69,11 +59,6 @@ test("typed column edits persist across reload", async ({
 
 	await expect(page.getByTestId("edit-state")).toHaveValue(nextState);
 	await expect(page.getByTestId("edit-preferred_skill")).toHaveValue(nextSkill);
-	await expect(page.getByTestId("edit-worktree_active")).toHaveAttribute(
-		"aria-pressed",
-		String(!wasActive),
-	);
-
 	expectCleanConsole(problems);
 });
 
