@@ -13,7 +13,10 @@ from typing import Any
 
 MAX_COMMIT_REDISPATCH = 2
 RETRY_MARKER_PREFIX = "### Symphony Retry (transient"
+STALL_MARKER_PREFIX = "### Symphony Retry (stall"
 STALL_WATCHDOG_SENTINEL = "SYMPHONY_STALL_WATCHDOG"
+MAX_STALL_RETRIES = 1
+MAX_COMBINED_RETRIES = 3
 
 # Substring used both as the synthetic operator-reply header and as the marker
 # counted to enforce MAX_COMMIT_REDISPATCH. Must keep the `### Operator Reply (`
@@ -32,10 +35,19 @@ _RETRY_MARKER_PATTERN = (
 )
 RETRY_MARKER_RE = re.compile(_RETRY_MARKER_PATTERN, re.MULTILINE)
 RETRY_MARKER_TIMESTAMP_RE = re.compile(_RETRY_MARKER_PATTERN, re.MULTILINE)
+_STALL_MARKER_PATTERN = (
+    rf"^{re.escape(STALL_MARKER_PREFIX)}\s+·\s+(?P<attempt>\d+)\)"
+    rf"\s+·\s+(?P<timestamp>\S+)$"
+)
+STALL_MARKER_RE = re.compile(_STALL_MARKER_PATTERN, re.MULTILINE)
 
 
 def format_retry_marker(attempt: int, reason: str, now: datetime) -> str:
     return f"{RETRY_MARKER_PREFIX} · {attempt}) · {now.isoformat()}"
+
+
+def format_stall_retry_marker(attempt: int, now: datetime) -> str:
+    return f"{STALL_MARKER_PREFIX} · {attempt}) · {now.isoformat()}"
 
 
 def count_retries(comments_md: str | None) -> int:
@@ -45,6 +57,19 @@ def count_retries(comments_md: str | None) -> int:
         int(match.group("attempt")) for match in RETRY_MARKER_RE.finditer(comments_md)
     ]
     return max(attempts, default=0)
+
+
+def count_stall_retries(comments_md: str | None) -> int:
+    if not comments_md:
+        return 0
+    attempts = [
+        int(match.group("attempt")) for match in STALL_MARKER_RE.finditer(comments_md)
+    ]
+    return max(attempts, default=0)
+
+
+def count_all_retries(comments_md: str | None) -> int:
+    return count_retries(comments_md) + count_stall_retries(comments_md)
 
 
 def retry_cooldown_expired(

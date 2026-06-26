@@ -5,11 +5,19 @@ from __future__ import annotations
 import re
 
 from redispatch_core import (
+    MAX_COMBINED_RETRIES as MAX_COMBINED_RETRIES,
+    MAX_STALL_RETRIES as MAX_STALL_RETRIES,
     RETRY_MARKER_PREFIX as RETRY_MARKER_PREFIX,
     RETRY_MARKER_RE as RETRY_MARKER_RE,
     RETRY_MARKER_TIMESTAMP_RE as RETRY_MARKER_TIMESTAMP_RE,
+    STALL_MARKER_PREFIX as STALL_MARKER_PREFIX,
+    STALL_MARKER_RE as STALL_MARKER_RE,
+    STALL_WATCHDOG_SENTINEL as STALL_WATCHDOG_SENTINEL,
+    count_all_retries as count_all_retries,
     count_retries as count_retries,
+    count_stall_retries as count_stall_retries,
     format_retry_marker as format_retry_marker,
+    format_stall_retry_marker as format_stall_retry_marker,
     retry_cooldown_expired as retry_cooldown_expired,
 )
 

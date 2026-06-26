@@ -129,10 +129,16 @@ from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
 from .transient_retry import (
+    MAX_COMBINED_RETRIES,
     MAX_OVERLOAD_RETRIES,
+    MAX_STALL_RETRIES,
     MAX_TIMEOUT_RETRIES,
+    STALL_WATCHDOG_SENTINEL,
+    count_all_retries,
     count_retries,
+    count_stall_retries,
     format_retry_marker,
+    format_stall_retry_marker,
     is_transient,
     retry_cooldown_expired,
 )
@@ -1911,6 +1917,7 @@ async def _maybe_transient_review_retry(
     notifier: TelegramNotifier | None,
     now: Callable[[], datetime],
     mode: str,
+    comments_md: str | None = None,
 ) -> TickResult | None:
     if not getattr(candidate, "review_dispatch", False):
         return None
@@ -1918,7 +1925,7 @@ async def _maybe_transient_review_retry(
         return None
 
     now_dt = now()
-    comments_md = getattr(candidate, "comments_md", "") or ""
+    comments_md = comments_md if comments_md is not None else getattr(candidate, "comments_md", "") or ""
     prior = count_retries(comments_md)
     cap = MAX_TIMEOUT_RETRIES if result.timed_out else MAX_OVERLOAD_RETRIES
     retry_summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
@@ -1991,6 +1998,133 @@ async def _retry_comments_text(
     )
 
 
+async def _fresh_retry_comments_text(
+    adapter: TrackerAdapter, candidate: CandidateIssue
+) -> str:
+    issue = await _fetch_issue(adapter, candidate.id)
+    if issue.get("comments_md"):
+        return str(issue.get("comments_md") or "")
+    comments = await adapter.list_comments(candidate.id)
+    return "\n\n".join(
+        str(comment.get("body") or comment.get("comment_html") or "")
+        for comment in comments
+    )
+
+
+async def _block_retry_ceiling(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    result: AgentResult,
+    *,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    parse_stderr: bool,
+    notifier: TelegramNotifier | None,
+    now: Callable[[], datetime],
+    mode: str,
+) -> TickResult:
+    total = count_all_retries(getattr(candidate, "comments_md", "") or "")
+    msg = f"Combined retry ceiling exhausted after {total} retries."
+    now_dt = now()
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="failed",
+        verdict="blocked",
+        summary=_extract_summary(result, secrets, include_stderr=parse_stderr) or msg,
+        ended_at=now_dt.isoformat(),
+    )
+    _iu, _du = _build_urls(config, candidate.id)
+    await _block_issue(
+        adapter,
+        candidate.id,
+        msg,
+        issue_name=candidate.name,
+        issue_identifier=candidate.identifier,
+        notifier=notifier,
+        issue_url=_iu,
+        dashboard_url=_du,
+    )
+    return TickResult(True, "combined-ceiling-exhausted", candidate.id, mode=mode)
+
+
+async def _maybe_retry_stall(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    result: AgentResult,
+    *,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    parse_stderr: bool,
+    notifier: TelegramNotifier | None,
+    now: Callable[[], datetime],
+    mode: str,
+    comments_md: str,
+) -> TickResult | None:
+    if STALL_WATCHDOG_SENTINEL not in (result.stderr or ""):
+        return None
+
+    now_dt = now()
+    prior = count_stall_retries(comments_md)
+    if prior >= MAX_STALL_RETRIES:
+        msg = f"Stall retry cap exhausted after {prior} retries."
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=_extract_summary(result, secrets, include_stderr=parse_stderr) or msg,
+            ended_at=now_dt.isoformat(),
+        )
+        _iu, _du = _build_urls(config, candidate.id)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        reason = "stall-retry-exhausted-review" if getattr(candidate, "review_dispatch", False) else "stall-retry-exhausted-implement"
+        return TickResult(True, reason, candidate.id, mode=mode)
+
+    body = format_stall_retry_marker(prior + 1, now_dt)
+    if getattr(candidate, "review_dispatch", False):
+        body = f"{body}\n\n{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}"
+        role = TrackerRole.STATE_IN_REVIEW
+        reason = "stall-retry-review"
+    else:
+        role = TrackerRole.STATE_TODO
+        reason = "stall-retry-implement"
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="failed",
+        verdict="retry",
+        summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
+        or "Agent stalled; retrying.",
+        ended_at=now_dt.isoformat(),
+    )
+    await adapter.add_comment(candidate.id, CommentPayload(body=body))
+    await adapter.transition_state(candidate.id, role)
+    return TickResult(True, reason, candidate.id, mode=mode)
+
+
 async def _maybe_retry_transient_implement(
     adapter: TrackerAdapter,
     candidate: CandidateIssue,
@@ -2002,6 +2136,7 @@ async def _maybe_retry_transient_implement(
     parse_stderr: bool,
     now: Callable[[], datetime],
     mode: str,
+    comments_md: str | None = None,
 ) -> TickResult | None:
     if getattr(candidate, "review_dispatch", False):
         return None
@@ -2010,7 +2145,7 @@ async def _maybe_retry_transient_implement(
     if not is_transient(result.stderr, result.exit_code, result.timed_out):
         return None
 
-    comments_md = await _retry_comments_text(adapter, candidate)
+    comments_md = comments_md if comments_md is not None else await _retry_comments_text(adapter, candidate)
     retry_count = count_retries(comments_md)
     retry_cap = MAX_TIMEOUT_RETRIES if result.timed_out else MAX_OVERLOAD_RETRIES
     retry_at = now()
@@ -2070,6 +2205,61 @@ async def _classify_terminal(
     """Classify terminal agent output and apply final tracker/run transitions."""
 
     if result.timed_out or result.exit_code != 0:
+        comments_md = getattr(candidate, "comments_md", "") or ""
+        if count_all_retries(comments_md) >= MAX_COMBINED_RETRIES:
+            return await _block_retry_ceiling(
+                config,
+                adapter,
+                candidate,
+                result,
+                run_id=run_id,
+                run_log_path=run_log_path,
+                secrets=secrets,
+                parse_stderr=parse_stderr,
+                notifier=notifier,
+                now=now,
+                mode=mode,
+            )
+        try:
+            fresh_comments_md = await _fresh_retry_comments_text(adapter, candidate)
+            if fresh_comments_md:
+                comments_md = fresh_comments_md
+        except Exception as exc:
+            LOGGER.warning(
+                "retry_comments_fetch_failed issue_id=%s error=%s",
+                candidate.id,
+                exc,
+            )
+        if count_all_retries(comments_md) >= MAX_COMBINED_RETRIES:
+            return await _block_retry_ceiling(
+                config,
+                adapter,
+                candidate,
+                result,
+                run_id=run_id,
+                run_log_path=run_log_path,
+                secrets=secrets,
+                parse_stderr=parse_stderr,
+                notifier=notifier,
+                now=now,
+                mode=mode,
+            )
+        stall_retry = await _maybe_retry_stall(
+            config,
+            adapter,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
+            secrets=secrets,
+            parse_stderr=parse_stderr,
+            notifier=notifier,
+            now=now,
+            mode=mode,
+            comments_md=comments_md,
+        )
+        if stall_retry is not None:
+            return stall_retry
         transient_retry = await _maybe_transient_review_retry(
             config,
             adapter,
@@ -2082,6 +2272,7 @@ async def _classify_terminal(
             notifier=notifier,
             now=now,
             mode=mode,
+            comments_md=comments_md,
         )
         if transient_retry is not None:
             return transient_retry
@@ -2095,6 +2286,7 @@ async def _classify_terminal(
             parse_stderr=parse_stderr,
             now=now,
             mode=mode,
+            comments_md=comments_md,
         )
         if retry is not None:
             return retry

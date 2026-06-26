@@ -4,13 +4,20 @@ from datetime import datetime, timedelta, timezone
 
 from redispatch_core import RETRY_MARKER_PREFIX as REDISPATCH_RETRY_MARKER_PREFIX
 from scheduler.transient_retry import (
+    MAX_COMBINED_RETRIES,
     MAX_OVERLOAD_RETRIES,
+    MAX_STALL_RETRIES,
     MAX_TIMEOUT_RETRIES,
     RETRY_MARKER_PREFIX,
     RETRY_MARKER_RE,
     RETRY_MARKER_TIMESTAMP_RE,
+    STALL_MARKER_RE,
+    STALL_WATCHDOG_SENTINEL,
+    count_all_retries,
     count_retries,
+    count_stall_retries,
     format_retry_marker,
+    format_stall_retry_marker,
     is_transient,
     retry_cooldown_expired,
 )
@@ -78,7 +85,21 @@ def test_retry_cooldown_expired_uses_latest_marker_timestamp() -> None:
     assert retry_cooldown_expired(old_marker, now, cooldown_s=60)
 
 
+def test_stall_retry_marker_format_regex_and_counts() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    transient = format_retry_marker(2, "overloaded", now)
+    stall = format_stall_retry_marker(1, now)
+
+    assert stall == "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00"
+    assert STALL_MARKER_RE.fullmatch(stall)
+    assert count_stall_retries(f"{transient}\n{stall}") == 1
+    assert count_all_retries(f"{transient}\n{stall}") == 3
+    assert not is_transient(STALL_WATCHDOG_SENTINEL, 1, False)
+
+
 def test_retry_constants_and_redispatch_reexport() -> None:
     assert MAX_OVERLOAD_RETRIES == 2
     assert MAX_TIMEOUT_RETRIES == 1
+    assert MAX_STALL_RETRIES == 1
+    assert MAX_COMBINED_RETRIES == 3
     assert REDISPATCH_RETRY_MARKER_PREFIX is RETRY_MARKER_PREFIX

@@ -1,11 +1,13 @@
 ---
 id: 125
 title: Stall retry markers + counter + combined ceiling + _classify_terminal path
-status: pending
+status: in-progress
 blocked_by: [124]
 locks: [redispatch_core, scheduler, transient_retry]
 priority: 1
 created: 2026-06-25
+updated: 2026-06-26
+actor: ralph
 ---
 
 ## What to build
