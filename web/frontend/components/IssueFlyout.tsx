@@ -547,9 +547,28 @@ function ReplyComposer({
 	onSent: () => void;
 }) {
 	const queryClient = useQueryClient();
-	const [draft, setDraft] = useState("");
+	const draftKey = `podium.reply-draft.${issue.id}`;
+	const [draft, setDraft] = useState(() => {
+		try {
+			return window.sessionStorage.getItem(draftKey) ?? "";
+		} catch {
+			return "";
+		}
+	});
 	const taRef = useRef<HTMLTextAreaElement>(null);
 	const hasStaged = hasStagedDispatch(staged);
+	const saveDraft = (next: string) => {
+		setDraft(next);
+		try {
+			if (next) {
+				window.sessionStorage.setItem(draftKey, next);
+			} else {
+				window.sessionStorage.removeItem(draftKey);
+			}
+		} catch {
+			// Storage unavailable — keep the in-memory draft.
+		}
+	};
 
 	// Auto-grow: start small (one row) and expand to fit the draft up to a cap,
 	// after which it scrolls. Resync height whenever the draft changes (typing,
@@ -611,7 +630,7 @@ function ReplyComposer({
 				: postReply(issue.id, body);
 		},
 		onSuccess: () => {
-			setDraft("");
+			saveDraft("");
 			onClearStaged();
 			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
 			queryClient.invalidateQueries({
@@ -636,7 +655,7 @@ function ReplyComposer({
 							: "Write a reply to the agent…"
 				}
 				disabled={replyDisabled}
-				onChange={(e) => setDraft(e.target.value)}
+				onChange={(e) => saveDraft(e.target.value)}
 				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
 			/>
 			{replyDisabled && (
@@ -1242,6 +1261,7 @@ export function IssueFlyout({
 										// scrolled to the newest entry on open.
 										<div className="space-y-3">
 											<ReplyComposer
+												key={issue.id}
 												issue={issue}
 												staged={stagedDispatch}
 												onClearStaged={clearStagedDispatch}

@@ -29,6 +29,78 @@ const waitForReply = (page: Page) =>
 			res.ok(),
 	);
 
+test("composer restores unsent drafts per issue and across reload", async ({
+	page,
+	problems,
+}) => {
+	const suffix = Date.now();
+	const titleA = `e2e reply draft A ${suffix}`;
+	const titleB = `e2e reply draft B ${suffix}`;
+	const { issueId: issueA } = seedIssue("homelab", titleA, "in_review");
+	const { issueId: issueB } = seedIssue("homelab", titleB, "in_review");
+
+	await page.goto(`/homelab?issue=${issueA}`);
+	await expect(page.getByTestId("flyout-title")).toContainText(titleA);
+	await page.getByTestId("reply-input").fill("draft for issue A");
+
+	await page.goto(`/homelab?issue=${issueB}`);
+	await expect(page.getByTestId("flyout-title")).toContainText(titleB);
+	await expect(page.getByTestId("reply-input")).toHaveValue("");
+	await page.getByTestId("reply-input").fill("draft for issue B");
+
+	await page.goto(`/homelab?issue=${issueA}`);
+	await expect(page.getByTestId("flyout-title")).toContainText(titleA);
+	await expect(page.getByTestId("reply-input")).toHaveValue("draft for issue A");
+
+	await page.reload();
+	await expect(page.getByTestId("flyout-title")).toContainText(titleA);
+	await expect(page.getByTestId("reply-input")).toHaveValue("draft for issue A");
+
+	const replied = waitForReply(page);
+	await page.getByTestId("reply-send").click();
+	await replied;
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+
+	await page.goto(`/homelab?issue=${issueA}`);
+	await expect(page.getByTestId("flyout-title")).toContainText(titleA);
+	await expect(page.getByTestId("reply-input")).toHaveValue("");
+
+	expectCleanConsole(problems);
+});
+
+test("staged schedule controls still reset on issue switch", async ({
+	page,
+	problems,
+}) => {
+	const suffix = Date.now();
+	const { issueId: issueA } = seedIssue(
+		"homelab",
+		`e2e staged schedule A ${suffix}`,
+		"in_review",
+	);
+	const { issueId: issueB } = seedIssue(
+		"homelab",
+		`e2e staged schedule B ${suffix}`,
+		"in_review",
+	);
+
+	await page.goto(`/homelab?issue=${issueA}`);
+	await page.getByTestId("issue-schedule-mode").selectOption("next_window");
+	await expect(page.getByTestId("issue-schedule-mode")).toHaveValue(
+		"next_window",
+	);
+	await expect(page.getByText("pending")).toBeVisible();
+
+	await page.goto(`/homelab?issue=${issueB}`);
+	await expect(page.getByTestId("issue-schedule-mode")).toHaveValue("none");
+
+	await page.goto(`/homelab?issue=${issueA}`);
+	await expect(page.getByTestId("issue-schedule-mode")).toHaveValue("none");
+	await expect(page.getByText("pending")).toHaveCount(0);
+
+	expectCleanConsole(problems);
+});
+
 test("composer posts a reply, closes the flyout, and the card moves to Todo", async ({
 	page,
 	problems,

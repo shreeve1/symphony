@@ -1,10 +1,10 @@
 ---
 id: 126
 title: Save issue flyout reply drafts per issue
-status: todo
+status: done
 priority: 2
 created: 2026-06-24
-updated: 2026-06-24
+updated: 2026-06-26
 actor: symphony
 ---
 
@@ -31,17 +31,26 @@ Implement the smallest fix:
 
 ## Acceptance criteria
 
-- [ ] Typing in issue A's reply composer, opening issue B, then reopening issue A
+- [x] Typing in issue A's reply composer, opening issue B, then reopening issue A
       restores issue A's unsent draft.
-- [ ] Issue B does not show issue A's draft.
-- [ ] Refreshing the browser while issue A is open restores issue A's draft.
-- [ ] Sending a reply/comment clears the saved draft for that issue.
-- [ ] Staged schedule/approval controls still reset on issue switch.
-- [ ] No backend/API/schema changes.
+- [x] Issue B does not show issue A's draft.
+- [x] Refreshing the browser while issue A is open restores issue A's draft.
+- [x] Sending a reply/comment clears the saved draft for that issue.
+- [x] Staged schedule/approval controls still reset on issue switch.
+- [x] No backend/API/schema changes.
 
 ## Verification
 
 `cd web/frontend && pnpm test:e2e -- reply.spec.ts`
+
+## Implementation Notes
+
+- Added `sessionStorage` persistence for `ReplyComposer` drafts under
+  `podium.reply-draft.<issue-id>`.
+- Keyed `ReplyComposer` by issue id so cached issue switches cannot leak one issue's
+  draft into another issue.
+- Added Playwright coverage for per-issue restore, browser reload restore,
+  clear-on-send, and unchanged staged schedule reset behavior.
 
 ## Notes
 
