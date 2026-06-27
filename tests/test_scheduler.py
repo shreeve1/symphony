@@ -7070,3 +7070,394 @@ async def test_done_verdict_parks_in_review_without_auto_close_flag(
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
+
+
+# ── _handle_operator_reland tests ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_not_entered_without_marker(
+    tmp_path: Path,
+) -> None:
+    """No operator marker → _handle_operator_reland returns False, does nothing."""
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": "### Symphony Implement (1)\n\nSome output.",
+    }
+    candidate = replace(
+        _candidate("issue-1"),
+        binding_name="homelab",
+        comments_md="### Symphony Implement (1)\n\nSome output.",
+    )
+
+    handled = await scheduler._handle_operator_reland(
+        _adapter(transport),
+        _config(tmp_path),
+        candidate,
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is False
+    assert not transport.comments.get("issue-1", [])
+    assert transport.issues["issue-1"]["state"] == PlaneState.TODO.value
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_dirty_under_cap_redispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import (
+        COMMIT_REDISPATCH_REPLY_PREFIX,
+        OPERATOR_RELAND_PENDING_PREFIX,
+    )
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: True)
+
+    handled = await scheduler._handle_operator_reland(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            comments_md=f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+        ),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    body = transport.comments["issue-1"][-1]["comment_html"]
+    assert COMMIT_REDISPATCH_REPLY_PREFIX in body
+    assert OPERATOR_RELAND_PENDING_PREFIX in body
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_dirty_at_cap_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import (
+        COMMIT_REDISPATCH_REPLY_PREFIX,
+        MAX_COMMIT_REDISPATCH,
+        OPERATOR_RELAND_PENDING_PREFIX,
+    )
+
+    transport = FakeTransport()
+    prior = "\n\n".join(
+        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · attempt-{index})"
+        for index in range(MAX_COMMIT_REDISPATCH)
+    )
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00\n\n{prior}",
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: True)
+
+    handled = await scheduler._handle_operator_reland(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            comments_md=f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00\n\n{prior}",
+        ),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert (
+        "still uncommitted after 2 re-dispatches; worktree intact"
+        in transport.comments["issue-1"][-1]["comment_html"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_base_dirty_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import OPERATOR_RELAND_PENDING_PREFIX
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        scheduler, "_review_base_repo_dirty", lambda config, binding: True
+    )
+
+    handled = await scheduler._handle_operator_reland(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            comments_md=f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+        ),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert (
+        "base checkout has uncommitted changes"
+        in transport.comments["issue-1"][-1]["comment_html"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_conflict_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import OPERATOR_RELAND_PENDING_PREFIX
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        scheduler, "_review_base_repo_dirty", lambda config, binding: False
+    )
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: "rebase conflict: branch cannot be merged",
+    )
+
+    handled = await scheduler._handle_operator_reland(
+        _adapter(transport),
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            base_branch="main",
+            comments_md=f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+        ),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    assert "rebase conflict" in transport.comments["issue-1"][-1]["comment_html"]
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_clean_lands_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from redispatch_core import (
+        OPERATOR_RELAND_DONE_PREFIX,
+        OPERATOR_RELAND_PENDING_PREFIX,
+    )
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": (
+            f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00\n"
+            f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:30:00+00:00"
+        ),
+        "worktree_active": True,
+    }
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        scheduler, "_review_base_repo_dirty", lambda config, binding: False
+    )
+    monkeypatch.setattr("worktree_facade.land_worktree", lambda *a: None)
+    # Record _update_issue_columns calls
+    column_calls: list[dict[str, Any]] = []
+    adapter = _adapter(transport)
+
+    async def update_columns(issue_id: str, columns: dict[str, Any]) -> dict[str, Any]:
+        column_calls.append(dict(columns))
+        return {}
+
+    adapter._update_issue_columns = update_columns  # type: ignore[attr-defined]
+
+    handled = await scheduler._handle_operator_reland(
+        adapter,
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            base_branch="main",
+            comments_md=(
+                f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00\n"
+                f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:30:00+00:00"
+            ),
+        ),
+        result=AgentResult(0, 10, False),
+        run_id=None,
+        run_log_path=None,
+        secrets=(),
+        summary="",
+        stdout="",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+    # worktree_active cleared
+    assert column_calls == [{"worktree_active": False}]
+    # operator marker balanced: 2 pending, 2 done
+    done_comments = [
+        c["comment_html"]
+        for c in transport.comments["issue-1"]
+        if OPERATOR_RELAND_DONE_PREFIX in c["comment_html"]
+    ]
+    assert len(done_comments) == 1
+    assert done_comments[0].count(OPERATOR_RELAND_DONE_PREFIX) == 2
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_finishes_run_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Clean land and at-cap block both finish the Run row (no left-running row)."""
+    from redispatch_core import (
+        COMMIT_REDISPATCH_REPLY_PREFIX,
+        MAX_COMMIT_REDISPATCH,
+        OPERATOR_RELAND_PENDING_PREFIX,
+    )
+
+    # ── Block branch: dirty at-cap ──
+    transport = FakeTransport()
+    prior = "\n\n".join(
+        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · attempt-{index})"
+        for index in range(MAX_COMMIT_REDISPATCH)
+    )
+    transport.issues["issue-1"] = {
+        **_issue("issue-1", state=PlaneState.TODO.value),
+        "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00\n\n{prior}",
+    }
+    adapter = RunStoreAdapter(transport, tmp_path / "block.db")
+    await adapter.record_run({"issue_id": "issue-1", "state": "running"})
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: True)
+
+    handled = await scheduler._handle_operator_reland(
+        adapter,
+        _config(tmp_path),
+        replace(
+            _candidate("issue-1"),
+            binding_name="homelab",
+            comments_md=f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00\n\n{prior}",
+        ),
+        result=AgentResult(0, 10, False, stdout="block stdout"),
+        run_id="run-1",
+        run_log_path=tmp_path / "block.log",
+        secrets=(),
+        summary="",
+        stdout="block stdout",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert len(adapter.run_updates) == 1
+    assert adapter.run_updates[0]["state"] == "failed"
+    assert adapter.run_updates[0]["verdict"] == "blocked"
+
+    # ── Clean land branch ──
+    transport2 = FakeTransport()
+    transport2.issues["issue-2"] = {
+        **_issue("issue-2", state=PlaneState.TODO.value),
+        "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+    }
+    adapter2 = RunStoreAdapter(transport2, tmp_path / "land.db")
+    await adapter2.record_run({"issue_id": "issue-2", "state": "running"})
+    monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr(
+        scheduler, "_review_base_repo_dirty", lambda config, binding: False
+    )
+    monkeypatch.setattr("worktree_facade.land_worktree", lambda *a: None)
+
+    handled = await scheduler._handle_operator_reland(
+        adapter2,
+        _config(tmp_path),
+        replace(
+            _candidate("issue-2"),
+            binding_name="homelab",
+            base_branch="main",
+            comments_md=f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+        ),
+        result=AgentResult(0, 10, False, stdout="land stdout"),
+        run_id="run-1",
+        run_log_path=tmp_path / "land.log",
+        secrets=(),
+        summary="",
+        stdout="land stdout",
+        stderr="",
+        now=lambda: datetime(2026, 5, 4, 2, 0, tzinfo=UTC),
+        notifier=None,
+    )
+
+    assert handled is True
+    assert len(adapter2.run_updates) == 1
+    assert adapter2.run_updates[0]["state"] == "succeeded"
+    assert adapter2.run_updates[0]["verdict"] == "done"

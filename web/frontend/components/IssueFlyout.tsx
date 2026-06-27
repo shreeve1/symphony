@@ -196,7 +196,7 @@ function ChipSelect({
 	const entries: ComboOption[] =
 		typeof options[0] === "string"
 			? (options as readonly string[]).map((o) => ({ value: o }))
-			: (options as readonly ComboOption[]);
+			: [...(options as readonly ComboOption[])];
 	return (
 		<ChipShell label={label}>
 			<select
@@ -1021,8 +1021,8 @@ export function IssueFlyout({
 		patch.mutate(
 			{ issue: detail.data, patch: issuePatch },
 			{
-				onSuccess: () => {
-					if (issuePatch.state === "done" || issuePatch.state === "archived") {
+				onSuccess: (data) => {
+					if (data.state === "done" || data.state === "archived") {
 						onClose();
 					}
 				},
@@ -1035,13 +1035,14 @@ export function IssueFlyout({
 	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
 	// Model catalog feeds the preferred_model picker.
 	const options = useQuery({
-		queryKey: ["issue-options", issue.binding_name],
-		queryFn: () => fetchIssueOptions(issue.binding_name),
+		queryKey: ["issue-options", detail.data?.binding_name ?? ""],
+		queryFn: () => fetchIssueOptions(detail.data!.binding_name),
+		enabled: detail.data != null,
 	});
 	const skillNames = (skills.data ?? []).map((s) => s.name);
 	const modelOpts = modelOptionsForAgent(
 		options.data?.models ?? [],
-		issue.preferred_agent,
+		detail.data?.preferred_agent ?? null,
 	);
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
 
@@ -1193,6 +1194,13 @@ export function IssueFlyout({
 								onStageSchedule={stageSchedule}
 								stagedPending={false}
 							/>
+
+							{patch.isError && (
+								<p data-testid="patch-error" className="text-xs text-red-500">
+									{(patch.error as { detail?: string } | null)?.detail ||
+										"Failed to update — the issue may have changed state. Try again."}
+								</p>
+							)}
 
 							<div>
 								<div

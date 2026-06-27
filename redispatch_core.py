@@ -29,6 +29,21 @@ RELAND_PENDING_RE = re.compile(
     rf"^{re.escape(RELAND_PENDING_PREFIX)}(?:\s|$)", re.MULTILINE
 )
 RELAND_DONE_RE = re.compile(rf"^{re.escape(RELAND_DONE_PREFIX)}(?:\s|$)", re.MULTILINE)
+
+# Operator move-to-done reland marker pair. DISTINCT from the review
+# RELAND pair above: tracker_podium.list_candidates keys review-run
+# reselection off RELAND_PENDING_RE specifically, so this distinct prefix
+# does NOT trigger review reselection. An operator-done issue redispatches
+# as a normal todo implement run; the scheduler consumes this marker after
+# the commit run to close the dirty-loop land (finding #2, #3).
+OPERATOR_RELAND_PENDING_PREFIX = "### Symphony Operator Reland Pending"
+OPERATOR_RELAND_DONE_PREFIX = "### Symphony Operator Reland Done"
+OPERATOR_RELAND_PENDING_RE = re.compile(
+    rf"^{re.escape(OPERATOR_RELAND_PENDING_PREFIX)}(?:\s|$)", re.MULTILINE
+)
+OPERATOR_RELAND_DONE_RE = re.compile(
+    rf"^{re.escape(OPERATOR_RELAND_DONE_PREFIX)}(?:\s|$)", re.MULTILINE
+)
 _RETRY_MARKER_PATTERN = (
     rf"^{re.escape(RETRY_MARKER_PREFIX)}\s+·\s+(?P<attempt>\d+)\)"
     rf"\s+·\s+(?P<timestamp>\S+)$"
@@ -101,4 +116,40 @@ def redispatch_commit_note(worktree_path: str | PathLike[Any], branch: str) -> s
         f"repo's tests for the changed code, then `git add -A && git commit` "
         f"with a clear message. Do not start new work or expand scope. When the "
         f"commit lands, end your turn."
+    )
+
+
+def count_operator_reland_pending(comments_md: str | None) -> int:
+    """Count outstanding operator move-to-done reland pending markers."""
+    if not comments_md:
+        return 0
+    return len(OPERATOR_RELAND_PENDING_RE.findall(comments_md))
+
+
+def operator_reland_unconsumed(comments_md: str | None) -> bool:
+    """True if an operator-reland pending marker has no balancing done marker.
+
+    pending count > done count, mirroring the reland_unconsumed check in
+    tracker_podium.list_candidates but for the distinct operator prefix."""
+    if not comments_md:
+        return False
+    return count_operator_reland_pending(comments_md) > len(
+        OPERATOR_RELAND_DONE_RE.findall(comments_md)
+    )
+
+
+def operator_reland_done_body(comments_md: str | None, *, now: datetime) -> str:
+    """Emit one OPERATOR_RELAND_DONE line per outstanding pending marker.
+
+    Mirrors scheduler ``_reland_done_body`` so a successful land balances
+    every outstanding operator-reland pending marker (prevents re-entry)."""
+    if not comments_md:
+        return ""
+    outstanding = count_operator_reland_pending(comments_md) - len(
+        OPERATOR_RELAND_DONE_RE.findall(comments_md)
+    )
+    if outstanding <= 0:
+        return ""
+    return "\n".join(
+        f"{OPERATOR_RELAND_DONE_PREFIX} · {now.isoformat()}" for _ in range(outstanding)
     )

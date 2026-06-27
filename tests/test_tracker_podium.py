@@ -321,3 +321,32 @@ def test_connections_enable_wal_and_busy_timeout(tmp_path: Path) -> None:
 
     assert journal_mode == "wal"
     assert busy_timeout == 5000
+
+
+@pytest.mark.asyncio
+async def test_operator_reland_marker_does_not_reselect_as_review_run(
+    tmp_path: Path,
+) -> None:
+    """An in_review issue whose only reland marker is the OPERATOR variant is
+    NOT re-selected as a review run — the distinct prefix keeps
+    list_candidates' review reselection off it (finding #3)."""
+    from redispatch_core import OPERATOR_RELAND_PENDING_PREFIX
+
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path, state="in_review")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET comments_md = ? WHERE id = ?",
+            (
+                f"### Symphony Review (1)\n\n{OPERATOR_RELAND_PENDING_PREFIX} · one",
+                issue_id,
+            ),
+        )
+        connection.commit()
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path, binding_name="test"
+    ).list_candidates()
+
+    # The operator marker is not a review reland: no review reselection.
+    assert candidates == []

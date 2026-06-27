@@ -325,9 +325,17 @@ export async function patchIssue(
 		body: JSON.stringify(patch),
 	});
 	if (!res.ok) {
-		throw new Error(
+		let detail: string | undefined;
+		try {
+			detail = ((await res.json()) as { detail?: string }).detail;
+		} catch {
+			// Body not JSON — detail stays undefined.
+		}
+		const err: Error & { detail?: string } = new Error(
 			`PATCH /api/issues/${id} -> ${res.status} ${res.statusText}`,
 		);
+		err.detail = detail;
+		throw err;
 	}
 	return res.json() as Promise<IssueDetail>;
 }

@@ -31,11 +31,14 @@ from prompt_renderer import render_previous_comments_block, review_mode
 from redispatch_core import (
     COMMIT_REDISPATCH_REPLY_PREFIX,
     MAX_COMMIT_REDISPATCH,
+    OPERATOR_RELAND_PENDING_PREFIX,
     RELAND_DONE_PREFIX,
     RELAND_DONE_RE,
     RELAND_PENDING_PREFIX,
     RELAND_PENDING_RE,
     count_commit_redispatches,
+    operator_reland_done_body,
+    operator_reland_unconsumed,
     redispatch_commit_note,
 )
 from repo_host import repo_host_for
@@ -753,6 +756,28 @@ def _review_worktree_diff_empty(
             config.homelab_repo_path, binding_name, issue_id, base_branch
         ),
     )
+
+
+def _review_base_repo_dirty(
+    config: SymphonyConfig,
+    binding: ProjectBinding | None,
+) -> bool:
+    """Return True if the base repo checkout has uncommitted changes.
+
+    Mirror of `_review_worktree_is_dirty` that checks the base repo
+    rather than a specific worktree. Local path uses
+    ``web.api.worktree.base_repo_dirty`` directly because
+    ``worktree_facade.__all__`` does not export it.
+    """
+    if binding is not None and binding.is_remote:
+        remote_worktree = import_module("remote_worktree")
+        return cast(
+            bool,
+            remote_worktree.base_repo_dirty(binding.remote, config.homelab_repo_path),
+        )
+    from web.api.worktree import base_repo_dirty as _local_base_repo_dirty
+
+    return _local_base_repo_dirty(config.homelab_repo_path)
 
 
 def _land_review_worktree(
@@ -2705,6 +2730,23 @@ async def _classify_terminal(
         )
         return TickResult(True, "agent-verified-close", candidate.id, mode=mode)
 
+    if await _handle_operator_reland(
+        adapter,
+        config,
+        candidate,
+        result=result,
+        run_id=run_id,
+        run_log_path=run_log_path,
+        secrets=secrets,
+        summary=summary or "",
+        stdout=stdout,
+        stderr=stderr,
+        now=now,
+        notifier=notifier,
+        binding=binding,
+    ):
+        return TickResult(True, "operator-reland-terminal", candidate.id, mode=mode)
+
     if verdict == "done" and await _handle_review_terminal_done(
         adapter,
         config,
@@ -4056,6 +4098,220 @@ async def _handle_review_terminal_done(
         reason="Review passed; worktree auto-landed",
         issue_url=_iu,
         dashboard_url=_du,
+    )
+    return True
+
+
+async def _handle_operator_reland(
+    adapter: TrackerAdapter,
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    result: AgentResult,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    summary: str,
+    stdout: str,
+    stderr: str,
+    now: Callable[[], datetime],
+    notifier: TelegramNotifier | None,
+    binding: ProjectBinding | None = None,
+) -> bool:
+    """Handle operator move-to-done reland after a commit-redispatch run completes.
+
+    Returns True when the operator marker was outstanding AND the function
+    handled the issue (landed / re-dispatched / blocked). Returns False when
+    no operator marker is outstanding so the generic terminal path should take
+    over.
+    """
+    # Gate: fetch comments_md (candidate attribute or via adapter)
+    comments_md = getattr(candidate, "comments_md", "")
+    if not comments_md:
+        issue = await _fetch_issue(adapter, candidate.id)
+        comments_md = str(issue.get("comments_md") or "")
+    if not operator_reland_unconsumed(comments_md):
+        return False
+
+    _iu, _du = _build_urls(config, candidate.id)
+    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+    binding_name = candidate.binding_name or (
+        resolved_binding.name if resolved_binding is not None else ""
+    )
+    issue_id = str(candidate.id)
+
+    # ── 6.3: Dirty worktree ───────────────────────────────────────────
+    if binding_name and await asyncio.to_thread(
+        _review_worktree_is_dirty,
+        config,
+        resolved_binding,
+        binding_name,
+        issue_id,
+    ):
+        prior = count_commit_redispatches(comments_md)
+        if prior >= MAX_COMMIT_REDISPATCH:
+            block_msg = (
+                f"Operator land halted: still uncommitted after "
+                f"{MAX_COMMIT_REDISPATCH} re-dispatches; worktree intact."
+            )
+            await _finish_run_record(
+                adapter,
+                run_id,
+                run_log_path,
+                result=result,
+                secrets=secrets,
+                state="failed",
+                verdict="blocked",
+                summary=block_msg,
+                ended_at=now().isoformat(),
+            )
+            await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+            await _block_issue(
+                adapter,
+                candidate.id,
+                block_msg,
+                issue_name=candidate.name,
+                issue_identifier=candidate.identifier,
+                notifier=notifier,
+                issue_url=_iu,
+                dashboard_url=_du,
+            )
+            return True
+
+        # Under cap: commit-redispatch note + fresh operator pending marker
+        commit_body = _commit_redispatch_body(
+            config,
+            binding_name,
+            issue_id,
+            auto_land=False,
+            now=now(),
+        )
+        operator_marker = f"\n\n{OPERATOR_RELAND_PENDING_PREFIX} · {now().isoformat()}"
+        body = commit_body + operator_marker
+        await adapter.add_comment(candidate.id, CommentPayload(body=body))
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="succeeded",
+            verdict=None,
+            summary=summary,
+            ended_at=now().isoformat(),
+        )
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=todo "
+            "reason=operator-reland-dirty-commit-redispatch attempt=%s",
+            candidate.id,
+            prior + 1,
+        )
+        return True
+
+    # ── 6.4: Base repo dirty ──────────────────────────────────────────
+    if await asyncio.to_thread(_review_base_repo_dirty, config, resolved_binding):
+        block_msg = (
+            "Operator land halted: base checkout has uncommitted changes; "
+            "worktree intact."
+        )
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=block_msg,
+            ended_at=now().isoformat(),
+        )
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            block_msg,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    # ── 6.5: Clean land ───────────────────────────────────────────────
+    base_branch = candidate.base_branch or config.base_branch
+    error = await asyncio.to_thread(
+        _land_review_worktree,
+        config,
+        resolved_binding,
+        binding_name,
+        issue_id,
+        base_branch,
+    )
+    if error is not None:
+        await asyncio.sleep(REVIEW_LAND_RETRY_DELAY_S)
+        error = await asyncio.to_thread(
+            _land_review_worktree,
+            config,
+            resolved_binding,
+            binding_name,
+            issue_id,
+            base_branch,
+        )
+    if error is not None:
+        await _finish_run_record(
+            adapter,
+            run_id,
+            run_log_path,
+            result=result,
+            secrets=secrets,
+            state="failed",
+            verdict="blocked",
+            summary=error,
+            ended_at=now().isoformat(),
+        )
+        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+        await _block_issue(
+            adapter,
+            candidate.id,
+            error,
+            issue_name=candidate.name,
+            issue_identifier=candidate.identifier,
+            notifier=notifier,
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return True
+
+    # Land success: balance operator marker, clear worktree_active, done
+    reland_issue = await _fetch_issue(adapter, candidate.id)
+    done_body = operator_reland_done_body(
+        str(reland_issue.get("comments_md") or ""), now=now()
+    )
+    if done_body:
+        await adapter.add_comment(candidate.id, CommentPayload(body=done_body))
+
+    update_columns = getattr(adapter, "_update_issue_columns", None)
+    if callable(update_columns):
+        await _maybe_await(update_columns(candidate.id, {"worktree_active": False}))
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="succeeded",
+        verdict="done",
+        summary=summary,
+        ended_at=now().isoformat(),
+    )
+    await _append_terminal_output_context(adapter, candidate, stdout, stderr)
+    await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
+    LOGGER.info(
+        "state_transitioned issue_id=%s state=done reason=operator-reland-landed",
+        candidate.id,
     )
     return True
 

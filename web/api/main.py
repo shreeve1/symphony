@@ -40,6 +40,7 @@ try:
     from redispatch_core import (
         COMMIT_REDISPATCH_REPLY_PREFIX,
         MAX_COMMIT_REDISPATCH,
+        OPERATOR_RELAND_PENDING_PREFIX,
         count_commit_redispatches,
         redispatch_commit_note,
     )
@@ -52,6 +53,7 @@ except ModuleNotFoundError:
     from redispatch_core import (  # type: ignore[no-redef]
         COMMIT_REDISPATCH_REPLY_PREFIX,
         MAX_COMMIT_REDISPATCH,
+        OPERATOR_RELAND_PENDING_PREFIX,
         count_commit_redispatches,
         redispatch_commit_note,
     )
@@ -1254,8 +1256,30 @@ async def patch_issue(
     if not changed:
         return current
 
+    # Worktree merge-on-done: detect the worktree-backed move-to-done early so
+    # the terminal state can be deferred until the merge is provably on main
+    # ("done means landed", crash-safe). _maybe_merge_worktree is the authority
+    # for the terminal state on this path.
+    worktree_done_case = changed.get("state") == "done" and bool(
+        current.get("worktree_active")
+    )
+    # Never land a worktree-backed issue while a run is queued/running — the
+    # merge/cleanup would race an agent still editing that worktree (finding #4).
+    if worktree_done_case and current.get("latest_run_state") in ACTIVE_RUN_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"land not allowed during active run {current['latest_run_state']}",
+        )
+
     changed["updated_at"] = _next_updated_at(current["updated_at"])
+    # On the worktree-done path defer state (and a combined worktree_active flip)
+    # to _maybe_merge_worktree so done is durable only after a proven land, and
+    # a combined {state:done, worktree_active:false} cannot mark a physically
+    # intact worktree inactive on dirty/blocked outcomes.
     stored_changed = changed.copy()
+    if worktree_done_case:
+        stored_changed.pop("state", None)
+        stored_changed.pop("worktree_active", None)
     for key in ("blocked_by", "locks"):
         if key in stored_changed:
             stored_changed[key] = json.dumps(stored_changed[key])
@@ -1680,18 +1704,20 @@ async def _maybe_merge_worktree(
     current: dict[str, Any],
     connection: sqlite3.Connection,
 ) -> dict[str, Any]:
-    """Attempt FF-merge of worktree branch into base_branch for a done issue.
+    """Land a worktree-backed issue the operator moved to ``done``.
 
-    Called after the issue has already been transitioned to ``done``. On
-    failure, reverts state to ``blocked`` with an explanatory comment.
-    On success, removes the worktree and branch ref.
-    Returns the final issue row.
+    Authority for the terminal state on the worktree-done path: patch_issue
+    defers persisting ``done`` (and a combined worktree_active flip) to here.
+    Outcomes: ``todo`` (dirty re-dispatch to commit), ``blocked`` (conflict /
+    base-dirty / re-dispatch cap / missing worktree), or ``done`` (clean land
+    proven on main, worktree_active cleared). Returns the final issue row.
     """
     try:
         from web.api.worktree import (
             base_repo_dirty,
             branch_name,
-            land_worktree,
+            cleanup_worktree,
+            merge_worktree,
             worktree_dir,
             worktree_exists,
             worktree_is_dirty,
@@ -1700,7 +1726,8 @@ async def _maybe_merge_worktree(
         from worktree import (  # type: ignore[no-redef]
             base_repo_dirty,
             branch_name,
-            land_worktree,
+            cleanup_worktree,
+            merge_worktree,
             worktree_dir,
             worktree_exists,
             worktree_is_dirty,
@@ -1729,10 +1756,13 @@ async def _maybe_merge_worktree(
             binding_name,
             issue_str,
         ):
-            return _row(
-                connection.execute(
-                    "SELECT * FROM issue WHERE id = ?", (issue_id,)
-                ).fetchone()
+            return await _append_blocked_and_publish(
+                connection,
+                issue_id,
+                current,
+                "Auto-merge halted: worktree absent but worktree_active is set — "
+                "cannot prove landing. Worktree flag left intact for manual "
+                "reconciliation.",
             )
         if await asyncio.to_thread(
             remote_worktree.worktree_is_dirty,
@@ -1768,7 +1798,7 @@ async def _maybe_merge_worktree(
             return await _append_blocked_and_publish(connection, issue_id, current, msg)
 
         error = await asyncio.to_thread(
-            remote_worktree.land_worktree,
+            remote_worktree.merge_worktree,
             remote,
             repo_path,
             binding_name,
@@ -1779,18 +1809,38 @@ async def _maybe_merge_worktree(
             return await _append_blocked_and_publish(
                 connection, issue_id, current, error
             )
-        return _row(
+        post_merge = _row(
             connection.execute(
                 "SELECT * FROM issue WHERE id = ?", (issue_id,)
             ).fetchone()
         )
+        if post_merge.get("latest_run_state") in ACTIVE_RUN_STATES:
+            return await _abort_worktree_land(
+                connection,
+                issue_id,
+                post_merge,
+                "Aborted land: a run started during landing — move to done again "
+                "to retry.",
+            )
+        await asyncio.to_thread(
+            remote_worktree.remove_worktree,
+            remote,
+            repo_path,
+            binding_name,
+            issue_str,
+        )
+        return await _finalize_worktree_done(connection, issue_id, post_merge)
 
     if not await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
-        # No worktree to merge — nothing to do.
-        return _row(
-            connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
+        # worktree_active is set but the worktree is gone (drift). Never a false
+        # done: block so the operator reconciles. worktree_active unchanged.
+        return await _append_blocked_and_publish(
+            connection,
+            issue_id,
+            current,
+            "Auto-merge halted: worktree absent but worktree_active is set — "
+            "cannot prove landing. Worktree flag left intact for manual "
+            "reconciliation.",
         )
 
     # ADR-0014: a dirty worktree means the agent left uncommitted work. Never
@@ -1823,15 +1873,28 @@ async def _maybe_merge_worktree(
         )
         return await _append_blocked_and_publish(connection, issue_id, current, msg)
 
+    # Split land (finding #4 race mitigation): merge WITHOUT cleaning up first
+    # (land_worktree cleans up before returning and would defeat an abort), then
+    # re-check for a run that started during the merge. Only if the coast is
+    # clear do we clean up and persist done.
     error = await asyncio.to_thread(
-        land_worktree, repo_path, binding_name, issue_str, base_branch
+        merge_worktree, repo_path, binding_name, issue_str, base_branch
     )
     if error is not None:
         return await _append_blocked_and_publish(connection, issue_id, current, error)
 
-    return _row(
+    post_merge = _row(
         connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
     )
+    if post_merge.get("latest_run_state") in ACTIVE_RUN_STATES:
+        return await _abort_worktree_land(
+            connection,
+            issue_id,
+            post_merge,
+            "Aborted land: a run started during landing — move to done again to retry.",
+        )
+    await asyncio.to_thread(cleanup_worktree, repo_path, binding_name, issue_str)
+    return await _finalize_worktree_done(connection, issue_id, post_merge)
 
 
 async def _maybe_teardown_archived_worktree(
@@ -1997,6 +2060,65 @@ async def _maybe_archive_worktree(
     )
 
 
+async def _finalize_worktree_done(
+    connection: sqlite3.Connection,
+    issue_id: int,
+    current: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist ``done`` + ``worktree_active=false`` after a proven land.
+
+    Called only after merge_worktree succeeded and the dispatch-race re-check
+    found no active run. Publishes the decorated row.
+    """
+    now = _next_updated_at(current["updated_at"])
+    connection.execute(
+        "UPDATE issue SET state = 'done', worktree_active = FALSE, updated_at = ? "
+        "WHERE id = ?",
+        (now, issue_id),
+    )
+    connection.commit()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _decorate_issue_gates(connection, [_row(row)])[0]
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    return result
+
+
+async def _abort_worktree_land(
+    connection: sqlite3.Connection,
+    issue_id: int,
+    current: dict[str, Any],
+    message: str,
+) -> dict[str, Any]:
+    """Abort an in-progress land because a run appeared mid-merge.
+
+    The merge already put the branch on ``main``; the worktree is intentionally
+    kept (no cleanup) so an in-flight run is not left in a removed worktree.
+    Parks the issue in ``in_review`` with a recoverable retry message; the
+    operator-reland marker is left outstanding for loop closure.
+    worktree_active unchanged.
+    """
+    latest = connection.execute(
+        "SELECT comments_md, updated_at FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    existing = str(latest["comments_md"] or "").rstrip()
+    updated_comments = f"{existing}\n\n{message}".strip() if existing else message
+    now = _next_updated_at(latest["updated_at"])
+    connection.execute(
+        "UPDATE issue SET state = 'in_review', comments_md = ?, updated_at = ? "
+        "WHERE id = ?",
+        (updated_comments, now, issue_id),
+    )
+    connection.commit()
+    row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+    result = _decorate_issue_gates(connection, [_row(row)])[0]
+    await websocket_hub.publish(
+        {"type": "issue.updated", "id": issue_id, "row": result}
+    )
+    return result
+
+
 async def _append_blocked_and_publish(
     connection: sqlite3.Connection,
     issue_id: int,
@@ -2050,8 +2172,8 @@ async def _redispatch_to_commit(
     except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
         from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
 
-    # Re-read fresh comments_md/updated_at: patch_issue already committed
-    # state='done' and bumped updated_at before _maybe_merge_worktree ran, so
+    # Re-read fresh comments_md/updated_at: patch_issue bumped updated_at in the
+    # initial persist (state/worktree_active are deferred on this path), so
     # current["updated_at"] is stale. Mirror _append_blocked_and_publish.
     latest = connection.execute(
         "SELECT comments_md, updated_at FROM issue WHERE id = ?", (issue_id,)
@@ -2063,6 +2185,10 @@ async def _redispatch_to_commit(
     note = (
         f"\n\n{COMMIT_REDISPATCH_REPLY_PREFIX} · {now})\n\n"
         f"{redispatch_commit_note(wt_path, branch)}"
+        # Operator-reland marker: distinct from the review RELAND marker so it
+        # does NOT trigger review-run reselection. The scheduler consumes it
+        # after this commit run to close the dirty-loop land (finding #2, #3).
+        f"\n\n{OPERATOR_RELAND_PENDING_PREFIX} · {now}"
     )
 
     cursor = connection.execute(

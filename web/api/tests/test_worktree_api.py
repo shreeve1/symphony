@@ -174,6 +174,7 @@ def test_merge_on_done_happy_path(repo_and_db: tuple[Path, Path]) -> None:
     assert body["state"] == "done", f"Blocked comment: {body.get('comments_md', '')}"
     assert body["worktree_path"] == f"worktrees/trading/{issue_id}"
     assert body["worktree_branch"] == f"podium/trading/{issue_id}"
+    assert body["worktree_active"] is False
 
     # The merge landed the agent commit.
     log = _git(repo, "log", "--oneline", "-1").stdout
@@ -258,6 +259,7 @@ def test_combined_done_and_worktree_off_does_not_archive_after_merge_block(
     assert "uncommitted changes" in body["comments_md"]
     assert "Worktree archived" not in body["comments_md"]
     assert wt_path.is_dir()
+    assert body["worktree_active"] is True
 
 
 def test_merge_on_done_rebases_non_conflicting_diverged_base(
@@ -337,8 +339,9 @@ def test_merge_on_done_aborts_on_force_pushed_base(
     assert wt_path.is_dir()
 
 
-def test_merge_on_done_noop_when_no_worktree(repo_and_db: tuple[Path, Path]) -> None:
-    """State→done without a worktree is a clean transition."""
+def test_done_missing_worktree_blocks(repo_and_db: tuple[Path, Path]) -> None:
+    """worktree_active set but worktree absent → block, never a false done
+    (finding #1 missing-worktree case). worktree_active left unchanged."""
     db_path = repo_and_db[1]
     issue = _seed_podium(db_path, "trading")
     issue_id = issue["id"]
@@ -350,7 +353,10 @@ def test_merge_on_done_noop_when_no_worktree(repo_and_db: tuple[Path, Path]) -> 
             json={"state": "done"},
         )
     assert response.status_code == 200
-    assert response.json()["state"] == "done"
+    body = response.json()
+    assert body["state"] == "blocked"
+    assert "cannot prove landing" in body["comments_md"]
+    assert body["worktree_active"] is True
 
 
 # --- dirty-worktree commit re-dispatch tests (ADR-0014) ---
@@ -391,6 +397,7 @@ def test_done_dirty_worktree_redispatches_to_commit(
     body = response.json()
     assert body["state"] == "todo"
     assert main.COMMIT_REDISPATCH_REPLY_PREFIX in body["comments_md"]
+    assert main.OPERATOR_RELAND_PENDING_PREFIX in body["comments_md"]
 
     # Worktree + branch left intact; base branch not advanced.
     assert wt_path.is_dir()
@@ -520,6 +527,129 @@ def test_redispatch_note_matches_operator_reply_regex(
 
     assert prompt_renderer._OPERATOR_REPLY_RE.search(comments_md) is not None
     assert main._count_commit_redispatches(comments_md) == 1
+
+
+# --- land-on-done hardening: crash-safety, active-run guard, race abort ---
+
+
+def test_done_worktree_not_persisted_before_merge(
+    repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """done is not durable until the merge is proven (finding #1): if the land
+    finalization crashes, the issue row stays in its pre-state, never done."""
+    import contextlib
+    import sqlite3
+
+    repo, db_path = repo_and_db
+    from web.api.worktree import create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "agent change")
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("crash after merge, before persisting done")
+
+    monkeypatch.setattr(main, "_finalize_worktree_done", _boom)
+
+    with TestClient(app) as client:
+        login(client)
+        with contextlib.suppress(Exception):
+            client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    with sqlite3.connect(db_path) as conn:
+        row_state = conn.execute(
+            "SELECT state FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()[0]
+    assert row_state != "done", "done must not be durable before the merge is proven"
+
+
+def test_done_rejected_during_active_run(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """An active run (queued/running) blocks move-to-done with 409 (finding #4)."""
+    import sqlite3
+
+    repo, db_path = repo_and_db
+    from web.api.worktree import create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "agent change")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE issue SET latest_run_state = 'running' WHERE id = ?", (issue_id,)
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert response.status_code == 409, response.text
+    assert "land not allowed during active run" in response.json()["detail"]
+    with sqlite3.connect(db_path) as conn:
+        row_state = conn.execute(
+            "SELECT state FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()[0]
+    assert row_state == "todo"
+    assert wt_path.is_dir()
+
+
+def test_land_aborts_if_run_starts_during_merge(
+    repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run appearing between merge success and cleanup aborts the land to a
+    recoverable in_review; worktree kept, cleanup NOT called (finding #4)."""
+    import sqlite3
+
+    import web.api.worktree as wt_mod
+
+    repo, db_path = repo_and_db
+    from web.api.worktree import create_worktree
+
+    issue = _seed_podium(db_path, "trading")
+    issue_id = issue["id"]
+    issue_str = str(issue_id)
+    wt_path = create_worktree(repo, "trading", issue_str, "main")
+    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "agent change")
+
+    real_merge = wt_mod.merge_worktree
+
+    def fake_merge(repo_path, binding, iss, base):
+        error = real_merge(repo_path, binding, iss, base)
+        # A run starts mid-merge (after the branch is already on main).
+        with sqlite3.connect(db_path) as c:
+            c.execute(
+                "UPDATE issue SET latest_run_state = 'running' WHERE id = ?",
+                (issue_id,),
+            )
+            c.commit()
+        return error
+
+    monkeypatch.setattr(wt_mod, "merge_worktree", fake_merge)
+    cleanup_calls: list[int] = []
+    monkeypatch.setattr(
+        wt_mod, "cleanup_worktree", lambda *a, **k: cleanup_calls.append(1)
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    body = response.json()
+    assert body["state"] == "in_review", body.get("comments_md", "")
+    assert "Aborted land" in body["comments_md"]
+    assert wt_path.is_dir()
+    assert cleanup_calls == []
 
 
 # --- archive teardown tests ---
@@ -685,10 +815,14 @@ def test_remote_done_merge_uses_remote_worktree_ops(
         lambda remote, repo: calls.append(("base", "n8n", "")) and False,
     )
     monkeypatch.setattr(
-        "remote_worktree.land_worktree",
+        "remote_worktree.merge_worktree",
         lambda remote, repo, binding, issue, base: (
-            calls.append(("land", binding, issue)) or None
+            calls.append(("merge", binding, issue)) or None
         ),
+    )
+    monkeypatch.setattr(
+        "remote_worktree.remove_worktree",
+        lambda remote, repo, binding, issue: calls.append(("remove", binding, issue)),
     )
     issue = _seed_podium(remote_db, "n8n")
     issue_id = issue["id"]
@@ -697,12 +831,15 @@ def test_remote_done_merge_uses_remote_worktree_ops(
         login(client)
         response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
     assert response.status_code == 200, response.json()
-    assert response.json()["state"] == "done"
+    body = response.json()
+    assert body["state"] == "done"
+    assert body["worktree_active"] is False
     assert calls == [
         ("exists", "n8n", str(issue_id)),
         ("dirty", "n8n", str(issue_id)),
         ("base", "n8n", ""),
-        ("land", "n8n", str(issue_id)),
+        ("merge", "n8n", str(issue_id)),
+        ("remove", "n8n", str(issue_id)),
     ]
 
 
@@ -714,7 +851,7 @@ def test_remote_done_merge_blocks_on_dirty_remote_base(
     monkeypatch.setattr("remote_worktree.worktree_is_dirty", lambda *a: False)
     monkeypatch.setattr("remote_worktree.base_repo_dirty", lambda *a: True)
     monkeypatch.setattr(
-        "remote_worktree.land_worktree",
+        "remote_worktree.merge_worktree",
         lambda *a: pytest.fail("dirty remote base must not land"),
     )
     issue = _seed_podium(remote_db, "n8n")
@@ -728,6 +865,45 @@ def test_remote_done_merge_blocks_on_dirty_remote_base(
     body = response.json()
     assert body["state"] == "blocked"
     assert "remote base checkout has uncommitted changes" in body["comments_md"]
+
+
+def test_remote_land_aborts_if_run_starts_during_merge(
+    remote_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Remote split-land race: a run appearing mid-merge aborts to in_review,
+    worktree kept, remote remove_worktree NOT called (finding #4)."""
+    import sqlite3
+
+    _no_local_worktree_ops(monkeypatch)
+    monkeypatch.setattr("remote_worktree.worktree_exists", lambda *a: True)
+    monkeypatch.setattr("remote_worktree.worktree_is_dirty", lambda *a: False)
+    monkeypatch.setattr("remote_worktree.base_repo_dirty", lambda *a: False)
+
+    issue = _seed_podium(remote_db, "n8n")
+    issue_id = issue["id"]
+
+    def _merge_starts_run(*_a, **_k):
+        with sqlite3.connect(remote_db) as c:
+            c.execute(
+                "UPDATE issue SET latest_run_state = 'running' WHERE id = ?",
+                (issue_id,),
+            )
+            c.commit()
+        return None
+
+    monkeypatch.setattr("remote_worktree.merge_worktree", _merge_starts_run)
+    removed: list[int] = []
+    monkeypatch.setattr(
+        "remote_worktree.remove_worktree", lambda *_a, **_k: removed.append(1)
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    body = response.json()
+    assert body["state"] == "in_review", body.get("comments_md", "")
+    assert "Aborted land" in body["comments_md"]
+    assert removed == []
 
 
 def test_remote_archive_teardown_uses_remote_worktree_ops(
