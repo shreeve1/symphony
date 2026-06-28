@@ -97,7 +97,7 @@ def _issue_rows(db_path: Path) -> list[tuple[Any, ...]]:
         return connection.execute(
             """
             SELECT id, title, description, state, base_branch, preferred_agent,
-                   blocked_by, locks, auto_land
+                   blocked_by, locks, auto_land, preferred_model
             FROM issue ORDER BY id
             """
         ).fetchall()
@@ -151,7 +151,9 @@ def test_create_plan_issues_in_dependency_order_with_real_blockers(
     assert sentinel.read_text(encoding="utf-8") == before
 
 
-def test_dry_run_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dry_run_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = _make_repo(tmp_path)
     bindings = _make_bindings(tmp_path, repo)
     plan = _make_plan(tmp_path)
@@ -184,7 +186,9 @@ def test_unknown_dependency_is_rejected(tmp_path: Path) -> None:
         podium_issues._load_plan_slices(plan)
 
 
-def test_cli_create_from_plan_dry_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_create_from_plan_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = _make_repo(tmp_path)
     bindings = _make_bindings(tmp_path, repo)
     plan = _make_plan(tmp_path)
@@ -230,7 +234,9 @@ def test_cli_no_binding_returns_error(
     assert "no podium binding matches" in capsys.readouterr().err
 
 
-def test_cli_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     repo = _make_repo(tmp_path)
     bindings = _make_bindings(tmp_path, repo)
     plan = _make_plan(tmp_path)
@@ -239,5 +245,327 @@ def test_cli_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytes
 
     assert podium.main(["issues", "list", "--binding", "demo"]) == 0
     out = capsys.readouterr().out
-    assert "#1 demo todo auto_land=True blocked_by=[] locks=['web-api'] API slice" in out
-    assert "#2 demo todo auto_land=True blocked_by=[1] locks=['web-frontend'] UI slice" in out
+    assert (
+        "#1 demo todo auto_land=True blocked_by=[] locks=['web-api'] API slice" in out
+    )
+    assert (
+        "#2 demo todo auto_land=True blocked_by=[1] locks=['web-frontend'] UI slice"
+        in out
+    )
+
+
+def _write_plan(tmp_path: Path, slices: list[dict]) -> Path:
+    path = tmp_path / "plan.yml"
+    path.write_text(yaml.safe_dump({"slices": slices}), encoding="utf-8")
+    return path
+
+
+def _patch_catalog(monkeypatch: pytest.MonkeyPatch, models: list[dict]) -> None:
+    monkeypatch.setattr(podium_issues, "load_models", lambda: models)
+
+
+_CLAUDE_CATALOG = [
+    {"id": "claude-opus-4-8", "agent": "claude", "default": True},
+    {"id": "claude-fable-5", "agent": "claude"},
+]
+
+# A pi model under the binding's default_agent so a model-only slice (no `agent:`)
+# resolves against the default agent and succeeds — the T.2.3 "valid model-only" case.
+_PI_CATALOG = [
+    {"id": "gpt-5.5", "agent": "pi", "provider": "openai-codex", "default": True},
+]
+
+# Shared id across agents + two pi providers: bare `claude-opus-4-8` is ambiguous
+# for agent=pi (two pi matches), so provider/id is required to disambiguate (T.2.4).
+_AMBIGUOUS_CATALOG = [
+    {"id": "claude-opus-4-8", "agent": "claude", "default": True},
+    {"id": "claude-opus-4-8", "agent": "pi", "provider": "cliproxy"},
+    {"id": "claude-opus-4-8", "agent": "pi", "provider": "openai-codex"},
+]
+
+
+def test_model_and_agent_threaded_to_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "m",
+                "title": "Model slice",
+                "description": "pin a model",
+                "acceptance": ["model threaded"],
+                "verification": "uv run pytest -q",
+                "model": "claude-opus-4-8",
+                "agent": "claude",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_catalog(monkeypatch, _CLAUDE_CATALOG)
+
+    lines = create_plan_issues(repo, plan, bindings_path=bindings)
+
+    rows = _issue_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0][5] == "claude"  # preferred_agent
+    assert rows[0][9] == "claude-opus-4-8"  # preferred_model (new index 9)
+    assert lines[1:] == ["m 'Model slice' -> podium #1"]
+
+
+def test_model_only_uses_default_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "mo",
+                "title": "Model only",
+                "description": "model, no agent",
+                "acceptance": ["defaults to pi"],
+                "verification": "uv run pytest -q",
+                "model": "gpt-5.5",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_catalog(monkeypatch, _PI_CATALOG)  # binding default_agent is "pi"
+
+    create_plan_issues(repo, plan, bindings_path=bindings)
+
+    rows = _issue_rows(db_path)
+    assert rows[0][5] == "pi"  # preferred_agent = default_agent
+    assert rows[0][9] == "gpt-5.5"  # preferred_model
+
+
+def test_agent_only_overrides_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "a",
+                "title": "Agent slice",
+                "description": "override agent only",
+                "acceptance": ["agent threaded"],
+                "verification": "uv run pytest -q",
+                "agent": "claude",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    # No model set -> the catalog-validation path never runs, so load_models is
+    # left unpatched: the no-model path stays catalog-free and byte-identical.
+
+    create_plan_issues(repo, plan, bindings_path=bindings)
+
+    rows = _issue_rows(db_path)
+    assert rows[0][5] == "claude"  # preferred_agent
+    assert rows[0][9] is None  # preferred_model
+
+
+def test_unknown_model_rejected_at_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "x",
+                "title": "Bad model",
+                "description": "unknown model",
+                "acceptance": ["rejected"],
+                "verification": "uv run pytest -q",
+                "model": "nope",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_catalog(monkeypatch, _CLAUDE_CATALOG)
+
+    with pytest.raises(PodiumIssuesError, match="model"):
+        create_plan_issues(repo, plan, bindings_path=bindings)
+    assert _issue_rows(db_path) == []  # no row inserted
+
+
+def test_agent_model_mismatch_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "mm",
+                "title": "Mismatch",
+                "description": "agent/model mismatch",
+                "acceptance": ["rejected"],
+                "verification": "uv run pytest -q",
+                "model": "claude-fable-5",
+                "agent": "pi",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_catalog(monkeypatch, _CLAUDE_CATALOG)
+
+    with pytest.raises(PodiumIssuesError, match="requires agent"):
+        create_plan_issues(repo, plan, bindings_path=bindings)
+    assert _issue_rows(db_path) == []
+
+
+def test_invalid_agent_rejected(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "ia",
+                "title": "Bad agent",
+                "acceptance": ["rejected"],
+                "verification": "uv run pytest -q",
+                "agent": "gemini",
+            }
+        ],
+    )
+    with pytest.raises(PodiumIssuesError, match="agent"):
+        podium_issues._load_plan_slices(plan)
+
+
+def test_dry_run_validates_and_shows_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    good = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "g",
+                "title": "Good",
+                "description": "valid",
+                "acceptance": ["ok"],
+                "verification": "uv run pytest -q",
+                "model": "claude-opus-4-8",
+                "agent": "claude",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_catalog(monkeypatch, _CLAUDE_CATALOG)
+
+    lines = create_plan_issues(repo, good, bindings_path=bindings, dry_run=True)
+    assert any("model=claude-opus-4-8 agent=claude" in line for line in lines)
+    assert _issue_rows(db_path) == []  # dry-run inserts nothing
+
+    bad = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "b",
+                "title": "Bad",
+                "description": "invalid",
+                "acceptance": ["ok"],
+                "verification": "uv run pytest -q",
+                "model": "nope",
+            }
+        ],
+    )
+    with pytest.raises(PodiumIssuesError, match="model"):
+        create_plan_issues(repo, bad, bindings_path=bindings, dry_run=True)
+
+
+@pytest.mark.parametrize(
+    "field, value", [("model", ""), ("model", "   "), ("agent", ""), ("agent", "\t")]
+)
+def test_empty_or_whitespace_model_agent_rejected(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "e",
+                "title": "Empty",
+                "acceptance": ["ok"],
+                "verification": "uv run pytest -q",
+                field: value,
+            }
+        ],
+    )
+    with pytest.raises(PodiumIssuesError, match="empty"):
+        podium_issues._load_plan_slices(plan)
+
+
+def test_provider_id_form_disambiguates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "d",
+                "title": "Disambiguate",
+                "description": "provider/id pins a shared id",
+                "acceptance": ["resolves"],
+                "verification": "uv run pytest -q",
+                "model": "cliproxy/claude-opus-4-8",
+                "agent": "pi",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_catalog(monkeypatch, _AMBIGUOUS_CATALOG)
+
+    # Bare id is ambiguous for agent=pi (two pi providers); provider/id must resolve.
+    create_plan_issues(repo, plan, bindings_path=bindings)
+
+    rows = _issue_rows(db_path)
+    assert (
+        rows[0][9] == "cliproxy/claude-opus-4-8"
+    )  # raw form persisted, dispatch re-resolves
+    assert rows[0][5] == "pi"  # preferred_agent
+
+
+def test_malformed_catalog_wrapped_as_podium_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _write_plan(
+        tmp_path,
+        [
+            {
+                "key": "mc",
+                "title": "Bad catalog",
+                "description": "models.yml unreadable",
+                "acceptance": ["clean error"],
+                "verification": "uv run pytest -q",
+                "model": "claude-opus-4-8",
+            }
+        ],
+    )
+    db_path = _init_db(tmp_path, monkeypatch)
+
+    # A malformed models.yml surfaces as ValueError from load_models; the CLI
+    # wraps it so the operator sees a PodiumIssuesError, not a traceback.
+    def _boom() -> list[dict]:
+        raise ValueError("models must be a list")
+
+    monkeypatch.setattr(podium_issues, "load_models", _boom)
+
+    with pytest.raises(PodiumIssuesError, match="models.yml"):
+        create_plan_issues(repo, plan, bindings_path=bindings)
+    assert _issue_rows(db_path) == []  # no row inserted on a catalog read failure

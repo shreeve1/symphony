@@ -1,10 +1,15 @@
 """Create Podium issues from an LLM-sliced plan spec.
 
-The /podium-issues skill does the natural-language slicing. This module is the
-boring sink: resolve the Podium binding for cwd, then insert the already-sliced
-issues in dependency order so blocked_by contains real Podium ids. Slicer-created
-issues are auto-land eligible because each slice is required to carry a runnable
-verification command.
+The /podium-issues skill does the natural-language slicing. This module resolves
+the Podium binding for cwd, then inserts the already-sliced issues in dependency
+order so blocked_by contains real Podium ids. Slicer-created issues are auto-land
+eligible because each slice is required to carry a runnable verification command.
+
+Each slice may optionally pin a `model` and `agent`. When a model is set the
+slice is validated against `models.yml` at load time with the same resolver
+dispatch uses (model_catalog.resolve_model + an agent-match assertion), so
+authoring and dispatch share one contract -- a typo'd model fails here instead
+of writing an auto_land issue that silently stalls a dependent batch at dispatch.
 """
 
 from __future__ import annotations
@@ -19,6 +24,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
+
+from model_catalog import KNOWN_AGENTS, ModelResolutionError, load_models, resolve_model
 
 _db = cast(Any, import_module("web.api.db"))
 _seed = cast(Any, import_module("web.api.seed"))
@@ -40,6 +47,8 @@ class PlanSlice:
     blocked_by: list[str]
     locks: list[str]
     priority: int | None = None
+    model: str | None = None
+    agent: str | None = None
 
 
 def _git_toplevel(cwd: Path) -> Path:
@@ -89,10 +98,31 @@ def _load_plan_slices(plan_path: Path) -> list[PlanSlice]:
         title = str(row.get("title") or "").strip()
         verification = str(row.get("verification") or "").strip()
         if not title or not verification:
-            raise PodiumIssuesError(f"{plan_path}: slice {key!r} needs title+verification")
+            raise PodiumIssuesError(
+                f"{plan_path}: slice {key!r} needs title+verification"
+            )
         acceptance = [str(x) for x in row.get("acceptance", [])]
         if not acceptance:
             raise PodiumIssuesError(f"{plan_path}: slice {key!r} needs acceptance")
+        model = row.get("model")
+        agent = row.get("agent")
+        if model is not None:
+            model = str(model).strip()
+            if not model:
+                raise PodiumIssuesError(
+                    f"{plan_path}: slice {key!r} model must not be empty"
+                )
+        if agent is not None:
+            agent = str(agent).strip()
+            if not agent:
+                raise PodiumIssuesError(
+                    f"{plan_path}: slice {key!r} agent must not be empty"
+                )
+            if agent not in KNOWN_AGENTS:
+                raise PodiumIssuesError(
+                    f"{plan_path}: slice {key!r} agent {agent!r} "
+                    f"must be one of {KNOWN_AGENTS}"
+                )
         slices.append(
             PlanSlice(
                 key=key,
@@ -103,6 +133,8 @@ def _load_plan_slices(plan_path: Path) -> list[PlanSlice]:
                 blocked_by=[str(x) for x in row.get("blocked_by", [])],
                 locks=[str(x) for x in row.get("locks", [])],
                 priority=row.get("priority"),
+                model=model,
+                agent=agent,
             )
         )
     unknown = sorted({b for s in slices for b in s.blocked_by} - seen)
@@ -117,7 +149,9 @@ def _dependency_order(slices: list[PlanSlice]) -> list[PlanSlice]:
     ordered: list[PlanSlice] = []
     while remaining:
         ready = [
-            s for s in slices if s.key in remaining and all(b in emitted for b in s.blocked_by)
+            s
+            for s in slices
+            if s.key in remaining and all(b in emitted for b in s.blocked_by)
         ]
         if not ready:
             raise PodiumIssuesError("slice dependency cycle detected")
@@ -126,6 +160,34 @@ def _dependency_order(slices: list[PlanSlice]) -> list[PlanSlice]:
             emitted.add(item.key)
             remaining.pop(item.key)
     return ordered
+
+
+def _validate_model_agent(
+    slices: list[PlanSlice], default_agent: str, models: list[dict[str, Any]]
+) -> None:
+    """Validate each slice's model against models.yml the way dispatch will.
+
+    Mirrors the model/agent portion of scheduler `_apply_dispatch_gate`:
+    resolve_model alone can return a single match whose agent differs from the
+    requested one (its `len(matches) == 1` branch), so the agent-match assertion
+    is mandatory -- exactly the check dispatch performs.
+    """
+    for slice_ in slices:
+        if slice_.model is None:
+            continue
+        agent = slice_.agent or default_agent
+        try:
+            entry = resolve_model(slice_.model, models, agent=agent)
+        except ModelResolutionError as exc:
+            raise PodiumIssuesError(
+                f"slice {slice_.key!r}: model {slice_.model!r}: {exc}"
+            ) from exc
+        if entry["agent"] != agent:
+            raise PodiumIssuesError(
+                f"slice {slice_.key!r}: model {slice_.model!r} requires agent "
+                f"{entry['agent']!r} but resolves to agent {agent!r}; "
+                "set agent: to match"
+            )
 
 
 def _description(slice_: PlanSlice) -> str:
@@ -155,14 +217,15 @@ def _insert_issue(
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
           approval_required, approved, auto_land, scheduled_for, base_branch, comments_md,
           context_md, external_id, blocked_by, locks, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, NULL, NULL, 'high', 0, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, NULL, 'high', 0, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
         """,
         (
             str(binding["name"]),
             slice_.title,
             _description(slice_),
             slice_.priority,
-            binding.get("default_agent"),
+            slice_.agent or str(binding.get("default_agent") or "pi"),
+            slice_.model,
             int(approval_required),
             str(binding.get("base_branch") or "main"),
             json.dumps(blocked_by_ids),
@@ -187,12 +250,26 @@ def create_plan_issues(
     binding = resolve_binding_for_cwd(cwd, bindings_path)
     slices = _load_plan_slices(plan_path)
     name = str(binding["name"])
+    default_agent = str(binding.get("default_agent") or "pi")
+    if any(s.model for s in slices):
+        try:
+            models = load_models()
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            raise PodiumIssuesError(f"could not read models.yml: {exc}") from exc
+        _validate_model_agent(slices, default_agent, models)
     lines = [f"binding={name} slices={len(slices)}"]
     if dry_run:
         for slice_ in slices:
             deps = ",".join(slice_.blocked_by) or "none"
             locks = ",".join(slice_.locks) or "none"
-            lines.append(f"{slice_.key} '{slice_.title}' blocked_by={deps} locks={locks} -> podium (dry-run)")
+            suffix = ""
+            if slice_.model:
+                suffix += f" model={slice_.model}"
+            if slice_.agent:
+                suffix += f" agent={slice_.agent}"
+            lines.append(
+                f"{slice_.key} '{slice_.title}' blocked_by={deps} locks={locks}{suffix} -> podium (dry-run)"
+            )
         return lines
 
     created: dict[str, int] = {}
@@ -204,9 +281,7 @@ def create_plan_issues(
             issue_id = _insert_issue(connection, binding, slice_, blocked_by_ids, now)
             created[slice_.key] = issue_id
             connection.commit()
-            lines.append(
-                f"{slice_.key} '{slice_.title}' -> podium #{issue_id}"
-            )
+            lines.append(f"{slice_.key} '{slice_.title}' -> podium #{issue_id}")
     finally:
         connection.close()
     return lines
