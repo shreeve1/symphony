@@ -482,6 +482,20 @@ class TestGenerateIssueTitle:
 
         assert generate_issue_title("first line", run_func=fake_run) == "first line"
 
+    def test_uses_short_timeout(self) -> None:
+        from web.api.title_generator import generate_issue_title
+
+        def fake_run(cmd, **kwargs):
+            assert kwargs["timeout"] <= 1
+
+            class R:
+                returncode = 0
+                stdout = "fast title"
+
+            return R()
+
+        assert generate_issue_title("desc", run_func=fake_run) == "fast title"
+
     def test_falls_back_on_empty_stdout(self) -> None:
         from web.api.title_generator import generate_issue_title
 
