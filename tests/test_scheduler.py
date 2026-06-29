@@ -281,8 +281,8 @@ async def test_podium_candidates_include_unmarked_review_issue(tmp_path: Path) -
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              comments_md, context_md, worktree_active, created_at, updated_at
-            ) VALUES ('test', 'needs review', '', 'in_review', 'pi', '', '', 1,
+              comments_md, context_md, worktree_active, auto_land, created_at, updated_at
+            ) VALUES ('test', 'needs review', '', 'in_review', 'pi', '', '', 1, 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """
@@ -302,9 +302,9 @@ async def test_podium_candidates_include_unmarked_review_issue(tmp_path: Path) -
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              comments_md, context_md, created_at, updated_at
+              comments_md, context_md, auto_land, created_at, updated_at
             ) VALUES ('test', 'mentions marker', '', 'in_review', 'pi',
-                      'Operator mentioned `### Symphony Review` inline.', '',
+                      'Operator mentioned `### Symphony Review` inline.', '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """
@@ -1009,8 +1009,8 @@ async def test_stall_watchdog_review_retry_keeps_issue_in_review(
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              comments_md, context_md, created_at, updated_at
-            ) VALUES ('test', 'needs stall retry', '', 'in_review', 'pi', '', '',
+              comments_md, context_md, auto_land, created_at, updated_at
+            ) VALUES ('test', 'needs stall retry', '', 'in_review', 'pi', '', '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """
@@ -3050,8 +3050,8 @@ async def test_transient_review_failure_relands_review_dispatch(tmp_path: Path) 
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              comments_md, context_md, created_at, updated_at
-            ) VALUES ('test', 'needs review retry', '', 'in_review', 'pi', '', '',
+              comments_md, context_md, auto_land, created_at, updated_at
+            ) VALUES ('test', 'needs review retry', '', 'in_review', 'pi', '', '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """
@@ -3138,8 +3138,8 @@ async def test_transient_review_retry_cooldown_hides_reland_candidate(
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              comments_md, context_md, created_at, updated_at
-            ) VALUES ('test', 'cooling down', '', 'in_review', 'pi', ?, '',
+              comments_md, context_md, auto_land, created_at, updated_at
+            ) VALUES ('test', 'cooling down', '', 'in_review', 'pi', ?, '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """,
@@ -3186,8 +3186,8 @@ async def test_transient_review_retry_cap_blocks_and_notifies(tmp_path: Path) ->
             """
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
-              comments_md, context_md, created_at, updated_at
-            ) VALUES ('test', 'needs review retry cap', '', 'in_review', 'pi', ?, '',
+              comments_md, context_md, auto_land, created_at, updated_at
+            ) VALUES ('test', 'needs review retry cap', '', 'in_review', 'pi', ?, '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """,
@@ -5823,9 +5823,9 @@ async def test_coding_review_candidate_dispatches_with_marker_and_worktree(
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
               preferred_model, reasoning_effort, comments_md, context_md,
-              worktree_active, created_at, updated_at
+              worktree_active, auto_land, created_at, updated_at
             ) VALUES ('test', 'needs review', 'Body\n\n## Verification\n\n`true`', 'in_review', 'pi',
-                      NULL, 'high', '', '', 1,
+                      NULL, 'high', '', '', 1, 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
             """

@@ -286,7 +286,7 @@ async def test_reland_pending_reselects_marked_review_issue(tmp_path: Path) -> N
     issue_id = _seed_db(db_path, state="in_review")
     with sqlite3.connect(db_path) as connection:
         connection.execute(
-            "UPDATE issue SET comments_md = ? WHERE id = ?",
+            "UPDATE issue SET comments_md = ?, auto_land = 1 WHERE id = ?",
             (f"### Symphony Review (1)\n\n{RELAND_PENDING_PREFIX} · one", issue_id),
         )
         connection.execute(
@@ -310,6 +310,22 @@ async def test_reland_pending_reselects_marked_review_issue(tmp_path: Path) -> N
 
     assert [candidate.id for candidate in candidates] == [str(issue_id)]
     assert candidates[0].review_dispatch is True
+
+
+@pytest.mark.asyncio
+async def test_non_auto_land_in_review_issue_is_not_review_dispatched(
+    tmp_path: Path,
+) -> None:
+    """Operator-authored (auto_land=false) issues skip the review run entirely
+    — they stay in_review for a manual merge (issue #149)."""
+    db_path = tmp_path / "podium.db"
+    _seed_db(db_path, state="in_review")
+
+    candidates = await PodiumTrackerAdapter(
+        db_path=db_path, binding_name="test"
+    ).list_candidates()
+
+    assert candidates == []
 
 
 def test_connections_enable_wal_and_busy_timeout(tmp_path: Path) -> None:

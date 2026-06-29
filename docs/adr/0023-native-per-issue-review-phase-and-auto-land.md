@@ -68,9 +68,15 @@ the operator selects, but built into the Symphony service.
    commands, so a too-optimistic review `done` is overridden (tralph parity); no
    Python verification extractor exists today, so the backstop builds one.
 
-3. **Scope.** The review phase is **universal for all `type: coding` bindings**.
-   Infra bindings are excluded — they already have ADR-0020's
-   `auto_close_on_verified` re-measure-and-close path.
+3. **Scope.** ~~The review phase is **universal for all `type: coding` bindings**.~~
+   **Superseded by issue #149 (2026-06-29):** the review run now fires **only for
+   slicer-authored (`auto_land=true`) issues** — the `/podium-issues` slicer
+   guarantees an objectively-runnable `## Verification`, which is the trust basis
+   for an unattended review. Operator-authored issues (`auto_land=false`) skip the
+   review run entirely and stay in `in_review` for a manual merge (pure ADR-0014
+   behavior). The gate lives in `tracker_podium.list_candidates`: `review_dispatch`
+   now also requires `auto_land`. Infra bindings remain excluded — they already
+   have ADR-0020's `auto_close_on_verified` re-measure-and-close path.
 
 4. **Pass-terminal is provenance-gated** (the load-bearing decision):
    A review pass first requires a **clean, committed worktree** (the reviewer was

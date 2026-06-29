@@ -171,11 +171,21 @@ class PodiumTrackerAdapter:
             reland_unconsumed = len(RELAND_PENDING_RE.findall(comments_md)) > len(
                 RELAND_DONE_RE.findall(comments_md)
             )
-            review_dispatch = is_review and (
-                not REVIEW_MARKER_RE.search(comments_md)
-                or (
-                    reland_unconsumed
-                    and retry_cooldown_expired(comments_md, datetime.now(UTC))
+            # Review runs only fire for slicer-authored (auto_land) issues — the
+            # /podium-issues slicer guarantees an objectively-runnable
+            # ## Verification, which is the trust basis for the unattended review
+            # phase. Operator-authored issues (auto_land=false) skip review
+            # entirely and stay in_review for a manual merge (issue #149; scopes
+            # ADR-0023 #3's universal-for-coding review down to auto_land).
+            review_dispatch = (
+                is_review
+                and bool(issue.get("auto_land") or False)
+                and (
+                    not REVIEW_MARKER_RE.search(comments_md)
+                    or (
+                        reland_unconsumed
+                        and retry_cooldown_expired(comments_md, datetime.now(UTC))
+                    )
                 )
             )
             if not is_todo and not review_dispatch:
