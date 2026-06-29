@@ -3,10 +3,11 @@ title: "Podium frontend deploy hazard + atomic deploy script + UI cosmetics"
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-15
+updated: 2026-06-29
 sources:
   - wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md
   - wiki/raw/sessions/2026-06-15-podium-web-stale-build-client-exception.md
+  - wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md
   - web/frontend/deploy.sh
   - web/frontend/next.config.mjs
   - web/frontend/playwright.config.ts
@@ -41,6 +42,22 @@ This is more dangerous than a plain in-place rebuild: while the original `next s
 
 Recovery from the crash-loop is `web/frontend/deploy.sh` (rebuilds a valid production `.next` via staging swap), not a bare restart. Prevention: do **not** run the frontend e2e suite against the live `web/frontend` dir during an automated build, or always finish such a build with `deploy.sh` to restore a clean production `.next`.
 
+## Third trigger: stale webpack cache → byte-identical bundle ships old code
+
+Distinct from the two hazards above (in-place rebuild MIME 400; Playwright `next dev` crash-loop). `deploy.sh` only `rm -rf`s the staging dist dir (`.next.staging`), never `.next/cache`. Next.js keeps a **persistent webpack cache** at `.next/cache`; a rebuild can reuse stale cached modules and emit a **byte-identical page bundle that carries none of the source edits** [source: web/frontend/deploy.sh, wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md#third-deploy-hazard].
+
+Observed 2026-06-29 (C-0347): the GFM-table renderer fix. First `deploy.sh` run reported success (`is-active` + root 200), but the `[binding]` page bundle stayed `page-ae8e2ada9e8d7983.js` dated 2026-06-26 with **identical md5 in both `.next` and `.next.prev`** — the `Markdown.tsx` edit never shipped. Because the bundle filename was unchanged and chunks are served `Cache-Control: public, max-age=31536000, immutable`, the browser cache-hit and kept rendering the old table-as-text. This was proven server-side, not a client-cache problem: the served live chunk md5 equalled the on-disk md5 both times, but the *first* run's bundle genuinely lacked the edit (no `gfmTable` marker).
+
+Recovery: `rm -rf .next/cache .next.staging` then `deploy.sh` → fresh bundle with a new content hash (`page-dd17ba642575253a.js`, dated today) carrying the change. **Prevention (unfixed in `deploy.sh` as of 2026-06-29): `rm -rf .next/cache` before `pnpm build`.**
+
+Diagnostic shortcut for the next occurrence: after a deploy that "looks successful" but the UI didn't change, compare the page-bundle filename/md5 across `.next` and `.next.prev` and grep the live-referenced client chunk for a marker unique to the edit. Identical md5 + missing marker = stale cache, not a browser-cache issue.
+
+## deploy.sh restart-cancel race
+
+`deploy.sh` does `sudo systemctl stop` then immediately `sudo systemctl start`. `stop` returns before the unit has fully released; `start` hits a still-`deactivating (final-sigterm)` unit and returns `Job for podium-web.service canceled.`, leaving the service **DOWN** until manually waited out (the `deactivating` linger exceeded 20s on 2026-06-29) and re-started [source: web/frontend/deploy.sh (lines 30/34), wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md#deploy-sh-restart-cancel-race].
+
+Recovery: poll `systemctl is-active` until it reports `inactive`/`failed`, then `sudo systemctl start`. The clean second deploy (post cache-bust) did **not** reproduce it, so the race is timing-dependent but real — `deploy.sh` cannot be assumed to leave the service up just because `is-active` passed the verify step (the canceled-start case never reaches a healthy `active`). **Prevention (unfixed): poll `is-active` through `deactivating` before issuing `start`, or retry `start` on cancel.**
+
 ## Fix: atomic staging-swap deploy
 
 Chosen prevention (Option A) keeps the live site up through the slow build, then does a fast atomic swap:
@@ -65,3 +82,7 @@ The card reads the issue's *pinned preference* (`preferred_agent`/`preferred_mod
 - Commit the five working-tree changes (latest commit at capture: `eef75d1`). (Done.)
 - ~~First real `deploy.sh` run will exercise stop/swap/start live.~~ Done 2026-06-12 (see Fix section).
 - Isolate frontend e2e from the live build dir: point Playwright's `webServer` / `NEXT_DIST_DIR` at a throwaway dir, or gate `test:e2e` out of automated `/dev-build` runs, so a test run can never overwrite the production `.next` that `podium-web` serves. Until then, any build that runs `playwright test` must end with `deploy.sh`.
+- **Patch `deploy.sh` to `rm -rf .next/cache` before `pnpm build`** (third-trigger prevention, C-0347, unfixed as of 2026-06-29).
+- **Patch `deploy.sh` restart to be self-healing** (poll `is-active` through `deactivating` before `start`, or retry `start` on cancel) so a timing-canceled start cannot leave `podium-web` down (unfixed as of 2026-06-29).
+- Add a Playwright regression lock: a comment containing a GFM table renders a `<table>` (`flyout-tabs.spec.ts` doesn't cover tables today).
+- Commit the three GFM renderer working-tree changes (`Markdown.tsx`, `package.json`, `pnpm-lock.yaml`).
