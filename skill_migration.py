@@ -7,6 +7,7 @@ Podium API/SQLite seams those workflows rely on after Plane retirement.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from collections.abc import Mapping
@@ -327,9 +328,15 @@ def _insert_binding_row(
 
 
 def _append_binding(path: Path, binding: dict[str, Any]) -> None:
+    # Preserve the existing file byte-for-byte: only the new block is appended.
+    # A load/dump/rewrite flattens indentation and drops comments/blank lines,
+    # turning a one-binding append into a whole-file diff that trips restart
+    # pre-sanity. Dupe and shape checks still parse read-only.
     if path.exists():
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        raw = yaml.safe_load(text)
     else:
+        text = None
         raw = None
     if raw is None:
         raw = {"bindings": []}
@@ -340,9 +347,24 @@ def _append_binding(path: Path, binding: dict[str, Any]) -> None:
             raise ValueError(
                 f"binding already exists in bindings.yml: {binding['name']}"
             )
-    raw["bindings"].append(binding)
+    # Fresh/empty file: start a block-style header, append at 0 indent.
+    # Non-empty file: keep its text verbatim and match its list-item indent.
+    if not raw.get("bindings"):
+        base = "bindings:\n"
+        indent = ""
+    else:
+        assert text is not None  # non-empty bindings imply the file existed
+        base = text if text.endswith("\n") else text + "\n"
+        m = re.search(r"^(\s*)-\s+name:", text or "", flags=re.MULTILINE)
+        indent = m.group(1) if m else ""
+    block = yaml.safe_dump([binding], sort_keys=False, default_flow_style=False)
+    if indent:
+        block = "".join(
+            indent + line if line.strip() else line
+            for line in block.splitlines(keepends=True)
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    path.write_text(base + block, encoding="utf-8")
 
 
 def _remove_binding(path: Path, name: str) -> bool:

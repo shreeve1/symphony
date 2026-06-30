@@ -154,6 +154,55 @@ def test_binding_scaffold_remote_requires_rpc_pi_coding(tmp_path: Path) -> None:
         raise AssertionError("expected ValueError for remote_host without remote_user")
 
 
+def test_append_binding_preserves_existing_formatting_and_comments(
+    tmp_path: Path,
+) -> None:
+    # Seed a hand-written 2-indent bindings.yml with a comment and a blank
+    # line between entries -- the byte-level detail that a load/dump/rewrite
+    # silently destroys (turning an append into a whole-file diff).
+    seed = (
+        "# Symphony bindings\n"
+        "bindings:\n"
+        "  - name: homelab\n"
+        "    type: infra\n"
+        "    repo_path: /home/james/homelab\n"
+        "    base_branch: main\n"
+        "\n"
+        "  - name: dotfiles\n"
+        "    type: coding\n"
+        "    repo_path: /home/james/dotfiles\n"
+        "    base_branch: main\n"
+    )
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(seed, encoding="utf-8")
+    db_path = tmp_path / "podium.db"
+
+    scaffold_podium_binding(
+        PodiumBindingScaffoldRequest(
+            name="agency",
+            repo_path=tmp_path / "repo",
+            base_branch="main",
+        ),
+        db_path=db_path,
+        bindings_path=bindings_path,
+    )
+
+    result = bindings_path.read_text(encoding="utf-8")
+    # Existing content survives byte-for-byte; only the new block is added.
+    assert result.startswith(seed)
+    assert "# Symphony bindings" in result  # comment preserved
+    assert "  - name: homelab" in result  # 2-space indent preserved
+    assert "\n\n  - name: dotfiles" in result  # blank line preserved
+    assert result.count("name: homelab") == 1  # no duplication / rewrite
+    # New entry appended at the matching indent and parses correctly.
+    assert "  - name: agency" in result
+    raw = yaml.safe_load(result)
+    by_name = {b["name"]: b for b in raw["bindings"]}
+    assert by_name["agency"]["repo_path"] == str(tmp_path / "repo")
+    assert by_name["agency"]["tracker"] == "podium"
+    assert by_name["homelab"]["type"] == "infra"
+
+
 def test_binding_scaffold_skill_is_not_plane_coupled() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
 
