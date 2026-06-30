@@ -8,6 +8,7 @@ podium.db-shm
 podium.db-wal
 podium.db.predelete-bak-*
 runs/
+.symphony-runs/
 *.env
 plans/
 Plans/
