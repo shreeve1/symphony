@@ -144,7 +144,11 @@ with connect() as connection:
 	return runDbScript<{ issueId: number }>(script);
 }
 
-export function seedWorktreeIssue(binding: string, title: string, state = "todo") {
+export function seedWorktreeIssue(
+	binding: string,
+	title: string,
+	state = "todo",
+) {
 	const script = `
 import json
 from datetime import UTC, datetime
