@@ -3,8 +3,6 @@ models:
     agent: claude
     label: Opus 4.8
     default: true
-  - id: claude-fable-5
-    agent: claude
   - id: claude-sonnet-4-6
     agent: claude
   - id: claude-haiku-4-5
@@ -16,15 +14,6 @@ models:
     agent: pi
     provider: deepseek
     default: true
-  - id: gpt-5.3-codex-spark
-    agent: pi
-    provider: openai-codex
-  - id: gpt-5.4
-    agent: pi
-    provider: openai-codex
-  - id: gpt-5.4-mini
-    agent: pi
-    provider: openai-codex
   - id: gpt-5.5
     agent: pi
     provider: openai-codex
@@ -42,3 +31,9 @@ models:
   - id: claude-sonnet-4-6
     agent: pi
     provider: cliproxy
+  - id: glm-5.2
+    agent: pi
+    provider: zai
+  - id: openrouter/auto
+    agent: pi
+    provider: openrouter

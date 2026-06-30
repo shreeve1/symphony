@@ -67,9 +67,6 @@ def test_models_catalog_is_loadable_by_options_validator() -> None:
     assert {item["id"] for item in loaded} >= {
         "deepseek-v4-flash",
         "deepseek-v4-pro",
-        "gpt-5.3-codex-spark",
-        "gpt-5.4",
-        "gpt-5.4-mini",
         "gpt-5.5",
     }
     assert all(item["agent"] in {"pi", "claude"} for item in loaded)
