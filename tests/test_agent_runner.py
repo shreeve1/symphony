@@ -1257,7 +1257,9 @@ def test_drain_rpc_events_deadline_wins_over_stall() -> None:
     assert drain.stalled is False
 
 
-def test_run_pi_rpc_agent_stall_returns_watchdog_sentinel(monkeypatch, tmp_path: Path) -> None:
+def test_run_pi_rpc_agent_stall_returns_watchdog_sentinel(
+    monkeypatch, tmp_path: Path
+) -> None:
     temp_dir = tmp_path / "temp-helper"
     helper = tmp_path / "plane_cli.py"
     helper.write_text("print('helper')\n")
@@ -1287,7 +1289,9 @@ def test_run_pi_rpc_agent_stall_returns_watchdog_sentinel(monkeypatch, tmp_path:
     assert signals == [signal.SIGTERM]
 
 
-def test_run_remote_agent_stall_returns_watchdog_sentinel(monkeypatch, tmp_path: Path) -> None:
+def test_run_remote_agent_stall_returns_watchdog_sentinel(
+    monkeypatch, tmp_path: Path
+) -> None:
     process = FakeRpcProcess([])
     signals: list[int] = []
     config = replace(_config(tmp_path), stall_timeout_ms=100)
