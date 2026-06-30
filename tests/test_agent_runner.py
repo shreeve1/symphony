@@ -1091,6 +1091,62 @@ def test_drain_rpc_events_spools_assistant_deltas(tmp_path: Path) -> None:
     assert spool.read_text() == "Working on it"
 
 
+def test_drain_rpc_events_separates_text_blocks(tmp_path: Path) -> None:
+    """Distinct assistant text blocks (narration between tool calls) are joined
+    with a blank line, not mashed together ("explore.This is")."""
+
+    def text_start() -> str:
+        return (
+            json.dumps(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {"type": "text_start"},
+                }
+            )
+            + "\n"
+        )
+
+    def text_delta(s: str) -> str:
+        return (
+            json.dumps(
+                {
+                    "type": "message_update",
+                    "assistantMessageEvent": {"type": "text_delta", "delta": s},
+                }
+            )
+            + "\n"
+        )
+
+    process = FakeRpcProcess(
+        [
+            text_start(),
+            text_delta("Let me explore."),
+            json.dumps({"type": "message_end", "message": {}}) + "\n",
+            text_start(),
+            text_delta("This is a frontend bug."),
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+    read_line, close_reader = agent_runner_module._rpc_line_reader(process)
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        1_000_000.0,
+        "55",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=read_line,
+        close_reader=close_reader,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        source_env={},
+    )
+
+    assert "".join(drain.assistant_parts) == (
+        "Let me explore.\n\nThis is a frontend bug."
+    )
+
+
 def test_drain_rpc_events_caps_spool_size(monkeypatch, tmp_path: Path) -> None:
     """The spool stops growing past the cap (tmpfs safety) while the drain
     result is unaffected (ADR-0019)."""

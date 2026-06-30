@@ -1292,6 +1292,21 @@ def _drain_rpc_events(
                 continue  # banner / non-JSON noise on stdout
 
             event_type = str(event.get("type") or "")
+            if _is_text_block_start(event) and assistant_parts:
+                # A new assistant text block began after a tool call (or a
+                # prior text block). pi streams each block's deltas separately;
+                # joining them raw mashes distinct messages together (
+                # "explore.This is"). Separate them with a blank line so the
+                # captured turn reads as paragraphs. Skip if already separated.
+                joined = "".join(assistant_parts)
+                if joined and not joined.endswith("\n\n"):
+                    sep = "\n" if joined.endswith("\n") else "\n\n"
+                    assistant_parts.append(sep)
+                    if spool is not None:
+                        with suppress(OSError):
+                            spool.write(sep)
+                            spool.flush()
+                            spool_written += len(sep)
             delta = _assistant_delta(event)
             if delta:
                 assistant_parts.append(delta)
@@ -1463,6 +1478,20 @@ def _rpc_line_reader(
             buf.extend(data)
 
     return read_line, selector.close
+
+
+def _is_text_block_start(event: dict[str, object]) -> bool:
+    """True when a new assistant text content block begins.
+
+    pi emits a `text_start` assistantMessageEvent at the start of each text
+    block (`docs/rpc.md`). A turn that narrates between tool calls produces
+    several such blocks; without a separator their deltas concatenate into one
+    run-on string in the captured turn.
+    """
+    if event.get("type") != "message_update":
+        return False
+    ame = event.get("assistantMessageEvent")
+    return isinstance(ame, dict) and ame.get("type") == "text_start"
 
 
 def _assistant_delta(event: dict[str, object]) -> str:
