@@ -992,9 +992,7 @@ def _regenerate_title(
     finally:
         connection.close()
     asyncio.run_coroutine_threadsafe(
-        websocket_hub.publish(
-            {"type": "issue.updated", "id": issue_id, "row": result}
-        ),
+        websocket_hub.publish({"type": "issue.updated", "id": issue_id, "row": result}),
         loop,
     )
 
@@ -1137,7 +1135,11 @@ async def create_binding_issue(
     # Regenerate the real title via pi off the request path; pushes an
     # issue.updated event so the board live-swaps the fallback title.
     _spawn_title_regeneration(
-        resolve_db_path(), issue_id, issue.description, title, asyncio.get_running_loop()
+        resolve_db_path(),
+        issue_id,
+        issue.description,
+        title,
+        asyncio.get_running_loop(),
     )
     return result
 
