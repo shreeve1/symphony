@@ -217,7 +217,7 @@ def _insert_issue(
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
           approval_required, approved, auto_land, scheduled_for, base_branch, comments_md,
           context_md, external_id, blocked_by, locks, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, NULL, 'high', 0, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, NULL, 'high', 1, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
         """,
         (
             str(binding["name"]),

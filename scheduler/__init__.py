@@ -416,10 +416,7 @@ def _worktree_enabled(
 ) -> bool:
     if not config.worktree_default:
         return False
-    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    if getattr(candidate, "worktree_active", False):
-        return True
-    return resolved_binding is not None and resolved_binding.binding_type == "coding"
+    return bool(getattr(candidate, "worktree_active", False))
 
 
 def _worktree_run_fields(

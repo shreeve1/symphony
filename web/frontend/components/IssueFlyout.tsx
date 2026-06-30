@@ -512,6 +512,12 @@ function MetadataChips({
 						/>
 					</>
 				)}
+				<ChipToggle
+					label="hold"
+					field="hold"
+					value={issue.hold}
+					onPatch={onPatch}
+				/>
 				<ChipText
 					label="base"
 					field="base_branch"

@@ -51,6 +51,7 @@ function useCreateIssue(binding: string, bindingType: Issue["binding_type"]) {
 				preferred_skill: body.preferred_skill ?? null,
 				reasoning_effort: body.reasoning_effort ?? "high",
 				worktree_active: body.worktree_active ?? false,
+				hold: body.hold ?? false,
 				approval_required: body.approval_required ?? false,
 				approved: body.approved ?? false,
 				scheduled_for: body.schedule ? new Date().toISOString() : null,
@@ -306,6 +307,7 @@ function NewIssueModal({
 	const [model, setModel] = useState("");
 	const [effort, setEffort] = useState("");
 	const [base, setBase] = useState("");
+	const [hold, setHold] = useState(false);
 	const [scheduleDraft, setScheduleDraft] =
 		useState<ScheduleDraft>(defaultScheduleDraft);
 	const descRef = useRef<HTMLTextAreaElement | null>(null);
@@ -392,6 +394,7 @@ function NewIssueModal({
 				...(effort && { reasoning_effort: effort }),
 				...(schedule && { schedule }),
 				...(base.trim() && { base_branch: base.trim() }),
+				...(hold && { hold: true }),
 			},
 			{ onSuccess: onClose },
 		);
@@ -496,6 +499,17 @@ function NewIssueModal({
 							onChange={setScheduleDraft}
 						/>
 					)}
+
+					<label className="flex items-center gap-2 text-xs text-muted-foreground">
+						<input
+							type="checkbox"
+							data-testid="new-issue-hold"
+							checked={hold}
+							onChange={(e) => setHold(e.target.checked)}
+							className="h-3.5 w-3.5"
+						/>
+						Hold (don't dispatch)
+					</label>
 
 					{create.isError && (
 						<p data-testid="new-issue-error" className="text-xs text-red-500">

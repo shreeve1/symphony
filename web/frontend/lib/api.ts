@@ -45,6 +45,7 @@ export interface Issue {
 	dependencies_satisfied: boolean;
 	unsatisfied_blocked_by: number[];
 	lock_conflicts: string[];
+	hold: boolean;
 }
 
 // Full issue record, including the markdown bodies the list endpoint omits.
@@ -111,6 +112,7 @@ export interface InboxItem {
 	dependencies_satisfied: boolean;
 	unsatisfied_blocked_by: number[];
 	lock_conflicts: string[];
+	hold: boolean;
 }
 
 // CLI-refreshed skill catalog row (#015).
@@ -133,6 +135,7 @@ export interface IssuePatch {
 	worktree_active?: boolean;
 	approval_required?: boolean;
 	approved?: boolean;
+	hold?: boolean;
 	scheduled_for?: string | null;
 	base_branch?: string | null;
 	comments_md?: string;
@@ -159,6 +162,7 @@ export interface IssueCreate {
 	worktree_active?: boolean;
 	approval_required?: boolean;
 	approved?: boolean;
+	hold?: boolean;
 	schedule?: ScheduleRequest;
 	base_branch?: string;
 	blocked_by?: number[];

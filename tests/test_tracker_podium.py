@@ -69,6 +69,29 @@ async def test_list_issues_candidates_and_state_helpers(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_hold_excludes_todo_issue_from_candidates_until_cleared(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    # A held todo issue is never emitted as a dispatch candidate.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE issue SET hold = 1 WHERE id = ?", (issue_id,))
+        connection.commit()
+    assert await adapter.list_candidates() == []
+
+    # Clearing hold releases it on the next poll.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE issue SET hold = 0 WHERE id = ?", (issue_id,))
+        connection.commit()
+    candidates = await adapter.list_candidates()
+    assert len(candidates) == 1
+    assert candidates[0].id == str(issue_id)
+
+
+@pytest.mark.asyncio
 async def test_get_issue_transition_and_label_noops(tmp_path: Path) -> None:
     issue_id = _seed_db(tmp_path / "podium.db")
     adapter = PodiumTrackerAdapter(db_path=tmp_path / "podium.db", binding_name="test")

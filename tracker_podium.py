@@ -192,6 +192,10 @@ class PodiumTrackerAdapter:
                 continue
             if is_todo and not self._dependencies_satisfied(issue, state_by_id):
                 continue
+            # hold is an operator-only dispatch gate (never set by the slicer);
+            # a held todo issue is not emitted as a candidate until cleared.
+            if is_todo and bool(issue.get("hold") or False):
+                continue
             preferred_skill = issue.get("preferred_skill")
             candidates.append(
                 CandidateIssue(

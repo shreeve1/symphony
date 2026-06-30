@@ -564,6 +564,7 @@ class IssuePatch(BaseModel):
     approval_required: bool | None = None
     approved: bool | None = None
     auto_land: bool | None = None
+    hold: bool | None = None
     scheduled_for: str | None = None
     base_branch: str | None = None
     comments_md: str | None = None
@@ -611,6 +612,7 @@ class IssueCreate(BaseModel):
     approval_required: bool = False
     approved: bool = False
     auto_land: bool = False
+    hold: bool = False
     scheduled_for: str | None = None
     schedule: ScheduleRequest | None = None
     base_branch: str | None = None
@@ -670,6 +672,7 @@ NON_NULLABLE_FIELDS = (
     "approval_required",
     "approved",
     "auto_land",
+    "hold",
     "comments_md",
     "context_md",
 )
@@ -770,6 +773,7 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
         "approval_required",
         "approved",
         "auto_land",
+        "hold",
     ):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
@@ -876,7 +880,7 @@ def list_binding_issues(
         SELECT
           id, binding_name, title, description, state, priority, preferred_agent,
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
-          approval_required, approved, auto_land, scheduled_for,
+          approval_required, approved, auto_land, hold, scheduled_for,
           base_branch, created_at, updated_at,
           latest_run_id, latest_verdict, latest_run_state, last_event_at,
           external_id, blocked_by, locks
@@ -899,7 +903,7 @@ def list_inbox_issues(
           i.id, i.binding_name, i.title, i.description, i.state, i.priority,
           i.preferred_agent, i.preferred_model, i.preferred_skill,
           i.reasoning_effort, i.worktree_active,
-          i.approval_required, i.approved, i.auto_land, i.scheduled_for,
+          i.approval_required, i.approved, i.auto_land, i.hold, i.scheduled_for,
           i.base_branch, i.created_at, i.updated_at,
           i.latest_run_id, i.latest_verdict, i.latest_run_state, i.last_event_at,
           i.inbox_dismissed_at, i.blocked_by, i.locks
@@ -1026,9 +1030,9 @@ async def create_binding_issue(
             INSERT INTO issue(
               binding_name, title, description, state, priority, preferred_agent,
               preferred_model, preferred_skill, reasoning_effort, worktree_active,
-              approval_required, approved, auto_land, scheduled_for, base_branch, comments_md,
+              approval_required, approved, auto_land, hold, scheduled_for, base_branch, comments_md,
               context_md, external_id, blocked_by, locks, created_at, updated_at
-            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -1043,6 +1047,7 @@ async def create_binding_issue(
                 issue.approval_required,
                 issue.approved,
                 issue.auto_land,
+                issue.hold,
                 scheduled_for,
                 issue.base_branch or _base_branch_for(name),
                 comments_md,

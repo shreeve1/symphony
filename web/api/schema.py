@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0012_retry_verdict"
+INITIAL_REVISION = "0013_issue_hold"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS issue(
   blocked_by TEXT,
   locks TEXT,
   auto_land BOOLEAN NOT NULL DEFAULT FALSE,
+  hold BOOLEAN NOT NULL DEFAULT FALSE,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 

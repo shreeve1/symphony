@@ -97,7 +97,7 @@ def _issue_rows(db_path: Path) -> list[tuple[Any, ...]]:
         return connection.execute(
             """
             SELECT id, title, description, state, base_branch, preferred_agent,
-                   blocked_by, locks, auto_land, preferred_model
+                   blocked_by, locks, auto_land, preferred_model, worktree_active
             FROM issue ORDER BY id
             """
         ).fetchall()
@@ -149,6 +149,23 @@ def test_create_plan_issues_in_dependency_order_with_real_blockers(
     assert "uv run pytest tests/test_api.py -q" in rows[0][2]
     assert rows[0][3:6] == ("todo", "main", "pi")
     assert sentinel.read_text(encoding="utf-8") == before
+
+
+def test_created_slices_stamp_worktree_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The /podium-issues slicer stamps worktree_active=1 so every slice
+    # dispatches into its own per-issue worktree; the operator-authored
+    # worktree opt-out (worktree_active=false, main-checkout) does not apply.
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(tmp_path, repo)
+    plan = _make_plan(tmp_path)
+    db_path = _init_db(tmp_path, monkeypatch)
+
+    create_plan_issues(repo, plan, bindings_path=bindings)
+
+    rows = _issue_rows(db_path)
+    assert [bool(r[10]) for r in rows] == [True, True]
 
 
 def test_dry_run_writes_nothing(

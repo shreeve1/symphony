@@ -72,7 +72,7 @@ def _seed_db(path: Path, *, preferred_agent: str = "pi") -> int:
               binding_name, title, description, state, preferred_agent,
               preferred_skill, worktree_active, base_branch, comments_md,
               context_md, created_at, updated_at
-            ) VALUES ('trading', 'Compact me', 'Exercise compaction', 'todo', ?, '/dev-build', 0, 'main', '', ?, '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            ) VALUES ('trading', 'Compact me', 'Exercise compaction', 'todo', ?, '/dev-build', 1, 'main', '', ?, '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
             """,
             (preferred_agent, "old run log\n" * 20),
         )

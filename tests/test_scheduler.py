@@ -3396,6 +3396,7 @@ async def test_review_terminal_remote_auto_land_uses_remote_worktree(
             _candidate("issue-1"),
             binding_name="n8n",
             base_branch="main",
+            worktree_active=True,
             review_dispatch=True,
         ),
         result=AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\n"),
@@ -6554,7 +6555,9 @@ def test_worktree_run_fields_present_for_remote_coding(tmp_path: Path) -> None:
 def test_worktree_run_fields_default_for_local_coding(tmp_path: Path) -> None:
     config = _config(tmp_path)
     binding = _local_coding_binding(config)
-    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+    candidate = replace(
+        _candidate("issue-1"), worktree_active=True, binding_name=binding.name
+    )
 
     fields = scheduler._worktree_run_fields(config, candidate, "main", binding=binding)
 
@@ -6572,6 +6575,33 @@ def test_worktree_run_fields_default_can_be_disabled(tmp_path: Path) -> None:
 
     assert (
         scheduler._worktree_run_fields(config, candidate, "main", binding=binding) == {}
+    )
+
+
+def test_worktree_enabled_truth_table(tmp_path: Path) -> None:
+    # The binding_type=="coding" fallback is gone: a worktree is created only
+    # when worktree_default is on AND the issue's worktree_active flag is set.
+    binding = _local_coding_binding(_config(tmp_path))
+
+    # worktree_default=True (the _config default)
+    on = _config(tmp_path)
+    assert (
+        scheduler._worktree_enabled(on, _candidate("issue-1"), binding=binding) is False
+    )
+    assert (
+        scheduler._worktree_enabled(
+            on, replace(_candidate("issue-1"), worktree_active=True), binding=binding
+        )
+        is True
+    )
+
+    # worktree_default=False gates everything off regardless of the flag
+    off = _config(tmp_path, worktree_default=False)
+    assert (
+        scheduler._worktree_enabled(
+            off, replace(_candidate("issue-1"), worktree_active=True), binding=binding
+        )
+        is False
     )
 
 
@@ -6650,7 +6680,9 @@ async def test_prepare_resume_candidate_local_coding_defaults_to_worktree(
         return _RecordingRepoHost("worktreehead")
 
     monkeypatch.setattr(scheduler, "repo_host_for", fake_repo_host_for)
-    candidate = replace(_candidate("issue-1"), binding_name=binding.name)
+    candidate = replace(
+        _candidate("issue-1"), worktree_active=True, binding_name=binding.name
+    )
     result, _ = await scheduler._prepare_resume_candidate(
         cast(TrackerAdapter, _NoStoreAdapter()),
         config,
