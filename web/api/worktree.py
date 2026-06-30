@@ -184,6 +184,48 @@ def worktree_diff_empty(
     return False
 
 
+def merge_worktree_preserving_base_wip(
+    repo_path: Path,
+    binding_name: str,
+    issue_id: str,
+    base_branch: str,
+) -> str | None:
+    """Merge while preserving dirty base-checkout WIP.
+
+    Dirty base changes are stashed, the issue branch is merged, then the stash
+    is restored. If the restore conflicts, the merged issue version wins for
+    conflicted files; non-conflicting operator WIP stays in the working tree.
+    """
+    if not base_repo_dirty(repo_path):
+        return merge_worktree(repo_path, binding_name, issue_id, base_branch)
+
+    branch = branch_name(binding_name, issue_id)
+    stash = _run_git(
+        repo_path,
+        [
+            "stash",
+            "push",
+            "--include-untracked",
+            "-m",
+            f"symphony-base-wip-before-{branch}",
+        ],
+        check=False,
+    )
+    if stash is None:
+        return (
+            "Auto-merge halted: base checkout has uncommitted changes and "
+            "Symphony could not stash them."
+        )
+
+    merge_error = merge_worktree(repo_path, binding_name, issue_id, base_branch)
+    restore_error = _restore_stash_issue_wins(repo_path, "stash@{0}")
+    if restore_error is not None:
+        if merge_error is None:
+            return restore_error
+        return f"{merge_error} {restore_error}"
+    return merge_error
+
+
 def merge_worktree(
     repo_path: Path,
     binding_name: str,
@@ -304,7 +346,9 @@ def land_worktree(
     Returns ``None`` on success, or the merge block reason on failure. This is
     intentionally process-neutral: no issue-state mutation and no redispatch.
     """
-    error = merge_worktree(repo_path, binding_name, issue_id, base_branch)
+    error = merge_worktree_preserving_base_wip(
+        repo_path, binding_name, issue_id, base_branch
+    )
     if error is not None:
         return error
     cleanup_worktree(repo_path, binding_name, issue_id)
@@ -314,6 +358,57 @@ def land_worktree(
 def cleanup_worktree(repo_path: Path, binding_name: str, issue_id: str) -> None:
     """Convenience: remove worktree + branch ref after a successful merge."""
     remove_worktree(repo_path, binding_name, issue_id)
+
+
+def _restore_stash_issue_wins(repo_path: Path, stash_ref: str) -> str | None:
+    apply = subprocess.run(
+        ["git", "-C", str(repo_path), "stash", "apply", stash_ref],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if apply.returncode == 0:
+        _run_git(repo_path, ["stash", "drop", stash_ref], check=False)
+        return None
+
+    unmerged = _run_git(
+        repo_path, ["diff", "--name-only", "--diff-filter=U", "-z"], check=False
+    )
+    paths = [path for path in (unmerged or "").split("\0") if path]
+    if not paths:
+        return (
+            "Auto-merge halted: issue branch landed, but restoring stashed base "
+            "changes failed. Inspect `git stash list`."
+        )
+
+    for path in paths:
+        checkout = subprocess.run(
+            ["git", "-C", str(repo_path), "checkout", "--ours", "--", path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if checkout.returncode != 0:
+            return (
+                "Auto-merge halted: issue branch landed, but resolving stashed "
+                f"base changes for {path} failed. Inspect `git stash list`."
+            )
+        _run_git(repo_path, ["add", "--", path], check=False)
+
+    remaining = _run_git(
+        repo_path, ["diff", "--name-only", "--diff-filter=U"], check=False
+    )
+    if remaining and remaining.strip():
+        return (
+            "Auto-merge halted: issue branch landed, but some stashed base "
+            "changes still conflict. Inspect `git status` and `git stash list`."
+        )
+
+    _run_git(repo_path, ["stash", "drop", stash_ref], check=False)
+    LOGGER.info("base_wip_restored_issue_wins conflicts=%s", paths)
+    return None
 
 
 def _run_git(repo_path: Path, args: list[str], *, check: bool = True) -> str | None:

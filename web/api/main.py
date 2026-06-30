@@ -1709,25 +1709,23 @@ async def _maybe_merge_worktree(
     Authority for the terminal state on the worktree-done path: patch_issue
     defers persisting ``done`` (and a combined worktree_active flip) to here.
     Outcomes: ``todo`` (dirty re-dispatch to commit), ``blocked`` (conflict /
-    base-dirty / re-dispatch cap / missing worktree), or ``done`` (clean land
-    proven on main, worktree_active cleared). Returns the final issue row.
+    re-dispatch cap / missing worktree), or ``done`` (land proven on main,
+    worktree_active cleared). Returns the final issue row.
     """
     try:
         from web.api.worktree import (
-            base_repo_dirty,
             branch_name,
             cleanup_worktree,
-            merge_worktree,
+            merge_worktree_preserving_base_wip,
             worktree_dir,
             worktree_exists,
             worktree_is_dirty,
         )
     except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
         from worktree import (  # type: ignore[no-redef]
-            base_repo_dirty,
             branch_name,
             cleanup_worktree,
-            merge_worktree,
+            merge_worktree_preserving_base_wip,
             worktree_dir,
             worktree_exists,
             worktree_is_dirty,
@@ -1864,21 +1862,16 @@ async def _maybe_merge_worktree(
             connection, issue_id, current, repo_path, binding_name, issue_str
         )
 
-    # Precheck: base checkout must be clean.
-    if await asyncio.to_thread(base_repo_dirty, repo_path):
-        msg = (
-            f"Auto-merge halted: base checkout has uncommitted changes. "
-            f"Branch {branch_name(binding_name, issue_str)} is unmerged. "
-            f"Worktree at {worktree_dir(repo_path, binding_name, issue_str)} is intact."
-        )
-        return await _append_blocked_and_publish(connection, issue_id, current, msg)
-
     # Split land (finding #4 race mitigation): merge WITHOUT cleaning up first
     # (land_worktree cleans up before returning and would defeat an abort), then
     # re-check for a run that started during the merge. Only if the coast is
     # clear do we clean up and persist done.
     error = await asyncio.to_thread(
-        merge_worktree, repo_path, binding_name, issue_str, base_branch
+        merge_worktree_preserving_base_wip,
+        repo_path,
+        binding_name,
+        issue_str,
+        base_branch,
     )
     if error is not None:
         return await _append_blocked_and_publish(connection, issue_id, current, error)

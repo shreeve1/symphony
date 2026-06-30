@@ -20,6 +20,7 @@ from web.api.worktree import (
     create_worktree,
     land_worktree,
     merge_worktree,
+    merge_worktree_preserving_base_wip,
     remove_worktree,
     worktree_diff_empty,
     worktree_dir,
@@ -294,6 +295,43 @@ def test_merge_worktree_rebases_diverged_base(
     assert (repo / "main-edit.txt").read_text(encoding="utf-8") == "main work"
     cleanup_worktree(repo, binding_name, issue_id)
     assert not worktree_exists(repo, binding_name, issue_id)
+
+
+def test_merge_preserving_base_wip_restores_non_conflicting_dirty_files(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "feature.txt").write_text("feature work", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "feature commit")
+
+    (repo / "operator.txt").write_text("operator WIP", encoding="utf-8")
+
+    error = merge_worktree_preserving_base_wip(repo, binding_name, issue_id, "main")
+
+    assert error is None
+    assert (repo / "feature.txt").read_text(encoding="utf-8") == "feature work"
+    assert (repo / "operator.txt").read_text(encoding="utf-8") == "operator WIP"
+    assert "?? operator.txt" in _git(repo, "status", "--porcelain").stdout
+    assert _git(repo, "stash", "list").stdout == ""
+
+
+def test_merge_preserving_base_wip_issue_wins_conflicting_file(
+    repo: Path, binding_name: str, issue_id: str
+) -> None:
+    wt_path = create_worktree(repo, binding_name, issue_id, "main")
+    (wt_path / "README.md").write_text("issue version", encoding="utf-8")
+    _git(wt_path, "add", ".")
+    _git(wt_path, "commit", "-m", "issue edit")
+
+    (repo / "README.md").write_text("operator WIP", encoding="utf-8")
+
+    error = merge_worktree_preserving_base_wip(repo, binding_name, issue_id, "main")
+
+    assert error is None
+    assert (repo / "README.md").read_text(encoding="utf-8") == "issue version"
+    assert not base_repo_dirty(repo)
+    assert _git(repo, "stash", "list").stdout == ""
 
 
 def test_merge_worktree_rebase_conflict_blocks_cleanly(

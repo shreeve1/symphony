@@ -4210,37 +4210,7 @@ async def _handle_operator_reland(
         )
         return True
 
-    # ── 6.4: Base repo dirty ──────────────────────────────────────────
-    if await asyncio.to_thread(_review_base_repo_dirty, config, resolved_binding):
-        block_msg = (
-            "Operator land halted: base checkout has uncommitted changes; "
-            "worktree intact."
-        )
-        await _finish_run_record(
-            adapter,
-            run_id,
-            run_log_path,
-            result=result,
-            secrets=secrets,
-            state="failed",
-            verdict="blocked",
-            summary=block_msg,
-            ended_at=now().isoformat(),
-        )
-        await _append_terminal_output_context(adapter, candidate, stdout, stderr)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            block_msg,
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return True
-
-    # ── 6.5: Clean land ───────────────────────────────────────────────
+    # ── 6.4: Land ────────────────────────────────────────────────────
     base_branch = candidate.base_branch or config.base_branch
     error = await asyncio.to_thread(
         _land_review_worktree,

@@ -186,8 +186,10 @@ def test_merge_on_done_happy_path(repo_and_db: tuple[Path, Path]) -> None:
     assert branch_name("trading", issue_str) not in branches
 
 
-def test_merge_on_done_aborts_when_base_dirty(repo_and_db: tuple[Path, Path]) -> None:
-    """Dirty base checkout aborts merge, issue becomes blocked."""
+def test_merge_on_done_stashes_dirty_base_and_issue_wins(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """Dirty base WIP no longer blocks; issue branch wins overlap."""
     repo, db_path = repo_and_db
     from web.api.worktree import create_worktree
 
@@ -195,12 +197,13 @@ def test_merge_on_done_aborts_when_base_dirty(repo_and_db: tuple[Path, Path]) ->
     issue_id = issue["id"]
 
     wt_path = create_worktree(repo, "trading", str(issue_id), "main")
-    (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
+    (wt_path / "README.md").write_text("agent version", encoding="utf-8")
     _git(wt_path, "add", ".")
     _git(wt_path, "commit", "-m", "agent change")
 
-    # Dirty the base repo by modifying a tracked file.
-    (repo / "README.md").write_text("uncommitted change", encoding="utf-8")
+    # Dirty the base repo with overlapping WIP plus a non-conflicting file.
+    (repo / "README.md").write_text("operator WIP", encoding="utf-8")
+    (repo / "operator.txt").write_text("keep me", encoding="utf-8")
 
     queue = main.websocket_hub.subscribe()
     try:
@@ -214,22 +217,23 @@ def test_merge_on_done_aborts_when_base_dirty(repo_and_db: tuple[Path, Path]) ->
         main.websocket_hub.unsubscribe(queue)
     assert response.status_code == 200
     body = response.json()
-    assert body["state"] == "blocked"
-    assert "uncommitted changes" in body["comments_md"]
+    assert body["state"] == "done"
+    assert body["worktree_active"] is False
 
     messages = []
     while not queue.empty():
         messages.append(queue.get_nowait())
-    assert messages[-1]["row"]["state"] == "blocked"
+    assert messages[-1]["row"]["state"] == "done"
 
-    # Worktree intact.
-    assert wt_path.is_dir()
+    assert not wt_path.is_dir()
+    assert (repo / "README.md").read_text(encoding="utf-8") == "agent version"
+    assert (repo / "operator.txt").read_text(encoding="utf-8") == "keep me"
 
 
-def test_combined_done_and_worktree_off_does_not_archive_after_merge_block(
+def test_combined_done_and_worktree_off_does_not_archive_after_dirty_base_land(
     repo_and_db: tuple[Path, Path],
 ) -> None:
-    """Merge/block result wins over archive note in a combined PATCH."""
+    """Merge result wins over archive note in a combined PATCH."""
     repo, db_path = repo_and_db
     from web.api.worktree import create_worktree
 
@@ -254,12 +258,11 @@ def test_combined_done_and_worktree_off_does_not_archive_after_merge_block(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["state"] == "blocked"
+    assert body["state"] == "done"
     assert "operator note" in body["comments_md"]
-    assert "uncommitted changes" in body["comments_md"]
     assert "Worktree archived" not in body["comments_md"]
-    assert wt_path.is_dir()
-    assert body["worktree_active"] is True
+    assert not wt_path.is_dir()
+    assert body["worktree_active"] is False
 
 
 def test_merge_on_done_rebases_non_conflicting_diverged_base(

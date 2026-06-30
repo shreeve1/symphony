@@ -7208,7 +7208,7 @@ async def test_operator_reland_dirty_at_cap_blocks(
 
 
 @pytest.mark.asyncio
-async def test_operator_reland_base_dirty_blocks(
+async def test_operator_reland_base_dirty_delegates_to_land(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from redispatch_core import OPERATOR_RELAND_PENDING_PREFIX
@@ -7217,11 +7217,13 @@ async def test_operator_reland_base_dirty_blocks(
     transport.issues["issue-1"] = {
         **_issue("issue-1", state=PlaneState.TODO.value),
         "comments_md": f"{OPERATOR_RELAND_PENDING_PREFIX} · 2026-05-04T01:00:00+00:00",
+        "worktree_active": True,
     }
     monkeypatch.setattr("worktree_facade.worktree_is_dirty", lambda *a: False)
     monkeypatch.setattr(
         scheduler, "_review_base_repo_dirty", lambda config, binding: True
     )
+    monkeypatch.setattr("worktree_facade.land_worktree", lambda *a: None)
 
     handled = await scheduler._handle_operator_reland(
         _adapter(transport),
@@ -7245,11 +7247,7 @@ async def test_operator_reland_base_dirty_blocks(
     assert handled is True
     assert (
         transport.issues["issue-1"]["state"]
-        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
-    )
-    assert (
-        "base checkout has uncommitted changes"
-        in transport.comments["issue-1"][-1]["comment_html"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
     )
 
 
