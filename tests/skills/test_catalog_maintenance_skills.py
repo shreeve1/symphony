@@ -37,9 +37,10 @@ def test_checkpointed_exploration_skill_is_catalog_scannable() -> None:
     text = CHECKPOINTED_EXPLORATION_SKILL_PATH.read_text(encoding="utf-8")
 
     assert "checkpointed-exploration" in record_by_name
-    assert "bounded reviewable checkpoints" in record_by_name[
-        "checkpointed-exploration"
-    ].description
+    assert (
+        "bounded reviewable checkpoints"
+        in record_by_name["checkpointed-exploration"].description
+    )
     assert "SYMPHONY_QUESTION_BEGIN" in text
     assert "Do not emit `SYMPHONY_RESULT: done`" in text
 
