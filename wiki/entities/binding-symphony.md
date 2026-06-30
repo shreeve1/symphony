@@ -49,7 +49,7 @@ A gap-review pass (`a3f0fa5`) added three self-binding guards: (1) never start a
 
 - Binding is live in the running scheduler since the 2026-06-13 restart (`symphony_started … bindings=3`, `reconcile_startup_done binding=symphony`).
 - `WORKFLOW.md` authored and committed (`2e8ff42`) — no longer a stub, so `symphony-binding-smoke` will run.
-- Remaining optional: harden `_append_binding` against `bindings.yml` comment loss (C-0171).
+- Resolved: `_append_binding` hardened to comment-preserving text-append (C-0350); was the C-0171 open follow-up. (`_remove_binding` still round-trips.)
 
 ## Related
 
