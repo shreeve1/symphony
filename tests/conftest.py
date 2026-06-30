@@ -33,3 +33,19 @@ def _no_real_orphan_reap(monkeypatch):
         main, "reap_orphan_rpc_processes", lambda *a, **k: 0, raising=False
     )
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_background_title_regen(monkeypatch):
+    """Neutralise the fire-and-forget post-create title-regeneration thread.
+
+    It invokes the real ``pi`` binary (~20-25s) and schedules on the web app's
+    event loop; daemon threads outlive the per-test TestClient loop and leak.
+    Tests that exercise regeneration call ``_regenerate_title`` directly.
+    """
+    from web.api import main as web_main
+
+    monkeypatch.setattr(
+        web_main, "_spawn_title_regeneration", lambda *a, **k: None, raising=False
+    )
+    yield

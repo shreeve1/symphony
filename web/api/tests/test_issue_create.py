@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import threading
+import time
 from collections.abc import Iterator
 from importlib import import_module
 from pathlib import Path
@@ -485,11 +488,13 @@ class TestGenerateIssueTitle:
 
         assert generate_issue_title("first line", run_func=fake_run) == "first line"
 
-    def test_uses_short_timeout(self) -> None:
+    def test_uses_realistic_timeout(self) -> None:
         from web.api.title_generator import generate_issue_title
 
         def fake_run(cmd, **kwargs):
-            assert kwargs["timeout"] <= 1
+            # A one-shot pi call empirically takes ~20-25s; the timeout must be
+            # a realistic ceiling, not the 1s band-aid that always fell back.
+            assert kwargs["timeout"] >= 15
 
             class R:
                 returncode = 0
@@ -567,3 +572,75 @@ class TestGenerateIssueTitle:
 
         result = generate_issue_title("desc", run_func=fake_run)
         assert result == "x" * 80
+
+
+def _run_loop_briefly(fn):
+    """Run fn (which schedules onto an asyncio loop) on a throwaway loop."""
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    try:
+        fn(loop)
+        for _ in range(200):
+            time.sleep(0.01)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+
+
+def test_regenerate_title_updates_row_and_pushes(client, monkeypatch):
+    # Create inserts the instant fallback title (first description line).
+    created = client.post(
+        "/api/bindings/symphony/issues", json={"description": "first line\nmore"}
+    ).json()
+    issue_id = created["id"]
+    assert created["title"] == "first line"
+
+    # Background pi generation yields a distinct title.
+    monkeypatch.setattr(
+        main._title_generator, "generate_issue_title", lambda desc, **kw: "A Good Title"
+    )
+    seen = []
+
+    async def fake_publish(msg):
+        seen.append(msg)
+
+    monkeypatch.setattr(main.websocket_hub, "publish", fake_publish)
+
+    _run_loop_briefly(
+        lambda loop: main._regenerate_title(
+            main.resolve_db_path(), issue_id, "first line\nmore", "first line", loop
+        )
+    )
+
+    with main.connect(main.resolve_db_path()) as conn:
+        row = conn.execute(
+            "SELECT title FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+    assert row["title"] == "A Good Title"
+    assert seen and seen[0]["type"] == "issue.updated" and seen[0]["id"] == issue_id
+
+
+def test_regenerate_title_noop_when_title_matches_fallback(client, monkeypatch):
+    created = client.post(
+        "/api/bindings/symphony/issues", json={"description": "first line\nmore"}
+    ).json()
+    issue_id = created["id"]
+
+    # pi returns the same string as the fallback already stored -> no write.
+    monkeypatch.setattr(
+        main._title_generator, "generate_issue_title", lambda desc, **kw: "first line"
+    )
+    seen = []
+
+    async def fake_publish(msg):
+        seen.append(msg)
+
+    monkeypatch.setattr(main.websocket_hub, "publish", fake_publish)
+
+    _run_loop_briefly(
+        lambda loop: main._regenerate_title(
+            main.resolve_db_path(), issue_id, "first line\nmore", "first line", loop
+        )
+    )
+
+    assert seen == []
+    assert created["title"] == "first line"

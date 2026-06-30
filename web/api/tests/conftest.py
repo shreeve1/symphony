@@ -88,3 +88,17 @@ class _FakePiResult:
 def issue_id(client: TestClient) -> int:
     issues = client.get("/api/bindings/symphony/issues").json()
     return issues[0]["id"]
+
+
+@pytest.fixture(autouse=True)
+def _no_background_title_regen(monkeypatch):
+    """Neutralise the fire-and-forget post-create title-regeneration thread.
+
+    It invokes the real ``pi`` binary (~20-25s) and schedules on the app event
+    loop; daemon threads outlive the per-test TestClient loop and leak. Tests
+    that exercise regeneration call ``_regenerate_title`` directly.
+    """
+    monkeypatch.setattr(
+        main, "_spawn_title_regeneration", lambda *a, **k: None, raising=False
+    )
+    yield

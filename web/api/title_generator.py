@@ -13,8 +13,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 _TITLE_MAX_CHARS = 80
-# Keep the create path snappy; fallback title is fine when pi is slow.
-_TIMEOUT_S = 1
+# Realistic ceiling for a one-shot pi call (empirically ~20-25s). The create
+# path uses _fallback_title inline and runs generate_issue_title in a
+# background thread, so this no longer gates the HTTP response.
+_TIMEOUT_S = 30
 
 
 def generate_issue_title(

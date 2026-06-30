@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 import subprocess
+import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -97,6 +98,7 @@ verify_session = _auth.verify_session
 verify_bearer_token = _auth.verify_bearer_token
 resolve_run_log_root = _db.resolve_run_log_root
 connect = _db.connect
+resolve_db_path = _db.resolve_db_path
 get_connection = _db.get_connection
 INITIAL_REVISION = _schema.INITIAL_REVISION
 SCHEMA_SQL = _schema.SCHEMA_SQL
@@ -953,8 +955,63 @@ def binding_issue_options(
     }
 
 
-def _generate_title(description: str) -> str:
-    return _title_generator.generate_issue_title(description)
+def _regenerate_title(
+    db_path: Path,
+    issue_id: int,
+    description: str,
+    fallback_title: str,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Background post-create title regeneration via pi.
+
+    The create handler inserts an instant fallback title and returns; this runs
+    in a daemon thread so a slow (~20-25s) pi call never blocks the single
+    uvicorn worker. On a differing title it updates the row and pushes an
+    ``issue.updated`` event so the board live-swaps the title.
+    """
+    try:
+        title = _title_generator.generate_issue_title(description)
+    except Exception:
+        logger.exception("title_background_failed issue=%s", issue_id)
+        return
+    if not title or title == fallback_title:
+        return
+    connection = connect(db_path)
+    try:
+        connection.execute(
+            "UPDATE issue SET title = ? WHERE id = ?",
+            (title, issue_id),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        if row is None:
+            return
+        result = _decorate_issue_gates(connection, [_row(row)])[0]
+    finally:
+        connection.close()
+    asyncio.run_coroutine_threadsafe(
+        websocket_hub.publish(
+            {"type": "issue.updated", "id": issue_id, "row": result}
+        ),
+        loop,
+    )
+
+
+def _spawn_title_regeneration(
+    db_path: Path,
+    issue_id: int,
+    description: str,
+    fallback_title: str,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Fire-and-forget wrapper so tests can stub out the background thread."""
+    threading.Thread(
+        target=_regenerate_title,
+        args=(db_path, issue_id, description, fallback_title, loop),
+        daemon=True,
+    ).start()
 
 
 def _branches_for(name: str) -> list[str]:
@@ -1023,7 +1080,9 @@ async def create_binding_issue(
         scheduled_for = now
     blocked_by = issue.blocked_by or []
     locks = issue.locks or []
-    title = _generate_title(issue.description)
+    # Instant fallback title so create never blocks on a slow pi call; the
+    # real title is regenerated in a background thread below.
+    title = _title_generator._fallback_title(issue.description)
     try:
         cursor = connection.execute(
             """
@@ -1074,6 +1133,11 @@ async def create_binding_issue(
     result = _decorate_issue_gates(connection, [_row(row)])[0]
     await websocket_hub.publish(
         {"type": "issue.created", "binding_name": name, "row": result}
+    )
+    # Regenerate the real title via pi off the request path; pushes an
+    # issue.updated event so the board live-swaps the fallback title.
+    _spawn_title_regeneration(
+        resolve_db_path(), issue_id, issue.description, title, asyncio.get_running_loop()
     )
     return result
 
