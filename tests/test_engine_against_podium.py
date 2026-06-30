@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 import main
-import scheduler
 from agent_runner import AgentResult
 from config import SymphonyConfig
 from scheduler import run_tick
@@ -193,85 +192,6 @@ async def test_gate_blocked_dispatch_preserves_preferred_skill(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_infra_build_grace_then_block_against_podium_when_no_plan(
-    tmp_path: Path,
-) -> None:
-    # Faithful root-cause coverage: against the REAL Podium adapter, an infra
-    # dev-build issue with no plan file projects MODE_BUILD from preferred_skill
-    # every tick. add_labels/remove_labels are no-ops on Podium, so the
-    # return-to-plan recovery cannot stick. The gate must therefore retry only
-    # BUILD_PLAN_MISSING_GRACE_ATTEMPTS times (staying in Todo, bounded comment
-    # growth) and then block terminally — never an infinite bounce.
-    db_path = tmp_path / "podium.db"
-    connection = sqlite3.connect(db_path)
-    try:
-        connection.executescript(SCHEMA_SQL)
-        connection.execute("INSERT INTO binding(name) VALUES ('test')")
-        cursor = connection.execute(
-            """
-            INSERT INTO issue(
-              binding_name, title, description, state, preferred_agent,
-              preferred_skill, comments_md, context_md, created_at, updated_at
-            ) VALUES ('test', 'No plan here', 'dev-build but no plan file', 'todo', 'pi', '/dev-build', '', '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
-            """
-        )
-        connection.commit()
-        issue_id = cursor.lastrowid
-    finally:
-        connection.close()
-    assert issue_id is not None
-
-    (tmp_path / "WORKFLOW.md").write_text(
-        "Repo policy. mode={{issue.mode}}", encoding="utf-8"
-    )
-    config = _config(tmp_path)
-    binding = replace(config.bindings[0], binding_type="infra")
-    config = config.for_binding(binding)
-    adapter = PodiumTrackerAdapter(
-        db_path=db_path,
-        binding_name="test",
-        contract=binding.tracker_contract,
-    )
-
-    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
-        raise AssertionError("agent must not run when no plan file exists")
-
-    def render(issue) -> str:
-        return main._render_candidate_prompt(
-            issue,
-            contract=adapter.contract,
-            repo_path=tmp_path,
-            binding_type="infra",
-            tracker_kind="podium",
-        )
-
-    grace = scheduler.BUILD_PLAN_MISSING_GRACE_ATTEMPTS
-    reasons: list[str] = []
-    for _ in range(grace + 1):
-        result = await run_tick(
-            config,
-            adapter,
-            agent_runner=agent_runner,
-            render_prompt=render,
-            repo_dirty=lambda path: False,
-            run_blocked_reconciler=False,
-            now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
-        )
-        reasons.append(result.reason)
-
-    issue = await adapter.get_issue(str(issue_id))
-
-    # Grace ticks return to Plan (and stay Todo); the final tick blocks.
-    assert reasons[:grace] == ["build-plan-missing-returned-to-plan"] * grace
-    assert reasons[grace] == "build-plan-missing-skill-driven-blocked"
-    assert issue["state"] == "blocked"
-    # Comment growth is bounded: exactly `grace` return-to-plan markers.
-    assert issue["comments_md"].count("Returning this issue to Plan mode") == grace
-    # The skill was never consumed (no dispatch occurred).
-    assert issue["preferred_skill"] == "/dev-build"
-
-
-@pytest.mark.asyncio
 async def test_consume_preferred_skill_compare_and_clear(tmp_path: Path) -> None:
     # [2.5]/[T.2.3] W1 race guard: wrong expected no-ops; matching clears.
     db_path = tmp_path / "podium.db"
@@ -307,3 +227,63 @@ async def test_consume_preferred_skill_compare_and_clear(tmp_path: Path) -> None
     # Matching expected → cleared.
     issue = await adapter.consume_preferred_skill(str(issue_id), "/skill-A")
     assert issue["preferred_skill"] is None
+
+
+@pytest.mark.asyncio
+async def test_podium_dispatch_injects_comments_once(tmp_path: Path) -> None:
+    # Regression: the Podium renderer already embeds comments_md as the
+    # "## Previous Issue Comments" block, so the scheduler must NOT append a
+    # second copy on the Podium path (it would double the whole thread).
+    db_path = tmp_path / "podium.db"
+    marker = "UNIQUE_HISTORIC_COMMENT_MARKER"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              preferred_model, reasoning_effort, comments_md, context_md,
+              created_at, updated_at
+            ) VALUES ('test', 'Has history', 'Do work', 'todo', 'pi', 'gpt-5.5', 'medium', ?, '', '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00')
+            """,
+            (f"**Comment (2026-06-11):**\n{marker}",),
+        )
+        connection.commit()
+        issue_id = cursor.lastrowid
+    finally:
+        connection.close()
+    assert issue_id is not None
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+        contract=binding.tracker_contract,
+    )
+    prompts: list[str] = []
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        prompts.append(rendered_prompt)
+        return AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done\nturn")
+
+    await run_tick(
+        config,
+        adapter,
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+
+    assert len(prompts) == 1
+    assert prompts[0].count(marker) == 1
+    assert prompts[0].count("## Previous Issue Comments") == 1

@@ -67,7 +67,6 @@ from session_continuity import (
     derive_session_id,
     evaluate_resume_eligibility,
 )
-from skill_mode_map import mode_for_skill
 from tracker_adapter import TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from tracker_types import (
@@ -167,14 +166,6 @@ STDERR_SUMMARY_MAX_LINES = 8
 STDERR_SUMMARY_MAX_CHARS = 900
 PREVIOUS_COMMENT_MAX_CHARS = 1500
 PREVIOUS_COMMENT_TAIL_CHARS = 500
-# Infra build gate: how many times to retry the return-to-plan recovery for a
-# skill-driven (Podium) issue with no plan file before blocking it terminally.
-# A short grace window lets a plan that lands seconds later self-heal, while
-# still bounding the otherwise-infinite bounce and its comment growth.
-BUILD_PLAN_MISSING_GRACE_ATTEMPTS = 3
-# Stable substring of the return-to-plan recovery comment, counted in
-# comments_md to track how many grace attempts have already been spent.
-_BUILD_PLAN_RETURN_MARKER = "Returning this issue to Plan mode"
 _REVIEW_DISPATCH_MARKER_RE = re.compile(
     r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
 )
@@ -585,7 +576,15 @@ async def _render_for_dispatch(
         candidate,
         resume=getattr(candidate, "resumed", False),
     )
-    if comments_text and not getattr(candidate, "resumed", False):
+    # Podium's renderer already embeds comments_md as the canonical
+    # "## Previous Issue Comments" block (with operator-reply flagging), so
+    # appending here too would double-inject the whole thread. Only the Plane
+    # path (no context store) needs the scheduler to attach comments.
+    if (
+        comments_text
+        and not getattr(candidate, "resumed", False)
+        and not getattr(adapter, "stores_context", False)
+    ):
         prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
     return candidate, prompt
 
@@ -1180,84 +1179,6 @@ def _binding_approval_enabled(binding: ProjectBinding | None) -> bool:
     return bool(binding and binding.approval_policy.enabled)
 
 
-def _issue_slug(issue: CandidateIssue) -> str:
-    raw = issue.identifier or issue.id
-    slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
-    return slug or issue.id
-
-
-def _expected_plan_path(repo_path: Path, issue: CandidateIssue) -> Path:
-    return (repo_path / "plans" / f"{_issue_slug(issue)}.md").resolve()
-
-
-def _plan_stem_matches_issue(stem: str, slug: str) -> bool:
-    """A plan file belongs to the issue if its stem is the slug, or the slug
-    followed by a ``-`` separator (the Plane-era ``{id}-{title}`` convention)."""
-
-    return stem == slug or stem.startswith(f"{slug}-")
-
-
-def _state_path_for_plan(plan_path: Path) -> Path:
-    return plan_path.with_name(f".{plan_path.stem}.state.yml")
-
-
-def _final_non_empty_line(body: str) -> str | None:
-    for line in reversed(body.splitlines()):
-        stripped = line.strip().strip("`")
-        if stripped:
-            return stripped
-    return None
-
-
-def _validate_issue_plan_path(
-    repo_path: Path, issue: CandidateIssue, raw_path: str
-) -> Path:
-    plans_dir = (repo_path / "plans").resolve()
-    candidate = Path(raw_path).expanduser().resolve()
-    if not raw_path.startswith("/"):
-        raise ValueError("plan path is not absolute")
-    if not _plan_stem_matches_issue(candidate.stem, _issue_slug(issue)):
-        raise ValueError("plan path does not match the current issue slug")
-    if candidate.parent != plans_dir:
-        raise ValueError("plan path is outside the homelab plans directory")
-    if candidate.suffix != ".md":
-        raise ValueError("plan path is not a Markdown file")
-    if not candidate.is_file():
-        raise ValueError("plan path is not a readable regular file")
-    return candidate
-
-
-def _validated_fallback_plan_path(
-    repo_path: Path, issue: CandidateIssue
-) -> Path | None:
-    expected = _expected_plan_path(repo_path, issue)
-    if expected.is_file():
-        try:
-            return _validate_issue_plan_path(repo_path, issue, str(expected))
-        except ValueError:
-            return None
-
-    # Fall back to the Plane-era ``plans/{id}-{title}.md`` convention. The Plan
-    # author may still name plans with a title suffix while the Podium issue
-    # identifier is just the numeric id, so the exact ``{id}.md`` is absent.
-    slug = _issue_slug(issue)
-    plans_dir = (repo_path / "plans").resolve()
-    if not plans_dir.is_dir():
-        return None
-    matches = sorted(
-        path
-        for path in plans_dir.glob(f"{slug}-*.md")
-        if path.is_file() and _plan_stem_matches_issue(path.stem, slug)
-    )
-    if len(matches) != 1:
-        # Zero matches: no plan. Multiple matches: ambiguous, refuse to guess.
-        return None
-    try:
-        return _validate_issue_plan_path(repo_path, issue, str(matches[0]))
-    except ValueError:
-        return None
-
-
 async def _dispatch_with_resume_fallback(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -1576,114 +1497,6 @@ async def _gate_run_tick_candidate(
 
     if adapter.labels_contain_role(fresh_labels, TrackerRole.SCHEDULED):
         return TickResult(False, "scheduled-held", candidate.id)
-
-    if mode == "build" and not is_coding:
-        if adapter.labels_contain_role(fresh_labels, TrackerRole.MODE_PLAN):
-            try:
-                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_PLAN])
-            except PlaneRateLimitError:
-                raise
-            except Exception as exc:
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(
-                        body=f"Build could not start: failed to remove stale `plan` label: {exc}"
-                    ),
-                )
-                return TickResult(
-                    False, "stale-plan-label-remove-failed", candidate.id, mode=mode
-                )
-
-        plan_path = _validated_fallback_plan_path(config.homelab_repo_path, candidate)
-        if plan_path is None:
-            # When the work-shape is projected from preferred_skill (Podium),
-            # the Build mode label is recomputed from the skill every tick, so
-            # the add-plan/remove-build flip below is a silent no-op: the issue
-            # re-enters Build mode next tick and would bounce todo<->build
-            # forever, re-posting an identical comment each time (unbounded
-            # comments_md growth). Bound it: allow a short grace window (so a
-            # plan that lands seconds later still self-heals via return-to-plan)
-            # by counting the return-to-plan comments already posted, then block
-            # once the grace is spent.
-            #
-            # This guard is inert on the Plane path: plane_adapter candidates
-            # never carry preferred_skill, so mode_for_skill(None) == "execute"
-            # and the existing return-to-plan recovery (which DOES stick on
-            # Plane, where a planning agent can regenerate the plan) is used as
-            # before.
-            skill_forces_build = (
-                mode_for_skill(getattr(candidate, "preferred_skill", None)) == "build"
-            )
-            prior_return_to_plan = candidate.comments_md.count(
-                _BUILD_PLAN_RETURN_MARKER
-            )
-            if (
-                skill_forces_build
-                and prior_return_to_plan >= BUILD_PLAN_MISSING_GRACE_ATTEMPTS
-            ):
-                slug = _issue_slug(candidate)
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    (
-                        "Build could not start: the preferred skill forces Build "
-                        "mode but no readable plan file was found at "
-                        f"plans/{slug}.md (or plans/{slug}-<title>.md) after "
-                        f"{BUILD_PLAN_MISSING_GRACE_ATTEMPTS} attempts. Symphony "
-                        "cannot return this issue to Plan mode because the mode is "
-                        "projected from the skill, so it would retry forever. "
-                        "Provide the plan file or change the preferred skill to "
-                        "dev-plan."
-                    ),
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(
-                    False,
-                    "build-plan-missing-skill-driven-blocked",
-                    candidate.id,
-                    mode=mode,
-                )
-            try:
-                await adapter.add_labels(candidate.id, [TrackerRole.MODE_PLAN])
-                await adapter.remove_labels(candidate.id, [TrackerRole.MODE_BUILD])
-                await adapter.add_comment(
-                    candidate.id,
-                    CommentPayload(
-                        body=(
-                            "Build could not start because no readable plan file was found. "
-                            "Returning this issue to Plan mode so Symphony can regenerate and post the plan."
-                        )
-                    ),
-                )
-                await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
-            except PlaneRateLimitError:
-                raise
-            except Exception as exc:
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    f"Build plan recovery failed after no readable plan was found: {exc}",
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
-                    notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(
-                    False, "build-plan-recovery-failed", candidate.id, mode=mode
-                )
-            return TickResult(
-                False,
-                "build-plan-missing-returned-to-plan",
-                candidate.id,
-                mode=mode,
-            )
 
     if getattr(adapter, "stores_context", False):
         candidate, gate_error = _apply_dispatch_gate(candidate, binding)

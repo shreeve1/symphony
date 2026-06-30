@@ -3,9 +3,11 @@ title: Prompt renderer
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-06-18
+updated: 2026-06-30
 sources:
   - prompt_renderer.py
+  - scheduler/__init__.py
+  - skill_mode_map.py
   - skill_mode_map.py
   - tests/test_prompt_renderer_podium.py
   - wiki/raw/sessions/2026-06-18-retire-context-md-refeed-floor.md
@@ -42,6 +44,8 @@ For non-coding bindings, `_render_schedule_context(issue)` appends one-shot sche
 ## Skill→Mode bridge
 
 `skill_mode_map.py` is the transitional single source for projecting Podium `preferred_skill` values back to legacy renderer Mode values. Known mappings: `/dev-plan → plan`, `/dev-build → build`, `/diagnose → execute`, `/code-review → execute`; unknown or missing skills default to `execute` [source: skill_mode_map.py#1-28].
+
+> **2026-06-30 — plan/build is now INERT (ADR-0031, C-0351).** `mode_for_skill`/`SKILL_TO_MODE` and the Podium `preferred_skill`→`plan`/`build` label projection still run, but **no engine branch acts on `plan`/`build` anymore**: the scheduler `mode == "build"` gate (return-to-plan recovery + plan-path discovery) is deleted, and the Plan Mode / Build Mode sections of `INFRA_PREAMBLE` are removed. Plan-vs-build is now an instruction the operator writes in the issue body. `_resolve_mode`/`mode_for_skill` survive for logging/label display only; removal of the dormant vocabulary is a deferred cleanup. See [../analyses/adr-0031-operator-driven-plan-build.md](../analyses/adr-0031-operator-driven-plan-build.md). The same change fixed a double-injection bug: the Podium `render_prompt` already embeds `comments_md`, so the scheduler's `_render_for_dispatch` comment append is now Plane-only.
 
 This bridge exists because Podium stores work shape as `preferred_skill`, while existing `WORKFLOW.md` templates still consume `{{issue.mode}}` [source: skill_mode_map.py#1-6].
 

@@ -20,6 +20,25 @@ def test_skill_to_mode_projection_table() -> None:
     assert mode_for_skill(None) == "execute"
 
 
+def test_infra_preamble_has_no_plan_or_build_mode_sections() -> None:
+    """Plan/Build mode is operator-driven via the issue body now; the engine no
+    longer injects Plan/Build mode instructions into the infra preamble."""
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-PB",
+            name="Infra issue",
+            description="Do infra work",
+            labels="infra",
+        ),
+        binding_type="infra",
+        tracker_kind="podium",
+    )
+    assert "## Plan Mode" not in prompt
+    assert "## Build Mode" not in prompt
+    assert "/Development pipeline" not in prompt
+    assert "PLAN mode" not in prompt
+
+
 def test_podium_render_prompt_reads_comments_without_truncation_and_omits_context(
     tmp_path: Path,
 ) -> None:

@@ -47,14 +47,9 @@ End every run by emitting exactly one terminal outcome:
   <one clear question for the operator>
   SYMPHONY_QUESTION_END
 
-If you provide a summary block, it overrides your natural turn in the posted
-comment. Emit marker lines at the START of a line (no indentation):
-
-  SYMPHONY_SUMMARY_BEGIN
-  <your override summary here>
-  SYMPHONY_SUMMARY_END
-
-Keep summaries and questions focused; they are bounded to ~4000 characters when posted."""
+Optional: to override the posted comment, emit a `SYMPHONY_SUMMARY_BEGIN` /
+`SYMPHONY_SUMMARY_END` block with marker lines at the START of a line (no
+indentation). Override summaries and questions are bounded to ~4000 characters."""
 
 # Engine-owned review preambles (ADR-0023/ADR-0024). Review runs are unattended
 # native service work, not an operator-facing catalog skill.
@@ -152,23 +147,19 @@ rules strictly:
 
 ## Completion
 
-12. Always include a work summary in your `SYMPHONY_SUMMARY` block (rule 15) —
-    it is the per-run comment Symphony posts on the issue.
+12. Answer naturally — Symphony captures your end-of-turn message (what you did,
+    findings, and any questions for the operator) and posts it as the issue
+    comment. Write it for a human reader (markdown allowed).
 13. Signal the terminal state using the appended Symphony output contract
     (rule 15). Do NOT call any tracker CLI — Symphony owns the issue state
     transition from terminal markers.
 14. If the issue cannot be completed, emit `SYMPHONY_RESULT: blocked` with a
-    clear explanation of the blocker in the summary.
+    clear explanation of the blocker in your turn.
 15. **End every run with the Symphony output contract.** Symphony appends the
     authoritative contract to your prompt (`## Symphony output contract`).
-    Emit one terminal outcome marker and a `SYMPHONY_SUMMARY_BEGIN` /
-    `SYMPHONY_SUMMARY_END` block holding your natural end-of-turn summary —
-    what you did, findings, and any questions for the operator. Symphony posts
-    that block verbatim as the issue comment, so write it for a human reader
-    (markdown allowed). The legacy single-line `SYMPHONY_SUMMARY: <one sentence>`
-    form is still accepted as a fallback. The summary is the only per-run signal
-    on the issue for a clean run — the scheduler does NOT echo stdout or stderr
-    into the comment.
+    Emit exactly one terminal outcome marker. Your natural turn becomes the
+    posted comment; a `SYMPHONY_SUMMARY` block is optional and only needed to
+    override what gets posted.
 16. If you exit 0 with no marker and no repo changes (a clean read-only check),
     the scheduler treats that as `done`. If you made repo changes, commit them
     yourself first. The scheduler will not perform git writes, cleanup, or other
@@ -179,85 +170,7 @@ rules strictly:
     cleared (e.g. reclaimable back under threshold). If you cannot re-verify, or
     the condition still holds, emit `SYMPHONY_RESULT: review` instead so a human
     confirms. On bindings the operator has opted into verified auto-close, a
-    `done` verdict closes the issue directly, so reserve it for confirmed cures.
-
-## Plan Mode
-
-When the issue has the `plan` label, you are in PLAN mode:
-
-17. Research, design, and produce an implementation plan. Do not implement
-    production changes.
-18. Unless this is a routine infra/docker package, reboot, or image update
-    planning ticket, run the `/Development pipeline` Plan skill with `loop codex
-    2` to cap the Claude/OpenCode <-> Codex audit loop at two rounds unless
-    the operator explicitly requests more.
-19. If skill loading is unavailable, read and follow
-    `/home/james/.claude/skills/Development/Plan/SKILL.md` and
-    `/home/james/.claude/skills/Development/Plan/Workflows/CreatePlan.md`.
-20. Use the current issue slug for the plan artifact: `plans/<issue-slug>.md`.
-    The plan file lives on the base branch. Save extra issue context at
-    `tickets/{{issue.identifier}}.md` when useful.
-21. Plan mode may create or update only the current issue's plan file and
-    `tickets/{{issue.identifier}}.md`.
-22. Do NOT modify application, infrastructure, runbook, service, or runtime
-    files. Do NOT restart services, reload units, or mutate live systems.
-23. Commit the plan artifact and any issue-scoped ticket notes directly to the
-    base branch before emitting `SYMPHONY_RESULT: review`.
-24. Put in your `SYMPHONY_SUMMARY` block: `Symphony completed plan.` as the
-    handoff marker, summary, risks, affected files/services, approval checklist,
-    and the full absolute path to the generated plan file as the final
-    non-empty line.
-25. The repo plan file on the base branch is the source of truth. The summary
-    block is the review summary and handoff pointer.
-26. For routine infra/docker package, reboot, or image update planning tickets,
-    do not invoke the Plan skill or any interactive planning workflow. Create a
-    concise issue-scoped review plan directly from docs and diagnostics so the
-    operator can approve, edit, or schedule it.
-27. If a Plan skill step would ask an interactive question, choose the safest
-    reasonable default from issue context and document the assumption in the
-    run summary. If no safe default exists, or proceeding requires destructive
-    action, live mutation, secret inspection, or ambiguous tracker mutation,
-    emit `SYMPHONY_RESULT: blocked` with the exact question and required decision.
-
-## Build Mode
-
-When the issue has the `build` label, you are executing an approved plan:
-
-28. Run the `/Development pipeline` Build skill with Codex checks at the end of
-    each wave.
-29. If skill loading is unavailable, read and follow
-    `/home/james/.claude/skills/Development/Build/SKILL.md` and
-    `/home/james/.claude/skills/Development/Build/Workflows/ExecutePlan.md`.
-30. Build mode is triggered only by the explicit `build` label. Do not
-    auto-detect plans in normal execute mode.
-31. Use the plan path from the Plan mode summary comment first. The plan path must
-    be the final non-empty line of the newest valid `Symphony completed plan.`
-    handoff comment.
-32. If no comment path exists, use the convention fallback
-    `plans/<issue-slug>.md`.
-33. The plan must resolve under the repository's `plans/` directory, match the
-    current issue slug exactly, be a readable regular `.md` file, and not rely on
-    symlink or path traversal.
-34. If no readable plan exists, do not guess. Remove `build`, add `plan`,
-    comment that Build is returning to Plan mode because no readable plan was
-    found, and leave or move the issue to Todo for regeneration.
-35. If a plan path exists but is suspicious, points outside the repository's
-    `plans/` directory, has the wrong slug, or is unreadable, block the issue
-    with the reason.
-36. Read the plan from the base branch, implement it exactly as specified, and
-    commit resulting work directly to the base branch. If you discover the plan
-    is infeasible or unsafe, emit `SYMPHONY_RESULT: blocked` with an explanation.
-    Do not improvise.
-37. Post one final summary block by default (rule 15). Wave progress, Codex audit
-    notes, and cross-session context should live in `tickets/{{issue.identifier}}.md`.
-38. Build commits must retain the `Symphony-Issue:` trailer and add `Plan-Path:`
-    when a validated plan file was used.
-39. If a Build skill step would ask an interactive question, choose the safest
-    reasonable default from issue context and document the assumption in the
-    final run summary. If no safe default exists, or proceeding requires
-    destructive action, live mutation, secret inspection, or ambiguous tracker
-    mutation, emit `SYMPHONY_RESULT: blocked` with the exact question and required
-    decision."""
+    `done` verdict closes the issue directly, so reserve it for confirmed cures."""
 
 CHECKPOINTED_EXPLORATION_SKILL = "checkpointed-exploration"
 
