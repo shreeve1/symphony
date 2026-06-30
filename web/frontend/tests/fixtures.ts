@@ -144,6 +144,32 @@ with connect() as connection:
 	return runDbScript<{ issueId: number }>(script);
 }
 
+export function seedWorktreeIssue(binding: string, title: string, state = "todo") {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+binding = ${JSON.stringify(binding)}
+title = ${JSON.stringify(title)}
+state = ${JSON.stringify(state)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    cursor = connection.execute(
+        """
+        INSERT INTO issue(
+          binding_name, title, description, state, priority, preferred_agent,
+          reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+          created_at, updated_at, last_event_at
+        ) VALUES (?, ?, ?, ?, 'med', 'pi', 'high', TRUE, 'main', '', '', ?, ?, ?)
+        """,
+        (binding, title, f"E2E worktree fixture for {binding}.", state, now, now, now),
+    )
+    connection.commit()
+    print(json.dumps({"issueId": cursor.lastrowid}))
+`;
+	return runDbScript<{ issueId: number }>(script);
+}
+
 export function setIssueComments(issueId: number, commentsMd: string) {
 	const script = `
 import json

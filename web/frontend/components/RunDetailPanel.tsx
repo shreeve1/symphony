@@ -58,6 +58,7 @@ export function RunDetailPanel({
 		["ended", formatValue(run.data?.ended_at)],
 		["duration", formatRunDuration(run.data, now)],
 		["branch", formatValue(run.data?.branch_name)],
+		["worktree", formatValue(run.data?.worktree_path)],
 	];
 
 	return (

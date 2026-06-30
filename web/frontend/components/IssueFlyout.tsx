@@ -519,6 +519,17 @@ function MetadataChips({
 					onPatch={onPatch}
 				/>
 			</div>
+			{issue.worktree_active &&
+				issue.state !== "done" &&
+				issue.worktree_path &&
+				issue.worktree_branch && (
+					<p
+						data-testid="worktree-path"
+						className="text-xs text-muted-foreground"
+					>
+						worktree: {issue.worktree_path} (branch: {issue.worktree_branch})
+					</p>
+				)}
 			{showEmptySkillHint && (
 				<p
 					data-testid="skill-catalog-empty"
