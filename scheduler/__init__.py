@@ -1270,7 +1270,9 @@ async def _select_run_tick_candidate(
         or retry_cooldown_expired(c.comments_md, now_dt)
     ]
 
-    approval_policy_enabled = _binding_approval_enabled(binding) and (binding is not None and binding.scheduling)
+    approval_policy_enabled = _binding_approval_enabled(binding) and (
+        binding is not None and binding.scheduling
+    )
     if candidate is None:
         candidate = await _reserve_candidate(
             candidates,
@@ -1298,7 +1300,9 @@ async def _gate_run_tick_candidate(
 ) -> _RunTickGate | TickResult:
     """Run tick gate stage before rendering or dispatch side effects."""
 
-    approval_policy_enabled = _binding_approval_enabled(binding) and (binding is not None and binding.scheduling)
+    approval_policy_enabled = _binding_approval_enabled(binding) and (
+        binding is not None and binding.scheduling
+    )
     if approval_policy_enabled and adapter.labels_contain_role(
         candidate.labels, TrackerRole.APPROVAL_REQUIRED
     ):
@@ -1306,7 +1310,9 @@ async def _gate_run_tick_candidate(
 
     mode = _resolve_mode(candidate.labels, adapter.contract)
 
-    if getattr(candidate, "review_dispatch", False) and (binding is not None and binding.scheduling):
+    if getattr(candidate, "review_dispatch", False) and (
+        binding is not None and binding.scheduling
+    ):
         return TickResult(False, "state-changed", candidate.id)
 
     expected_state = (

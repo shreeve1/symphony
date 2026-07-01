@@ -423,7 +423,13 @@ async def test_run_tick_uses_passed_binding_type_for_coding_gate(
     monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
     config = _config(tmp_path, blocked_reconciler_enabled=True)
     infra_binding = config.bindings[0]
-    coding_binding = replace(infra_binding, name="coding", binding_type="coding", scheduling=False, blocked_reconciler=False)
+    coding_binding = replace(
+        infra_binding,
+        name="coding",
+        binding_type="coding",
+        scheduling=False,
+        blocked_reconciler=False,
+    )
     wide_config = replace(config, bindings=(infra_binding, coding_binding))
     transport = FakeTransport()
     scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
@@ -4062,7 +4068,12 @@ async def test_coding_binding_ignores_schedule_marker(
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = f"{schedule_line}\nSYMPHONY_RESULT: done\n"
     cfg = _config(tmp_path)
-    binding = replace(cfg.bindings[0], binding_type="coding", scheduling=False, blocked_reconciler=False)
+    binding = replace(
+        cfg.bindings[0],
+        binding_type="coding",
+        scheduling=False,
+        blocked_reconciler=False,
+    )
     cfg = replace(cfg, bindings=(binding,))
 
     result = await run_tick(
