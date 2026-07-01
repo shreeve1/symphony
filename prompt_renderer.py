@@ -376,8 +376,16 @@ def render_prompt(
             rendered = f"{rendered}\n\n{schedule_context}"
 
     if tracker_kind == "podium":
+        # Tail-truncate the full comment thread at _PREVIOUS_COMMENTS_MAX_CHARS.
+        # Long-lived looping issues (e.g. recurring patrol findings) accumulate a
+        # comments_md blob that grew unbounded and was re-fed verbatim on every
+        # fresh dispatch (issue #168/#76: 27 runs, 53 KB). Tail-keep preserves the
+        # newest findings + the newest operator reply; the scheduler parses its
+        # state markers from the stored column, not this rendered copy, so the
+        # cap is display-only and cannot affect transitions. Resume dispatch
+        # bypasses this entirely (newest operator reply only).
         comments_block = render_previous_comments_block(
-            issue.comments_md, truncate=False, flag_operator_replies=True
+            issue.comments_md, truncate=True, flag_operator_replies=True
         )
         if comments_block:
             rendered = f"{rendered}\n\n{comments_block}"

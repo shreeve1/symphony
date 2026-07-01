@@ -39,7 +39,7 @@ def test_infra_preamble_has_no_plan_or_build_mode_sections() -> None:
     assert "PLAN mode" not in prompt
 
 
-def test_podium_render_prompt_reads_comments_without_truncation_and_omits_context(
+def test_podium_render_prompt_truncates_comments_and_omits_context(
     tmp_path: Path,
 ) -> None:
     workflow = tmp_path / "WORKFLOW.md"
@@ -62,12 +62,52 @@ def test_podium_render_prompt_reads_comments_without_truncation_and_omits_contex
     # ADR-0016: mode no longer renders into the prompt body (the WORKFLOW.md
     # `mode={{issue.mode}}` line is gone); the /dev-plan skill directive stands in.
     assert "First, invoke the `dev-plan` skill" in prompt
-    assert long_comments in prompt
-    assert "[Earlier previous comments truncated]" not in prompt
+    # The Podium path now tail-truncates comments_md at 12k chars (issue #168):
+    # the full blob is dropped, the truncation notice is present, and only the
+    # tail (newest) survives.
+    assert long_comments not in prompt
+    assert ("x" * 12050) not in prompt
+    assert "[Earlier previous comments truncated]" in prompt
+    assert "new" in prompt  # tail survives
     # context_md is dormant: no longer injected into Podium prompts.
     assert "Prior run details" not in prompt
     assert "## Issue Context" not in prompt
     assert "Do podium work" in prompt
+
+
+def test_podium_truncation_preserves_newest_operator_reply(tmp_path: Path) -> None:
+    """The newest operator reply must survive tail-truncation (issue #168).
+
+    A long-lived looping issue re-feeds comments_md on every fresh dispatch.
+    The renderer's caveat says "the most recent Operator Reply is the current
+    request to act on", so the most recent reply must land in the kept tail.
+    """
+    workflow = tmp_path / "WORKFLOW.md"
+    workflow.write_text("Repo policy\n", encoding="utf-8")
+    old_reply = (
+        "### Operator Reply (2026-06-20T00:00:00+00:00)\n\nolder directive"
+    )
+    new_reply = (
+        "### Operator Reply (2026-06-30T00:00:00+00:00)\n\nnewer directive"
+    )
+    # Padding larger than the cap pushes the old reply out of the tail window
+    # but keeps the newest reply (at the end) intact.
+    comments_md = old_reply + "\n\n" + ("pad " * 4000) + "\n\n" + new_reply
+
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-76",
+            name="Looping issue",
+            description="Do work",
+            comments_md=comments_md,
+        ),
+        path=workflow,
+        tracker_kind="podium",
+    )
+
+    assert "[Earlier previous comments truncated]" in prompt
+    assert "newer directive" in prompt  # newest operator reply preserved
+    assert "older directive" not in prompt  # old reply dropped by tail-keep
 
 
 def test_coding_binding_ignores_workflow_md(tmp_path: Path) -> None:
