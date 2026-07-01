@@ -162,10 +162,6 @@ REPORT_MAX_BYTES = 2048
 # run-detail pane can show full output; still capped (tail-kept) so a runaway
 # agent cannot grow the run-log dir without limit.
 LOG_MAX_BYTES = 1_048_576
-STDERR_SUMMARY_MAX_LINES = 8
-STDERR_SUMMARY_MAX_CHARS = 900
-PREVIOUS_COMMENT_MAX_CHARS = 1500
-PREVIOUS_COMMENT_TAIL_CHARS = 500
 _REVIEW_DISPATCH_MARKER_RE = re.compile(
     r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
 )
@@ -187,7 +183,6 @@ SCHEDULED_LABEL_WINDOW_START_HOUR = _SCHEDULED_LABEL_WINDOW_START_HOUR
 SCHEDULED_LABEL_WINDOW_END_HOUR = _SCHEDULED_LABEL_WINDOW_END_HOUR
 SCHEDULED_LABEL_DEFAULT_REASON = "scheduled label maintenance window"
 SCHEDULED_LABEL_DEFAULT_SOURCE = "scheduled label maintenance window (12am-6am PT)"
-_REDACTED = "***REDACTED***"
 
 
 @dataclass
@@ -298,71 +293,9 @@ def _fixed_now(value: datetime) -> Callable[[], datetime]:
     return now
 
 
-# SYMPHONY_RESULT marker: agents may emit `SYMPHONY_RESULT: done|review|blocked`
-# on its own line in stdout to declare an explicit verdict. Last occurrence wins,
-# case-insensitive. Unknown values fall through to the heuristic.
-_RESULT_MARKER_RE = re.compile(
-    r"^[ \t]*SYMPHONY_RESULT:[ \t]*(done|review|blocked)[ \t]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-# SYMPHONY_QUESTION_BEGIN/END block: agents use this instead of SYMPHONY_RESULT
-# when deliberately parking a Run for operator clarification. Markers must sit at
-# the start of a line so echoed contract examples remain inert.
-_QUESTION_BLOCK_RE = re.compile(
-    r"^SYMPHONY_QUESTION_BEGIN[ \t]*\n(.*?)\nSYMPHONY_QUESTION_END[ \t]*$",
-    re.IGNORECASE | re.MULTILINE | re.DOTALL,
-)
-# SYMPHONY_SUMMARY marker: agents may emit `SYMPHONY_SUMMARY: <one short line>`
-# on its own line in stdout (or stderr — both are checked) to provide a
-# human-readable result line for the Plane completion comment. Last occurrence
-# wins, case-insensitive on the prefix. The captured text is trimmed to
-# SUMMARY_MAX_CHARS and stripped of newlines so a misbehaving agent cannot
-# dump the world into a Plane comment via this channel.
-_SUMMARY_MARKER_RE = re.compile(
-    r"^[ \t]*SYMPHONY_SUMMARY:[ \t]*(.+?)[ \t]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-_METRIC_MARKER_RE = re.compile(
-    r"^[ \t]*SYMPHONY_(COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):[ \t]*(.+?)[ \t]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-SUMMARY_MAX_CHARS = 500
-# SYMPHONY_SUMMARY_BEGIN/END block: agents emit their full natural end-of-turn
-# summary (markdown, multi-line) between these markers. Posted verbatim as the
-# terminal-state comment. Bounded so a runaway agent cannot dump its whole
-# transcript into the comment stream (comments are re-injected into the next
-# prompt as untrusted context).
-# Markers must sit at the start of a line (no leading whitespace). This keeps
-# the indented example inside OUTPUT_CONTRACT from matching even when an agent
-# echoes the prompt into its output stream — the echo stays indented.
-_SUMMARY_BLOCK_RE = re.compile(
-    r"^SYMPHONY_SUMMARY_BEGIN[ \t]*\n(.*?)\nSYMPHONY_SUMMARY_END[ \t]*$",
-    re.IGNORECASE | re.MULTILINE | re.DOTALL,
-)
-# Machine marker lines stripped from a summary block before display so they
-# never surface in the human comment.
-_MARKER_LINE_RE = re.compile(
-    r"^[ \t]*SYMPHONY_(?:RESULT|SUMMARY|COST_USD|INPUT_TOKENS|OUTPUT_TOKENS):.*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-_QUESTION_MARKER_LINE_RE = re.compile(
-    r"^SYMPHONY_QUESTION_(?:BEGIN|END)[ \t]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-SUMMARY_BLOCK_MAX_CHARS = 4000
-SUMMARY_BLOCK_HEAD_CHARS = 2500
-SUMMARY_BLOCK_TAIL_CHARS = 1200
 # Cap the blocked-reason text sent to the Telegram notifier, leaving headroom
 # under Telegram's 4096-char limit for the name/identifier/URL wrapping.
 NOTIFY_REASON_MAX_CHARS = 2000
-_PERMISSION_GATE_RE = re.compile(
-    r"permission requested:|auto-rejecting|user rejected permission",
-    re.IGNORECASE,
-)
-_APPROVAL_GATE_RE = re.compile(
-    r"awaiting explicit .*approval|requires explicit .*approval|cannot (?:proceed|execute|run).*without approval|destructive .*approval|(?<!no )\bapproval required\b(?!\s*:\s*(?:none|n/a|no)\b)",
-    re.IGNORECASE,
-)
 
 
 class SchedulerError(RuntimeError):
