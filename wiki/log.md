@@ -1637,3 +1637,12 @@ Append entries with this format:
 - **Verification**: real `bash deploy.sh` → exit 0, swap applied (BUILD_ID advanced), HTTP 200; `systemctl stop` rc=0 in 10s, port freed, no Restart flap.
 - **Outputs**: new raw `wiki/raw/podium-web.service.d-stop.conf`; C-0354 (gotcha) admitted; `wiki/sources/podium-systemd-units.md` Live-update note added; runbook `~/homelab/docs/runbooks/automation/symphony.md` Overview pointer added (load-bearing for reinstall). Drop-in is a system file in `/etc`, not in any repo.
 - **Unresolved**: the `~/homelab` runbook edit is uncommitted (separate repo) — operator to land.
+
+## session-update 2026-07-01 — pi turn truncated at Markdown `---` (C-0355; ADR-0022 follow-up)
+- **Inputs**: Interactive investigation of why Podium issue 168's AI comment was truncated to a one-sentence preamble (binding `symphony`, agent `pi`, model `glm-5.2`, run 620). The full run-history analysis was present in `runs/620.log` but not in `comments_md`.
+- **Root cause**: `scheduler/sanitize.py` `_capture_natural_turn` strips claude's `<natural_turn>\n\n---\n<result_file>` separator by cutting stdout at the first `\n\n---\n`. That strip ran unconditionally for EVERY binding. A pi/glm agent that used `---` as an ordinary Markdown section divider had everything after the rule silently dropped — only the preamble reached the comment. Claude-only wiring misapplied to pi.
+- **Fix**: added `is_claude` param to `_capture_natural_turn`; the separator strip now runs only when `is_claude`. Caller `_classify_terminal` (`scheduler/__init__.py`) resolves `agent = binding.resolve_agent(candidate.labels)` and passes `is_claude=agent == "claude"`. Regression tests `test_pi_markdown_hr_not_treated_as_separator` + `test_claude_turn_separator_still_strips_result_file` (`tests/test_captured_turn.py`).
+- **Verification**: `pytest tests/test_captured_turn.py` 15 passed; `tests/test_scheduler.py` 213 passed.
+- **Deploy**: `symphony-host.service` (live dispatcher, imports scheduler at process start) restarted onto `code_sha=16fafde` 2026-07-01; verified `symphony_started`, claude/pi RPC probes ok, remote binding reachable, dispatch loops ticking clean.
+- **Outputs**: C-0355 (gotcha) admitted; ADR-0022 analysis page gained a "Follow-up bug" section + `updated: 2026-07-01`; index.md ADR-0022 row + ROUTING Output-Contract keywords updated.
+- **Unresolved**: none. (Note: not committed at capture time — separate git commit step follows.)

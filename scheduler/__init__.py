@@ -2227,10 +2227,12 @@ async def _classify_terminal(
             return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
     verdict = _parse_result_marker(class_stdout)
+    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
     summary = _capture_natural_turn(
         result,
         secrets,
         is_coding=is_coding,
+        is_claude=agent == "claude",
         binding_name=binding.name if binding else "",
         homelab_repo_path=str(config.homelab_repo_path),
     )

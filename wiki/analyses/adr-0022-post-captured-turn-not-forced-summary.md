@@ -15,6 +15,7 @@ sources:
   - tests/test_captured_turn.py
 confidence: high
 tags: [adr, output-contract, comments, summary, pi-rpc, claude, assistant-turn, accepted]
+updated: 2026-07-01
 ---
 
 # ADR-0022 — Post the agent's captured turn, not a forced summary block
@@ -54,6 +55,14 @@ Post the captured natural turn as the comment; stop forcing a self-authored summ
 - **Partially supersedes ADR-0007 / #046:** the curated clean-comment-stream rationale and verbatim-summary posting (C-0160 sub-extract, C-0161 verbatim post) are walked back; the marker contract, secret redaction, and re-injection cap survive. #046's other wins (no Timeline footer, no claim comment, raw-stream verdict parsing) are unaffected [source: wiki/analyses/podium-046-unified-output-contract.md].
 - pi and claude converge on one delivery model; the earlier "A for pi, C for claude" split is dropped once pi was found to already capture the turn.
 - **Related but separate:** defaulting `claude_persist: true` for local bindings (`config.py:101`) was discussed alongside this — it does *not* fix this bug (output flows identically warm or cold) and carries its own soak (8-slot cap, 45-min TTL); remote stays excluded by config (ADR-0012). Tracked as its own change, foldable into the same deploy.
+
+## Follow-up bug — pi turns truncated at Markdown `---` (issue 168, C-0355, 2026-07-01)
+
+`_capture_natural_turn` (`scheduler/sanitize.py`) strips claude's `<natural_turn>\n\n---\n<result_file>` separator by cutting stdout at the first `\n\n---\n`. That strip ran **unconditionally for every binding**. A pi/glm agent that used `---` as an ordinary Markdown section divider in its own prose therefore had everything after the rule silently dropped — only the preamble reached `comments_md`; the full answer survived only in `runs/<id>.log`.
+
+Observed on Podium issue 168 (binding `symphony`, agent `pi`, model `glm-5.2`, run 620): a complete run-history analysis (issue 76's 27-run/53 KB `comments_md`, `truncate=False` re-feed diagnosis, cap recommendation) was posted as just its one-sentence intro. Because ADR-0028 makes the comment channel the only per-slice "why" capture, this dropped real operator-facing analysis.
+
+**Fix:** gate the separator strip on a new `is_claude` param — `_capture_natural_turn(..., is_claude=...)`. The caller `_classify_terminal` (`scheduler/__init__.py`) resolves `agent = binding.resolve_agent(candidate.labels)` and passes `is_claude=agent == "claude"`. pi turns keep their `---` rules verbatim; claude's result-file separator is still stripped. Regression tests: `test_pi_markdown_hr_not_treated_as_separator`, `test_claude_turn_separator_still_strips_result_file` (`tests/test_captured_turn.py`). Deployed via `symphony-host.service` restart (`code_sha=16fafde`, 2026-07-01). See C-0355.
 
 ## Related
 

@@ -138,6 +138,7 @@ def _capture_natural_turn(
     secrets: Sequence[str],
     *,
     is_coding: bool = False,
+    is_claude: bool = False,
     binding_name: str = "",
     homelab_repo_path: str = "",
 ) -> str | None:
@@ -158,10 +159,13 @@ def _capture_natural_turn(
         return None
 
     # ponytail: claude prepends natural turn with a "\n\n---\n" separator;
-    # use only the natural turn part for the comment.
-    separator_idx = stdout.find("\n\n---\n")
-    if separator_idx >= 0:
-        stdout = stdout[:separator_idx].strip() or stdout
+    # use only the natural turn part for the comment. This is claude-only wiring:
+    # a pi agent's own Markdown ``---`` horizontal rule must NOT be treated as a
+    # turn separator (that truncated issue 168's answer to its preamble).
+    if is_claude:
+        separator_idx = stdout.find("\n\n---\n")
+        if separator_idx >= 0:
+            stdout = stdout[:separator_idx].strip() or stdout
 
     # Strip ANSI escapes and all SYMPHONY_ marker lines (RESULT, SCHEDULE,
     # COST_USD, INPUT_TOKENS, OUTPUT_TOKENS) — these are protocol, not prose.

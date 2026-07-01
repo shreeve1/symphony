@@ -72,6 +72,47 @@ def test_natural_turn_wins_over_summary_block() -> None:
 
 
 # ---------------------------------------------------------------------------
+# T.1.3b – pi agent Markdown ``---`` horizontal rule is NOT a turn separator.
+#          Regression for issue 168: a glm/pi turn using ``---`` as a section
+#          divider was truncated to its preamble because the claude-only
+#          ``\n\n---\n`` split ran for every binding.
+# ---------------------------------------------------------------------------
+
+
+def test_pi_markdown_hr_not_treated_as_separator() -> None:
+    from scheduler.sanitize import _capture_natural_turn
+
+    stdout = (
+        "Investigation complete. No files changed.\n\n"
+        "---\n\n"
+        "**Short answers:** the real findings live here.\n"
+        "SYMPHONY_RESULT: review\n"
+    )
+    result = AgentResult(0, 10, False, stdout=stdout)
+    # Default (pi) path: separator must NOT be applied.
+    summary = _capture_natural_turn(result, (), is_claude=False)
+    assert summary is not None
+    assert "Investigation complete" in summary
+    assert "the real findings live here" in summary
+    assert "SYMPHONY_RESULT" not in summary
+
+
+def test_claude_turn_separator_still_strips_result_file() -> None:
+    from scheduler.sanitize import _capture_natural_turn
+
+    stdout = (
+        "Natural turn for the operator.\n\n"
+        "---\n"
+        "result-file trailing content that should be dropped"
+    )
+    result = AgentResult(0, 10, False, stdout=stdout)
+    summary = _capture_natural_turn(result, (), is_claude=True)
+    assert summary is not None
+    assert "Natural turn for the operator." in summary
+    assert "result-file trailing content" not in summary
+
+
+# ---------------------------------------------------------------------------
 # T.1.4 – Empty stdout falls back gracefully.
 # ---------------------------------------------------------------------------
 
