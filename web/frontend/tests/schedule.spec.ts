@@ -64,16 +64,16 @@ test("schedule control is hidden for coding bindings", async ({
 	problems,
 }) => {
 	const { issueId } = seedIssue(
-		"trading",
+		"dotfiles",
 		`e2e coding no schedule ${Date.now()}`,
 	);
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 	await page.getByTestId("new-issue-button").click();
 	await expect(page.getByTestId("new-issue-schedule")).toHaveCount(0);
 	await page.keyboard.press("Escape");
 
-	await page.goto(`/trading?issue=${issueId}`);
+	await page.goto(`/dotfiles?issue=${issueId}`);
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 	await expect(page.getByTestId("issue-schedule")).toHaveCount(0);
 

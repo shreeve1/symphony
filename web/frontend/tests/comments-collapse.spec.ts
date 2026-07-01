@@ -15,7 +15,7 @@ test("comments tab collapses stacked completions to the most recent", async ({
 	problems,
 }) => {
 	const title = `collapse-completions ${Date.now()}`;
-	const { issueId } = seedIssue("trading", title, "in_review");
+	const { issueId } = seedIssue("dotfiles", title, "in_review");
 	setIssueComments(
 		issueId,
 		[
@@ -25,7 +25,7 @@ test("comments tab collapses stacked completions to the most recent", async ({
 		].join("\n\n"),
 	);
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
@@ -53,7 +53,7 @@ test("comments tab keeps a patrol entry visible between collapsed completions", 
 	problems,
 }) => {
 	const title = `patrol-entry ${Date.now()}`;
-	const { issueId } = seedIssue("trading", title, "in_review");
+	const { issueId } = seedIssue("dotfiles", title, "in_review");
 	setIssueComments(
 		issueId,
 		[
@@ -63,7 +63,7 @@ test("comments tab keeps a patrol entry visible between collapsed completions", 
 		].join("\n\n"),
 	);
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
@@ -90,7 +90,7 @@ test("comments tab collapses stacked operator replies to the latest", async ({
 	problems,
 }) => {
 	const title = `collapse-operator ${Date.now()}`;
-	const { issueId } = seedIssue("trading", title, "in_review");
+	const { issueId } = seedIssue("dotfiles", title, "in_review");
 	setIssueComments(
 		issueId,
 		[
@@ -101,7 +101,7 @@ test("comments tab collapses stacked operator replies to the latest", async ({
 		].join("\n\n"),
 	);
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 	await page.getByTestId("issue-card").filter({ hasText: title }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 

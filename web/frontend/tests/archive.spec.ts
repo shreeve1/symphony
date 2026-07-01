@@ -5,7 +5,7 @@ test("archived column is collapsed by default on fresh binding", async ({
 	problems,
 }) => {
 	// No localStorage set for this binding -> archived column default collapsed.
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	const col = page.getByTestId("column-archived");
 	await expect(col).toBeVisible();
@@ -18,9 +18,9 @@ test("state chip moves issue to archived column", async ({
 	page,
 	problems,
 }) => {
-	const { issueId } = seedIssue("trading", "Archive me");
+	const { issueId } = seedIssue("dotfiles", "Archive me");
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Open flyout.
 	await page
@@ -66,9 +66,9 @@ test("state chip moves issue to archived column", async ({
 });
 
 test("state chip restores archived issue", async ({ page, problems }) => {
-	const { issueId } = seedIssue("trading", "Restore me", "archived");
+	const { issueId } = seedIssue("dotfiles", "Restore me", "archived");
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Expand archived column and open the issue.
 	const archivedCol = page.getByTestId("column-archived");

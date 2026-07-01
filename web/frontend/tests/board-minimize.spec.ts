@@ -1,7 +1,7 @@
 import { expect, expectCleanConsole, test } from "./fixtures";
 
 test("collapse and expand column", async ({ page, problems }) => {
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Verify Todo column starts expanded.
 	const todoCol = page.getByTestId("column-todo");
@@ -22,7 +22,7 @@ test("collapse and expand column", async ({ page, problems }) => {
 });
 
 test("collapse state persists on reload", async ({ page, problems }) => {
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Collapse Todo.
 	await page.getByTestId("minimize-todo").click();
@@ -42,8 +42,8 @@ test("collapse state persists on reload", async ({ page, problems }) => {
 });
 
 test("per-binding independence", async ({ page, problems }) => {
-	// Collapse Todo on trading.
-	await page.goto("/trading");
+	// Collapse Todo on dotfiles.
+	await page.goto("/dotfiles");
 	await page.getByTestId("minimize-todo").click();
 	await expect(page.getByTestId("column-todo")).toHaveAttribute(
 		"data-collapsed",
@@ -56,8 +56,8 @@ test("per-binding independence", async ({ page, problems }) => {
 		"data-collapsed",
 	);
 
-	// Navigate back to trading — Todo column remembered as collapsed.
-	await page.goto("/trading");
+	// Navigate back to dotfiles — Todo column remembered as collapsed.
+	await page.goto("/dotfiles");
 	await expect(page.getByTestId("column-todo")).toHaveAttribute(
 		"data-collapsed",
 		"true",
@@ -68,10 +68,10 @@ test("per-binding independence", async ({ page, problems }) => {
 
 test("corrupt collapse storage falls back to expanded", async ({ page, problems }) => {
 	await page.addInitScript(() => {
-		localStorage.setItem("podium.collapsed.trading", "not-json");
+		localStorage.setItem("podium.collapsed.dotfiles", "not-json");
 	});
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 	await expect(page.getByTestId("column-todo")).not.toHaveAttribute(
 		"data-collapsed",
 	);

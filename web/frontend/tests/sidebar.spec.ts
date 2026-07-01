@@ -12,7 +12,7 @@ test("sidebar lists both bindings and navigates on click", async ({
 	await expect(page.getByTestId("dashboard-global-rollup")).toBeVisible();
 	const rows = page.getByTestId("binding-row");
 	await expect(rows.filter({ hasText: "homelab" })).toHaveCount(1);
-	await expect(rows.filter({ hasText: "trading" })).toHaveCount(1);
+	await expect(rows.filter({ hasText: "dotfiles" })).toHaveCount(1);
 
 	// Clicking a binding navigates to /{binding} and shows the board.
 	await page.getByTestId("binding-row").filter({ hasText: "homelab" }).click();

@@ -158,9 +158,9 @@ test("composer send is disabled with a hint while the issue is running", async (
 
 test("no console errors during the reply flow", async ({ page, problems }) => {
 	const title = `e2e reply console issue ${Date.now()}`;
-	seedIssue("trading", title, "blocked");
+	seedIssue("dotfiles", title, "blocked");
 
-	await openIssue(page, "trading", title);
+	await openIssue(page, "dotfiles", title);
 
 	const input = page.getByTestId("reply-input");
 	await input.fill("Thanks — try a different approach.");

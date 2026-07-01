@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 
 import { expect, expectCleanConsole, seedSkills, test } from "./fixtures";
 
-// Both tests run against /homelab so the /trading seeds that board.spec and
+// Both tests run against /homelab so the /dotfiles seeds that board.spec and
 // flyout-tabs.spec assert on stay pristine. Each test uses its own card —
 // they run in parallel against the same persistent dev database.
 const PERSIST_CARD = "Seed todo issue for homelab";

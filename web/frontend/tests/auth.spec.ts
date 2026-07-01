@@ -10,6 +10,6 @@ test("redirects unauthenticated visitors to login and renders board after login"
 	await page.getByLabel("Password").fill(password);
 	await page.getByRole("button", { name: "Log in" }).click();
 	await expect(page).toHaveURL(/\/$/);
-	await page.getByTestId("binding-row").filter({ hasText: "trading" }).click();
+	await page.getByTestId("binding-row").filter({ hasText: "dotfiles" }).click();
 	await expect(page.getByTestId("column-todo")).toBeVisible();
 });

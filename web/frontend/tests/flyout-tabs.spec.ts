@@ -10,12 +10,12 @@ test("flyout switches between Comments and Session tabs", async ({
 	page,
 	problems,
 }) => {
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Target the seeded issue by title to stay robust against extra seed data.
 	await page
 		.getByTestId("issue-card")
-		.filter({ hasText: "Seed running issue for trading" })
+		.filter({ hasText: "Seed running issue for dotfiles" })
 		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
@@ -105,14 +105,14 @@ test("flyout maximize preference follows close, reopen, issue switches, and relo
 	page,
 	problems,
 }) => {
-	const first = seedIssue("trading", "Flyout maximize memory A", "in_review");
-	const second = seedIssue("trading", "Flyout maximize memory B", "blocked");
+	const first = seedIssue("dotfiles", "Flyout maximize memory A", "in_review");
+	const second = seedIssue("dotfiles", "Flyout maximize memory B", "blocked");
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 	await page.evaluate(() => {
 		window.localStorage.removeItem("podium-flyout-maximized");
 	});
-	await page.goto(`/trading?issue=${first.issueId}`);
+	await page.goto(`/dotfiles?issue=${first.issueId}`);
 	await expect(page.getByTestId("flyout-title")).toHaveText(
 		"Flyout maximize memory A",
 	);
@@ -157,7 +157,7 @@ test("flyout maximize preference follows close, reopen, issue switches, and relo
 		.poll(async () => (await flyout.boundingBox())?.width ?? 0)
 		.toBeGreaterThanOrEqual(viewportWidth - 1);
 
-	await page.goto(`/trading?issue=${second.issueId}`);
+	await page.goto(`/dotfiles?issue=${second.issueId}`);
 	await expect(page.getByTestId("flyout-title")).toHaveText(
 		"Flyout maximize memory B",
 	);

@@ -1,6 +1,6 @@
 import { expect, expectCleanConsole, seedSkills, test } from "./fixtures";
 
-// Runs against /homelab so the /trading seeds that board.spec asserts on stay
+// Runs against /homelab so the /dotfiles seeds that board.spec asserts on stay
 // pristine. Unique title per run: the dev database persists across runs.
 test("new issue flow: modal -> Todo card -> survives reload", async ({
 	page,

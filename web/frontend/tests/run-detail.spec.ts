@@ -4,12 +4,12 @@ test("run detail opens from issue flyout and reloads its log", async ({
 	page,
 	problems,
 }) => {
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Target the seeded running issue by title so extra seed data doesn't shift ordering.
 	await page
 		.getByTestId("issue-card")
-		.filter({ hasText: "Seed running issue for trading" })
+		.filter({ hasText: "Seed running issue for dotfiles" })
 		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 

@@ -5,20 +5,20 @@ test("board renders state columns and opens a flyout on card click", async ({
 	page,
 	problems,
 }) => {
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// Columns render in the fixed order declared by STATES.
 	for (const state of STATES) {
 		await expect(page.getByTestId(`column-${state.key}`)).toBeVisible();
 	}
 
-	// At least one issue card is visible (trading is seeded with two).
+	// At least one issue card is visible (dotfiles is seeded with two).
 	await expect(page.getByTestId("issue-card").first()).toBeVisible();
 
 	// Clicking the seed's running card opens the flyout.
 	await page
 		.getByTestId("issue-card")
-		.filter({ hasText: "Seed running issue for trading" })
+		.filter({ hasText: "Seed running issue for dotfiles" })
 		.click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 
@@ -33,7 +33,7 @@ test("board renders state columns and opens a flyout on card click", async ({
 	// Re-open the flyout: run history shows runs without any cost element.
 	await page
 		.getByTestId("issue-card")
-		.filter({ hasText: "Seed running issue for trading" })
+		.filter({ hasText: "Seed running issue for dotfiles" })
 		.click();
 	await expect(page.getByTestId("run-row").first()).toBeVisible();
 	await expect(page.getByTestId("run-cost")).toHaveCount(0);

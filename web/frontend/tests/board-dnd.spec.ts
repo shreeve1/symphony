@@ -37,9 +37,9 @@ test("dragging a card to another column changes and persists its state", async (
 	page,
 	problems,
 }) => {
-	const { issueId } = seedIssue("trading", "Drag me across");
+	const { issueId } = seedIssue("dotfiles", "Drag me across");
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	const todoCard = page
 		.getByTestId("column-todo")
@@ -73,9 +73,9 @@ test("clicking a card still opens the flyout after drag wiring", async ({
 	page,
 	problems,
 }) => {
-	seedIssue("trading", "Click not drag");
+	seedIssue("dotfiles", "Click not drag");
 
-	await page.goto("/trading");
+	await page.goto("/dotfiles");
 
 	// A plain click stays under the activation distance, so it must open the
 	// flyout rather than starting a drag.
