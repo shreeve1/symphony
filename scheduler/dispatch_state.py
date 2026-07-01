@@ -63,11 +63,7 @@ def _effective_run_cap(config: SymphonyConfig, binding: ProjectBinding | None) -
     Remote coding bindings use per-issue worktrees and can run in parallel;
     other remote bindings still share one checkout and stay serialized.
     """
-    if (
-        binding is not None
-        and binding.is_remote
-        and not binding.worktree_default
-    ):
+    if binding is not None and binding.is_remote and not binding.worktree_default:
         return 1
     return config.run_cap
 

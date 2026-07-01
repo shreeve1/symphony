@@ -252,9 +252,7 @@ def _worktree_enabled(
 ) -> bool:
     # per-binding capability (ADR-0032); falls back to global config when binding is None
     wt_default = (
-        binding.worktree_default
-        if binding is not None
-        else config.worktree_default
+        binding.worktree_default if binding is not None else config.worktree_default
     )
     if not wt_default:
         return False
