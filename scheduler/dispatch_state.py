@@ -66,7 +66,7 @@ def _effective_run_cap(config: SymphonyConfig, binding: ProjectBinding | None) -
     if (
         binding is not None
         and binding.is_remote
-        and not (config.worktree_default and binding.binding_type == "coding")
+        and not binding.worktree_default
     ):
         return 1
     return config.run_cap

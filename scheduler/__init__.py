@@ -250,7 +250,13 @@ def _worktree_enabled(
     *,
     binding: ProjectBinding | None = None,
 ) -> bool:
-    if not config.worktree_default:
+    # per-binding capability (ADR-0032); falls back to global config when binding is None
+    wt_default = (
+        binding.worktree_default
+        if binding is not None
+        else config.worktree_default
+    )
+    if not wt_default:
         return False
     return bool(getattr(candidate, "worktree_active", False))
 

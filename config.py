@@ -106,6 +106,18 @@ class ProjectBinding:
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
     remote: RemotePolicy | None = None
     preamble: str | None = None
+    _worktree_default: bool | None = field(default=None, repr=False)
+
+    @property
+    def worktree_default(self) -> bool:
+        """Per-binding worktree default capability (ADR-0032).
+
+        Derives from ``binding_type`` when not explicitly configured:
+        coding → True, infra → False.
+        """
+        if self._worktree_default is None:
+            return self.binding_type == "coding"
+        return self._worktree_default
 
     @property
     def is_remote(self) -> bool:
@@ -551,11 +563,18 @@ def _binding_from_mapping(
     _cap_default = binding_type == "infra"
     scheduling = _cap_default
     blocked_reconciler = _cap_default
+    # worktree_default: coding→True, infra→False; ADR-0032
+    _wt_default = binding_type == "coding"
+    worktree_default = _wt_default
     if "scheduling" in raw:
         scheduling = _optional_bool(raw["scheduling"], prefix=f"{prefix}.scheduling")
     if "blocked_reconciler" in raw:
         blocked_reconciler = _optional_bool(
             raw["blocked_reconciler"], prefix=f"{prefix}.blocked_reconciler"
+        )
+    if "worktree_default" in raw:
+        worktree_default = _optional_bool(
+            raw["worktree_default"], prefix=f"{prefix}.worktree_default"
         )
     remote = _remote_from_mapping(raw.get("remote"), prefix=f"{prefix}.remote")
     if remote is not None:
@@ -594,6 +613,7 @@ def _binding_from_mapping(
         auto_close_on_verified=auto_close_on_verified,
         scheduling=scheduling,
         blocked_reconciler=blocked_reconciler,
+        _worktree_default=worktree_default,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),

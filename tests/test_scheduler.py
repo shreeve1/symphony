@@ -6590,8 +6590,8 @@ def test_worktree_run_fields_default_for_local_coding(tmp_path: Path) -> None:
 
 
 def test_worktree_run_fields_default_can_be_disabled(tmp_path: Path) -> None:
-    config = _config(tmp_path, worktree_default=False)
-    binding = _local_coding_binding(config)
+    config = _config(tmp_path)
+    binding = replace(_local_coding_binding(config), _worktree_default=False)
     candidate = replace(
         _candidate("issue-1"), worktree_active=True, binding_name=binding.name
     )
@@ -6618,11 +6618,11 @@ def test_worktree_enabled_truth_table(tmp_path: Path) -> None:
         is True
     )
 
-    # worktree_default=False gates everything off regardless of the flag
-    off = _config(tmp_path, worktree_default=False)
+    # _worktree_default=False on binding gates everything off regardless of the flag
+    off = replace(binding, _worktree_default=False)
     assert (
         scheduler._worktree_enabled(
-            off, replace(_candidate("issue-1"), worktree_active=True), binding=binding
+            on, replace(_candidate("issue-1"), worktree_active=True), binding=off
         )
         is False
     )
@@ -6663,7 +6663,7 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
     tmp_path: Path, monkeypatch
 ) -> None:
     config = _config(tmp_path)
-    binding = _local_binding(config)
+    binding = _local_coding_binding(config)
     captured: dict[str, Any] = {}
 
     def fake_repo_host_for(b, *, cwd=None, **kwargs):
@@ -6682,7 +6682,7 @@ async def test_prepare_resume_candidate_local_worktree_cwd(
         binding=binding,  # pyright: ignore[reportArgumentType]
     )
     expected_cwd = scheduler._dispatch_cwd(config, candidate, binding=binding)
-    # Worktree-active local binding records the worktree-HEAD sha (cwd-bound),
+    # Worktree-active coding binding records the worktree-HEAD sha (cwd-bound),
     # not the base-repo path.
     assert captured["cwd"] == expected_cwd
     assert expected_cwd != config.homelab_repo_path
