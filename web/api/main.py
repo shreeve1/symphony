@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import os
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -824,6 +825,9 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+_LOCAL_HOSTNAME = socket.gethostname()
+
+
 @app.get("/api/bindings")
 def list_bindings(
     connection: sqlite3.Connection = Depends(get_connection),
@@ -845,6 +849,7 @@ def list_bindings(
         binding["is_remote"] = _is_remote_binding(name)
         repo_path = _repo_path_for_binding(name)
         binding["repo_name"] = repo_path.name if repo_path is not None else None
+        binding["host"] = name if binding["is_remote"] else _LOCAL_HOSTNAME
     return result
 
 

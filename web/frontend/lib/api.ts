@@ -13,6 +13,7 @@ export interface Binding {
 	approval_enabled: boolean;
 	is_remote: boolean;
 	repo_name: string | null;
+	host: string;
 }
 
 export interface Issue {

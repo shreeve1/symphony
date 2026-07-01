@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import sqlite3
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -149,6 +150,11 @@ def test_bindings_endpoint_surfaces_remote_repo_name(
     assert local["is_remote"] is False
     assert local["repo_name"] is None
     assert local["claude_persist"] is False
+
+    # host grouping (#173): remote bindings group under their own name,
+    # local bindings under the server hostname. No config field — derived.
+    assert remote["host"] == REMOTE_BINDING_NAME
+    assert local["host"] == socket.gethostname()
 
 
 def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ import {
 	dismissIssue,
 	fetchBindings,
 	fetchInbox,
+	type Binding,
 	type InboxItem,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -114,6 +115,33 @@ export function Sidebar() {
 
 	const colorMap = new Map(bindings?.map((b) => [b.name, b.color]) ?? []);
 
+	// Group bindings by host: local bindings share the server hostname,
+	// remote bindings group under their own name. ponytail: host label is
+	// derived — no config field. Ceiling: two repos on one remote host make
+	// two groups; upgrade path = resolve remote.host via ~/.ssh/config alias.
+	const bindingGroups: ReadonlyArray<readonly [string, Binding[]]> = (() => {
+		if (!bindings) return [];
+		const map = new Map<string, Binding[]>();
+		for (const b of bindings) {
+			const list = map.get(b.host);
+			if (list) list.push(b);
+			else map.set(b.host, [b]);
+		}
+		const localHost = bindings.find((b) => !b.is_remote)?.host;
+		return [...map.entries()]
+			.sort(([a], [b]) =>
+				a === localHost ? -1 : b === localHost ? 1 : a.localeCompare(b),
+			)
+			.map(([host, list]) => [
+				host,
+				[...list].sort((a, b) =>
+					(a.repo_name ?? a.display_name).localeCompare(
+						b.repo_name ?? b.display_name,
+					),
+				),
+			]);
+	})();
+
 	return (
 		<aside
 			data-testid="sidebar"
@@ -127,10 +155,6 @@ export function Sidebar() {
 			</Link>
 
 			<nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2">
-				<p className="px-2 pb-1 text-xs font-medium uppercase tracking-wider text-sidebar-foreground/50">
-					Bindings
-				</p>
-
 				{bindingsLoading && (
 					<p className="px-2 py-1 text-sm text-sidebar-foreground/60">
 						Loading…
@@ -142,37 +166,43 @@ export function Sidebar() {
 					</p>
 				)}
 
-				{bindings?.map((binding) => (
-					<div key={binding.name}>
-						<Link
-							href={`/${binding.name}`}
-							data-testid="binding-row"
-							className={cn(
-								"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
-								active === binding.name && "bg-sidebar-accent font-medium",
-							)}
-						>
-							<span
-								aria-hidden
-								className="size-2 shrink-0 rounded-full"
-								style={{ backgroundColor: binding.color }}
-							/>
-							<span className="truncate">
-								{binding.display_name}
-								{binding.is_remote && binding.repo_name
-									? ` — ${binding.repo_name}`
-									: ""}
-							</span>
-						</Link>
-						{active === binding.name && (
-							<Link
-								href={`/${binding.name}/files`}
-								data-testid="binding-files-link"
-								className="ml-4 flex items-center rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent"
-							>
-								Files
-							</Link>
-						)}
+				{bindingGroups.map(([host, list]) => (
+					<div key={host} data-testid="binding-group">
+						<p className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/60">
+							{host}
+						</p>
+						{list.map((binding) => {
+							const label = binding.repo_name ?? binding.display_name;
+							return (
+								<div key={binding.name}>
+									<Link
+										href={`/${binding.name}`}
+										data-testid="binding-row"
+										className={cn(
+											"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
+											active === binding.name &&
+												"bg-sidebar-accent font-medium",
+										)}
+									>
+										<span
+											aria-hidden
+											className="size-2 shrink-0 rounded-full"
+											style={{ backgroundColor: binding.color }}
+										/>
+										<span className="truncate">{label}</span>
+									</Link>
+									{active === binding.name && (
+										<Link
+											href={`/${binding.name}/files`}
+											data-testid="binding-files-link"
+											className="ml-4 flex items-center rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent"
+										>
+											Files
+										</Link>
+									)}
+								</div>
+							);
+						})}
 					</div>
 				))}
 
