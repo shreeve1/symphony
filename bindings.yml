@@ -50,7 +50,7 @@ bindings:
     mode: local
   pi_mode: rpc
   remote:
-    host: 100.95.224.218
+    host: n8n
     user: itadmin
 - name: ai-web-chat
   plane_project_id: ai-web-chat

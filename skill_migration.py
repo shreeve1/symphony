@@ -47,9 +47,8 @@ class PodiumBindingScaffoldRequest:
     approval_enabled: bool = False
     context_compact_threshold_tokens: int = 16_000
     context_compact_keep_recent_runs: int = 3
-    # Remote execution target (ADR-0012). When remote_host/remote_user are set,
-    # a ``remote:`` block is written to bindings.yml so the binding dispatches
-    # over SSH and the frontend "name — repo" label surfaces automatically.
+    # Remote execution target (ADR-0012). remote_host is the host name used for
+    # SSH and sidebar grouping; do not depend on reverse DNS for display.
     remote_host: str | None = None
     remote_user: str | None = None
     remote_identity: str | None = None

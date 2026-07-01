@@ -33,7 +33,7 @@ def login(client: TestClient, password: str = TEST_PASSWORD) -> None:
     assert response.status_code == 200
 
 
-# Remote binding (ADR-0012): type:coding + pi_mode:one-shot + default_agent:pi
+# Remote binding (ADR-0012): type:coding + pi_mode:rpc + default_agent:pi
 # with a truthy `remote:` block. Mirrors the live n8n bindings.yml entry. n8n is
 # now a seeded binding, so tests that INSERT this row directly must use
 # `INSERT OR IGNORE` to tolerate the pre-seeded row.
@@ -43,10 +43,10 @@ REMOTE_BINDING_ENTRY: dict[str, Any] = {
     "repo_path": "/home/itadmin/itastack",
     "base_branch": "main",
     "type": "coding",
-    "pi_mode": "one-shot",
+    "pi_mode": "rpc",
     "default_agent": "pi",
     "tracker": "podium",
-    "remote": {"user": "itadmin", "host": "100.95.224.218"},
+    "remote": {"user": "itadmin", "host": "n8n"},
 }
 
 

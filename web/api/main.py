@@ -825,30 +825,11 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-_LOCAL_HOSTNAME = socket.gethostname()
-
-# Memo of remote IP -> friendly group label. ponytail: the host label derives
-# from infra reverse-DNS (NetBird registers host PTR records), so two repos on
-# the same host group under one header with no config field. One lookup per IP
-# per process; any resolver failure falls back to the raw IP (still groups by
-# host, just with an ugly label).
-_REMOTE_HOST_LABELS: dict[str, str] = {}
+_LOCAL_HOSTNAME = socket.gethostname().split(".", 1)[0]
 
 
-def _resolve_host_label(ip: str) -> str:
-    cached = _REMOTE_HOST_LABELS.get(ip)
-    if cached is not None:
-        return cached
-    label = ip
-    try:
-        hostname, _aliases, _addrs = socket.gethostbyaddr(ip)
-        head = hostname.split(".", 1)[0]
-        if head:
-            label = head
-    except (socket.herror, socket.gaierror, OSError):
-        pass
-    _REMOTE_HOST_LABELS[ip] = label
-    return label
+def _host_label(host: str) -> str:
+    return host.split(".", 1)[0]
 
 
 @app.get("/api/bindings")
@@ -875,9 +856,7 @@ def list_bindings(
         if binding["is_remote"]:
             remote = _remote_for_binding(name)
             binding["host"] = (
-                _resolve_host_label(remote.host)
-                if remote and remote.host
-                else name
+                _host_label(remote.host) if remote and remote.host else name
             )
         else:
             binding["host"] = _LOCAL_HOSTNAME

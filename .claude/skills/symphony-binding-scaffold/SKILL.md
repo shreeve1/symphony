@@ -23,7 +23,7 @@ Create a new Symphony binding for the Podium era.
    - `binding_type` — must be `infra` or `coding` (default `coding`).
    - `pi_mode` — `rpc` or `one-shot` (default `rpc`, the accepted ADR-0010 standard). Written only for `pi` bindings; `one-shot` selects the legacy `pi --print` rollback path. Ignored for `claude` bindings.
    - `display_name` — optional; defaults to `name`.
-   - `remote_host` / `remote_user` — optional; set both to make this a remote binding (ADR-0012). Writes a `remote:` block to `bindings.yml`, dispatches over SSH, and surfaces the frontend "name — repo" label automatically. `remote_identity` is an optional SSH key path. Remote bindings require `binding_type=coding`, `default_agent=pi`, `pi_mode=rpc` (local coding parity, mirrored from `config.py`); the scaffold raises `ValueError` otherwise.
+   - `remote_host` / `remote_user` — optional; set both to make this a remote binding (ADR-0012). Use the host name (for example `n8n`), not an IP that requires reverse DNS for display. Writes a `remote:` block to `bindings.yml`, dispatches over SSH, and surfaces the frontend host grouping automatically. `remote_identity` is an optional SSH key path. Remote bindings require `binding_type=coding`, `default_agent=pi`, `pi_mode=rpc` (local coding parity, mirrored from `config.py`); the scaffold raises `ValueError` otherwise.
 2. Run `scaffold_podium_binding(...)`. It takes a `PodiumBindingScaffoldRequest` plus required keyword-only `db_path` and `bindings_path`:
 
    ```bash
@@ -41,7 +41,7 @@ Create a new Symphony binding for the Podium era.
            binding_type="coding",   # 'infra' | 'coding'
            pi_mode="rpc",           # 'rpc' (default) | 'one-shot'; pi bindings only
            # Remote binding (ADR-0012): set host+user, require RPC pi coding.
-           # remote_host="100.95.224.218",
+           # remote_host="n8n",
            # remote_user="itadmin",
            # remote_identity=None,  # optional SSH key path
        ),

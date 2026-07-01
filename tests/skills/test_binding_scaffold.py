@@ -98,7 +98,7 @@ def test_binding_scaffold_writes_remote_block(tmp_path: Path) -> None:
             repo_path=Path("/home/itadmin/itastack"),
             base_branch="main",
             pi_mode="rpc",
-            remote_host="100.95.224.218",
+            remote_host="n8n",
             remote_user="itadmin",
         ),
         db_path=db_path,
@@ -107,7 +107,7 @@ def test_binding_scaffold_writes_remote_block(tmp_path: Path) -> None:
 
     raw = yaml.safe_load(bindings_path.read_text(encoding="utf-8"))
     [binding] = raw["bindings"]
-    assert binding["remote"] == {"host": "100.95.224.218", "user": "itadmin"}
+    assert binding["remote"] == {"host": "n8n", "user": "itadmin"}
     assert "identity" not in binding["remote"]
 
 
@@ -119,7 +119,7 @@ def test_binding_scaffold_remote_requires_rpc_pi_coding(tmp_path: Path) -> None:
         "name": "bad",
         "repo_path": Path("/home/itadmin/itastack"),
         "base_branch": "main",
-        "remote_host": "100.95.224.218",
+        "remote_host": "n8n",
         "remote_user": "itadmin",
     }
 
@@ -143,7 +143,7 @@ def test_binding_scaffold_remote_requires_rpc_pi_coding(tmp_path: Path) -> None:
                 repo_path=Path("/home/itadmin/itastack"),
                 base_branch="main",
                 pi_mode="rpc",
-                remote_host="100.95.224.218",
+                remote_host="n8n",
             ),
             db_path=db_path,
             bindings_path=bindings_path,
