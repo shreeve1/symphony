@@ -423,7 +423,7 @@ async def test_run_tick_uses_passed_binding_type_for_coding_gate(
     monkeypatch.setattr(scheduler, "reconcile_blocked", fake_reconcile_blocked)
     config = _config(tmp_path, blocked_reconciler_enabled=True)
     infra_binding = config.bindings[0]
-    coding_binding = replace(infra_binding, name="coding", binding_type="coding")
+    coding_binding = replace(infra_binding, name="coding", binding_type="coding", scheduling=False, blocked_reconciler=False)
     wide_config = replace(config, bindings=(infra_binding, coding_binding))
     transport = FakeTransport()
     scheduled_uuid = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
@@ -1015,6 +1015,8 @@ async def test_stall_watchdog_review_retry_keeps_issue_in_review(
         binding_type="coding",
         tracker="podium",
         repo_path=repo,
+        scheduling=False,
+        blocked_reconciler=False,
     )
     adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
     seen_review_dispatch: list[bool] = []
@@ -2812,6 +2814,8 @@ async def test_transient_review_failure_relands_review_dispatch(tmp_path: Path) 
         binding_type="coding",
         tracker="podium",
         repo_path=repo,
+        scheduling=False,
+        blocked_reconciler=False,
     )
     config = base_config.for_binding(binding)
     adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
@@ -2949,6 +2953,8 @@ async def test_transient_review_retry_cap_blocks_and_notifies(tmp_path: Path) ->
         binding_type="coding",
         tracker="podium",
         repo_path=repo,
+        scheduling=False,
+        blocked_reconciler=False,
     )
     config = base_config.for_binding(binding)
     adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
@@ -4056,7 +4062,7 @@ async def test_coding_binding_ignores_schedule_marker(
     transport.issues["issue-1"] = _issue("issue-1")
     agent_output = f"{schedule_line}\nSYMPHONY_RESULT: done\n"
     cfg = _config(tmp_path)
-    binding = replace(cfg.bindings[0], binding_type="coding")
+    binding = replace(cfg.bindings[0], binding_type="coding", scheduling=False, blocked_reconciler=False)
     cfg = replace(cfg, bindings=(binding,))
 
     result = await run_tick(
@@ -5587,6 +5593,8 @@ async def test_coding_review_candidate_dispatches_with_marker_and_worktree(
         binding_type="coding",
         tracker="podium",
         repo_path=repo,
+        scheduling=False,
+        blocked_reconciler=False,
     )
     config = base_config.for_binding(binding)
     adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
@@ -6412,6 +6420,8 @@ def _local_coding_binding(config: SymphonyConfig) -> ProjectBinding:
         binding_type="coding",
         tracker="podium",
         default_agent="pi",
+        scheduling=False,
+        blocked_reconciler=False,
     )
 
 
@@ -6422,6 +6432,8 @@ def _remote_binding(config: SymphonyConfig) -> ProjectBinding:
         binding_type="coding",
         tracker="podium",
         default_agent="pi",
+        scheduling=False,
+        blocked_reconciler=False,
         remote=RemotePolicy(host="100.95.224.218", user="itadmin"),
     )
 

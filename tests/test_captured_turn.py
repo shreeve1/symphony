@@ -164,7 +164,7 @@ def test_display_bound_truncation() -> None:
 
     huge = "X" * (DISPLAY_MAX_CHARS + 1000)
     result = AgentResult(0, 10, False, stdout=huge)
-    summary = _capture_natural_turn(result, (), is_coding=False)
+    summary = _capture_natural_turn(result, (), scheduling=True)
     assert summary is not None
     assert len(summary) < DISPLAY_MAX_CHARS + 500  # smaller than raw input
     assert "truncated" in summary.lower()
@@ -172,7 +172,8 @@ def test_display_bound_truncation() -> None:
 
 # ---------------------------------------------------------------------------
 # T.1.7 – Coding binding file-fallback: turn exceeds DISPLAY_MAX_CHARS on a
-#         coding binding → file written, comment shows path + excerpt.
+#         binding without scheduling capability → file written, comment shows
+#         path + excerpt.
 # ---------------------------------------------------------------------------
 
 
@@ -185,7 +186,7 @@ def test_coding_binding_file_fallback(tmp_path: Path) -> None:
     summary = _capture_natural_turn(
         result,
         (),
-        is_coding=True,
+        scheduling=False,
         binding_name="test-binding",
         homelab_repo_path=str(tmp_path),
     )

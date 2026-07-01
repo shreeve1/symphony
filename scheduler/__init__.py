@@ -1142,7 +1142,6 @@ async def _select_run_tick_candidate(
 ) -> _RunTickSelection | TickResult:
     """Run tick selection/reconcile stage and reserve one candidate."""
 
-    is_coding = binding is not None and binding.binding_type == "coding"
     await reconcile_pending_review(config, adapter, dispatch_state, notifier=notifier)
 
     try:
@@ -1155,7 +1154,7 @@ async def _select_run_tick_candidate(
         )
         if (
             config.blocked_reconciler_enabled
-            and not is_coding
+            and (binding is not None and binding.blocked_reconciler)
             and run_blocked_reconciler
         ):
             try:
@@ -1169,7 +1168,9 @@ async def _select_run_tick_candidate(
             except Exception as exc:
                 LOGGER.warning("blocked_reconcile_failed error=%s", exc, exc_info=True)
         scheduled = (
-            None if is_coding else await _select_scheduled_candidate(adapter, now=now)
+            await _select_scheduled_candidate(adapter, now=now)
+            if (binding is not None and binding.scheduling)
+            else None
         )
     except PlaneRateLimitError:
         raise
@@ -1257,7 +1258,7 @@ async def _select_run_tick_candidate(
         LOGGER.warning("plane_poll_failed error=%s", exc)
         return TickResult(False, "plane-unreachable")
     _clear_rate_limit(dispatch_state)
-    if not is_coding:
+    if binding is not None and binding.scheduling:
         candidates = [c for c in candidates if not getattr(c, "review_dispatch", False)]
     now_dt = now()
     candidates = [
@@ -1269,7 +1270,7 @@ async def _select_run_tick_candidate(
         or retry_cooldown_expired(c.comments_md, now_dt)
     ]
 
-    approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
+    approval_policy_enabled = _binding_approval_enabled(binding) and (binding is not None and binding.scheduling)
     if candidate is None:
         candidate = await _reserve_candidate(
             candidates,
@@ -1297,8 +1298,7 @@ async def _gate_run_tick_candidate(
 ) -> _RunTickGate | TickResult:
     """Run tick gate stage before rendering or dispatch side effects."""
 
-    is_coding = binding is not None and binding.binding_type == "coding"
-    approval_policy_enabled = _binding_approval_enabled(binding) and not is_coding
+    approval_policy_enabled = _binding_approval_enabled(binding) and (binding is not None and binding.scheduling)
     if approval_policy_enabled and adapter.labels_contain_role(
         candidate.labels, TrackerRole.APPROVAL_REQUIRED
     ):
@@ -1306,7 +1306,7 @@ async def _gate_run_tick_candidate(
 
     mode = _resolve_mode(candidate.labels, adapter.contract)
 
-    if getattr(candidate, "review_dispatch", False) and not is_coding:
+    if getattr(candidate, "review_dispatch", False) and (binding is not None and binding.scheduling):
         return TickResult(False, "state-changed", candidate.id)
 
     expected_state = (
@@ -1883,7 +1883,7 @@ async def _classify_terminal(
     secrets: Sequence[str],
     parse_stderr: bool,
     mode: str,
-    is_coding: bool,
+    scheduling: bool,
     notifier: TelegramNotifier | None,
     dispatch_state: _DispatchState,
     now: Callable[[], datetime],
@@ -2049,7 +2049,7 @@ async def _classify_terminal(
     class_stdout = result.stdout
     class_stderr = result.stderr if parse_stderr else ""
 
-    if not is_coding:
+    if scheduling:
         scheduled_after_agent = await _detect_agent_schedule(
             adapter,
             candidate,
@@ -2067,7 +2067,7 @@ async def _classify_terminal(
     summary = _capture_natural_turn(
         result,
         secrets,
-        is_coding=is_coding,
+        scheduling=scheduling,
         is_claude=agent == "claude",
         binding_name=binding.name if binding else "",
         homelab_repo_path=str(config.homelab_repo_path),
@@ -2104,10 +2104,11 @@ async def _classify_terminal(
         )
         return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
-    # Schedule marker: infra agents can emit SYMPHONY_SCHEDULE: to defer
-    # an issue into a maintenance window. Permission/tool failures still win;
-    # scheduling wins over approval-gate false positives and stray result markers.
-    if not is_coding:
+    # Schedule marker: scheduling-capable bindings can emit SYMPHONY_SCHEDULE:
+    # to defer an issue into a maintenance window. Permission/tool failures
+    # still win; scheduling wins over approval-gate false positives and stray
+    # result markers.
+    if scheduling:
         now_dt = now()
         schedule_marker = _parse_schedule_marker(class_stdout, now=now_dt)
         if schedule_marker is not None:
@@ -2322,7 +2323,7 @@ async def _classify_terminal(
         )
         return TickResult(True, "agent-question-park", candidate.id, mode=mode)
 
-    if not is_coding:
+    if scheduling:
         after_agent = await _fetch_issue(adapter, candidate.id)
         if _is_state(
             after_agent,
@@ -2338,7 +2339,7 @@ async def _classify_terminal(
             return TickResult(True, "agent-blocked", candidate.id, mode=mode)
 
     if (
-        not is_coding
+        scheduling
         and verdict == "done"
         and binding is not None
         and binding.auto_close_on_verified
@@ -2498,7 +2499,6 @@ async def run_tick(
     """Run one scheduler tick without sleeping forever."""
 
     tick_binding = binding or _binding_from_config(config)
-    is_coding = tick_binding is not None and tick_binding.binding_type == "coding"
     dispatch_state = dispatch_state or _new_dispatch_state(config, binding=tick_binding)
 
     selection = await _select_run_tick_candidate(
@@ -2575,7 +2575,7 @@ async def run_tick(
             secrets=prepared.secrets,
             parse_stderr=prepared.parse_stderr,
             mode=gate.mode,
-            is_coding=is_coding,
+            scheduling=(tick_binding.scheduling if tick_binding is not None else True),
             notifier=notifier,
             dispatch_state=dispatch_state,
             now=now,

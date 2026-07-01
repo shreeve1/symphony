@@ -137,7 +137,7 @@ def _capture_natural_turn(
     result: AgentResult,
     secrets: Sequence[str],
     *,
-    is_coding: bool = False,
+    scheduling: bool = True,
     is_claude: bool = False,
     binding_name: str = "",
     homelab_repo_path: str = "",
@@ -148,8 +148,9 @@ def _capture_natural_turn(
     claude bindings: result.stdout may be ``<natural_turn>\n\n---\n<result_file>``
     (see _extract_last_assistant_turn wiring in claude_runner.py).
 
-    Redacts secrets and display-bounds the turn. For coding bindings on overflow,
-    writes the full turn to a file, commits it, and returns ``path + excerpt``.
+    Redacts secrets and display-bounds the turn. For bindings without the
+    scheduling capability (coding bindings) on overflow, writes the full turn
+    to a file and returns ``path + excerpt``.
     Returns ``None`` when stdout is empty (caller should fall back to
     _extract_summary).
     """
@@ -204,7 +205,7 @@ def _capture_natural_turn(
         return text
 
     excerpt = _bound_display(text)
-    if not is_coding:
+    if scheduling:
         return excerpt
 
     # ponytail: file-fallback for coding bindings — write full turn to
