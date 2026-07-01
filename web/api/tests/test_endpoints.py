@@ -138,6 +138,14 @@ def test_bindings_endpoint_surfaces_remote_repo_name(
             "_binding_claude_persist_for",
             lambda name: name == REMOTE_BINDING_NAME,
         )
+        # #173: host label derives from reverse-DNS of remote.host (memoized,
+        # IP fallback). Patch so the assertion is env-independent.
+        monkeypatch.setattr(
+            main.socket,
+            "gethostbyaddr",
+            lambda ip: ("n8n.netbird.selfhosted", [], [ip]),
+        )
+        main._REMOTE_HOST_LABELS.clear()
         bindings = client.get("/api/bindings").json()
 
     by_name = {binding["name"]: binding for binding in bindings}
@@ -151,10 +159,53 @@ def test_bindings_endpoint_surfaces_remote_repo_name(
     assert local["repo_name"] is None
     assert local["claude_persist"] is False
 
-    # host grouping (#173): remote bindings group under their own name,
-    # local bindings under the server hostname. No config field — derived.
+    # host grouping (#173): remote bindings group under the reverse-DNS label
+    # of their remote.host IP (100.95.224.218 -> n8n); local bindings under the
+    # server hostname. No config field — derived.
     assert remote["host"] == REMOTE_BINDING_NAME
     assert local["host"] == socket.gethostname()
+
+
+def test_remote_bindings_on_same_host_share_group(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # #173 ceiling fix: two repos on one remote host must collapse into ONE
+    # sidebar group. Both resolve the same reverse-DNS label from remote.host,
+    # so no config field is needed and grouping stays correct at scale.
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    from web.api.tests.conftest import REMOTE_BINDING_ENTRY
+
+    second = {
+        **REMOTE_BINDING_ENTRY,
+        "name": "itastack2",
+        "repo_path": "/home/itadmin/itastack2",
+    }
+    monkeypatch.setattr(main.socket, "gethostbyaddr",
+                        lambda ip: ("n8n.netbird.selfhosted", [], [ip]))
+    main._REMOTE_HOST_LABELS.clear()
+
+    with TestClient(app) as client:
+        login(client)
+        monkeypatch.setattr(main, "_bindings_override",
+                            [REMOTE_BINDING_ENTRY, second])
+        with main.connect(db_path) as connection:
+            for name in ("n8n", "itastack2"):
+                connection.execute(
+                    "INSERT OR IGNORE INTO binding(name, display_name, sort_order) "
+                    "VALUES (?, ?, 99)",
+                    (name, name),
+                )
+            connection.commit()
+        hosts = {
+            b["name"]: b["host"]
+            for b in client.get("/api/bindings").json()
+            if b["name"] in ("n8n", "itastack2")
+        }
+
+    # Both repos sit on 100.95.224.218 -> both resolve to "n8n" -> one group.
+    assert hosts["n8n"] == "n8n"
+    assert hosts["itastack2"] == "n8n"
 
 
 def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:

@@ -116,9 +116,10 @@ export function Sidebar() {
 	const colorMap = new Map(bindings?.map((b) => [b.name, b.color]) ?? []);
 
 	// Group bindings by host: local bindings share the server hostname,
-	// remote bindings group under their own name. ponytail: host label is
-	// derived — no config field. Ceiling: two repos on one remote host make
-	// two groups; upgrade path = resolve remote.host via ~/.ssh/config alias.
+	// remote bindings share the reverse-DNS label of their remote.host IP
+	// (e.g. 100.95.224.218 -> n8n). ponytail: host label is derived from
+	// infra DNS — no config field. Two repos on one remote host collapse into
+	// one group because both resolve the same label.
 	const bindingGroups: ReadonlyArray<readonly [string, Binding[]]> = (() => {
 		if (!bindings) return [];
 		const map = new Map<string, Binding[]>();
