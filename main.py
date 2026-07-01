@@ -122,7 +122,9 @@ def _render_candidate_prompt(
             tracker_kind="podium",
             resume=resume,
         )
-    return render_prompt(issue_data, preamble_path=_preamble_path, binding_type=binding_type)
+    return render_prompt(
+        issue_data, preamble_path=_preamble_path, binding_type=binding_type
+    )
 
 
 def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> bool:

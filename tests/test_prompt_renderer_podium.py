@@ -86,12 +86,8 @@ def test_podium_truncation_preserves_newest_operator_reply(tmp_path: Path) -> No
     The renderer's caveat says "the most recent Operator Reply is the current
     request to act on", so the most recent reply must land in the kept tail.
     """
-    old_reply = (
-        "### Operator Reply (2026-06-20T00:00:00+00:00)\n\nolder directive"
-    )
-    new_reply = (
-        "### Operator Reply (2026-06-30T00:00:00+00:00)\n\nnewer directive"
-    )
+    old_reply = "### Operator Reply (2026-06-20T00:00:00+00:00)\n\nolder directive"
+    new_reply = "### Operator Reply (2026-06-30T00:00:00+00:00)\n\nnewer directive"
     # Padding larger than the cap pushes the old reply out of the tail window
     # but keeps the newest reply (at the end) intact.
     comments_md = old_reply + "\n\n" + ("pad " * 4000) + "\n\n" + new_reply
