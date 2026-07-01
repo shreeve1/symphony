@@ -4,11 +4,18 @@ from pathlib import Path
 
 from prompt_renderer import (
     CHECKPOINTED_EXPLORATION_DIRECTIVE,
+    INFRA_PREAMBLE,
     IssueData,
     render_prompt,
     render_previous_comments_block,
 )
 from skill_mode_map import SKILL_TO_MODE, mode_for_skill
+
+
+def _preamble_file(tmp_path: Path, content: str = INFRA_PREAMBLE) -> Path:
+    p = tmp_path / "preamble.md"
+    p.write_text(content, encoding="utf-8")
+    return p
 
 
 def test_skill_to_mode_projection_table() -> None:
@@ -42,8 +49,6 @@ def test_infra_preamble_has_no_plan_or_build_mode_sections() -> None:
 def test_podium_render_prompt_truncates_comments_and_omits_context(
     tmp_path: Path,
 ) -> None:
-    workflow = tmp_path / "WORKFLOW.md"
-    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
     long_comments = "old" + ("x" * 12050) + "new"
 
     prompt = render_prompt(
@@ -55,7 +60,6 @@ def test_podium_render_prompt_truncates_comments_and_omits_context(
             context_md="Prior run details </issue_context>",
             preferred_skill="/dev-plan",
         ),
-        path=workflow,
         tracker_kind="podium",
     )
 
@@ -82,8 +86,6 @@ def test_podium_truncation_preserves_newest_operator_reply(tmp_path: Path) -> No
     The renderer's caveat says "the most recent Operator Reply is the current
     request to act on", so the most recent reply must land in the kept tail.
     """
-    workflow = tmp_path / "WORKFLOW.md"
-    workflow.write_text("Repo policy\n", encoding="utf-8")
     old_reply = (
         "### Operator Reply (2026-06-20T00:00:00+00:00)\n\nolder directive"
     )
@@ -101,7 +103,6 @@ def test_podium_truncation_preserves_newest_operator_reply(tmp_path: Path) -> No
             description="Do work",
             comments_md=comments_md,
         ),
-        path=workflow,
         tracker_kind="podium",
     )
 
@@ -116,9 +117,6 @@ def test_coding_binding_ignores_workflow_md(tmp_path: Path) -> None:
     The issue is the prompt; repo policy/safety live in the repo's native
     agent config, not in a Symphony-rendered WORKFLOW.md body.
     """
-    workflow = tmp_path / "WORKFLOW.md"
-    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
-
     prompt = render_prompt(
         IssueData(
             identifier="POD-9",
@@ -126,14 +124,12 @@ def test_coding_binding_ignores_workflow_md(tmp_path: Path) -> None:
             description="Do the coding work",
             preferred_skill="/dev-build",
         ),
-        path=workflow,
         binding_type="coding",
         tracker_kind="podium",
     )
 
-    # WORKFLOW.md body absent...
-    assert "Repo policy" not in prompt
-    assert "mode=" not in prompt
+    # No preamble text present...
+    assert "Symphony performs no git operations" not in prompt
     # ...but the issue and the output contract still render.
     assert "Do the coding work" in prompt
     assert "SYMPHONY_RESULT" in prompt
@@ -142,10 +138,9 @@ def test_coding_binding_ignores_workflow_md(tmp_path: Path) -> None:
 
 
 def test_coding_binding_renders_without_workflow_file(tmp_path: Path) -> None:
-    """A coding binding dispatches even when WORKFLOW.md is absent (ADR-0011)."""
+    """A coding binding dispatches without any preamble (ADR-0011)."""
     prompt = render_prompt(
         IssueData(identifier="POD-10", name="No workflow", description="Body here"),
-        path=tmp_path / "WORKFLOW.md",  # does not exist
         binding_type="coding",
         tracker_kind="podium",
     )
@@ -154,16 +149,21 @@ def test_coding_binding_renders_without_workflow_file(tmp_path: Path) -> None:
     assert "SYMPHONY_RESULT" in prompt
 
 
-def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute() -> None:
+def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute(
+    tmp_path: Path,
+) -> None:
     # ADR-0016: mode (execute) is projected onto IssueData but no longer renders
     # into the prompt text, so assert the skill-directive behavior instead. The
     # mode projection itself is covered by test_skill_to_mode_projection_table.
+    preamble = _preamble_file(tmp_path)
     unknown = render_prompt(
         IssueData(identifier="POD-2", preferred_skill="/not-catalogued"),
+        preamble_path=preamble,
         tracker_kind="podium",
     )
     missing = render_prompt(
         IssueData(identifier="POD-3", preferred_skill=None),
+        preamble_path=preamble,
         tracker_kind="podium",
     )
 
@@ -171,7 +171,7 @@ def test_podium_render_prompt_defaults_unknown_or_missing_skill_to_execute() -> 
     # mode projection); a skill-less render emits none ([2.4]/[T.2.2]).
     assert "First, invoke the `not-catalogued` skill" in unknown
     assert "First, invoke" not in missing
-    # Both still render the engine-owned infra constant.
+    # Both still render the project-supplied preamble (INFRA_PREAMBLE vestige).
     assert "Symphony performs no git operations for this binding." in unknown
     assert "Symphony performs no git operations for this binding." in missing
 
@@ -194,8 +194,6 @@ def test_operator_reply_directive_present_only_when_flagged() -> None:
 
 
 def test_render_prompt_operator_reply_directive_podium_only(tmp_path: Path) -> None:
-    workflow = tmp_path / "WORKFLOW.md"
-    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
     comments = "### Operator Reply (2026-06-12T00:00:00+00:00)\n\nDo the thing."
 
     podium = render_prompt(
@@ -204,12 +202,10 @@ def test_render_prompt_operator_reply_directive_podium_only(tmp_path: Path) -> N
             comments_md=comments,
             preferred_skill="/dev-build",
         ),
-        path=workflow,
         tracker_kind="podium",
     )
     plane = render_prompt(
         IssueData(identifier="AUTO-9", comments_md=comments),
-        path=workflow,
         tracker_kind="plane",
     )
 
@@ -232,16 +228,9 @@ _RESUME_TWO_REPLIES = (
 )
 
 
-def _default_workflow(tmp_path: Path) -> Path:
-    p = tmp_path / "WORKFLOW.md"
-    p.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
-    return p
-
-
 def test_resume_prompt_contains_wrapper_and_newest_operator_reply_only(
     tmp_path: Path,
 ) -> None:
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-10",
@@ -250,7 +239,6 @@ def test_resume_prompt_contains_wrapper_and_newest_operator_reply_only(
             comments_md=_RESUME_CX,
             context_md="Prior context",
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -279,7 +267,6 @@ def test_resume_prompt_keeps_schedule_context_for_infra(tmp_path: Path) -> None:
     """ADR-0018 C-0300: a scheduled ticket released into the window can dispatch
     as a resume; the '## Schedule Context' block (the apply-now authorization)
     must survive so the agent applies instead of blocking."""
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-20",
@@ -289,7 +276,6 @@ def test_resume_prompt_keeps_schedule_context_for_infra(tmp_path: Path) -> None:
             schedule_reason="image prune waits for maintenance window",
             schedule_source="Symphony-Schedule comment",
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -304,14 +290,12 @@ def test_resume_prompt_keeps_schedule_context_for_infra(tmp_path: Path) -> None:
 
 def test_resume_prompt_omits_schedule_context_for_coding(tmp_path: Path) -> None:
     """Coding bindings never get a schedule-context block, resume or not."""
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-21",
             comments_md=_RESUME_CX,
             schedule_not_before="2026-06-22T07:00:00+00:00",
         ),
-        path=work,
         tracker_kind="podium",
         binding_type="coding",
         resume=True,
@@ -321,14 +305,12 @@ def test_resume_prompt_omits_schedule_context_for_coding(tmp_path: Path) -> None
 
 
 def test_resume_prompt_omits_older_operator_replies(tmp_path: Path) -> None:
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-11",
             comments_md=_RESUME_TWO_REPLIES,
             description="Should be omitted",
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -340,14 +322,12 @@ def test_resume_prompt_omits_older_operator_replies(tmp_path: Path) -> None:
 
 
 def test_resume_prompt_empty_when_no_operator_reply(tmp_path: Path) -> None:
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-12",
             name="No reply",
             comments_md="Just a regular comment.",
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -367,14 +347,12 @@ def test_resume_prompt_empty_when_no_operator_reply(tmp_path: Path) -> None:
 
 
 def test_resume_prompt_skill_directive_survives(tmp_path: Path) -> None:
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-13",
             comments_md=_RESUME_CX,
             preferred_skill="/dev-build",
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -387,14 +365,12 @@ def test_resume_prompt_skill_directive_survives(tmp_path: Path) -> None:
 def test_resume_prompt_skill_directive_omitted_when_no_skill(
     tmp_path: Path,
 ) -> None:
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-14",
             comments_md=_RESUME_CX,
             preferred_skill=None,
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -406,15 +382,12 @@ def test_resume_prompt_skill_directive_omitted_when_no_skill(
 def test_checkpointed_exploration_directive_emits_only_for_selected_skill(
     tmp_path: Path,
 ) -> None:
-    work = _default_workflow(tmp_path)
-
     selected = render_prompt(
         IssueData(
             identifier="POD-16",
             comments_md=_RESUME_CX,
             preferred_skill="checkpointed-exploration",
         ),
-        path=work,
         tracker_kind="podium",
     )
     other = render_prompt(
@@ -423,7 +396,6 @@ def test_checkpointed_exploration_directive_emits_only_for_selected_skill(
             comments_md=_RESUME_CX,
             preferred_skill="dev-build",
         ),
-        path=work,
         tracker_kind="podium",
     )
 
@@ -437,14 +409,12 @@ def test_checkpointed_exploration_directive_emits_only_for_selected_skill(
 def test_checkpointed_exploration_directive_survives_resume(
     tmp_path: Path,
 ) -> None:
-    work = _default_workflow(tmp_path)
     prompt = render_prompt(
         IssueData(
             identifier="POD-18",
             comments_md=_RESUME_CX,
             preferred_skill="/checkpointed-exploration",
         ),
-        path=work,
         tracker_kind="podium",
         resume=True,
     )
@@ -457,7 +427,7 @@ def test_checkpointed_exploration_directive_survives_resume(
 
 def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
     """Confirm resume=False (default) still produces full prompt."""
-    work = _default_workflow(tmp_path)
+    preamble = _preamble_file(tmp_path)
     full = render_prompt(
         IssueData(
             identifier="POD-15",
@@ -467,7 +437,7 @@ def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
             context_md="Context content",
             preferred_skill="/dev-plan",
         ),
-        path=work,
+        preamble_path=preamble,
         tracker_kind="podium",
         resume=False,
     )
@@ -478,7 +448,7 @@ def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
     assert "Context content" not in full
     assert "<previous_comments>" in full
     assert "First, invoke the `dev-plan` skill" in full
-    # ADR-0016: the infra constant renders (the temp WORKFLOW.md is ignored).
+    # ADR-0032: project-supplied preamble renders.
     assert "Symphony performs no git operations for this binding." in full
     assert "Repo policy" not in full
 
@@ -486,9 +456,8 @@ def test_fresh_render_unchanged_by_resume_flag(tmp_path: Path) -> None:
 def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
     tmp_path: Path,
 ) -> None:
-    workflow = tmp_path / "WORKFLOW.md"
-    workflow.write_text("Repo policy. mode={{issue.mode}}\n", encoding="utf-8")
     long_comments = "start" + ("x" * 12050) + "tail"
+    preamble = _preamble_file(tmp_path)
 
     prompt = render_prompt(
         IssueData(
@@ -498,7 +467,7 @@ def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
             context_md="not consumed by Plane renderer",
             preferred_skill="/dev-plan",
         ),
-        path=workflow,
+        preamble_path=preamble,
     )
     comments_block = render_previous_comments_block(long_comments)
 

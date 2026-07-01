@@ -19,9 +19,9 @@ class StopLoop(Exception):
 def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_render(issue_data, *, path=None, binding_type="infra"):
+    def fake_render(issue_data, *, preamble_path=None, binding_type="infra"):
         captured["issue"] = issue_data
-        captured["path"] = path
+        captured["preamble_path"] = preamble_path
         captured["binding_type"] = binding_type
         return "rendered prompt"
 
@@ -49,9 +49,9 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     assert captured["issue"].description == "Verify proxy container"
     assert captured["issue"].labels == "media, maintenance"
     assert captured["issue"].mode == "conversation"
-    # ADR-0016: render_prompt no longer reads a WORKFLOW.md, so _render_candidate_prompt
-    # passes no path (it renders the engine-owned INFRA_PREAMBLE constant instead).
-    assert captured["path"] is None
+    # ADR-0032: _render_candidate_prompt passes preamble_path (resolved from binding.preamble).
+    # With no preamble configured, it passes None.
+    assert captured["preamble_path"] is None
     assert captured["issue"].schedule_not_before == "2026-05-08T20:00:00+00:00"
     assert captured["issue"].schedule_not_after == "2026-05-08T22:00:00+00:00"
     assert captured["issue"].schedule_reason == "maintenance window"

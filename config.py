@@ -105,6 +105,7 @@ class ProjectBinding:
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
     remote: RemotePolicy | None = None
+    preamble: str | None = None
 
     @property
     def is_remote(self) -> bool:
@@ -578,6 +579,8 @@ def _binding_from_mapping(
                 f"{prefix}.pi_mode: remote pi bindings require 'rpc' "
                 f"(ADR-0012), got '{pi_mode}'"
             )
+    preamble_raw = raw.get("preamble")
+    preamble = str(preamble_raw) if preamble_raw else None
     return ProjectBinding(
         name=str(raw.get("name") or plane_project_id),
         plane_project_id=plane_project_id,
@@ -595,6 +598,7 @@ def _binding_from_mapping(
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),
         remote=remote,
+        preamble=preamble,
     )
 
 

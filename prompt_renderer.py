@@ -347,9 +347,7 @@ def review_mode(description: str) -> Literal["coding", "validation"]:
 def render_prompt(
     issue: IssueData,
     *,
-    # ponytail: vestigial since ADR-0016 — no WORKFLOW.md is read. Kept optional
-    # and ignored to avoid churning ~25 call sites; drop in a later cleanup.
-    path: Path | None = None,
+    preamble_path: Path | None = None,
     binding_type: str = "infra",
     tracker_kind: Literal["plane", "podium"] = "plane",
     resume: bool = False,
@@ -360,14 +358,14 @@ def render_prompt(
     if tracker_kind == "podium":
         issue = replace(issue, mode=mode_for_skill(issue.preferred_skill))
 
-    # Coding bindings are "issue is the prompt": no preamble (ADR-0011). Infra
-    # bindings render the engine-owned INFRA_PREAMBLE constant (ADR-0016) — no
-    # per-repo WORKFLOW.md is read. Host safety/autonomy live in the bound
-    # repo's CLAUDE.md.
-    if binding_type == "coding":
-        body = ""
+    # ADR-0032: per-binding preamble loaded from file. Absent or empty → no
+    # preamble ("issue is the prompt"). INFRA_PREAMBLE stays as an inert vestige
+    # a project may copy as its own preamble file. OUTPUT_CONTRACT is always
+    # appended regardless.
+    if preamble_path is not None and preamble_path.is_file():
+        body = preamble_path.read_text(encoding="utf-8")
     else:
-        body = INFRA_PREAMBLE
+        body = ""
     rendered = _substitute(body, issue)
 
     if binding_type != "coding":

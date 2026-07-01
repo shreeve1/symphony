@@ -88,6 +88,7 @@ def _render_candidate_prompt(
     binding_type: str = "infra",
     tracker_kind: Literal["plane", "podium"] = "plane",
     resume: bool = False,
+    preamble: str | None = None,
 ) -> str:
     issue_data = IssueData(
         id=issue.id,
@@ -107,16 +108,21 @@ def _render_candidate_prompt(
         context_md=getattr(issue, "context_md", ""),
         preferred_skill=getattr(issue, "preferred_skill", None),
     )
+    # Resolve preamble path relative to repo (ADR-0032).
+    _preamble_path: Path | None = None
+    if preamble and repo_path:
+        _preamble_path = repo_path / preamble
     if tracker_kind == "podium":
         if getattr(issue, "review_dispatch", False):
             return render_review_prompt(issue_data)
         return render_prompt(
             issue_data,
+            preamble_path=_preamble_path,
             binding_type=binding_type,
             tracker_kind="podium",
             resume=resume,
         )
-    return render_prompt(issue_data, binding_type=binding_type)
+    return render_prompt(issue_data, preamble_path=_preamble_path, binding_type=binding_type)
 
 
 def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> bool:
@@ -298,6 +304,7 @@ async def run_bindings_loop(
                             binding_type=getattr(binding, "binding_type", "infra"),
                             tracker_kind=getattr(binding, "tracker", "plane"),
                             resume=getattr(issue, "resumed", False),
+                            preamble=getattr(binding, "preamble", None),
                         )
                     )
                 ),
