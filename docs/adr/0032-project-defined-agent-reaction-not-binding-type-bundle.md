@@ -77,6 +77,38 @@ preamble.**
    capability flag. Removal of the enum is a later cleanup (flagged, not done),
    mirroring ADR-0031's inert-vestige posture.
 
+4. **The engine always owns `OUTPUT_CONTRACT`.** `OUTPUT_CONTRACT`
+   (`prompt_renderer.py:26`) is a *separate* constant from `INFRA_PREAMBLE`: it is
+   the harness (git ownership + the `SYMPHONY_RESULT`/`SYMPHONY_SCHEDULE`/
+   `SYMPHONY_QUESTION` verdict grammar the scheduler parses), not infra policy.
+   "Strip all the preamble" means dropping `INFRA_PREAMBLE`, **never** the output
+   contract — a zero-preamble binding still receives `OUTPUT_CONTRACT`, or the
+   agent has no way to signal completion and dispatch breaks. The engine/project
+   line: engine always owns the output contract; the project owns everything
+   above it.
+
+### Full `binding_type` / `is_coding` consumer inventory
+
+"No engine branch reads `binding_type`" is only true if the decomposition
+replaces **every** current read. The known consumers (each must map to a
+capability flag, not the preset):
+
+- `prompt_renderer.py` — preamble selection (→ project-supplied preamble).
+- `scheduler/__init__.py` — `_select_scheduled_candidate` (→ `scheduling` flag),
+  blocked reconciler (→ `blocked_reconciler` flag), `SYMPHONY_SCHEDULE` marker
+  detection (→ `scheduling` flag), agent-review/agent-blocked re-check and
+  auto-close-on-verified (→ their own flags).
+- `scheduler/dispatch_state.py:69` — **worktree defaulting**
+  (`worktree_default and binding_type == "coding"`). Behavioral trap: a
+  coding-style preset would silently switch homelab to per-issue worktrees +
+  Landing, but infra remediation commits directly to base (former INFRA_PREAMBLE
+  rules 5–7). Whether homelab-stripped uses worktrees is an **explicit decision**
+  for the homelab follow-up, not an implied default — gate it on a dedicated flag,
+  not the preset.
+- `config.py:542` — `auto_close_on_verified` "coding may not auto-close" guard.
+- `config.py:554` — "remote bindings require coding" (ADR-0012 invariant).
+- `scheduler/sanitize.py:140`.
+
 ## Rollout
 
 Engine decomposition lands **first**, with every capability flag defaulting to
