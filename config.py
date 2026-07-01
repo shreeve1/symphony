@@ -100,6 +100,8 @@ class ProjectBinding:
     pi_mode: Literal["one-shot", "rpc"] = "one-shot"
     claude_persist: bool = False
     auto_close_on_verified: bool = False
+    scheduling: bool = True
+    blocked_reconciler: bool = True
     approval_policy: ApprovalPolicy = field(default_factory=ApprovalPolicy)
     landing_policy: LandingPolicy = field(default_factory=LandingPolicy)
     remote: RemotePolicy | None = None
@@ -544,6 +546,16 @@ def _binding_from_mapping(
             f"{prefix}.auto_close_on_verified: only infra bindings may auto-close "
             f"on a verified done verdict, got type '{binding_type}'"
         )
+    # per-binding capability flags with binding_type-derived defaults (ADR-0032)
+    _cap_default = binding_type == "infra"
+    scheduling = _cap_default
+    blocked_reconciler = _cap_default
+    if "scheduling" in raw:
+        scheduling = _optional_bool(raw["scheduling"], prefix=f"{prefix}.scheduling")
+    if "blocked_reconciler" in raw:
+        blocked_reconciler = _optional_bool(
+            raw["blocked_reconciler"], prefix=f"{prefix}.blocked_reconciler"
+        )
     remote = _remote_from_mapping(raw.get("remote"), prefix=f"{prefix}.remote")
     if remote is not None:
         if claude_persist:
@@ -577,6 +589,8 @@ def _binding_from_mapping(
         pi_mode=pi_mode,
         claude_persist=claude_persist,
         auto_close_on_verified=auto_close_on_verified,
+        scheduling=scheduling,
+        blocked_reconciler=blocked_reconciler,
         tracker_contract=contract,
         approval_policy=ApprovalPolicy(enabled=bool(approval.get("enabled", False))),
         landing_policy=LandingPolicy(mode=str(landing.get("mode", "local"))),

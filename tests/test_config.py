@@ -844,3 +844,75 @@ def test_truthy_unparseable_without_name_does_not_log(caplog):
     assert not any(
         "config_truthy_unparseable" in record.message for record in caplog.records
     )
+
+
+# ---- per-binding capability flags (ADR-0032) ----
+
+
+def _binding_config(bindings_path: Path, yaml: str) -> SymphonyConfig:
+    bindings_path.write_text(yaml.lstrip(), encoding="utf-8")
+    return SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    )
+
+
+def test_infra_binding_defaults_capability_flags_true(tmp_path: Path):
+    binding = _binding_config(
+        tmp_path / "bindings.yml",
+        """
+bindings:
+  - plane_project_id: project-a
+    repo_path: /srv/infra
+    base_branch: main
+    default_agent: pi
+    type: infra
+    tracker: podium
+""",
+    ).bindings[0]
+
+    assert binding.scheduling is True
+    assert binding.blocked_reconciler is True
+
+
+def test_coding_binding_defaults_capability_flags_false(tmp_path: Path):
+    binding = _binding_config(
+        tmp_path / "bindings.yml",
+        """
+bindings:
+  - plane_project_id: project-a
+    repo_path: /srv/code
+    base_branch: main
+    default_agent: pi
+    type: coding
+    tracker: podium
+""",
+    ).bindings[0]
+
+    assert binding.scheduling is False
+    assert binding.blocked_reconciler is False
+
+
+def test_explicit_capability_flags_override_type_defaults(tmp_path: Path):
+    binding = _binding_config(
+        tmp_path / "bindings.yml",
+        """
+bindings:
+  - plane_project_id: project-a
+    repo_path: /srv/code
+    base_branch: main
+    default_agent: pi
+    type: coding
+    tracker: podium
+    scheduling: true
+    blocked_reconciler: true
+""",
+    ).bindings[0]
+
+    assert binding.scheduling is True
+    assert binding.blocked_reconciler is True
