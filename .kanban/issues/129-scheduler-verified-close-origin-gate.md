@@ -1,7 +1,7 @@
 ---
 id: 129
 title: Gate verified-close on origin == patrol
-status: in-progress
+status: review
 blocked_by: [128]
 parent: null
 priority: 0
