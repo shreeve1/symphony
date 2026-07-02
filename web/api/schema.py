@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0013_issue_hold"
+INITIAL_REVISION = "0014_issue_origin"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS issue(
   locks TEXT,
   auto_land BOOLEAN NOT NULL DEFAULT FALSE,
   hold BOOLEAN NOT NULL DEFAULT FALSE,
+  origin TEXT NOT NULL DEFAULT 'operator' CHECK (origin IN ('operator','patrol')),
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 
