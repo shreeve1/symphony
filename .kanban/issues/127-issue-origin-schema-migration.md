@@ -1,11 +1,13 @@
 ---
 id: 127
 title: Add issue.origin column + migration 0014
-status: review
+status: done
 blocked_by: []
 parent: null
 priority: 0
 created: 2026-07-02
+updated: 2026-07-02
+actor: ralph
 ---
 
 ## What to build
@@ -36,14 +38,14 @@ and the `state`/`priority` CHECK columns).
 
 ## Acceptance criteria
 
-- [ ] `web/api/migrations/versions/0014_issue_origin.py` exists with
+- [x] `web/api/migrations/versions/0014_issue_origin.py` exists with
       `down_revision = "0013_issue_hold"`, adds `origin` with the two-value
       CHECK, and backfills `external_id IS NOT NULL` rows to `'patrol'`.
-- [ ] `downgrade()` drops the `origin` column (migration is reversible).
-- [ ] `web/api/schema.py` SCHEMA_SQL includes the `origin` column with the same
+- [x] `downgrade()` drops the `origin` column (migration is reversible).
+- [x] `web/api/schema.py` SCHEMA_SQL includes the `origin` column with the same
       `NOT NULL DEFAULT 'operator' CHECK (origin IN ('operator','patrol'))`.
-- [ ] `INITIAL_REVISION == "0014_issue_origin"` in `schema.py`.
-- [ ] A fresh DB built from SCHEMA_SQL and a migrated DB have identical `issue`
+- [x] `INITIAL_REVISION == "0014_issue_origin"` in `schema.py`.
+- [x] A fresh DB built from SCHEMA_SQL and a migrated DB have identical `issue`
       table pragma (the alembic baseline test asserts this parity).
 
 ## Verification
@@ -53,3 +55,17 @@ and the `state`/`priority` CHECK columns).
 ## Blocked by
 
 None - can start immediately
+
+## Implementation Notes
+
+Added migration `0014_issue_origin.py` (`down_revision = 0013_issue_hold`) using a
+direct `ALTER TABLE issue ADD COLUMN origin TEXT NOT NULL DEFAULT 'operator'
+CHECK (origin IN ('operator','patrol'))`. SQLite accepts a *column-level* CHECK on
+ADD COLUMN (the issue's table-rebuild note applies to *table-level* CHECKs), so the
+simpler ADD COLUMN path matches the 0011/0013 style and keeps downgrade trivially
+reversible. `upgrade()` backfills `origin='patrol'` for `external_id IS NOT NULL`
+rows; `downgrade()` drops the column. Both idempotent via `_issue_columns()`.
+`schema.py`: added the identical column to SCHEMA_SQL and bumped
+`INITIAL_REVISION` to `0014_issue_origin`. Verified fresh-vs-migrated `issue`
+pragma parity. Verification `uv run pytest web/api/tests/test_alembic_baseline.py -q`
+passes (exit 0).
