@@ -24,3 +24,16 @@ and reversible; the issue's rebuild note only applies to table-level CHECKs.
 **Notes for next iteration:** #128 threads `origin` through the create API +
 `CandidateIssue`; #129 gates verified-close on `origin == 'patrol'`. Default is
 `'operator'`, and anything not explicitly `'patrol'` must be fail-safe (no auto-close).
+
+## #129 Gate verified-close on origin == patrol — 2026-07-02
+
+**What changed:** Added `and candidate.origin == "patrol"` to the ADR-0020
+verified-close guard so only patrol-origin issues auto-close on a `done` verdict;
+operator-origin `done` falls through to the In Review terminal path.
+**Files:** scheduler/__init__.py, tests/test_scheduler.py
+**Decisions:** Fail-safe polarity — only explicit `'patrol'` auto-closes; operator/
+None/unknown park in In Review. Updated the existing verified-close test to set
+`origin="patrol"` explicitly (it relied on the `_candidate` default) and added an
+operator-origin park-in-review test.
+**Notes for next iteration:** origin provenance chain (#127 column → #128 plumbing
+→ #129 gate) is complete.

@@ -1,7 +1,7 @@
 ---
 id: 129
 title: Gate verified-close on origin == patrol
-status: review
+status: done
 blocked_by: [128]
 parent: null
 priority: 0
@@ -34,10 +34,10 @@ Add a scheduler test covering both paths:
 
 ## Acceptance criteria
 
-- [ ] Verified-close branch requires `candidate.origin == "patrol"`.
-- [ ] Operator-origin `done` on an auto-close binding lands `in_review`.
-- [ ] Patrol-origin `done` on an auto-close binding lands `done` (unchanged).
-- [ ] New/updated test in `tests/test_scheduler.py` asserts both transitions.
+- [x] Verified-close branch requires `candidate.origin == "patrol"`.
+- [x] Operator-origin `done` on an auto-close binding lands `in_review`.
+- [x] Patrol-origin `done` on an auto-close binding lands `done` (unchanged).
+- [x] New/updated test in `tests/test_scheduler.py` asserts both transitions.
 
 ## Verification
 
@@ -46,3 +46,17 @@ Add a scheduler test covering both paths:
 ## Blocked by
 
 - Blocked by #128
+
+## Implementation Notes
+
+Added `and candidate.origin == "patrol"` to the ADR-0020 verified-close guard in
+`scheduler/__init__.py`. Fail-safe polarity: only an explicit `'patrol'` origin
+auto-closes; `'operator'`, `None`, and any unexpected value fall through to the
+existing In Review terminal handling. Patrol behavior unchanged.
+`tests/test_scheduler.py`: the existing verified-close test now sets
+`origin="patrol"` explicitly (it previously relied on the `_candidate` default of
+`'operator'`, which no longer closes); added
+`test_operator_origin_done_parks_in_review_on_auto_close_binding` asserting an
+operator-origin `done` on the same `auto_close_on_verified` binding lands
+`in_review` (reason `agent-marker-review`). Verification
+`uv run pytest tests/test_scheduler.py -q` passes (214 passed, exit 0).
