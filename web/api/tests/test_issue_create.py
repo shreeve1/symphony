@@ -160,6 +160,55 @@ def test_create_dependency_fields_round_trip(client: TestClient) -> None:
     assert listed[0]["locks"] == ["web-api"]
 
 
+def test_create_defaults_origin_to_operator(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues", json={"description": "bare"}
+    )
+    assert response.status_code == 201
+    assert response.json()["origin"] == "operator"
+
+
+def test_create_explicit_origin_patrol_persists(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "explicit", "origin": "patrol"},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["origin"] == "patrol"
+    assert client.get(f"/api/issues/{body['id']}").json()["origin"] == "patrol"
+
+
+def test_create_external_id_backstops_origin_to_patrol(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "external", "external_id": "ext-1"},
+    )
+    assert response.status_code == 201
+    assert response.json()["origin"] == "patrol"
+
+
+def test_create_explicit_origin_wins_over_external_id(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={
+            "description": "both",
+            "external_id": "ext-2",
+            "origin": "operator",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["origin"] == "operator"
+
+
+def test_create_invalid_origin_returns_422(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "bad", "origin": "robot"},
+    )
+    assert response.status_code == 422
+
+
 def test_create_missing_description_returns_422(client: TestClient) -> None:
     response = client.post("/api/bindings/symphony/issues", json={})
     assert response.status_code == 422

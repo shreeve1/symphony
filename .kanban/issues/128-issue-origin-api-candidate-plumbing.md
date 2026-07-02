@@ -1,11 +1,13 @@
 ---
 id: 128
 title: Carry origin through API create + CandidateIssue plumbing
-status: pending
+status: done
 blocked_by: [127]
 parent: null
 priority: 0
 created: 2026-07-02
+updated: 2026-07-02
+actor: ralph
 ---
 
 ## What to build
@@ -33,12 +35,12 @@ value flow create → DB → candidate.
 
 ## Acceptance criteria
 
-- [ ] `IssueCreate` accepts an optional `origin` field.
-- [ ] Create with explicit `origin='patrol'` persists `'patrol'`.
-- [ ] Create with no `origin` but a non-null `external_id` persists `'patrol'`
+- [x] `IssueCreate` accepts an optional `origin` field.
+- [x] Create with explicit `origin='patrol'` persists `'patrol'`.
+- [x] Create with no `origin` but a non-null `external_id` persists `'patrol'`
       (backstop).
-- [ ] Create with no `origin` and no `external_id` persists `'operator'`.
-- [ ] `CandidateIssue` exposes `origin` (defaults `'operator'`), populated from
+- [x] Create with no `origin` and no `external_id` persists `'operator'`.
+- [x] `CandidateIssue` exposes `origin` (defaults `'operator'`), populated from
       the issue row in `tracker_podium.list_candidates()`.
 
 ## Verification
@@ -48,3 +50,20 @@ value flow create → DB → candidate.
 ## Blocked by
 
 - Blocked by #127
+
+## Implementation Notes
+
+Added `origin: Literal["operator", "patrol"] | None = None` to `IssueCreate`
+(main.py) — using the `Literal` type means an invalid value is rejected at
+validation as 422 (matching the DB CHECK vocabulary) rather than hitting the DB.
+The create handler resolves the effective origin before the INSERT: explicit
+caller value wins (Option B); else non-null `external_id` → `'patrol'`
+(Option A backstop); else `'operator'`. Added `origin` to the INSERT column
+list + values. `_row()` already returns every column via `dict(row)`, so the
+create/read responses expose `origin` with no extra plumbing.
+`CandidateIssue` (tracker_types.py) gained `origin: str = "operator"`, populated
+in `tracker_podium.list_candidates()` via `origin=str(issue.get("origin") or
+"operator")`. No scheduler behavior change (deferred to #129). Added 5 tests to
+`test_issue_create.py` covering default, explicit patrol, external_id backstop,
+explicit-wins-over-external_id, and invalid-value-422. Verification
+`uv run pytest web/api/tests/test_issue_create.py -q` passes (59 passed, exit 0).

@@ -620,6 +620,7 @@ class IssueCreate(BaseModel):
     schedule: ScheduleRequest | None = None
     base_branch: str | None = None
     external_id: str | None = None
+    origin: Literal["operator", "patrol"] | None = None
     blocked_by: list[int] | None = None
     locks: list[str] | None = None
 
@@ -1093,6 +1094,15 @@ async def create_binding_issue(
         scheduled_for = now
     blocked_by = issue.blocked_by or []
     locks = issue.locks or []
+    # Resolve provenance: explicit caller value wins (Option B); otherwise a
+    # non-null external_id marks an un-migrated external caller as 'patrol'
+    # (Option A backstop); bare operator-created issues default to 'operator'.
+    if issue.origin is not None:
+        origin = issue.origin
+    elif issue.external_id is not None:
+        origin = "patrol"
+    else:
+        origin = "operator"
     # Instant fallback title so create never blocks on a slow pi call; the
     # real title is regenerated in a background thread below.
     title = _title_generator._fallback_title(issue.description)
@@ -1103,8 +1113,8 @@ async def create_binding_issue(
               binding_name, title, description, state, priority, preferred_agent,
               preferred_model, preferred_skill, reasoning_effort, worktree_active,
               approval_required, approved, auto_land, hold, scheduled_for, base_branch, comments_md,
-              context_md, external_id, blocked_by, locks, created_at, updated_at
-            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
+              context_md, external_id, origin, blocked_by, locks, created_at, updated_at
+            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -1124,6 +1134,7 @@ async def create_binding_issue(
                 issue.base_branch or _base_branch_for(name),
                 comments_md,
                 issue.external_id,
+                origin,
                 json.dumps(blocked_by),
                 json.dumps(locks),
                 now,

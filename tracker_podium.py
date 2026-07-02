@@ -220,6 +220,7 @@ class PodiumTrackerAdapter:
                     ),
                     locks=tuple(issue.get("locks") or ()),
                     review_dispatch=review_dispatch,
+                    origin=str(issue.get("origin") or "operator"),
                 )
             )
         return candidates

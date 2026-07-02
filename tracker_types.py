@@ -43,6 +43,7 @@ class CandidateIssue:
     active_run_id: str = ""
     locks: tuple[str, ...] = ()
     review_dispatch: bool = False
+    origin: str = "operator"
 
 
 @dataclass
