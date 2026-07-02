@@ -1,82 +1,82 @@
 bindings:
-- name: homelab
-  type: infra
-  tracker: podium
-  plane_project_id: cff68c17-bff6-452f-89b3-9b570613cfaa
-  repo_path: /home/james/homelab
-  base_branch: main
-  default_agent: pi
-  pi_mode: rpc
-  auto_close_on_verified: true
-  preamble: SYMPHONY.md  # ADR-0032: project-supplied preamble (re-homed INFRA_PREAMBLE)
-  scheduling: true  # ADR-0032 explicit — keep ADR-0018 window machinery
-  blocked_reconciler: true  # ADR-0032 explicit — keep patrol auto-cure
-  worktree_default: false  # ADR-0032 D1 explicit — commit-to-base, no Landing
-  approval:
-    enabled: false
-  landing:
-    mode: local
-- name: symphony
-  plane_project_id: symphony
-  tracker: podium
-  type: coding
-  repo_path: /home/james/symphony
-  base_branch: main
-  default_agent: pi
-  pi_mode: rpc
-  claude_persist: true
-  approval:
-    enabled: false
-  landing:
-    mode: local
-- name: dotfiles
-  plane_project_id: dotfiles
-  tracker: podium
-  type: coding
-  repo_path: /home/james/dotfiles
-  base_branch: main
-  default_agent: pi
-  approval:
-    enabled: false
-  landing:
-    mode: local
-  pi_mode: rpc
-- name: n8n
-  plane_project_id: n8n
-  tracker: podium
-  type: coding
-  repo_path: /home/itadmin/itastack
-  base_branch: main
-  default_agent: pi
-  approval:
-    enabled: false
-  landing:
-    mode: local
-  pi_mode: rpc
-  remote:
-    host: n8n
-    user: itadmin
-- name: ai-web-chat
-  plane_project_id: ai-web-chat
-  tracker: podium
-  type: coding
-  repo_path: /home/james/ai-web-chat
-  base_branch: main
-  default_agent: pi
-  approval:
-    enabled: false
-  landing:
-    mode: local
-  pi_mode: rpc
-- name: agency
-  plane_project_id: agency
-  tracker: podium
-  type: coding
-  repo_path: /home/james/agency
-  base_branch: main
-  default_agent: pi
-  approval:
-    enabled: false
-  landing:
-    mode: local
-  pi_mode: rpc
+  - name: homelab
+    type: infra
+    tracker: podium
+    plane_project_id: cff68c17-bff6-452f-89b3-9b570613cfaa
+    repo_path: /home/james/homelab
+    base_branch: main
+    default_agent: pi
+    pi_mode: rpc
+    auto_close_on_verified: true
+    preamble: SYMPHONY.md # ADR-0032: project-supplied preamble (re-homed INFRA_PREAMBLE)
+    scheduling: true # ADR-0032 explicit — keep ADR-0018 window machinery
+    blocked_reconciler: true # ADR-0032 explicit — keep patrol auto-cure
+    worktree_default: false # ADR-0032 D1 explicit — commit-to-base, no Landing
+    approval:
+      enabled: false
+    landing:
+      mode: local
+  - name: symphony
+    plane_project_id: symphony
+    tracker: podium
+    type: coding
+    repo_path: /home/james/symphony
+    base_branch: main
+    default_agent: pi
+    pi_mode: rpc
+    claude_persist: true
+    approval:
+      enabled: false
+    landing:
+      mode: local
+  - name: dotfiles
+    plane_project_id: dotfiles
+    tracker: podium
+    type: coding
+    repo_path: /home/james/dotfiles
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
+  - name: n8n
+    plane_project_id: n8n
+    tracker: podium
+    type: coding
+    repo_path: /home/itadmin/itastack
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
+    remote:
+      host: n8n
+      user: itadmin
+  - name: ai-web-chat
+    plane_project_id: ai-web-chat
+    tracker: podium
+    type: coding
+    repo_path: /home/james/ai-web-chat
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
+  - name: agency
+    plane_project_id: agency
+    tracker: podium
+    type: coding
+    repo_path: /home/james/agency
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
