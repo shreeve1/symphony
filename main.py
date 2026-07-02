@@ -89,6 +89,7 @@ def _render_candidate_prompt(
     tracker_kind: Literal["plane", "podium"] = "plane",
     resume: bool = False,
     preamble: str | None = None,
+    scheduling: bool = False,
 ) -> str:
     issue_data = IssueData(
         id=issue.id,
@@ -121,9 +122,13 @@ def _render_candidate_prompt(
             binding_type=binding_type,
             tracker_kind="podium",
             resume=resume,
+            scheduling=scheduling,
         )
     return render_prompt(
-        issue_data, preamble_path=_preamble_path, binding_type=binding_type
+        issue_data,
+        preamble_path=_preamble_path,
+        binding_type=binding_type,
+        scheduling=scheduling,
     )
 
 
@@ -307,6 +312,7 @@ async def run_bindings_loop(
                             tracker_kind=getattr(binding, "tracker", "plane"),
                             resume=getattr(issue, "resumed", False),
                             preamble=getattr(binding, "preamble", None),
+                            scheduling=getattr(binding, "scheduling", False),
                         )
                     )
                 ),

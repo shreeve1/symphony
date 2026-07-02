@@ -351,6 +351,7 @@ def render_prompt(
     binding_type: str = "infra",
     tracker_kind: Literal["plane", "podium"] = "plane",
     resume: bool = False,
+    scheduling: bool = False,
 ) -> str:
     if tracker_kind not in {"plane", "podium"}:
         raise ValueError(f"unsupported tracker_kind: {tracker_kind}")
@@ -368,7 +369,7 @@ def render_prompt(
         body = ""
     rendered = _substitute(body, issue)
 
-    if binding_type != "coding":
+    if scheduling:
         schedule_context = _render_schedule_context(issue)
         if schedule_context:
             rendered = f"{rendered}\n\n{schedule_context}"
@@ -416,7 +417,7 @@ def render_prompt(
         # a resume. Without this, the "## Schedule Context" block is dropped and
         # the agent loses its "you're in the approved window, apply now" signal,
         # falling back to blocking medium-risk work (ADR-0018 C-0300).
-        if binding_type != "coding":
+        if scheduling:
             schedule_context = _render_schedule_context(issue)
             if schedule_context:
                 parts.append(schedule_context)

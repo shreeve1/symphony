@@ -52,6 +52,7 @@ def test_render_prompt_uses_preamble_file_and_substitutes(tmp_path: Path) -> Non
             schedule_not_before="2026-05-08T20:00:00+00:00",
         ),
         preamble_path=preamble,
+        scheduling=True,
     )
 
     # Distinctive preamble lines render from the file.
@@ -106,6 +107,7 @@ def test_render_prompt_renders_schedule_context() -> None:
             schedule_reason="maintenance window",
             schedule_source="scheduled label maintenance window (12am-6am PT)",
         ),
+        scheduling=True,
     )
 
     assert "## Schedule Context" in prompt

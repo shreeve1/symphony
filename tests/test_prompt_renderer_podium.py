@@ -274,6 +274,7 @@ def test_resume_prompt_keeps_schedule_context_for_infra(tmp_path: Path) -> None:
         ),
         tracker_kind="podium",
         resume=True,
+        scheduling=True,
     )
 
     assert "## Schedule Context" in prompt
@@ -284,8 +285,10 @@ def test_resume_prompt_keeps_schedule_context_for_infra(tmp_path: Path) -> None:
     assert "<issue>" not in prompt
 
 
-def test_resume_prompt_omits_schedule_context_for_coding(tmp_path: Path) -> None:
-    """Coding bindings never get a schedule-context block, resume or not."""
+def test_resume_prompt_omits_schedule_context_when_scheduling_false(
+    tmp_path: Path,
+) -> None:
+    """ADR-0032: schedule context omitted when scheduling=False, regardless of binding_type."""
     prompt = render_prompt(
         IssueData(
             identifier="POD-21",
@@ -293,8 +296,8 @@ def test_resume_prompt_omits_schedule_context_for_coding(tmp_path: Path) -> None
             schedule_not_before="2026-06-22T07:00:00+00:00",
         ),
         tracker_kind="podium",
-        binding_type="coding",
         resume=True,
+        scheduling=False,
     )
 
     assert "## Schedule Context" not in prompt
