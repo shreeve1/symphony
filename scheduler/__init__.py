@@ -2353,6 +2353,7 @@ async def _classify_terminal(
         and verdict == "done"
         and binding is not None
         and binding.auto_close_on_verified
+        and candidate.origin == "patrol"
     ):
         # Verified-close (ADR-0020): on an opt-in infra binding, a `done` verdict
         # means the agent re-checked the issue's own condition and confirmed it

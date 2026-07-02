@@ -1,11 +1,13 @@
 ---
 id: 129
 title: Gate verified-close on origin == patrol
-status: pending
+status: in-progress
 blocked_by: [128]
 parent: null
 priority: 0
 created: 2026-07-02
+updated: 2026-07-02
+actor: ralph
 ---
 
 ## What to build

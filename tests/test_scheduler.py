@@ -6799,7 +6799,7 @@ async def test_verified_done_closes_issue_on_auto_close_binding(tmp_path: Path) 
         _adapter(transport),
         agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
         render_prompt=lambda issue: "prompt",
-        poller=lambda adapter: [_candidate("issue-1")],
+        poller=lambda adapter: [replace(_candidate("issue-1"), origin="patrol")],
         repo_dirty=lambda path: False,
         binding=binding,
     )
@@ -6811,6 +6811,39 @@ async def test_verified_done_closes_issue_on_auto_close_binding(tmp_path: Path) 
     )
     assert any(
         "Symphony closed:" in c["comment_html"] for c in transport.comments["issue-1"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_origin_done_parks_in_review_on_auto_close_binding(
+    tmp_path: Path,
+) -> None:
+    # ADR-0020 verified-close is gated on origin == 'patrol'. An operator-origin
+    # `done` on the same auto_close_on_verified binding must fall through to the
+    # In Review terminal path instead of auto-closing.
+    config = _config(tmp_path)
+    binding = replace(config.bindings[0], auto_close_on_verified=True)
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    stdout = (
+        "SYMPHONY_RESULT: done\n"
+        "SYMPHONY_SUMMARY_BEGIN\nLooked up the netbird deployment.\nSYMPHONY_SUMMARY_END"
+    )
+
+    result = await run_tick(
+        config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False, stdout=stdout),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-1"), origin="operator")],
+        repo_dirty=lambda path: False,
+        binding=binding,
+    )
+
+    assert result.reason == "agent-marker-review"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
 
 
