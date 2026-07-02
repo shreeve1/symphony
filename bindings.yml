@@ -8,6 +8,10 @@ bindings:
   default_agent: pi
   pi_mode: rpc
   auto_close_on_verified: true
+  preamble: SYMPHONY.md  # ADR-0032: project-supplied preamble (re-homed INFRA_PREAMBLE)
+  scheduling: true  # ADR-0032 explicit — keep ADR-0018 window machinery
+  blocked_reconciler: true  # ADR-0032 explicit — keep patrol auto-cure
+  worktree_default: false  # ADR-0032 D1 explicit — commit-to-base, no Landing
   approval:
     enabled: false
   landing:
