@@ -179,6 +179,38 @@ def test_create_explicit_origin_patrol_persists(client: TestClient) -> None:
     assert client.get(f"/api/issues/{body['id']}").json()["origin"] == "patrol"
 
 
+def test_patrol_origin_defaults_preferred_model_to_deepseek_flash(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "patrol", "origin": "patrol"},
+    )
+    assert response.status_code == 201
+    assert response.json()["preferred_model"] == "deepseek-v4-flash"
+
+
+def test_patrol_explicit_model_wins_over_default(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues",
+        json={
+            "description": "patrol",
+            "origin": "patrol",
+            "preferred_model": "deepseek-v4-pro",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["preferred_model"] == "deepseek-v4-pro"
+
+
+def test_operator_origin_leaves_preferred_model_unset(client: TestClient) -> None:
+    response = client.post(
+        "/api/bindings/symphony/issues", json={"description": "bare"}
+    )
+    assert response.status_code == 201
+    assert response.json()["preferred_model"] is None
+
+
 def test_create_external_id_backstops_origin_to_patrol(client: TestClient) -> None:
     response = client.post(
         "/api/bindings/symphony/issues",

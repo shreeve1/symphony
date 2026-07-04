@@ -943,6 +943,9 @@ def list_inbox_issues(
 # unknown ids, so the dropdown is the contract, not a hint.
 KNOWN_AGENTS = _model_catalog.KNOWN_AGENTS
 
+# Temporal patrols post issues on this model unless the caller pins one.
+PATROL_DEFAULT_MODEL = "deepseek-v4-flash"
+
 # Kept as module-level names: the symphony-models skill and tests import
 # _load_models/_validate_models from web.api.main.
 _validate_models = _model_catalog.validate_models
@@ -1103,6 +1106,12 @@ async def create_binding_issue(
         origin = "patrol"
     else:
         origin = "operator"
+    # Temporal patrols post as deepseek-v4-flash unless the caller pinned a
+    # model explicitly; scheduler still validates it against models.yml at
+    # dispatch (fails loudly if the catalog entry is removed).
+    preferred_model = issue.preferred_model
+    if origin == "patrol" and preferred_model is None:
+        preferred_model = PATROL_DEFAULT_MODEL
     # Instant fallback title so create never blocks on a slow pi call; the
     # real title is regenerated in a background thread below.
     title = _title_generator._fallback_title(issue.description)
@@ -1122,7 +1131,7 @@ async def create_binding_issue(
                 issue.description,
                 issue.priority,
                 issue.preferred_agent,
-                issue.preferred_model,
+                preferred_model,
                 issue.preferred_skill,
                 issue.reasoning_effort,
                 issue.worktree_active,
