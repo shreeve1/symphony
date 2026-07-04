@@ -1656,3 +1656,12 @@ Append entries with this format:
 - **Outputs**: `wiki/analyses/adr-0032-project-defined-agent-reaction.md` (new, promoted); `wiki/entities/workflow-homelab.md` (ADR-0032 update note — `INFRA_PREAMBLE`-is-current statement marked historical); `wiki/CLAIMS.md` C-0356 (decision, supersedes the `INFRA_PREAMBLE`-current half of C-0276); `index.md` Analyses row; `ROUTING.md` Bindings route page + ADR-0032 keywords.
 - **Cross-repo**: homelab-side worker marker fields (5b) + patrol-response/patrol-tune skills are project content captured in the homelab wiki (`d83230c`, candidate `concept-patrol-status-marker` + C-0025), not duplicated here.
 - **Unresolved**: `binding_type` enum removal deferred (flagged inert-vestige). Both repos have local commits ahead of origin (unpushed). ADR-0032 ADR file still reads `proposed` — operator may want to flip it to `accepted` given the flip is live.
+
+## [2026-07-04] session-update | patrol issues default to deepseek-v4-flash (C-0357)
+
+- **Task**: operator request (issue #194) — Temporal patrol-posted issues should dispatch as `deepseek-v4-flash`. Preceded by two read-only Q&A turns (homelab default agent/model; whether flash can be set for homelab).
+- **Change**: `web/api/main.py` `create_binding_issue` — added module constant `PATROL_DEFAULT_MODEL = "deepseek-v4-flash"`; after `origin` resolution, a null `issue.preferred_model` on an `origin == "patrol"` issue is defaulted to it before INSERT. Operator issues + explicit caller models untouched. Origin-scoped (all bindings), not binding-scoped — no per-binding `default_model` field exists; that was the surgical fit vs. adding config.
+- **Tests**: 3 new in `web/api/tests/test_issue_create.py` (patrol default / explicit-wins / operator-unset). `web/api/tests/` = 315 passed, 1 skipped. Code committed `8fc4a80`.
+- **Wiki**: C-0357 (config-fact) admitted; `analyses/podium-issue-dispatch-contract.md` gained a "Patrol-origin default model" section + `updated: 2026-07-04` + new source paths; `index.md` dispatch-contract row appended + date; `ROUTING.md` dispatch/model keyword line extended (PATROL_DEFAULT_MODEL, patrol default model, etc.).
+- **Deploy**: NOT deployed at capture — change ships in `podium-api.service` (create endpoint), needs a restart to take effect. Scheduler unaffected.
+- **Unresolved**: none. (Interactive operator-driven wiki pass — not a slice run, so ADR-0028 exemption N/A.)

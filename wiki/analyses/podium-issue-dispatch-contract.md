@@ -3,7 +3,7 @@ title: "Podium issue-field dispatch contract (model catalog, effort, skill, clau
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-24
+updated: 2026-07-04
 sources:
   - wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md
   - wiki/raw/sessions/2026-06-24-podium-api-model-dropdown-stale-validator.md
@@ -19,6 +19,8 @@ sources:
   - wiki/raw/sessions/2026-06-24-reply-comment-undecorated-gate-fields-crash.md
   - tests/test_dispatch_gate.py
   - tests/test_model_catalog.py
+  - web/api/main.py
+  - web/api/tests/test_issue_create.py
 confidence: high
 tags: [podium, dispatch, models, skills, reasoning-effort, claude]
 ---
@@ -86,6 +88,10 @@ frontend guard — decorate them too if a component ever reads a decorated field
 required. Deploy split: backend fix = `podium-api` restart, frontend = `web/frontend/deploy.sh`;
 NOT `symphony-host`/`symphony-restart`, which is the scheduler, not the API/UI
 [source: wiki/raw/sessions/2026-06-24-reply-comment-undecorated-gate-fields-crash.md].
+
+## Patrol-origin default model (2026-07-04)
+
+Temporal patrol-created issues default `preferred_model` to `deepseek-v4-flash` unless the caller pins a model explicitly (C-0357). The default is applied at the Podium create endpoint (`create_binding_issue`, `web/api/main.py`), not in the patrol worker: after origin is resolved (`origin == "patrol"` — explicit `origin` field, or the `external_id`-backstop for un-migrated callers), a null `issue.preferred_model` is replaced with the module constant `PATROL_DEFAULT_MODEL = "deepseek-v4-flash"` before the INSERT [source: web/api/main.py]. Operator-origin issues are untouched (their `preferred_model` stays null → per-agent catalog default applies, `deepseek-v4-pro` for pi); an explicit caller `preferred_model` always wins over the patrol default. This is origin-scoped, not binding-scoped — it applies to every patrol issue across all bindings, not homelab only (there is no per-binding `default_model` field). The value is a plain string that the scheduler still validates against `models.yml` at dispatch via the fail-loud gate above, so removing the `deepseek-v4-flash` catalog entry would block patrol issues loudly rather than silently mis-dispatch. Tests: `test_patrol_origin_defaults_preferred_model_to_deepseek_flash`, `test_patrol_explicit_model_wins_over_default`, `test_operator_origin_leaves_preferred_model_unset` (`web/api/tests/test_issue_create.py`). Deploy = `podium-api.service` restart (the create endpoint lives in the API, not the scheduler).
 
 ## Supersedes
 
