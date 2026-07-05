@@ -150,6 +150,15 @@ from .ports import (
     fetch_issue as _fetch_issue,
     maybe_await as _maybe_await,
 )
+from .run_records import (
+    close_run_record_steering as _close_run_record_steering,
+)
+from .run_records import (
+    finish_run_record as _finish_run_record,
+)
+from .run_records import (
+    mark_run_record_running as _mark_run_record_running,
+)
 from .transient_retry import (
     MAX_COMBINED_RETRIES,
     MAX_OVERLOAD_RETRIES,
@@ -175,10 +184,6 @@ LOGGER = logging.getLogger(__name__)
 # historical issues. New claim time comes from the Run record's ``started_at``.
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 2048
-# The on-disk run log keeps far more than the 2 KB comment/context bound so the
-# run-detail pane can show full output; still capped (tail-kept) so a runaway
-# agent cannot grow the run-log dir without limit.
-LOG_MAX_BYTES = 1_048_576
 _REVIEW_DISPATCH_MARKER_RE = re.compile(
     r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
 )
@@ -222,14 +227,6 @@ _SECRET_ENV_KEYS = (
     "CLIP" + "ROXY_API_KEY",
     "TELEGRAM_BOT_TOKEN",
 )
-
-
-def _write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(
-        f"## stdout\n\n{stdout}\n\n## stderr\n\n{stderr}\n",
-        encoding="utf-8",
-    )
 
 
 def _binding_from_config(config: SymphonyConfig) -> ProjectBinding | None:
@@ -784,85 +781,6 @@ async def _start_run_record(
         else resolve_run_log_root()
     )
     return run_id, (run_log_root / f"{run_id}.log").resolve()
-
-
-async def _mark_run_record_running(
-    adapter: TrackerAdapter,
-    run_id: str | None,
-    log_path: Path | None,
-    *,
-    started_at: str,
-) -> None:
-    if not run_id or log_path is None:
-        return
-    update_run = getattr(adapter, "update_run", None)
-    if not callable(update_run):
-        return
-    await _maybe_await(
-        cast(Callable[[str, dict[str, Any]], Any], update_run)(
-            run_id,
-            {"state": "running", "started_at": started_at, "log_path": str(log_path)},
-        )
-    )
-
-
-async def _close_run_record_steering(
-    adapter: TrackerAdapter,
-    run_id: str | None,
-    result: AgentResult,
-) -> None:
-    """Move a returned Run out of the steerable state before finalization."""
-
-    if not run_id:
-        return
-    update_run = getattr(adapter, "update_run", None)
-    if not callable(update_run):
-        return
-    state = "failed" if result.timed_out or result.exit_code != 0 else "succeeded"
-    await _maybe_await(
-        cast(Callable[[str, dict[str, Any]], Any], update_run)(run_id, {"state": state})
-    )
-
-
-async def _finish_run_record(
-    adapter: TrackerAdapter,
-    run_id: str | None,
-    log_path: Path | None,
-    *,
-    result: AgentResult,
-    secrets: Sequence[str],
-    state: str,
-    verdict: str | None,
-    summary: str | None,
-    ended_at: str,
-) -> None:
-    if not run_id or log_path is None:
-        return
-    # The run log carries far more than the 2 KB comment/context report so the
-    # run-detail pane shows full output; secrets are still redacted and ANSI
-    # stripped, only the truncation bound differs.
-    _write_run_log(
-        log_path,
-        _sanitize_report(result.stdout, secrets, max_bytes=LOG_MAX_BYTES),
-        _sanitize_report(result.stderr, secrets, max_bytes=LOG_MAX_BYTES),
-    )
-    update_run = getattr(adapter, "update_run", None)
-    if not callable(update_run):
-        return
-    await _maybe_await(
-        cast(Callable[[str, dict[str, Any]], Any], update_run)(
-            run_id,
-            {
-                "state": state,
-                "verdict": verdict,
-                "summary": summary,
-                "exit_code": result.exit_code,
-                "ended_at": ended_at,
-                "log_path": str(log_path),
-                **_parse_run_metrics(result.stdout),
-            },
-        )
-    )
 
 
 async def _handle_archived_terminal(
