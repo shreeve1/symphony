@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -9,20 +10,48 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
+import yaml
+
 main = cast(Any, import_module("web.cli.podium")).main
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_SOURCE = REPO_ROOT / "web/api/tests/fixtures/skills"
 
+HOST = socket.gethostname().split(".", 1)[0]
 
-def _rows(db_path: Path) -> list[tuple[str, str, str]]:
+
+def _rows(db_path: Path) -> list[tuple[str, str, str, str, str]]:
     with sqlite3.connect(db_path) as connection:
         return connection.execute(
-            "SELECT name, description, source FROM skill ORDER BY name"
+            "SELECT name, description, source, host, binding_name FROM skill"
+            " ORDER BY name"
         ).fetchall()
 
 
-def test_dry_run_command_lists_fixture_skills() -> None:
+def _make_repo_with_skills(root: Path, fixture: Path) -> Path:
+    """Build a repo whose .claude/skills is a copy of the fixture tree."""
+    repo = root / "repo"
+    shutil.copytree(fixture, repo / ".claude" / "skills")
+    return repo
+
+
+def _write_bindings(path: Path, repo: Path) -> Path:
+    path.write_text(
+        yaml.safe_dump(
+            {"bindings": [{"name": "fixture", "repo_path": str(repo)}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_dry_run_command_lists_fixture_skills(tmp_path: Path) -> None:
+    repo = _make_repo_with_skills(tmp_path, FIXTURE_SOURCE)
+    bindings = _write_bindings(tmp_path / "bindings.yml", repo)
+    empty_home = tmp_path / "home"
+    empty_home.mkdir()
+
     result = subprocess.run(
         [
             "uv",
@@ -33,20 +62,18 @@ def test_dry_run_command_lists_fixture_skills() -> None:
             "skills",
             "refresh",
             "--dry-run",
-            "--source",
-            "web/api/tests/fixtures/skills",
+            "--bindings",
+            str(bindings),
         ],
         cwd=REPO_ROOT,
+        env={**os.environ, "HOME": str(empty_home)},
         capture_output=True,
         text=True,
         check=True,
     )
 
-    assert result.stdout.splitlines() == [
-        f"alpha\tAlpha skill from fixture.\t{FIXTURE_SOURCE / 'alpha/SKILL.md'}",
-        f"bravo\tBravo skill from fixture.\t{FIXTURE_SOURCE / 'bravo/SKILL.md'}",
-        f"charlie\tCharlie skill from fixture.\t{FIXTURE_SOURCE / 'charlie/SKILL.md'}",
-    ]
+    names = [line.split("\t")[1] for line in result.stdout.splitlines() if "\t" in line]
+    assert names == ["alpha", "bravo", "charlie"]
 
 
 def test_set_password_writes_hash_to_stdout_only(tmp_path: Path) -> None:
@@ -70,50 +97,55 @@ def test_set_password_writes_hash_to_stdout_only(tmp_path: Path) -> None:
 def test_refresh_add_noop_change_and_remove(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
-    source = tmp_path / "skills"
-    shutil.copytree(FIXTURE_SOURCE, source)
+    repo = _make_repo_with_skills(tmp_path, FIXTURE_SOURCE)
+    skills_dir = repo / ".claude" / "skills"
+    bindings = _write_bindings(tmp_path / "bindings.yml", repo)
     db_path = tmp_path / "podium.db"
     monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    # Empty HOME so no host-global skills are scanned; only the repo scope.
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
 
-    assert main(["skills", "refresh", "--source", str(source)]) == 0
+    scope = f"[{HOST}/fixture]"
+
+    assert main(["skills", "refresh", "--bindings", str(bindings)]) == 0
     assert capsys.readouterr().out.splitlines() == [
-        "+ alpha",
-        "+ bravo",
-        "+ charlie",
+        f"+ {scope} alpha",
+        f"+ {scope} bravo",
+        f"+ {scope} charlie",
     ]
-    assert _rows(db_path) == [
-        ("alpha", "Alpha skill from fixture.", str(source / "alpha/SKILL.md")),
-        ("bravo", "Bravo skill from fixture.", str(source / "bravo/SKILL.md")),
-        ("charlie", "Charlie skill from fixture.", str(source / "charlie/SKILL.md")),
+    assert [(r[0], r[3], r[4]) for r in _rows(db_path)] == [
+        ("alpha", HOST, "fixture"),
+        ("bravo", HOST, "fixture"),
+        ("charlie", HOST, "fixture"),
     ]
 
-    assert main(["skills", "refresh", "--source", str(source)]) == 0
+    # Second run is a no-op.
+    assert main(["skills", "refresh", "--bindings", str(bindings)]) == 0
     assert capsys.readouterr().out == ""
     assert len(_rows(db_path)) == 3
 
+    # A manual row (source='') in this scope must survive refresh.
     with sqlite3.connect(db_path) as connection:
-        connection.executemany(
-            "INSERT INTO skill(name, description, source) VALUES (?, ?, ?)",
-            [
-                ("manual", "Manual hand-seeded skill", ""),
-                ("old-seed", "Retired boot seed", "seed"),
-            ],
+        connection.execute(
+            "INSERT INTO skill(name, description, source, host, binding_name)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("manual", "Manual hand-seeded skill", "", HOST, "fixture"),
         )
         connection.commit()
-    assert main(["skills", "refresh", "--source", str(source)]) == 0
-    assert capsys.readouterr().out.splitlines() == ["- old-seed"]
-    assert ("manual", "Manual hand-seeded skill", "") in _rows(db_path)
+    assert main(["skills", "refresh", "--bindings", str(bindings)]) == 0
+    assert capsys.readouterr().out == ""
+    assert any(r[0] == "manual" and r[2] == "" for r in _rows(db_path))
 
-    (source / "bravo/SKILL.md").write_text(
+    # Change bravo, remove charlie.
+    (skills_dir / "bravo/SKILL.md").write_text(
         "---\nname: bravo\ndescription: Bravo skill changed.\n---\n\n# Bravo\n",
         encoding="utf-8",
     )
-    os.remove(source / "charlie/SKILL.md")
+    os.remove(skills_dir / "charlie/SKILL.md")
 
-    assert main(["skills", "refresh", "--source", str(source)]) == 0
-    assert capsys.readouterr().out.splitlines() == ["~ bravo", "- charlie"]
-    assert _rows(db_path) == [
-        ("alpha", "Alpha skill from fixture.", str(source / "alpha/SKILL.md")),
-        ("bravo", "Bravo skill changed.", str(source / "bravo/SKILL.md")),
-        ("manual", "Manual hand-seeded skill", ""),
-    ]
+    assert main(["skills", "refresh", "--bindings", str(bindings)]) == 0
+    assert capsys.readouterr().out.splitlines() == [f"- {scope} charlie"]
+    remaining = {r[0]: r[1] for r in _rows(db_path)}
+    assert remaining["bravo"] == "Bravo skill changed."
+    assert "charlie" not in remaining
+    assert "manual" in remaining

@@ -1075,9 +1075,13 @@ export function IssueFlyout({
 			},
 		);
 	};
-	// Skill catalog feeds the preferred_skill picker; free text would 422
-	// against the FK and silently roll back.
-	const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
+	// Per-binding skill catalog (ADR-0033): host-global + this binding's repo.
+	const skillBinding = detail.data?.binding_name ?? "";
+	const skills = useQuery({
+		queryKey: ["skills", skillBinding],
+		queryFn: () => fetchSkills(skillBinding || undefined),
+		enabled: detail.data != null,
+	});
 	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
 	// Model catalog feeds the preferred_model picker.
 	const options = useQuery({

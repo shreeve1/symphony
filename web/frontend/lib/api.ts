@@ -220,7 +220,12 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export const fetchBindings = () => getJSON<Binding[]>("/api/bindings");
 
-export const fetchSkills = () => getJSON<Skill[]>("/api/skills");
+export const fetchSkills = (binding?: string) =>
+	getJSON<Skill[]>(
+		binding
+			? `/api/skills?binding=${encodeURIComponent(binding)}`
+			: "/api/skills",
+	);
 
 export const fetchInbox = () => getJSON<InboxItem[]>("/api/inbox");
 

@@ -1,17 +1,23 @@
 ---
 name: symphony-skills
-description: Refresh the Podium Skill catalog from repo-local .claude/skills/SKILL.md files using python -m web.cli.podium skills refresh. Dry-run first, then live refresh after operator confirmation.
+description: Refresh the Podium Skill catalog per host/per binding from each binding's host global ~/.claude/skills plus its repo .claude/skills using python -m web.cli.podium skills refresh. Dry-run first, then live refresh after operator confirmation.
 ---
 
 # Symphony Skills Catalog Refresh
 
-Refresh the Podium `skill` table that feeds the new-Issue Skill dropdown.
+Refresh the Podium `skill` table that feeds the new-Issue Skill dropdown. This
+normally runs automatically at `symphony-host` startup (ADR-0033); the CLI is the
+manual/fallback path for refreshing without a scheduler restart.
 
 ## Prerequisites
 
 - Run from `/home/james/symphony`.
 - Podium database path resolves through `PODIUM_DB_PATH` or `web.api.db.resolve_db_path()`.
-- Repo-local skill docs live under `.claude/skills/`.
+- Skills are scanned per binding (ADR-0033): each binding's host-global
+  `~/.claude/skills` (scanned once per host; `binding_name` NULL) plus that
+  binding's repo `.claude/skills` (scoped to the binding). Remote bindings are
+  scanned over SSH; an unreachable host is skipped best-effort (its rows are left
+  intact) and logged, never failing the run.
 
 ## Workflow
 
@@ -21,18 +27,18 @@ Refresh the Podium `skill` table that feeds the new-Issue Skill dropdown.
    cd /home/james/symphony && uv run python -m web.cli.podium skills refresh --dry-run
    ```
 
-   Output is one `name⇥description⇥source` line per scanned skill. This lists what
-   the catalog *would* contain — it does **not** diff against the existing table.
+   Output is one `[host/binding]⇥name⇥description⇥source` line per scanned skill
+   (`[host/global]` for host-global rows). This lists what the catalog *would*
+   contain — it does **not** diff against the existing table.
 
 2. To preview the actual change set, diff the dry-run output against the current
-   `skill` table (query the DB or `GET /api/skills`). Compute `+`/`~`/`-` yourself:
-   - `+ name` — scanned but not in DB (new Skill row).
-   - `~ name` — in both but description or source differs.
-   - `- name` — in DB but not scanned (stale seed row; manual rows are kept).
+   `skill` table (query the DB or `GET /api/skills`).
 
 3. Show the diff to the operator and get confirmation before the live write.
-4. Run the live refresh — it applies the changes and prints the `+ name` / `~ name` /
-   `- name` diff lines as it writes:
+4. Run the live refresh — it applies the changes and prints one
+   `+ [host/binding] name` / `- [host/binding] name` line per scoped change as it
+   writes (a scope is replaced only if its host was reachable; manual `source=''`
+   rows are kept):
 
    ```bash
    cd /home/james/symphony && uv run python -m web.cli.podium skills refresh

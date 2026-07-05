@@ -36,6 +36,7 @@ from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, build_ada
 from prompt_renderer import IssueData, render_prompt, render_review_prompt
 from repo_host import repo_host_for
 from scheduler import _resolve_mode, reconcile_startup, run_loop
+from web.cli.podium_skills import sync_skills
 from tracker_adapter import TrackerAdapter
 from tracker_contract import TrackerContract
 
@@ -245,6 +246,37 @@ def build_binding_runtime(
     )
 
 
+def _binding_to_scan_entry(binding: ProjectBinding) -> dict[str, Any]:
+    """Shape a ProjectBinding into the dict sync_skills scans (ADR-0033)."""
+    entry: dict[str, Any] = {
+        "name": binding.name,
+        "repo_path": str(binding.repo_path),
+    }
+    if binding.remote is not None:
+        entry["remote"] = {
+            "host": binding.remote.host,
+            "user": binding.remote.user,
+            "identity": binding.remote.identity,
+        }
+    return entry
+
+
+def _sync_skills_at_startup(config: SymphonyConfig) -> None:
+    """Scan each binding's host + repo for skills at boot (ADR-0033).
+
+    Best-effort: sync_skills already isolates per-host failures; this wrapper
+    guards against any unexpected error so a skill-sync problem never blocks
+    the scheduler from starting.
+    """
+    try:
+        entries = [_binding_to_scan_entry(b) for b in config.bindings]
+        changes = sync_skills(entries)
+    except Exception as exc:  # noqa: BLE001 - never block boot on skill sync
+        logging.getLogger(__name__).warning("skill_sync_failed error=%s", exc)
+        return
+    logging.getLogger(__name__).info("skill_sync_done changes=%d", len(changes))
+
+
 async def run_bindings_loop(
     config: SymphonyConfig, *, notifier: TelegramNotifier | None = None
 ) -> None:
@@ -264,6 +296,7 @@ async def run_bindings_loop(
     )
     if rpc_binding is not None:
         verify_pi_rpc_support(config.pi_bin, rpc_binding.repo_path)
+    await asyncio.to_thread(_sync_skills_at_startup, config)
     runtimes = []
     for binding in config.bindings:
         if _probe_binding(config, binding) is False:

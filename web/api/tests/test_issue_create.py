@@ -320,7 +320,8 @@ FAILURE_CASES = [
     ({"description": None}, 422),
     ({"description": 7}, 422),
     ({"description": "ok", "priority": "critical"}, 422),
-    ({"description": "ok", "preferred_skill": "no-such-skill"}, 422),
+    # preferred_skill no longer FK-validated (ADR-0033); an unknown skill string
+    # is accepted and the per-binding dropdown constrains the operator's choice.
     ({"description": "ok", "preferred_agent": 42}, 422),
     ({"description": "ok", "preferred_model": []}, 422),
     ({"description": "ok", "worktree_active": "maybe"}, 422),

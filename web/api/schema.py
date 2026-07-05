@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0014_issue_origin"
+INITIAL_REVISION = "0015_skill_host_binding_scope"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -18,9 +18,15 @@ CREATE TABLE IF NOT EXISTS binding_settings(
 );
 
 CREATE TABLE IF NOT EXISTS skill(
-  name TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
   description TEXT,
-  source TEXT
+  source TEXT,
+  -- Host the skill was scanned from (ADR-0033). NULL binding_name = host-global
+  -- (~/.claude/skills); set = repo-local (that binding's .claude/skills).
+  host TEXT,
+  binding_name TEXT,
+  UNIQUE(name, host, binding_name)
 );
 
 CREATE TABLE IF NOT EXISTS issue(
@@ -32,7 +38,7 @@ CREATE TABLE IF NOT EXISTS issue(
   priority TEXT CHECK (priority IS NULL OR priority IN ('low','med','high','urgent')),
   preferred_agent TEXT,
   preferred_model TEXT,
-  preferred_skill TEXT REFERENCES skill(name),
+  preferred_skill TEXT,
   reasoning_effort TEXT DEFAULT 'high',
   worktree_active BOOLEAN DEFAULT FALSE,
   base_branch TEXT,

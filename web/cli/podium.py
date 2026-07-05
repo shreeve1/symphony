@@ -10,12 +10,14 @@ from typing import Any, cast
 _auth = cast(Any, import_module("web.api.auth"))
 _skills = cast(Any, import_module("web.cli.podium_skills"))
 _issues = cast(Any, import_module("web.cli.podium_issues"))
-DEFAULT_SOURCE = _skills.DEFAULT_SOURCE
+_seed = cast(Any, import_module("web.api.seed"))
 hash_password = _auth.hash_password
-refresh_skills = _skills.refresh_skills
+sync_skills = _skills.sync_skills
 create_plan_issues = _issues.create_plan_issues
 list_podium_issues = _issues.list_issues
 ISSUES_BINDINGS_PATH = _issues.BINDINGS_PATH
+BINDINGS_PATH = _seed.BINDINGS_PATH
+_load_bindings = _seed._load_bindings
 PodiumIssuesError = _issues.PodiumIssuesError
 
 
@@ -29,10 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     refresh = skill_commands.add_parser("refresh")
     refresh.add_argument("--dry-run", action="store_true")
     refresh.add_argument(
-        "--source",
+        "--bindings",
         type=Path,
-        default=DEFAULT_SOURCE,
-        help="Directory scanned recursively for SKILL.md files.",
+        default=BINDINGS_PATH,
+        help="Path to bindings.yml (hosts + repos to scan).",
     )
     refresh.set_defaults(func=_skills_refresh)
 
@@ -66,7 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _skills_refresh(args: argparse.Namespace) -> int:
-    for line in refresh_skills(args.source, dry_run=args.dry_run):
+    bindings = _load_bindings(args.bindings)
+    for line in sync_skills(bindings, dry_run=args.dry_run):
         print(line)
     return 0
 

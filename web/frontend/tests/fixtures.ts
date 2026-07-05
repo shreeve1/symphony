@@ -100,17 +100,24 @@ function runDbScript<T>(script: string): T {
 }
 
 export function seedSkills(skills: { name: string; description?: string }[]) {
+	// ADR-0033: skills are host/binding scoped. Seed host-global rows tagged
+	// with the local hostname so they resolve for every local binding via the
+	// per-binding /api/skills filter.
 	const script = `
 import json
+import socket
 from web.api.db import connect
 from web.cli.podium_skills import ensure_schema
 skills = ${JSON.stringify(skills)}
+host = socket.gethostname().split(".", 1)[0]
 with connect() as connection:
     ensure_schema(connection)
     connection.executemany(
-        "INSERT INTO skill(name, description, source) VALUES (?, ?, 'e2e') "
-        "ON CONFLICT(name) DO UPDATE SET description = excluded.description, source = excluded.source",
-        [(skill["name"], skill.get("description", "")) for skill in skills],
+        "INSERT INTO skill(name, description, source, host, binding_name) "
+        "VALUES (?, ?, 'e2e', ?, NULL) "
+        "ON CONFLICT(name, host, binding_name) DO UPDATE SET "
+        "description = excluded.description, source = excluded.source",
+        [(skill["name"], skill.get("description", ""), host) for skill in skills],
     )
     connection.commit()
 print(json.dumps(True))

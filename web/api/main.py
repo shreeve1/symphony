@@ -864,14 +864,50 @@ def list_bindings(
     return result
 
 
+def _host_for_binding(name: str) -> str:
+    """Resolve which host a binding runs on (ADR-0033)."""
+    if _is_remote_binding(name):
+        remote = _remote_for_binding(name)
+        if remote and remote.host:
+            return _host_label(remote.host)
+        return name
+    return _LOCAL_HOSTNAME
+
+
 @app.get("/api/skills")
 def list_skills(
+    binding: str | None = None,
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> list[dict[str, Any]]:
-    rows = connection.execute(
-        "SELECT name, description, source FROM skill ORDER BY name"
-    ).fetchall()
-    return [_row(row) for row in rows]
+    # Per-binding resolution (ADR-0033): a binding sees its host's global skills
+    # (binding_name IS NULL AND host = <binding host>) plus its own repo-local
+    # skills (binding_name = <binding>). Called without a binding the full
+    # catalog is returned (manual/debug path).
+    if binding is not None:
+        host = _host_for_binding(binding)
+        rows = connection.execute(
+            """
+            SELECT name, description, source FROM skill
+            WHERE (binding_name IS NULL AND host IS ?) OR binding_name = ?
+            ORDER BY name
+            """,
+            (host, binding),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            "SELECT name, description, source FROM skill ORDER BY name"
+        ).fetchall()
+    # Distinct by name: the same skill may appear under multiple scopes but the
+    # dropdown only needs each name once.
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        name = str(row["name"])
+        if name in seen:
+            continue
+        seen.add(name)
+        result.append(_row(row))
+    return result
 
 
 @app.get("/api/bindings/{name}/issues")
@@ -1080,9 +1116,6 @@ async def create_binding_issue(
         errors = exc.errors(include_url=False)
         status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
         raise HTTPException(status_code=status, detail=errors) from exc
-
-    if issue.preferred_skill is not None:
-        _require_known_skill(connection, issue.preferred_skill)
 
     if issue.schedule is not None and _binding_type_for(name) != "infra":
         raise HTTPException(status_code=400, detail="scheduling is infra-only")
@@ -1342,9 +1375,6 @@ async def patch_issue(
     for key in ("blocked_by", "locks"):
         if key in fields and fields[key] is None:
             fields[key] = []
-
-    if fields.get("preferred_skill") is not None:
-        _require_known_skill(connection, fields["preferred_skill"])
 
     if "blocked_by" in fields and _blocked_by_has_cycle(
         connection, issue_id, fields["blocked_by"]
@@ -2507,16 +2537,6 @@ def _tail_bytes(path: Path, limit: int = 1_048_576) -> bytes:
         size = handle.tell()
         handle.seek(max(0, size - limit))
         return handle.read()
-
-
-def _require_known_skill(connection: sqlite3.Connection, skill_name: str) -> None:
-    known = connection.execute(
-        "SELECT name FROM skill WHERE name = ?", (skill_name,)
-    ).fetchone()
-    if known is None:
-        raise HTTPException(
-            status_code=422, detail=f"unknown preferred_skill: {skill_name}"
-        )
 
 
 def _get_binding_or_404(connection: sqlite3.Connection, name: str) -> None:

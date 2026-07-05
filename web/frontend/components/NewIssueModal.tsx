@@ -318,8 +318,11 @@ function NewIssueModal({
 		"coding";
 	const isInfra = bindingType === "infra";
 	const create = useCreateIssue(binding, bindingType);
-	// Same catalog feed as the flyout chip: free-text skill would 422 on the FK.
-	const skills = useQuery({ queryKey: ["skills"], queryFn: fetchSkills });
+	// Per-binding skill catalog (ADR-0033): host-global + this binding's repo.
+	const skills = useQuery({
+		queryKey: ["skills", binding],
+		queryFn: () => fetchSkills(binding),
+	});
 	// Agent/model/branch dropdown choices (branches read live from the repo).
 	const options = useQuery({
 		queryKey: ["issue-options", binding],

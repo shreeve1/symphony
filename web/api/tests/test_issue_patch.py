@@ -45,7 +45,8 @@ FAILURE_CASES = [
     ("priority", "critical", 422),
     ("preferred_agent", 42, 422),
     ("preferred_model", [], 422),
-    ("preferred_skill", "no-such-skill", 422),
+    # preferred_skill no longer FK-validated (ADR-0033): an unknown skill string
+    # is accepted; the per-binding dropdown constrains the operator's choice.
     ("reasoning_effort", "max", 422),
     ("worktree_active", "maybe", 422),
     ("approval_required", None, 422),
@@ -223,3 +224,46 @@ def test_list_skills_returns_catalog(client: TestClient) -> None:
     names = [skill["name"] for skill in skills]
     assert names == sorted(names)
     assert {"tdd", "code-review", "blueprint"}.issubset(set(names))
+
+
+def test_list_skills_filters_per_binding(client: TestClient, monkeypatch) -> None:
+    # ADR-0033: a binding sees host-global skills (binding_name NULL, matching
+    # host) plus its own repo-local skills, never a sibling binding's skills.
+    import os
+    from pathlib import Path
+
+    import web.api.main as main
+    from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
+
+    local_host = main._LOCAL_HOSTNAME
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO binding(name) VALUES (?)", (REMOTE_BINDING_NAME,)
+        )
+        connection.executemany(
+            "INSERT INTO skill(name, description, source, host, binding_name)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [
+                ("global-local", "", "/g/SKILL.md", local_host, None),
+                ("symphony-only", "", "/s/SKILL.md", local_host, "symphony"),
+                ("global-n8n", "", "/gn/SKILL.md", "n8n", None),
+                ("itastack-only", "", "/i/SKILL.md", "n8n", REMOTE_BINDING_NAME),
+            ],
+        )
+        connection.commit()
+    monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
+
+    symphony = {
+        s["name"] for s in client.get("/api/skills?binding=symphony").json()
+    }
+    assert "global-local" in symphony
+    assert "symphony-only" in symphony
+    assert "itastack-only" not in symphony
+    assert "global-n8n" not in symphony
+
+    n8n = {s["name"] for s in client.get("/api/skills?binding=n8n").json()}
+    assert "itastack-only" in n8n
+    assert "global-n8n" in n8n
+    assert "symphony-only" not in n8n
+    assert "global-local" not in n8n
