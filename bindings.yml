@@ -54,7 +54,7 @@ bindings:
       mode: local
     pi_mode: rpc
     remote:
-      host: n8n
+      host: 100.95.224.218 # n8n Tailscale IP; bare 'n8n' resolves to netbird addr where sshd refuses
       user: itadmin
   - name: ai-web-chat
     plane_project_id: ai-web-chat
