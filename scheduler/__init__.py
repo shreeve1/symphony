@@ -154,6 +154,10 @@ from .dispatch_state import (
     _new_dispatch_state,
     _record_rate_limit,
 )
+from .selection import (
+    labels_contain_role as _labels_contain_role,
+    oldest_candidate as _oldest_candidate,
+)
 
 _wake_signal = import_module("web.api.wake_signal")
 consume_wake_sentinel = _wake_signal.consume_wake_sentinel
@@ -982,23 +986,6 @@ class _RunTickAgentResult:
     run_id: str | None
     run_log_path: Path | None
     claim_dt: datetime
-
-
-def _labels_contain_role(
-    labels: tuple[str, ...] | list[str],
-    tracker: TrackerAdapter | TrackerContract,
-    role: TrackerRole,
-) -> bool:
-    if hasattr(tracker, "labels_contain_role"):
-        return cast(TrackerAdapter, tracker).labels_contain_role(labels, role)
-    contract = cast(TrackerContract, tracker)
-    binding = contract.optional_label_binding(role)
-    if binding is None:
-        return False
-    values = {binding.name}
-    if binding.uuid:
-        values.add(binding.uuid)
-    return bool(values & set(labels))
 
 
 def _resolve_mode(
@@ -3123,28 +3110,6 @@ async def _release_candidate(
     async with dispatch_state.in_flight_lock:
         dispatch_state.in_flight_ids.discard(issue_id)
         dispatch_state.in_flight_locks.pop(issue_id, None)
-
-
-def _oldest_candidate(
-    candidates: Sequence[CandidateIssue],
-    contract: TrackerContract = DEFAULT_CONTRACT,
-    *,
-    approval_policy_enabled: bool = True,
-) -> CandidateIssue | None:
-    eligible = [
-        issue
-        for issue in candidates
-        if (
-            not approval_policy_enabled
-            or not _labels_contain_role(
-                issue.labels, contract, TrackerRole.APPROVAL_REQUIRED
-            )
-        )
-        and not _labels_contain_role(issue.labels, contract, TrackerRole.SCHEDULED)
-    ]
-    if not eligible:
-        return None
-    return sorted(eligible, key=lambda issue: issue.created_at)[0]
 
 
 async def _select_scheduled_candidate(
