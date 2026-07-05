@@ -143,6 +143,8 @@ def test_remote_scope_scanned_over_ssh(tmp_path: Path) -> None:
     }
     assert ("itastack-deploy", "n8n", "n8n") in rows
     assert any("n8n" in str(a) for a in captured["args"])
+    # -L so a symlinked ~/.claude/skills (dotfiles) is followed on the remote.
+    assert any("find -L" in str(a) for a in captured["args"])
 
 
 def test_unreachable_host_is_best_effort(tmp_path: Path) -> None:

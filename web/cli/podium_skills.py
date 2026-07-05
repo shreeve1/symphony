@@ -139,7 +139,10 @@ _REMOTE_FILE_MARKER = "@@@SYMPHONY_SKILL_FILE@@@"
 _REMOTE_SCAN_SCRIPT = (
     'd="{directory}"; d="${{d/#\\~/$HOME}}"; '
     '[ -d "$d" ] || exit 0; '
-    'find "$d" -name SKILL.md 2>/dev/null | sort | while read -r f; do '
+    # -L follows symlinks: ~/.claude/skills is commonly a dotfiles symlink, and
+    # find without -L will not descend a symlinked root (mirrors Python rglob,
+    # which does follow it, so local and remote scans stay consistent).
+    'find -L "$d" -name SKILL.md 2>/dev/null | sort | while read -r f; do '
     f'echo "{_REMOTE_FILE_MARKER} $f"; cat "$f"; done'
 )
 
