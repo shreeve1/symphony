@@ -80,3 +80,15 @@ bindings:
     landing:
       mode: local
     pi_mode: rpc
+  - name: pi-rmm
+    plane_project_id: pi-rmm
+    tracker: podium
+    type: coding
+    repo_path: /home/james/pi-rmm
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
