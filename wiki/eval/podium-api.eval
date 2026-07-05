@@ -4,3 +4,4 @@ How is the ADR-0023 review preamble rendered after issue 116? ||| render_review_
 How does ADR-0023 prevent a review DONE from bypassing a failing runnable Verification command? ||| verification backstop
 How does ADR-0024 split validation reviews from coding reviews? ||| VALIDATION_REVIEW_PREAMBLE
 ADR-0026 startup pi probe fail-soft ||| pi_probe_failed_permanently
+Is pi-rmm already a live Symphony binding and how was it smoke-tested? ||| smoke Issue 225 / Run 851

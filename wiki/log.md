@@ -1,5 +1,12 @@
 # Wiki Log
 
+## [2026-07-05] session-update | pi-rmm binding onboard
+
+- Actor: agent (Pi), symphony-onboard-project workflow.
+- Inputs: `/home/james/pi-rmm`, `bindings.yml`, live Podium DB, `symphony-host.service` journal, Podium smoke Issue 225 / Run 851, skill verification tests.
+- Outputs: initialized `/home/james/pi-rmm` as git repo (`c7d955e`); committed Symphony binding append (`8bdcbc5`); restarted `symphony-host.service`; smoke Run 851 passed; updated `wiki/raw/sessions/2026-07-05-pi-rmm-binding-onboard.md`, `wiki/entities/binding-pi-rmm.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md` (C-0358), `wiki/eval/podium-api.eval`, and this log entry.
+- Notes: `pi-rmm` is a coding binding, so `WORKFLOW.md` was skipped; no top-level `CLAUDE.md`/`AGENTS.md` exists, which is a repo-owned safety/conventions warning only. No secrets/env files read.
+
 ## [2026-06-26] session-update | Issue 141 worktree gitlink tracking fix
 
 - Actor: agent (Pi), direct investigation + repo configuration fix.
