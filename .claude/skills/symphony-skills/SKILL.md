@@ -15,19 +15,24 @@ Refresh the Podium `skill` table that feeds the new-Issue Skill dropdown.
 
 ## Workflow
 
-1. Preview the catalog scan:
+1. Preview the target catalog (no DB write):
 
    ```bash
    cd /home/james/symphony && uv run python -m web.cli.podium skills refresh --dry-run
    ```
 
-2. Read the dry-run output. Lines are catalog changes:
-   - `+ name` means new Skill row.
-   - `~ name` means changed description or source path.
-   - `- name` means stale seed row removed.
+   Output is one `name⇥description⇥source` line per scanned skill. This lists what
+   the catalog *would* contain — it does **not** diff against the existing table.
+
+2. To preview the actual change set, diff the dry-run output against the current
+   `skill` table (query the DB or `GET /api/skills`). Compute `+`/`~`/`-` yourself:
+   - `+ name` — scanned but not in DB (new Skill row).
+   - `~ name` — in both but description or source differs.
+   - `- name` — in DB but not scanned (stale seed row; manual rows are kept).
 
 3. Show the diff to the operator and get confirmation before the live write.
-4. Run the live refresh:
+4. Run the live refresh — it applies the changes and prints the `+ name` / `~ name` /
+   `- name` diff lines as it writes:
 
    ```bash
    cd /home/james/symphony && uv run python -m web.cli.podium skills refresh

@@ -17,6 +17,7 @@ SCHEMA_SQL = _schema.SCHEMA_SQL
 
 
 DEFAULT_SOURCE = Path("~/.claude/skills")
+PROJECT_SOURCE = Path(".claude/skills")
 MANUAL_SOURCE = ""
 
 
@@ -32,9 +33,10 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         "SELECT name FROM sqlite_schema WHERE type = 'table'"
         " AND name = 'alembic_version'"
     ).fetchone()
-    if has_version_table and connection.execute(
-        "SELECT version_num FROM alembic_version"
-    ).fetchone():
+    if (
+        has_version_table
+        and connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    ):
         return
     connection.executescript(SCHEMA_SQL)
     connection.execute(
@@ -91,7 +93,13 @@ def refresh_skills(
     dry_run: bool = False,
     connection: sqlite3.Connection | None = None,
 ) -> list[str]:
-    records = scan_skills(source)
+    # Merge global source with repo-local project skills; project wins on
+    # name collisions (the project copy is what Symphony actually dispatches).
+    merged: dict[str, SkillRecord] = {
+        record.name: record for record in scan_skills(source)
+    }
+    merged.update({record.name: record for record in scan_skills(PROJECT_SOURCE)})
+    records = sorted(merged.values(), key=lambda record: record.name)
     if dry_run:
         return [_format_record(record) for record in records]
 
