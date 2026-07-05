@@ -254,9 +254,7 @@ def test_list_skills_filters_per_binding(client: TestClient, monkeypatch) -> Non
         connection.commit()
     monkeypatch.setattr(main, "_bindings_override", [REMOTE_BINDING_ENTRY])
 
-    symphony = {
-        s["name"] for s in client.get("/api/skills?binding=symphony").json()
-    }
+    symphony = {s["name"] for s in client.get("/api/skills?binding=symphony").json()}
     assert "global-local" in symphony
     assert "symphony-only" in symphony
     assert "itastack-only" not in symphony
