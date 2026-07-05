@@ -146,6 +146,10 @@ from .selection import (
 from .selection import (
     oldest_candidate as _oldest_candidate,
 )
+from .ports import (
+    fetch_issue as _fetch_issue,
+    maybe_await as _maybe_await,
+)
 from .transient_retry import (
     MAX_COMBINED_RETRIES,
     MAX_OVERLOAD_RETRIES,
@@ -3353,16 +3357,6 @@ async def _detect_agent_schedule(
         body += f" {schedule_summary}"
     await adapter.add_comment(candidate.id, CommentPayload(body=body))
     return "agent-scheduled"
-
-
-async def _maybe_await(value: Any) -> Any:
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
-async def _fetch_issue(adapter: TrackerAdapter, issue_id: str) -> dict[str, Any]:
-    return await adapter.get_issue(issue_id)
 
 
 async def _fetch_issue_comments(adapter: TrackerAdapter, issue_id: str) -> str:
