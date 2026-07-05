@@ -1573,7 +1573,9 @@ async def test_reconcile_stale_running_skips_unclaimed_in_flight() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_stale_running_fresh_in_flight_check_beats_entry_snapshot() -> None:
+async def test_reconcile_stale_running_fresh_in_flight_check_beats_entry_snapshot() -> (
+    None
+):
     # A concurrent _dispatch_one can reserve + transition an issue to running
     # AFTER reconcile's entry snapshot but BEFORE its flip. The flip must
     # re-check in_flight freshly under the lock and skip, not trust the stale

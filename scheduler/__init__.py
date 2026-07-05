@@ -2754,8 +2754,7 @@ async def reconcile_stale_running(
                         continue
             await adapter.transition_state(issue_id, TrackerRole.STATE_TODO)
             LOGGER.info(
-                "state_transitioned issue_id=%s state=todo "
-                "reason=unclaimed-running",
+                "state_transitioned issue_id=%s state=todo reason=unclaimed-running",
                 issue_id,
             )
             continue
