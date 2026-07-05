@@ -270,6 +270,61 @@ with connect() as connection:
 	);
 }
 
+// Issue with both preferred_agent and preferred_model left NULL but a finished
+// run on record — the flyout should surface what that run actually used.
+export function seedResolvedDispatchIssue(
+	binding: string,
+	title: string,
+	agent = "pi",
+	model = "deepseek-v4-pro:high",
+) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+binding = ${JSON.stringify(binding)}
+title = ${JSON.stringify(title)}
+agent = ${JSON.stringify(agent)}
+model = ${JSON.stringify(model)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    issue_cursor = connection.execute(
+        """
+        INSERT INTO issue(
+          binding_name, title, description, state, priority,
+          reasoning_effort, base_branch, comments_md, context_md,
+          created_at, updated_at, last_event_at
+        ) VALUES (?, ?, ?, 'in_review', 'med', 'high', 'main', '', '', ?, ?, ?)
+        """,
+        (binding, title, f"E2E resolved-dispatch fixture for {binding}.", now, now, now),
+    )
+    issue_id = issue_cursor.lastrowid
+    run_cursor = connection.execute(
+        """
+        INSERT INTO run(
+          issue_id, agent, provider, model, state, verdict, summary, exit_code,
+          cost_usd, input_tokens, output_tokens, branch_name,
+          base_branch, log_path, skill_invoked, started_at, ended_at
+        ) VALUES (?, ?, 'openai', ?, 'succeeded', 'review', NULL, NULL,
+          NULL, NULL, NULL, NULL, 'main', NULL, NULL, ?, ?)
+        """,
+        (issue_id, agent, model, now, now),
+    )
+    run_id = run_cursor.lastrowid
+    connection.execute(
+        """
+        UPDATE issue
+        SET latest_run_id = ?, latest_run_state = 'succeeded', latest_verdict = 'review'
+        WHERE id = ?
+        """,
+        (run_id, issue_id),
+    )
+    connection.commit()
+    print(json.dumps({"issueId": issue_id, "runId": run_id}))
+`;
+	return runDbScript<{ issueId: number; runId: number }>(script);
+}
+
 export function appendSessionTail(issueId: number, line: unknown) {
 	const script = `
 import json

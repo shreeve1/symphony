@@ -426,6 +426,7 @@ function MetadataChips({
 	onStageApproved,
 	onStageSchedule,
 	stagedPending,
+	resolvedDispatchParts,
 }: {
 	issue: IssueDetail;
 	skillNames: readonly string[];
@@ -438,6 +439,7 @@ function MetadataChips({
 	onStageApproved: (value: boolean) => void;
 	onStageSchedule: (mode: ScheduleMode) => void;
 	stagedPending: boolean;
+	resolvedDispatchParts: readonly string[];
 }) {
 	const scheduleMode = staged.scheduleMode ?? scheduleModeFor(issue);
 	const scheduleStaged = staged.scheduleMode != null;
@@ -525,6 +527,14 @@ function MetadataChips({
 					onPatch={onPatch}
 				/>
 			</div>
+			{resolvedDispatchParts.length > 0 && (
+				<p
+					data-testid="resolved-dispatch-hint"
+					className="text-xs text-muted-foreground"
+				>
+					Last run used: {resolvedDispatchParts.join(" · ")}
+				</p>
+			)}
 			{issue.worktree_active &&
 				issue.state !== "done" &&
 				issue.worktree_path &&
@@ -1113,6 +1123,15 @@ export function IssueFlyout({
 		issue && runs.data
 			? (runs.data.find((run) => run.id === issue.latest_run_id) ?? null)
 			: null;
+	// When the operator left agent/model unset, surface what the latest run
+	// actually resolved to (catalog/binding default) so the chips aren't blank.
+	const resolvedDispatchParts: string[] = [];
+	if (issue && issue.preferred_agent == null && latestRun?.agent) {
+		resolvedDispatchParts.push(latestRun.agent);
+	}
+	if (issue && issue.preferred_model == null && latestRun?.model) {
+		resolvedDispatchParts.push(latestRun.model);
+	}
 	const binding =
 		issue && bindings.data
 			? (bindings.data.find((item) => item.name === issue.binding_name) ?? null)
@@ -1219,6 +1238,7 @@ export function IssueFlyout({
 
 							<MetadataChips
 								issue={issue}
+								resolvedDispatchParts={resolvedDispatchParts}
 								skillNames={skillNames}
 								modelOptions={modelOpts}
 								showEmptySkillHint={showEmptySkillHint}
