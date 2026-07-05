@@ -78,6 +78,14 @@ from tracker_types import (
 )
 from web.api.db import resolve_run_log_root
 
+from .dispatch_state import (
+    _clear_rate_limit,
+    _cooldown_remaining_s,
+    _DispatchState,
+    _effective_run_cap,
+    _new_dispatch_state,
+    _record_rate_limit,
+)
 from .markers import (
     _SCHEDULE_MARKER_RE as _SCHEDULE_MARKER_RE,
 )
@@ -132,6 +140,12 @@ from .sanitize import (
 from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
+from .selection import (
+    labels_contain_role as _labels_contain_role,
+)
+from .selection import (
+    oldest_candidate as _oldest_candidate,
+)
 from .transient_retry import (
     MAX_COMBINED_RETRIES,
     MAX_OVERLOAD_RETRIES,
@@ -145,18 +159,6 @@ from .transient_retry import (
     format_stall_retry_marker,
     is_transient,
     retry_cooldown_expired,
-)
-from .dispatch_state import (
-    _DispatchState,
-    _clear_rate_limit,
-    _cooldown_remaining_s,
-    _effective_run_cap,
-    _new_dispatch_state,
-    _record_rate_limit,
-)
-from .selection import (
-    labels_contain_role as _labels_contain_role,
-    oldest_candidate as _oldest_candidate,
 )
 
 _wake_signal = import_module("web.api.wake_signal")
@@ -2736,6 +2738,26 @@ async def reconcile_stale_running(
         issue_id = str(issue["id"])
         claim_time = await _claimed_at(adapter, issue_id)
         if claim_time is None:
+            # No Run row and no claim comment: the issue was flipped to
+            # `running` outside the scheduler's claim path (#252 wedge — e.g.
+            # a patrol/monitor write bypassed the claim). Recover it to `todo`
+            # so the scheduler re-dispatches, unless THIS scheduler is
+            # mid-claim. Re-check in_flight freshly under the lock right before
+            # the flip (NOT the entry snapshot): a concurrent _dispatch_one can
+            # reserve + transition an issue to running after our snapshot, and
+            # an issue is always added to in_flight BEFORE transition_state(
+            # running), so a flip-time check always sees a mid-claim issue and
+            # skips it.
+            if dispatch_state is not None:
+                async with dispatch_state.in_flight_lock:
+                    if issue_id in dispatch_state.in_flight_ids:
+                        continue
+            await adapter.transition_state(issue_id, TrackerRole.STATE_TODO)
+            LOGGER.info(
+                "state_transitioned issue_id=%s state=todo "
+                "reason=unclaimed-running",
+                issue_id,
+            )
             continue
         elapsed = now() - claim_time
         issue_name = str(issue.get("name", ""))

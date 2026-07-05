@@ -1521,6 +1521,97 @@ async def test_reconcile_stale_running_blocks_expired_claim(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_reconcile_stale_running_recovers_unclaimed_wedge() -> None:
+    # Regression for #252: an issue flipped to `running` OUTSIDE the scheduler's
+    # claim path (e.g. a patrol/monitor write) has no Run row and no claim
+    # comment, so `_claimed_at` returns None. The boot-only reaper catches this
+    # at restart; the periodic reaper must self-heal it without a restart by
+    # transitioning it back to `todo` so the scheduler re-dispatches.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
+    transport.comments["issue-1"] = []  # no claim comment -> claim_time is None
+
+    await reconcile_stale_running(
+        _adapter(transport),
+        60_000,
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+    )
+
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_running_skips_unclaimed_in_flight() -> None:
+    # The unclaimed-wedge recovery must not fight a legitimately-just-claimed
+    # issue: between `transition_state(running)` and the Run row recording its
+    # started_at, `claim_time` is transiently None but the issue is already in
+    # the dispatch in-flight set. `in_flight_ids` is the grace.
+    import asyncio as _asyncio
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
+    transport.comments["issue-1"] = []
+    state = _DispatchState(
+        semaphore=_asyncio.Semaphore(1),
+        in_flight_ids={"issue-1"},
+        in_flight_lock=_asyncio.Lock(),
+        poll_interval=0.01,
+    )
+
+    await reconcile_stale_running(
+        _adapter(transport),
+        60_000,
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+        dispatch_state=state,
+    )
+
+    # Untouched: this scheduler is mid-claim.
+    assert transport.issues["issue-1"]["state"] == PlaneState.RUNNING.value
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stale_running_fresh_in_flight_check_beats_entry_snapshot() -> None:
+    # A concurrent _dispatch_one can reserve + transition an issue to running
+    # AFTER reconcile's entry snapshot but BEFORE its flip. The flip must
+    # re-check in_flight freshly under the lock and skip, not trust the stale
+    # entry snapshot (which was empty when reconcile started).
+    import asyncio as _asyncio
+
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
+    transport.comments["issue-1"] = []
+    state = _DispatchState(
+        semaphore=_asyncio.Semaphore(1),
+        in_flight_ids=set(),  # empty at reconcile entry
+        in_flight_lock=_asyncio.Lock(),
+        poll_interval=0.01,
+    )
+    adapter = _adapter(transport)
+    original_list = adapter.list_issues_by_state
+
+    async def concurrent_reserve(*args, **kwargs):
+        # Simulate a concurrent dispatch reserving issue-1 mid-reconcile,
+        # after the entry snapshot was taken but before the flip.
+        state.in_flight_ids.add("issue-1")
+        return await original_list(*args, **kwargs)
+
+    adapter.list_issues_by_state = concurrent_reserve  # type: ignore[method-assign]
+
+    await reconcile_stale_running(
+        adapter,
+        60_000,
+        now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
+        dispatch_state=state,
+    )
+
+    # Untouched: the fresh flip-time check saw the mid-reconcile reservation.
+    assert transport.issues["issue-1"]["state"] == PlaneState.RUNNING.value
+
+
+@pytest.mark.asyncio
 async def test_reconcile_uses_newest_claim_comment(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
