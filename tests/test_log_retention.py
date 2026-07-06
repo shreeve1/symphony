@@ -141,7 +141,7 @@ async def test_reconcile_startup_invokes_log_retention_once(
     config = _config(tmp_path)
     adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
 
-    await scheduler.reconcile_startup(
+    await scheduler._reconcile_startup(
         config,
         cast(Any, adapter),
         now=lambda: now,
@@ -184,7 +184,7 @@ async def test_run_loop_schedules_log_retention_every_24h(
 
     monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
     monkeypatch.setattr(scheduler, "LOG_RETENTION_INTERVAL", timedelta(0))
-    monkeypatch.setattr(scheduler, "run_log_retention", fake_log_retention)
+    monkeypatch.setattr(scheduler, "_run_log_retention", fake_log_retention)
     monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
     monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
 

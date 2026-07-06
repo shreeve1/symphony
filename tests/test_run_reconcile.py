@@ -118,7 +118,7 @@ async def test_reconcile_startup_reaps_queued_and_running_podium_runs(
     )
     now = datetime(2026, 6, 11, 12, 0, tzinfo=UTC)
 
-    cleaned = await scheduler.reconcile_startup(
+    cleaned = await scheduler._reconcile_startup(
         config,
         cast(Any, adapter),
         now=lambda: now,
@@ -161,7 +161,7 @@ async def test_reconcile_startup_logs_run_reconcile_pairs(
     adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
 
     with caplog.at_level("INFO"):
-        await scheduler.reconcile_startup(
+        await scheduler._reconcile_startup(
             config,
             cast(Any, adapter),
             now=lambda: datetime(2026, 6, 11, 12, 0, tzinfo=UTC),

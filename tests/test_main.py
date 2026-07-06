@@ -157,7 +157,7 @@ async def test_run_bindings_loop_continues_after_startup_reconcile_transient_fai
 
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with pytest.raises(StopLoop):
@@ -215,7 +215,7 @@ async def test_run_bindings_loop_reaps_claude_sockets_once_for_multiple_bindings
     monkeypatch.setattr(main, "verify_claude_support", lambda: calls.append("probe"))
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with pytest.raises(StopLoop):
@@ -272,7 +272,7 @@ async def test_run_bindings_loop_passes_confirmed_lock_to_claude_reaper(
     monkeypatch.setattr(main, "reap_orphan_rpc_processes", lambda: None)
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with pytest.raises(StopLoop):
@@ -333,7 +333,7 @@ async def test_run_bindings_loop_passes_unconfirmed_lock_when_lock_is_held(
         monkeypatch.setattr(main, "reap_orphan_rpc_processes", lambda: None)
         monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
         monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-        monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+        monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
         monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
         with pytest.raises(StopLoop):
@@ -384,7 +384,7 @@ async def test_run_bindings_loop_probes_before_runtime_construction(monkeypatch)
 
     monkeypatch.setattr(main, "_probe_binding", fake_probe_binding)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with pytest.raises(StopLoop):
@@ -472,7 +472,7 @@ async def test_run_bindings_loop_iterates_all_bindings(monkeypatch):
 
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
     monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
 
@@ -833,7 +833,7 @@ async def test_rate_limited_binding_does_not_block_other_binding(monkeypatch):
 
     monkeypatch.setattr(main, "_probe_binding", lambda config, binding: None)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build_runtime)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with pytest.raises(StopLoop):

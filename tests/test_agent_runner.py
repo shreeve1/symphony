@@ -459,7 +459,7 @@ def test_run_bindings_loop_skips_failed_probe_without_blocking_other_binding(
     monkeypatch.setattr(main, "reap_orphan_rpc_processes", lambda: None)
     monkeypatch.setattr(main, "_probe_binding", fake_probe)
     monkeypatch.setattr(main, "build_binding_runtime", fake_build)
-    monkeypatch.setattr(main, "reconcile_startup", fake_reconcile_startup)
+    monkeypatch.setattr(main, "_reconcile_startup", fake_reconcile_startup)
     monkeypatch.setattr(main, "run_loop", fake_run_loop)
 
     with caplog.at_level("WARNING", logger=main.__name__), pytest.raises(StopLoop):

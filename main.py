@@ -35,7 +35,7 @@ from notifier import TelegramNotifier
 from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, build_adapter
 from prompt_renderer import IssueData, render_prompt, render_review_prompt
 from repo_host import repo_host_for
-from scheduler import _resolve_mode, reconcile_startup, run_loop
+from scheduler import _reconcile_startup, _resolve_mode, run_loop
 from web.cli.podium_skills import sync_skills
 from tracker_adapter import TrackerAdapter
 from tracker_contract import TrackerContract
@@ -311,7 +311,7 @@ async def run_bindings_loop(
                 "reconcile_startup_begin binding=%s", runtime.name
             )
             try:
-                cleaned = await reconcile_startup(
+                cleaned = await _reconcile_startup(
                     runtime.config,
                     runtime.adapter,
                     notifier=notifier,

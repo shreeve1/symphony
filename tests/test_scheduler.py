@@ -31,9 +31,9 @@ from scheduler import (
     _reserve_candidate,
     _reserve_specific_candidate,
     _resolve_mode,
-    reconcile_pending_review,
-    reconcile_stale_running,
-    reconcile_startup,
+    _reconcile_pending_review,
+    _reconcile_stale_running,
+    _reconcile_startup,
     run_tick,
 )
 from tracker_adapter import TrackerAdapter
@@ -1505,7 +1505,7 @@ async def test_reconcile_stale_running_blocks_expired_claim(tmp_path: Path) -> N
         {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
     ]
 
-    await reconcile_stale_running(
+    await _reconcile_stale_running(
         _adapter(transport),
         1000,
         now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -1531,7 +1531,7 @@ async def test_reconcile_stale_running_recovers_unclaimed_wedge() -> None:
     transport.issues["issue-1"] = _issue("issue-1", state=PlaneState.RUNNING.value)
     transport.comments["issue-1"] = []  # no claim comment -> claim_time is None
 
-    await reconcile_stale_running(
+    await _reconcile_stale_running(
         _adapter(transport),
         60_000,
         now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -1561,7 +1561,7 @@ async def test_reconcile_stale_running_skips_unclaimed_in_flight() -> None:
         poll_interval=0.01,
     )
 
-    await reconcile_stale_running(
+    await _reconcile_stale_running(
         _adapter(transport),
         60_000,
         now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -1602,7 +1602,7 @@ async def test_reconcile_stale_running_fresh_in_flight_check_beats_entry_snapsho
 
     adapter.list_issues_by_state = concurrent_reserve  # type: ignore[method-assign]
 
-    await reconcile_stale_running(
+    await _reconcile_stale_running(
         adapter,
         60_000,
         now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -1622,7 +1622,7 @@ async def test_reconcile_uses_newest_claim_comment(tmp_path: Path) -> None:
         {"comment_html": "Symphony claimed at 2026-05-04T01:02:00+00:00"},
     ]
 
-    await reconcile_stale_running(
+    await _reconcile_stale_running(
         _adapter(transport),
         90_000,
         now=lambda: datetime(2026, 5, 4, 1, 2, 30, tzinfo=UTC),
@@ -1644,7 +1644,7 @@ async def test_reconcile_parses_claim_comment_with_code_sha_suffix(
         },
     ]
 
-    await reconcile_stale_running(
+    await _reconcile_stale_running(
         _adapter(transport),
         60_000,
         now=lambda: datetime(2026, 5, 4, 1, 2, 30, tzinfo=UTC),
@@ -1670,7 +1670,7 @@ async def test_reconcile_stale_running_sends_notification(tmp_path: Path) -> Non
     ]
     notifier = TelegramNotifier(bot_token="b", chat_id="c")
     with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
-        await reconcile_stale_running(
+        await _reconcile_stale_running(
             _adapter(transport),
             1000,
             now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -5134,7 +5134,7 @@ async def test_reconcile_startup_reaps_stale_running_issue(tmp_path: Path) -> No
         {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
     ]
 
-    cleaned = await reconcile_startup(
+    cleaned = await _reconcile_startup(
         config,
         _adapter(transport),
         now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -5161,7 +5161,7 @@ async def test_reconcile_startup_skips_live_running_issue(tmp_path: Path) -> Non
         {"comment_html": "Symphony claimed at 2026-05-04T01:00:00+00:00"}
     ]
 
-    cleaned = await reconcile_startup(
+    cleaned = await _reconcile_startup(
         config,
         _adapter(transport),
         now=lambda: datetime(
@@ -5197,7 +5197,7 @@ async def test_reconcile_startup_sends_notification_for_stale_issue(
     notifier = TelegramNotifier(bot_token="b", chat_id="c")
 
     with patch.object(TelegramNotifier, "send", new_callable=AsyncMock) as mock_send:
-        cleaned = await reconcile_startup(
+        cleaned = await _reconcile_startup(
             config,
             _adapter(transport),
             now=lambda: datetime(2026, 5, 4, 1, 1, 1, tzinfo=UTC),
@@ -6375,7 +6375,7 @@ async def test_post_agent_comment_429_stores_pending_data_and_propagates(
 
 @pytest.mark.asyncio
 async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> None:
-    """reconcile_pending_review posts completion comment and transitions to In Review."""
+    """_reconcile_pending_review posts completion comment and transitions to In Review."""
     issue_id = "test-issue-1"
     transport = FakeTransport()
     transport.issues[issue_id] = {
@@ -6398,7 +6398,7 @@ async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> 
         pending_completion_bodies={issue_id: pending_body},
     )
 
-    reconciled = await reconcile_pending_review(
+    reconciled = await _reconcile_pending_review(
         _config(tmp_path),
         adapter,
         state,
@@ -6419,7 +6419,7 @@ async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> 
 async def test_reconcile_pending_review_retry_429_propagates(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Retry add_comment 429 in reconcile_pending_review raises, preserves pending data."""
+    """Retry add_comment 429 in _reconcile_pending_review raises, preserves pending data."""
     issue_id = "test-issue-1"
     pending_body = "**Symphony completed:** Test summary."
 
