@@ -4,8 +4,12 @@ Loop lifecycle (run_loop, _sleep_or_wake, _wait_for_tasks_or_wake) moved from
 scheduler/__init__.py.  Functions still in __init__ (_dispatch_one,
 _sweep_persistent_claude_sessions, _fixed_now) are imported lazily.
 
-WAKE_SENTINEL_CHECK_INTERVAL_S and LOG_RETENTION_INTERVAL are local constants
-to avoid a circular dependency on __init__ for trivial values.
+WAKE_SENTINEL_CHECK_INTERVAL_S is a local constant (used in _sleep_or_wake /
+_wait_for_tasks_or_wake default args). LOG_RETENTION_INTERVAL and
+_run_log_retention resolve through the scheduler package at call time so they
+stay monkeypatchable (tests patch scheduler.LOG_RETENTION_INTERVAL /
+scheduler._run_log_retention); binding them at module load would freeze out
+those patches, as would a local constant.
 """
 
 from __future__ import annotations
@@ -27,12 +31,10 @@ from .dispatch_state import (
     _effective_run_cap,
     _new_dispatch_state,
 )
-from .reconcile import run_log_retention as _run_log_retention
 
 LOGGER = logging.getLogger(__name__)
 
 WAKE_SENTINEL_CHECK_INTERVAL_S = 1.0
-LOG_RETENTION_INTERVAL = timedelta(hours=24)
 
 
 async def _sleep_or_wake(
@@ -107,9 +109,11 @@ async def run_loop(
     """
 
     from . import (  # noqa: F811
+        LOG_RETENTION_INTERVAL,
         TickResult,
         _dispatch_one,
         _fixed_now,
+        _run_log_retention,
         _sleep_or_wake,
         _sweep_persistent_claude_sessions,
         _wait_for_tasks_or_wake,
