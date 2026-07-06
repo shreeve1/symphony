@@ -865,9 +865,13 @@ def list_bindings(
         binding["repo_name"] = repo_path.name if repo_path is not None else None
         if binding["is_remote"]:
             remote = _remote_for_binding(name)
-            binding["host"] = (
-                _host_label(remote.host) if remote and remote.host else name
-            )
+            host = _host_label(remote.host) if remote and remote.host else name
+            # Show display_name when host is a raw IP (operator-friendly)
+            try:
+                ipaddress.ip_address(host)
+                binding["host"] = str(binding["display_name"])
+            except ValueError:
+                binding["host"] = host
         else:
             binding["host"] = _LOCAL_HOSTNAME
     return result
