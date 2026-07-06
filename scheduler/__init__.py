@@ -28,17 +28,19 @@ from notifier import (
 from plane_adapter import PlaneRateLimitError
 from prompt_renderer import render_previous_comments_block, review_mode
 from redispatch_core import (
-    COMMIT_REDISPATCH_REPLY_PREFIX,
     MAX_COMMIT_REDISPATCH,
     OPERATOR_RELAND_PENDING_PREFIX,
-    RELAND_DONE_PREFIX,
-    RELAND_DONE_RE,
     RELAND_PENDING_PREFIX,
-    RELAND_PENDING_RE,
     count_commit_redispatches,
     operator_reland_done_body,
     operator_reland_unconsumed,
-    redispatch_commit_note,
+)
+from .reland import (
+    _commit_redispatch_body as _commit_redispatch_body,
+    _next_review_dispatch_marker as _next_review_dispatch_marker,
+    _reland_done_body as _reland_done_body,
+    _reland_done_count as _reland_done_count,
+    _reland_pending_count as _reland_pending_count,
 )
 from repo_host import repo_host_for
 from schedule import (
@@ -188,9 +190,6 @@ LOGGER = logging.getLogger(__name__)
 # historical issues. New claim time comes from the Run record's ``started_at``.
 CLAIM_PREFIX = "Symphony claimed at "
 REPORT_MAX_BYTES = 2048
-_REVIEW_DISPATCH_MARKER_RE = re.compile(
-    r"^### Symphony Review(?: \((\d+)\))?[ \t]*$", re.MULTILINE
-)
 # Matches CSI escape sequences (e.g. \x1b[0m, \x1b[90m, \x1b[1;31m). Stripped
 # from agent stderr so failure comments are readable on Plane, which renders
 # fenced code as plain text.
@@ -371,50 +370,6 @@ async def _render_for_dispatch(
     ):
         prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
     return candidate, prompt
-
-
-def _next_review_dispatch_marker(comments_md: str) -> str:
-    prior = len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
-    return f"### Symphony Review ({prior + 1})\n\nReview run dispatched."
-
-
-def _reland_pending_count(comments_md: str) -> int:
-    return len(RELAND_PENDING_RE.findall(comments_md or ""))
-
-
-def _reland_done_count(comments_md: str) -> int:
-    return len(RELAND_DONE_RE.findall(comments_md or ""))
-
-
-def _commit_redispatch_body(
-    config: SymphonyConfig,
-    binding_name: str,
-    issue_id: str,
-    *,
-    auto_land: bool,
-    now: datetime,
-) -> str:
-    worktree_helpers = import_module("worktree_facade")
-    worktree_path = worktree_helpers.worktree_dir(
-        config.homelab_repo_path, binding_name, issue_id
-    )
-    branch = worktree_helpers.branch_name(binding_name, issue_id)
-    body = (
-        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · {now.isoformat()})\n\n"
-        f"{redispatch_commit_note(worktree_path, branch)}"
-    )
-    if auto_land:
-        body += f"\n\n{RELAND_PENDING_PREFIX} · {now.isoformat()}"
-    return body
-
-
-def _reland_done_body(comments_md: str, *, now: datetime) -> str:
-    outstanding = _reland_pending_count(comments_md) - _reland_done_count(comments_md)
-    if outstanding <= 0:
-        return ""
-    return "\n".join(
-        f"{RELAND_DONE_PREFIX} · {now.isoformat()}" for _ in range(outstanding)
-    )
 
 
 def _extract_runnable_verification(issue_body: str) -> str:
