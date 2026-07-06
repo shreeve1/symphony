@@ -2740,6 +2740,8 @@ async def _release_candidate(
     async with dispatch_state.in_flight_lock:
         dispatch_state.in_flight_ids.discard(issue_id)
         dispatch_state.in_flight_locks.pop(issue_id, None)
+
+
 async def _fetch_issue_comments(adapter: TrackerAdapter, issue_id: str) -> str:
     comments = await adapter.list_comments(issue_id)
     comments.sort(key=lambda c: c.get("created_at", ""))
