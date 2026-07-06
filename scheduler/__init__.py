@@ -116,6 +116,21 @@ from .markers import (
 from .markers import (
     _parse_summary_marker as _parse_summary_marker,
 )
+from .ports import (
+    fetch_issue as _fetch_issue,
+)
+from .ports import (
+    maybe_await as _maybe_await,
+)
+from .run_records import (
+    close_run_record_steering as _close_run_record_steering,
+)
+from .run_records import (
+    finish_run_record as _finish_run_record,
+)
+from .run_records import (
+    mark_run_record_running as _mark_run_record_running,
+)
 from .sanitize import (
     _capture_natural_turn as _capture_natural_turn,
 )
@@ -145,19 +160,6 @@ from .selection import (
 )
 from .selection import (
     oldest_candidate as _oldest_candidate,
-)
-from .ports import (
-    fetch_issue as _fetch_issue,
-    maybe_await as _maybe_await,
-)
-from .run_records import (
-    close_run_record_steering as _close_run_record_steering,
-)
-from .run_records import (
-    finish_run_record as _finish_run_record,
-)
-from .run_records import (
-    mark_run_record_running as _mark_run_record_running,
 )
 from .transient_retry import (
     MAX_COMBINED_RETRIES,
@@ -691,7 +693,14 @@ def _apply_dispatch_gate(
                 f"Dispatch blocked: skill `{skill}` is not in the Podium "
                 "skill catalog. Refresh the catalog or clear preferred_skill."
             )
-        if not Path(skill_source).is_file():
+        try:
+            source_exists = Path(skill_source).is_file()
+        except PermissionError:
+            return candidate, (
+                f"Dispatch blocked: cannot read skill source for `{skill}` "
+                f"(permission denied): {skill_source}"
+            )
+        if not source_exists:
             return candidate, (
                 f"Dispatch blocked: skill source for `{skill}` is missing "
                 f"on disk: {skill_source}"

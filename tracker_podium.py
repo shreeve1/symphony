@@ -151,10 +151,18 @@ class PodiumTrackerAdapter:
         return bool(binding and binding.name in set(labels))
 
     def skill_source(self, skill_name: str) -> str:
-        """Absolute SKILL.md path for a catalog skill, or "" when unknown."""
+        """Absolute SKILL.md path for a catalog skill, or "" when unknown.
+
+        Deterministic: prefers binding-scoped skills, then global (null
+        binding_name), then falls back to any match by id.  This avoids
+        picking a stale row from a different host.
+        """
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT source FROM skill WHERE name = ?", (skill_name,)
+                "SELECT source FROM skill WHERE name = ? "
+                "ORDER BY CASE WHEN binding_name = ? THEN 0 "
+                "WHEN binding_name IS NULL THEN 1 ELSE 2 END, id",
+                (skill_name, self.binding_name),
             ).fetchone()
         return str(row["source"]) if row and row["source"] else ""
 
