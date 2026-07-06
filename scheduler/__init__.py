@@ -76,8 +76,6 @@ from tracker_types import (
     _is_state,
     _parse_iso,
 )
-from web.api.db import resolve_run_log_root
-
 from .bindings import (
     binding_from_config as _binding_from_config,
     binding_for_issue as _binding_for_issue,
@@ -130,12 +128,10 @@ from .ports import (
 )
 from .run_records import (
     close_run_record_steering as _close_run_record_steering,
-)
-from .run_records import (
     finish_run_record as _finish_run_record,
-)
-from .run_records import (
+    handle_archived_terminal as _handle_archived_terminal,
     mark_run_record_running as _mark_run_record_running,
+    start_run_record as _start_run_record,
 )
 from .sanitize import (
     _capture_natural_turn as _capture_natural_turn,
@@ -676,128 +672,6 @@ def _apply_dispatch_gate(
         ),
         None,
     )
-
-
-async def _start_run_record(
-    adapter: TrackerAdapter,
-    config: SymphonyConfig,
-    candidate: CandidateIssue,
-    *,
-    binding: ProjectBinding | None = None,
-) -> tuple[str | None, Path | None]:
-    if not getattr(adapter, "stores_context", False):
-        return None, None
-    record_run = getattr(adapter, "record_run", None)
-    update_run = getattr(adapter, "update_run", None)
-    if not callable(record_run) or not callable(update_run):
-        return None, None
-    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    agent = (
-        resolved_binding.resolve_agent(candidate.labels)
-        if resolved_binding is not None
-        else "pi"
-    )
-    base_branch = getattr(candidate, "base_branch", "") or config.base_branch
-    resolved_provider = getattr(candidate, "resolved_provider", "")
-    resolved_model = getattr(candidate, "resolved_model", "")
-    if agent == "pi":
-        resolved_provider = resolved_provider or config.pi_provider
-        resolved_model = resolved_model or config.pi_model
-    run_payload = {
-        "issue_id": candidate.id,
-        "agent": agent,
-        # Resolved by the dispatch gate from models.yml; legacy config fallback
-        # applies only to pi. Non-pi agents store resolved fields verbatim.
-        "provider": resolved_provider,
-        "model": resolved_model,
-        "state": "queued",
-        "base_branch": base_branch,
-        "skill_invoked": getattr(candidate, "preferred_skill", None),
-        "agent_session_sha": getattr(candidate, "agent_session_sha", "") or None,
-        "resumed": bool(getattr(candidate, "resumed", False)),
-        **_worktree_run_fields(
-            config, candidate, base_branch, binding=resolved_binding
-        ),
-    }
-    run = await _maybe_await(
-        cast(Callable[[dict[str, Any]], Any], record_run)(run_payload)
-    )
-    run_id = str(run.get("id") or "")
-    if not run_id:
-        return None, None
-    adapter_db_path = getattr(adapter, "db_path", None)
-    run_log_root = (
-        Path(adapter_db_path).parent / "runs"
-        if adapter_db_path is not None
-        else resolve_run_log_root()
-    )
-    return run_id, (run_log_root / f"{run_id}.log").resolve()
-
-
-async def _handle_archived_terminal(
-    adapter: TrackerAdapter,
-    config: SymphonyConfig,
-    candidate: CandidateIssue,
-    run_id: str | None,
-    *,
-    binding: ProjectBinding | None = None,
-) -> bool:
-    """Return True when a completed Run's issue was archived mid-run.
-
-    Archived is terminal for engine verdict transitions: run rows still finish,
-    but issue.state is not resurrected and persistent worktrees are discarded.
-    """
-    issue = await _fetch_issue(adapter, candidate.id)
-    if str(issue.get("state") or "") != "archived":
-        return False
-
-    LOGGER.info(
-        "archived_terminal issue_id=%s run_id=%s",
-        candidate.id,
-        run_id or "",
-    )
-
-    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    binding_name = str(
-        getattr(candidate, "binding_name", "")
-        or (resolved_binding.name if resolved_binding is not None else "")
-    )
-    if not binding_name:
-        return True
-
-    issue_id = str(candidate.id)
-    if resolved_binding is not None and resolved_binding.is_remote:
-        remote_worktree = import_module("remote_worktree")
-        if await asyncio.to_thread(
-            remote_worktree.worktree_exists,
-            resolved_binding.remote,
-            config.homelab_repo_path,
-            binding_name,
-            issue_id,
-        ):
-            await asyncio.to_thread(
-                remote_worktree.remove_worktree,
-                resolved_binding.remote,
-                config.homelab_repo_path,
-                binding_name,
-                issue_id,
-            )
-    else:
-        worktree_helpers = import_module("worktree_facade")
-        remove_worktree = worktree_helpers.remove_worktree
-        worktree_exists = worktree_helpers.worktree_exists
-
-        if await asyncio.to_thread(
-            worktree_exists, config.homelab_repo_path, binding_name, issue_id
-        ):
-            await asyncio.to_thread(
-                remove_worktree, config.homelab_repo_path, binding_name, issue_id
-            )
-
-    update_columns = getattr(adapter, "_update_issue_columns", None)
-    if callable(update_columns) and issue.get("worktree_active"):
-        await _maybe_await(update_columns(candidate.id, {"worktree_active": False}))
-    return True
 
 
 class LockHeld(RuntimeError):
