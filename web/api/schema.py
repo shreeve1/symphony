@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0015_skill_host_binding_scope"
+INITIAL_REVISION = "0016_skill_scope_null_safe_unique"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -25,9 +25,16 @@ CREATE TABLE IF NOT EXISTS skill(
   -- Host the skill was scanned from (ADR-0033). NULL binding_name = host-global
   -- (~/.claude/skills); set = repo-local (that binding's .claude/skills).
   host TEXT,
-  binding_name TEXT,
-  UNIQUE(name, host, binding_name)
+  binding_name TEXT
 );
+
+-- NULL-safe uniqueness: a table-level UNIQUE(name,host,binding_name) does NOT
+-- dedupe host-global rows because SQLite treats NULL as distinct, so refresh's
+-- ON CONFLICT never fired for binding_name IS NULL and every sync appended a
+-- fresh copy. IFNULL(binding_name,'') collapses NULL to a real value so the
+-- constraint (and ON CONFLICT) covers host-global rows too.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_skill_scope
+  ON skill(name, host, IFNULL(binding_name, ''));
 
 CREATE TABLE IF NOT EXISTS issue(
   id INTEGER PRIMARY KEY,

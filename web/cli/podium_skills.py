@@ -326,11 +326,15 @@ def _apply_sync(
         for record in sorted(records):
             if record.name not in existing:
                 changes.append(f"+ {_scope_label(host, binding)} {record.name}")
+            # ON CONFLICT target must match the ux_skill_scope expression index
+            # (IFNULL binding), not the bare columns: SQLite treats NULL as
+            # distinct, so a bare (name,host,binding_name) target never fires for
+            # host-global rows and every sync would append a duplicate.
             connection.execute(
                 """
                 INSERT INTO skill(name, description, source, host, binding_name)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(name, host, binding_name) DO UPDATE SET
+                ON CONFLICT(name, host, IFNULL(binding_name, '')) DO UPDATE SET
                   description = excluded.description,
                   source = excluded.source
                 """,

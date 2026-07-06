@@ -65,6 +65,39 @@ def test_local_sync_scopes_global_and_project(tmp_path: Path) -> None:
     assert any(c.startswith("+") for c in changes)
 
 
+def test_repeated_sync_is_idempotent_for_host_global(tmp_path: Path) -> None:
+    # Regression: SQLite treats NULL as distinct under UNIQUE, so a bare
+    # ON CONFLICT target never fired for host-global rows (binding_name NULL)
+    # and every sync appended a duplicate. The IFNULL expression index must
+    # dedupe so repeated syncs leave exactly one row per host-global skill.
+    home = tmp_path / "home"
+    (home / ".claude" / "skills").mkdir(parents=True)
+    _write_skill(home / ".claude" / "skills", "tdd", "global tdd")
+    repo = tmp_path / "repo"
+    (repo / ".claude" / "skills").mkdir(parents=True)
+
+    import os
+
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(home)
+    try:
+        conn = _fresh_db()
+        bindings = [{"name": "symphony", "repo_path": str(repo)}]
+        for _ in range(3):
+            _skills.sync_skills(bindings, connection=conn, local_hostname="aidev")
+    finally:
+        if old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = old_home
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM skill WHERE name='tdd' AND host='aidev'"
+        " AND binding_name IS NULL"
+    ).fetchone()[0]
+    assert count == 1
+
+
 def test_sync_replaces_scope_and_protects_manual_rows(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / ".claude" / "skills").mkdir(parents=True)
