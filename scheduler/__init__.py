@@ -2673,8 +2673,6 @@ async def run_loop(
                 LOGGER.info("wake_sentinel_consumed")
 
 
-
-
 async def _fetch_issue_comments(adapter: TrackerAdapter, issue_id: str) -> str:
     comments = await adapter.list_comments(issue_id)
     comments.sort(key=lambda c: c.get("created_at", ""))

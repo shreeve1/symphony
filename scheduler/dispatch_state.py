@@ -25,6 +25,7 @@ LOGGER = logging.getLogger(__name__)
 class SchedulerError(RuntimeError):
     """Raised for scheduler setup failures."""
 
+
 RATE_LIMIT_BASE_COOLDOWN_S = 30.0
 RATE_LIMIT_MAX_COOLDOWN_S = 300.0
 RATE_LIMIT_JITTER_FRACTION = 0.2
