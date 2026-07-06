@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
 import socket
 import subprocess
@@ -202,7 +203,15 @@ def _remote_policy(binding: dict[str, Any]):
 
 
 def _host_label(host: str) -> str:
-    return host.split(".", 1)[0]
+    # Strip the DNS domain from a hostname (aidev.lan -> aidev), but leave IP
+    # addresses intact: Tailscale IPs all share the 100.x prefix, so splitting
+    # on '.' would collapse every Tailscale-addressed host to '100' and
+    # cross-share host-global skills between different remote hosts.
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        return host.split(".", 1)[0]
 
 
 def sync_skills(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import os
@@ -830,7 +831,15 @@ _LOCAL_HOSTNAME = socket.gethostname().split(".", 1)[0]
 
 
 def _host_label(host: str) -> str:
-    return host.split(".", 1)[0]
+    # Strip DNS domain (aidev.lan -> aidev) but leave IPs intact: Tailscale IPs
+    # all share the 100.x prefix, so splitting on '.' would collapse every
+    # Tailscale-addressed host to '100'. Must match podium_skills._host_label so
+    # the per-binding skill filter resolves the same host string the sync wrote.
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        return host.split(".", 1)[0]
 
 
 @app.get("/api/bindings")

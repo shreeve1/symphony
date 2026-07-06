@@ -174,3 +174,11 @@ def test_unreachable_host_is_best_effort(tmp_path: Path) -> None:
 
     names = {r["name"] for r in conn.execute("SELECT name FROM skill")}
     assert "stale-remote" in names
+
+
+def test_host_label_preserves_ip_addresses() -> None:
+    # Tailscale IPs share the 100.x prefix; splitting on '.' would collapse every
+    # such host to '100' and cross-share host-global skills between hosts.
+    assert _skills._host_label("100.95.224.218") == "100.95.224.218"
+    assert _skills._host_label("aidev.lan") == "aidev"
+    assert _skills._host_label("n8n") == "n8n"
