@@ -83,6 +83,7 @@ from .bindings import (
     worktree_run_fields as _worktree_run_fields,
 )
 from .dispatch_state import (
+    SchedulerError,
     _clear_rate_limit,
     _cooldown_remaining_s,
     _DispatchState,
@@ -158,10 +159,10 @@ from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
 from .selection import (
+    _release_candidate,
+    _reserve_candidate,
+    _reserve_specific_candidate,
     labels_contain_role as _labels_contain_role,
-)
-from .selection import (
-    oldest_candidate as _oldest_candidate,
 )
 from .transient_retry import (
     MAX_COMBINED_RETRIES,
@@ -215,10 +216,6 @@ def _fixed_now(value: datetime) -> Callable[[], datetime]:
 # Cap the blocked-reason text sent to the Telegram notifier, leaving headroom
 # under Telegram's 4096-char limit for the name/identifier/URL wrapping.
 NOTIFY_REASON_MAX_CHARS = 2000
-
-
-class SchedulerError(RuntimeError):
-    """Raised for scheduler setup failures."""
 
 
 _SECRET_ENV_KEYS = (
@@ -2676,70 +2673,6 @@ async def run_loop(
                 LOGGER.info("wake_sentinel_consumed")
 
 
-async def _reserve_candidate(
-    candidates: Sequence[CandidateIssue],
-    contract: TrackerContract,
-    *,
-    approval_policy_enabled: bool,
-    dispatch_state: _DispatchState | None = None,
-) -> CandidateIssue | None:
-    if dispatch_state is None:
-        raise SchedulerError("dispatch_state is required")
-    async with dispatch_state.in_flight_lock:
-        held_locks = (
-            set().union(*dispatch_state.in_flight_locks.values())
-            if dispatch_state.in_flight_locks
-            else set()
-        )
-        available = [
-            candidate
-            for candidate in candidates
-            if candidate.id not in dispatch_state.in_flight_ids
-            and set(candidate.locks).isdisjoint(held_locks)
-        ]
-        selected = _oldest_candidate(
-            available,
-            contract,
-            approval_policy_enabled=approval_policy_enabled,
-        )
-        if selected is not None:
-            dispatch_state.in_flight_ids.add(selected.id)
-            dispatch_state.in_flight_locks[selected.id] = frozenset(selected.locks)
-        return selected
-
-
-async def _reserve_specific_candidate(
-    candidate: CandidateIssue,
-    *,
-    dispatch_state: _DispatchState | None = None,
-) -> bool:
-    if dispatch_state is None:
-        raise SchedulerError("dispatch_state is required")
-    async with dispatch_state.in_flight_lock:
-        held_locks = (
-            set().union(*dispatch_state.in_flight_locks.values())
-            if dispatch_state.in_flight_locks
-            else set()
-        )
-        if candidate.id in dispatch_state.in_flight_ids:
-            return False
-        if not set(candidate.locks).isdisjoint(held_locks):
-            return False
-        dispatch_state.in_flight_ids.add(candidate.id)
-        dispatch_state.in_flight_locks[candidate.id] = frozenset(candidate.locks)
-        return True
-
-
-async def _release_candidate(
-    issue_id: str,
-    *,
-    dispatch_state: _DispatchState | None = None,
-) -> None:
-    if dispatch_state is None:
-        raise SchedulerError("dispatch_state is required")
-    async with dispatch_state.in_flight_lock:
-        dispatch_state.in_flight_ids.discard(issue_id)
-        dispatch_state.in_flight_locks.pop(issue_id, None)
 
 
 async def _fetch_issue_comments(adapter: TrackerAdapter, issue_id: str) -> str:

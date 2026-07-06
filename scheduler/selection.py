@@ -1,9 +1,7 @@
 """Scheduler selection concern module.
 
-Pure candidate-selection predicates: role membership on a candidate's labels and
-picking the oldest eligible candidate. No dispatch state, no I/O — the impure
-reservation helpers remain in ``scheduler.__init__`` until later slices move them
-behind stable module seams.
+Candidate-selection predicates and reservation helpers for in-flight dispatch
+state management.
 """
 
 from __future__ import annotations
@@ -14,6 +12,8 @@ from typing import cast
 from tracker_adapter import TrackerAdapter
 from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from tracker_types import CandidateIssue
+
+from .dispatch_state import SchedulerError, _DispatchState
 
 
 def labels_contain_role(
@@ -53,3 +53,69 @@ def oldest_candidate(
     if not eligible:
         return None
     return sorted(eligible, key=lambda issue: issue.created_at)[0]
+
+
+async def _reserve_candidate(
+    candidates: Sequence[CandidateIssue],
+    contract: TrackerContract,
+    *,
+    approval_policy_enabled: bool,
+    dispatch_state: _DispatchState | None = None,
+) -> CandidateIssue | None:
+    if dispatch_state is None:
+        raise SchedulerError("dispatch_state is required")
+    async with dispatch_state.in_flight_lock:
+        held_locks = (
+            set().union(*dispatch_state.in_flight_locks.values())
+            if dispatch_state.in_flight_locks
+            else set()
+        )
+        available = [
+            candidate
+            for candidate in candidates
+            if candidate.id not in dispatch_state.in_flight_ids
+            and set(candidate.locks).isdisjoint(held_locks)
+        ]
+        selected = oldest_candidate(
+            available,
+            contract,
+            approval_policy_enabled=approval_policy_enabled,
+        )
+        if selected is not None:
+            dispatch_state.in_flight_ids.add(selected.id)
+            dispatch_state.in_flight_locks[selected.id] = frozenset(selected.locks)
+        return selected
+
+
+async def _reserve_specific_candidate(
+    candidate: CandidateIssue,
+    *,
+    dispatch_state: _DispatchState | None = None,
+) -> bool:
+    if dispatch_state is None:
+        raise SchedulerError("dispatch_state is required")
+    async with dispatch_state.in_flight_lock:
+        held_locks = (
+            set().union(*dispatch_state.in_flight_locks.values())
+            if dispatch_state.in_flight_locks
+            else set()
+        )
+        if candidate.id in dispatch_state.in_flight_ids:
+            return False
+        if not set(candidate.locks).isdisjoint(held_locks):
+            return False
+        dispatch_state.in_flight_ids.add(candidate.id)
+        dispatch_state.in_flight_locks[candidate.id] = frozenset(candidate.locks)
+        return True
+
+
+async def _release_candidate(
+    issue_id: str,
+    *,
+    dispatch_state: _DispatchState | None = None,
+) -> None:
+    if dispatch_state is None:
+        raise SchedulerError("dispatch_state is required")
+    async with dispatch_state.in_flight_lock:
+        dispatch_state.in_flight_ids.discard(issue_id)
+        dispatch_state.in_flight_locks.pop(issue_id, None)
