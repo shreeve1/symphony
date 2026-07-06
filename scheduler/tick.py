@@ -198,9 +198,7 @@ async def _select_run_tick_candidate(
         return TickResult(False, "plane-unreachable")
     _clear_rate_limit(dispatch_state)
     if binding is not None and binding.scheduling:
-        candidates = [
-            c for c in candidates if not getattr(c, "review_dispatch", False)
-        ]
+        candidates = [c for c in candidates if not getattr(c, "review_dispatch", False)]
     now_dt = now()
     candidates = [
         c
