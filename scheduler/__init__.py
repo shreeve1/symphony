@@ -78,6 +78,12 @@ from tracker_types import (
 )
 from web.api.db import resolve_run_log_root
 
+from .bindings import (
+    binding_from_config as _binding_from_config,
+    binding_for_issue as _binding_for_issue,
+    worktree_enabled as _worktree_enabled,
+    worktree_run_fields as _worktree_run_fields,
+)
 from .dispatch_state import (
     _clear_rate_limit,
     _cooldown_remaining_s,
@@ -229,70 +235,6 @@ _SECRET_ENV_KEYS = (
     "CLIP" + "ROXY_API_KEY",
     "TELEGRAM_BOT_TOKEN",
 )
-
-
-def _binding_from_config(config: SymphonyConfig) -> ProjectBinding | None:
-    if len(config.bindings) == 1:
-        return config.bindings[0]
-    return None
-
-
-def _binding_for_issue(
-    config: SymphonyConfig,
-    candidate: CandidateIssue,
-    *,
-    binding: ProjectBinding | None = None,
-) -> ProjectBinding | None:
-    if binding is not None:
-        return binding
-    candidate_binding_name = getattr(candidate, "binding_name", "")
-    if candidate_binding_name:
-        for configured_binding in config.bindings:
-            if configured_binding.name == candidate_binding_name:
-                return configured_binding
-    return _binding_from_config(config)
-
-
-def _worktree_enabled(
-    config: SymphonyConfig,
-    candidate: CandidateIssue,
-    *,
-    binding: ProjectBinding | None = None,
-) -> bool:
-    # per-binding capability (ADR-0032); falls back to global config when binding is None
-    wt_default = (
-        binding.worktree_default if binding is not None else config.worktree_default
-    )
-    if not wt_default:
-        return False
-    return bool(getattr(candidate, "worktree_active", False))
-
-
-def _worktree_run_fields(
-    config: SymphonyConfig,
-    candidate: CandidateIssue,
-    base_branch: str,
-    *,
-    binding: ProjectBinding | None = None,
-) -> dict[str, str]:
-    if not _worktree_enabled(config, candidate, binding=binding):
-        return {}
-    resolved_binding = _binding_for_issue(config, candidate, binding=binding)
-    worktree_helpers = import_module("worktree_facade")
-    branch_name = worktree_helpers.branch_name
-    worktree_dir = worktree_helpers.worktree_dir
-
-    binding_name = getattr(candidate, "binding_name", "") or (
-        resolved_binding.name if resolved_binding is not None else ""
-    )
-    issue_id = str(candidate.id)
-    return {
-        "worktree_path": str(
-            worktree_dir(config.homelab_repo_path, binding_name, issue_id)
-        ),
-        "branch_name": branch_name(binding_name, issue_id),
-        "base_branch": base_branch,
-    }
 
 
 def _invoke_renderer(
