@@ -9,13 +9,13 @@ import re
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
 
 from agent_runner import AgentAdapter, AgentResult
-from blocked_reconciler import reconcile_blocked
+from blocked_reconciler import reconcile_blocked  # noqa: F401  (re-export: scheduler.reconcile_blocked is the public monkeypatch surface)
 from claude_runner import claude_probe_failure_reason, sweep_persistent_claude_sessions
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
@@ -72,19 +72,17 @@ from tracker_contract import DEFAULT_CONTRACT, TrackerContract, TrackerRole
 from tracker_types import (
     CandidateIssue,
     CommentPayload,
-    _extract_labels,
+    _extract_labels,  # noqa: F401  (re-export: scheduler._extract_labels is the public test surface)
     _is_state,
     _parse_iso,
 )
 from .bindings import (
-    binding_from_config as _binding_from_config,
     binding_for_issue as _binding_for_issue,
     worktree_enabled as _worktree_enabled,
     worktree_run_fields as _worktree_run_fields,
 )
-from .dispatch_state import (
+from .dispatch_state import (  # noqa: F401  (SchedulerError + rate-limit/cooldown re-exports: scheduler._NAME is the public test/patch surface)
     SchedulerError,
-    _clear_rate_limit,
     _cooldown_remaining_s,
     _DispatchState,
     _effective_run_cap,
@@ -128,7 +126,6 @@ from .ports import (
     maybe_await as _maybe_await,
 )
 from .run_records import (
-    close_run_record_steering as _close_run_record_steering,
     finish_run_record as _finish_run_record,
     handle_archived_terminal as _handle_archived_terminal,
     mark_run_record_running as _mark_run_record_running,
@@ -158,7 +155,7 @@ from .sanitize import (
 from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
-from .selection import (
+from .selection import (  # noqa: F401  (_reserve/_release re-exports: scheduler._NAME is the public test surface)
     _release_candidate,
     _reserve_candidate,
     _reserve_specific_candidate,
@@ -2336,7 +2333,6 @@ async def _block_issue(
             LOGGER.warning("notification_error issue_id=%s error=%s", issue_id, exc)
 
 
-
 # Re-exported tick orchestration (moved to .tick module for seam isolation).
 from .tick import (  # noqa: E402
     _select_run_tick_candidate as _select_run_tick_candidate,
@@ -2352,6 +2348,7 @@ from .loop import (  # noqa: E402
     _wait_for_tasks_or_wake as _wait_for_tasks_or_wake,
     run_loop as run_loop,
 )
+
 # Re-exported schedule helpers (moved to .schedule module for seam isolation).
 from .schedule import (  # noqa: E402
     _default_scheduled_label_event as _default_scheduled_label_event,
@@ -2364,8 +2361,7 @@ from .schedule import (  # noqa: E402
 )
 
 # Re-exported reconcile functions (moved to .reconcile module for seam isolation).
-from .reconcile import (  # noqa: E402
-    reconcile_orphaned_runs as _reconcile_orphaned_runs,
+from .reconcile import (  # noqa: E402,F401  (re-exports: scheduler._NAME is the public test/patch surface)
     reconcile_pending_review as _reconcile_pending_review,
     reconcile_stale_running as _reconcile_stale_running,
     reconcile_startup as _reconcile_startup,
