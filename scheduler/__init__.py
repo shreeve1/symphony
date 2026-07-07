@@ -166,6 +166,7 @@ from .transient_retry import (
     MAX_OVERLOAD_RETRIES,
     MAX_STALL_RETRIES,
     MAX_TIMEOUT_RETRIES,
+    PI_RETRY_TAGS,
     STALL_WATCHDOG_SENTINEL,
     count_all_retries,
     count_retries,
@@ -910,7 +911,15 @@ async def _maybe_retry_stall(
     mode: str,
     comments_md: str,
 ) -> TickResult | None:
-    if STALL_WATCHDOG_SENTINEL not in (result.stderr or ""):
+    # ADR-0034: broaden beyond the RPC stall sentinel (ADR-0027) to also match
+    # any pi-retry extension tag — provider-stream stalls where pi keeps
+    # narrating never trip the RPC watchdog, so the tagged-exhaustion stderr is
+    # the only signal. Closed allowlist (PI_RETRY_TAGS) keeps genuine
+    # crashes/keys/config errors fail-closed to block.
+    stderr = result.stderr or ""
+    if STALL_WATCHDOG_SENTINEL not in stderr and not any(
+        tag in stderr for tag in PI_RETRY_TAGS
+    ):
         return None
 
     now_dt = now()

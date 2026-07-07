@@ -8,6 +8,7 @@ from scheduler.transient_retry import (
     MAX_OVERLOAD_RETRIES,
     MAX_STALL_RETRIES,
     MAX_TIMEOUT_RETRIES,
+    PI_RETRY_TAGS,
     RETRY_MARKER_PREFIX,
     RETRY_MARKER_RE,
     RETRY_MARKER_TIMESTAMP_RE,
@@ -100,6 +101,19 @@ def test_stall_retry_marker_format_regex_and_counts() -> None:
 def test_retry_constants_and_redispatch_reexport() -> None:
     assert MAX_OVERLOAD_RETRIES == 2
     assert MAX_TIMEOUT_RETRIES == 1
-    assert MAX_STALL_RETRIES == 1
+    assert MAX_STALL_RETRIES == 3  # ADR-0034: raised 1→3
     assert MAX_COMBINED_RETRIES == 3
     assert REDISPATCH_RETRY_MARKER_PREFIX is RETRY_MARKER_PREFIX
+
+
+def test_pi_retry_tags_allowlist_is_the_four_documented_literals() -> None:
+    # ADR-0034: closed allowlist owned by the dotfiles pi-retry extension. Pins
+    # Symphony's set to exactly the four documented literals so an accidental
+    # in-repo edit is caught; cross-repo sync (extension adds a 5th tag) is
+    # manual per the ADR's load-bearing-contract note.
+    assert set(PI_RETRY_TAGS) == {
+        "[stall-watchdog-retry]",
+        "[rate-limit-retry]",
+        "[unknown-error-retry]",
+        "[codex-websocket-limit-retry]",
+    }

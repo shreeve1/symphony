@@ -15,8 +15,25 @@ MAX_COMMIT_REDISPATCH = 2
 RETRY_MARKER_PREFIX = "### Symphony Retry (transient"
 STALL_MARKER_PREFIX = "### Symphony Retry (stall"
 STALL_WATCHDOG_SENTINEL = "SYMPHONY_STALL_WATCHDOG"
-MAX_STALL_RETRIES = 1
+# ADR-0034: raised 1→3 — full carrier-persistence budget when no transient
+# retry is spent on the same issue (combined ceiling MAX_COMBINED_RETRIES=3
+# is the authoritative cap across stall+transient+timeout).
+MAX_STALL_RETRIES = 3
 MAX_COMBINED_RETRIES = 3
+
+# ADR-0034: pi-retry extension tags — closed allowlist, load-bearing contract.
+# The dotfiles pi-retry extension owns these four literals; a rename there
+# without updating this set silently regresses carrier-disruption exits to
+# block (fail-closed, not silent-loop). If the extension adds a 5th tag,
+# update this set in lockstep.
+PI_RETRY_TAGS = frozenset(
+    {
+        "[stall-watchdog-retry]",
+        "[rate-limit-retry]",
+        "[unknown-error-retry]",
+        "[codex-websocket-limit-retry]",
+    }
+)
 
 # Substring used both as the synthetic operator-reply header and as the marker
 # counted to enforce MAX_COMMIT_REDISPATCH. Must keep the `### Operator Reply (`

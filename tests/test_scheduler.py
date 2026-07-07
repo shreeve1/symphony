@@ -36,6 +36,7 @@ from scheduler import (
     _reconcile_startup,
     run_tick,
 )
+from scheduler.transient_retry import PI_RETRY_TAGS
 from tracker_adapter import TrackerAdapter
 from tracker_contract import (
     DEFAULT_CONTRACT,
@@ -949,7 +950,11 @@ async def test_stall_watchdog_retry_requeues_with_stall_marker(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_second_stall_watchdog_failure_blocks(tmp_path: Path) -> None:
+async def test_second_stall_watchdog_failure_requeues_under_raised_cap(
+    tmp_path: Path,
+) -> None:
+    # ADR-0034: MAX_STALL_RETRIES raised 1→3. A 2nd stall failure (1 prior)
+    # now requeues as attempt 2 instead of blocking — proves the cap raise.
     from scheduler.transient_retry import (
         STALL_WATCHDOG_SENTINEL,
         format_stall_retry_marker,
@@ -976,13 +981,144 @@ async def test_second_stall_watchdog_failure_blocks(tmp_path: Path) -> None:
         now=lambda: now,
     )
 
-    assert tick.reason == "stall-retry-exhausted-implement"
+    assert tick.reason == "stall-retry-implement"
+    assert (
+        transport.comments["issue-1"][0]["comment_html"]
+        == "### Symphony Retry (stall · 2) · 2026-06-25T12:00:00+00:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_third_stall_retry_allowed_under_raised_cap(tmp_path: Path) -> None:
+    # ADR-0034: 2 prior stall markers → 3rd stall attempt still requeues
+    # (under old cap=1 this would already have blocked).
+    from scheduler.transient_retry import (
+        STALL_WATCHDOG_SENTINEL,
+        format_stall_retry_marker,
+    )
+
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    prior = "\n".join(
+        format_stall_retry_marker(n, now.replace(hour=8 + n)) for n in (1, 2)
+    )
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            -1, 10, False, stderr=STALL_WATCHDOG_SENTINEL
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-1"), comments_md=prior)],
+        repo_dirty=lambda path: False,
+        now=lambda: now,
+    )
+
+    assert tick.reason == "stall-retry-implement"
+    assert (
+        transport.comments["issue-1"][0]["comment_html"]
+        == "### Symphony Retry (stall · 3) · 2026-06-25T12:00:00+00:00"
+    )
+
+
+@pytest.mark.parametrize("tag", sorted(PI_RETRY_TAGS))
+@pytest.mark.asyncio
+async def test_pi_retry_tag_routes_to_stall_path(tmp_path: Path, tag: str) -> None:
+    # ADR-0034: any of the four pi-retry extension tags in stderr routes a
+    # fresh issue through the stall-retry path with NO RPC stall sentinel —
+    # the load-bearing behavioral change for provider-stream stalls.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            -1,
+            10,
+            False,
+            stderr=f"provider stream stalled\n\n{tag} provider returned error",
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert tick.reason == "stall-retry-implement"
+    assert (
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    assert transport.comments["issue-1"][0]["comment_html"] == (
+        "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fourth_stall_failure_blocks_at_combined_ceiling(
+    tmp_path: Path,
+) -> None:
+    # ADR-0034: after 3 stall requeues a 4th stall blocks. Because
+    # MAX_STALL_RETRIES now equals MAX_COMBINED_RETRIES (3), the combined
+    # ceiling is the binding constraint and fires before the stall handler.
+    from scheduler.transient_retry import (
+        STALL_WATCHDOG_SENTINEL,
+        format_stall_retry_marker,
+    )
+
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    prior = "\n".join(
+        format_stall_retry_marker(n, now.replace(hour=8 + n)) for n in (1, 2, 3)
+    )
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            -1, 10, False, stderr=STALL_WATCHDOG_SENTINEL
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("issue-1"), comments_md=prior)],
+        repo_dirty=lambda path: False,
+        now=lambda: now,
+    )
+
+    assert tick.reason == "combined-ceiling-exhausted"
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
+
+
+@pytest.mark.asyncio
+async def test_untagged_non_transient_crash_still_blocks(tmp_path: Path) -> None:
+    # ADR-0034: closed tag allowlist fails closed — a genuine crash/bad-key
+    # exit (no sentinel, no tag, no transient marker) still blocks. This is
+    # the "never loop a real bug" guarantee the closed allowlist preserves.
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+
+    tick = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(
+            1, 10, False, stderr="Error: invalid API key (401) unauthorized"
+        ),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+        now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert tick.reason == "nonzero"
     assert (
-        "Stall retry cap exhausted" in transport.comments["issue-1"][0]["comment_html"]
+        transport.issues["issue-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
 
 

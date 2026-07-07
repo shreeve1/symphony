@@ -1,5 +1,29 @@
 # Wiki Log
 
+## [2026-07-06] session-update | ADR-0034 carrier-disruption persistence (two layers)
+
+- Actor: agent (Pi), dev-build + dev-test + symphony-restart + wiki-update.
+- **Input**: handoff `/tmp/handoff-kvZSMW.md` — implement ADR-0034 (locked design, do not re-litigate). Origin: pi-rmm issue #295 / run #1117 blocked on a ZAI `glm-5.2:high` provider-stream stall after pi exhausted 4 in-process retries (~12 min).
+- **Root cause (the two-detector gap)**: ADR-0027's RPC stall watchdog detects *pi freezing* (silent RPC stream); the dotfiles `pi-retry` extension detects *provider stalling while pi keeps narrating* (stdout flows → RPC never silent → ADR-0027 never trips). The latter's four tag literals matched neither the stall sentinel nor `is_transient` → fell through to `exit_code != 0 → block`. pi had exhausted its in-process budget; the run blocked despite being purely carrier-transient.
+- **Decision/fix**: carrier-disruption persistence at two layers — (1) pi config `~/.pi/agent/settings.json` `retry.maxRetries` 3→6 (host-global; `baseDelayMs` stays default 2000, `provider.timeoutMs` 600000); (2) Symphony `redispatch_core.py` new `PI_RETRY_TAGS` closed-allowlist frozenset (4 literals) + `MAX_STALL_RETRIES` 1→3; `scheduler/__init__.py` `_maybe_retry_stall` gate broadened from sentinel-only to sentinel-OR-any-tag; `scheduler/transient_retry.py` re-exports `PI_RETRY_TAGS`. RPC sentinel (ADR-0027) kept as alternative trigger.
+- **Verification**: 22 targeted stall/tag tests + 8 ADR-0029 contract-gate corpus + 224 full scheduler suite green; dev-build Phase 7.5 pi reviewer → `[NOTE] No findings — diff looks correct`; deployed via `symphony-host.service` restart (pid 4021452, `code_sha=26db25d`), 7 bindings reconciled begin/done 0-failed, `pi_rpc_probe_ok`, zero errors.
+- **Output**: `wiki/analyses/adr-0034-carrier-disruption-persistence.md` (promoted); ADR flipped `proposed`→`accepted`.
+- **Claims**: C-0362 (config-fact — `PI_RETRY_TAGS` 4-literal closed-allowlist cross-repo contract), C-0363 (decision — ADR-0034 two layers, amends C-0337/ADR-0027 boundary), C-0364 (gotcha — stall-handler-first ordering makes tags `is_transient`-dead-code), C-0365 (gotcha — `MAX_STALL_RETRIES==MAX_COMBINED_RETRIES==3` shadows stall-exhausted branch → `combined-ceiling-exhausted`). All ADMIT.
+- **Index/ROUTING**: `index.md` analyses row; `ROUTING.md` architecture pages+keywords + ADR-0027/28/29/0034 section extended.
+- **Not superseded**: C-0337 (ADR-0027 RPC-sentinel path unchanged, still load-bearing) — ADR-0034 amends its boundary, doesn't replace it. C-0336 (original no-detector gap) is related context, distinct from ADR-0034's provider-stall gap.
+- **Unresolved**: none for ADR-0034. Pre-existing unrelated test failure `tests/test_main.py::test_render_candidate_prompt_maps_plane_issue` (`main.py:128` `scheduling` kwarg vs mock) confirmed fails on clean HEAD — out of scope, flagged for a separate fix.
+
+## [2026-07-06] session-update | skill-source PermissionError dispatch crash
+
+- Actor: agent (Pi), diagnose + wiki-update.
+- **Input**: symphony binding todo issues stuck not dispatching — journal showed `dispatch_failed error=[Errno 13] Permission denied: '/home/itadmin/.claude/skills/podium-issues/SKILL.md'`.
+- **Root cause**: Two bugs conspiring — (1) `skill_source()` query non-deterministic (picks stale remote-host row), (2) Python 3.12 `Path.is_file()` raises PermissionError on inaccessible paths, crashing the dispatch gate instead of returning a block reason.
+- **Fix**: `tracker_podium.py` — `skill_source()` now `ORDER BY` prefers binding-scoped then global skills (deterministic). `scheduler/__init__.py` — `_apply_dispatch_gate` wraps `Path.is_file()` in try/except PermissionError. 49 stale remote-host skill rows (host `100.95.224.218`) deleted from `podium.db`. Commit `110b324`.
+- **Output**: `wiki/raw/sessions/2026-07-06-skill-source-permission-error-dispatch-crash.md`, `wiki/analyses/analysis-session-skill-source-permission-error-dispatch-crash.md` (candidate → promoted).
+- **Claims**: C-0359 (gotcha — non-deterministic query), C-0360 (gotcha — Python 3.12 PermissionError), C-0361 (gotcha — remote-host skill leak). All ADMIT.
+- **Index/ROUTING**: `index.md` analyses table + row; `ROUTING.md` architecture pages + keywords extended.
+- **Unresolved**: Should skill sync filter out remote-host skills with inaccessible paths? Should startup reconciler detect runs orphaned mid-dispatch?
+
 ## [2026-07-05] session-update | pi-rmm binding onboard
 
 - Actor: agent (Pi), symphony-onboard-project workflow.

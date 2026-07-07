@@ -1,1 +1,4 @@
 ADR-0026 implement-run transient retry behavior ||| verdict=retry
+ADR-0034 four pi-retry tag allowlist Symphony stalls on provider-stream stalls (PI_RETRY_TAGS) ||| PI_RETRY_TAGS
+ADR-0034 stall handler runs before transient so pi-retry tags never reach is_transient ||| dead code
+ADR-0034 fourth consecutive stall exits combined ceiling not stall exhausted ||| combined-ceiling-exhausted
