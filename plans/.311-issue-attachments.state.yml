@@ -1,0 +1,15 @@
+plan_file: plans/311-issue-attachments.md
+prompt: "Create a plan for docs/handoffs/2026-07-08-311-issue-attachments-prd.md"
+reviewer: pi
+reviewer_model: null
+max_rounds: 2
+current_round: 0
+status: reviewer_unavailable
+exit_reason: "pi reviewer unavailable: engine launch with --exclude-tools failed (Unknown option); retry without --exclude-tools exceeded 600s poll budget with empty output"
+phase_8_findings:
+  critical: []
+  warning: []
+  note:
+    - "Preflight verified validation tools: uv and pnpm are on PATH."
+    - "Preflight verified referenced edit targets either exist or are listed under New Files."
+rounds: []
