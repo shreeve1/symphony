@@ -7529,7 +7529,6 @@ async def test_operator_reland_finishes_run_row(
 # ── Attachment path resolution tests ────────────────────
 
 
-
 def _attachment_candidate(path=".symphony/attachments/1/abc.txt"):
     return _candidate("issue-att").__class__(
         id="issue-att",
