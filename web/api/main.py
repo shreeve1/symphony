@@ -17,7 +17,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    WebSocket,
+)
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -2594,7 +2603,9 @@ async def create_attachment(
     binding_name = str(issue["binding_name"])
 
     if _is_remote_binding(binding_name):
-        raise HTTPException(status_code=400, detail="attachments not supported for remote bindings")
+        raise HTTPException(
+            status_code=400, detail="attachments not supported for remote bindings"
+        )
 
     repo_path = _repo_path_for_binding(binding_name)
     if repo_path is None:
@@ -2705,7 +2716,9 @@ def download_attachment(
         ).fetchone()["binding_name"]
     )
     if _is_remote_binding(binding_name):
-        raise HTTPException(status_code=400, detail="attachments not supported for remote bindings")
+        raise HTTPException(
+            status_code=400, detail="attachments not supported for remote bindings"
+        )
     repo_path = _repo_path_for_binding(binding_name)
     if repo_path is None:
         raise HTTPException(status_code=500, detail="binding has no repo_path")
@@ -2714,7 +2727,9 @@ def download_attachment(
     try:
         content = _attachments.read_local(repo_path, issue_id, stored_name)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="attachment file not found on disk") from None
+        raise HTTPException(
+            status_code=404, detail="attachment file not found on disk"
+        ) from None
 
     return Response(
         content=content,

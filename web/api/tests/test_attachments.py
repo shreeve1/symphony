@@ -384,9 +384,7 @@ def test_delete_attachment_wrong_issue(
 # ──────────────── purge ────────────────
 
 
-def test_archive_purge_removes_attachments(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_archive_purge_removes_attachments(monkeypatch, tmp_path: Path) -> None:
     """Purge removes attachment rows (CASCADE) and best-effort files."""
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -398,12 +396,8 @@ def test_archive_purge_removes_attachments(
     conn = main.connect(db_path)
     try:
         days_ago = 20
-        updated_at = (
-            datetime.now(UTC) - timedelta(days=days_ago)
-        ).isoformat()
-        created_at = (
-            datetime.now(UTC) - timedelta(days=days_ago + 1)
-        ).isoformat()
+        updated_at = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+        created_at = (datetime.now(UTC) - timedelta(days=days_ago + 1)).isoformat()
         cursor = conn.execute(
             """
             INSERT INTO issue(
@@ -479,12 +473,8 @@ def test_archive_purge_missing_attachment_file_not_abort(
     conn = main.connect(db_path)
     try:
         days_ago = 20
-        updated_at = (
-            datetime.now(UTC) - timedelta(days=days_ago)
-        ).isoformat()
-        created_at = (
-            datetime.now(UTC) - timedelta(days=days_ago + 1)
-        ).isoformat()
+        updated_at = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+        created_at = (datetime.now(UTC) - timedelta(days=days_ago + 1)).isoformat()
         cursor = conn.execute(
             """
             INSERT INTO issue(
@@ -543,12 +533,8 @@ def test_archive_purge_rollback_preserves_attachments(
     conn = main.connect(db_path)
     try:
         days_ago = 20
-        updated_at = (
-            datetime.now(UTC) - timedelta(days=days_ago)
-        ).isoformat()
-        created_at = (
-            datetime.now(UTC) - timedelta(days=days_ago + 1)
-        ).isoformat()
+        updated_at = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+        created_at = (datetime.now(UTC) - timedelta(days=days_ago + 1)).isoformat()
         cursor = conn.execute(
             """
             INSERT INTO issue(
