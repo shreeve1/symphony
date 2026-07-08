@@ -36,6 +36,7 @@ import {
 } from "@/components/ScheduleControl";
 import { RunHistoryList } from "@/components/RunHistoryList";
 import { SessionTailPanel } from "@/components/SessionTailPanel";
+import { AttachmentPanel } from "@/components/AttachmentPanel";
 import { useAppendTailEvent } from "@/components/QueryProvider";
 
 // Width persistence — the operator's chosen flyout width survives reopen and
@@ -1028,7 +1029,7 @@ function CommentsThread({
 	);
 }
 
-const TABS = ["comments", "session"] as const;
+const TABS = ["comments", "session", "attachments"] as const;
 type Tab = (typeof TABS)[number];
 
 export function IssueFlyout({
@@ -1313,7 +1314,7 @@ export function IssueFlyout({
 												source={issue.comments_md}
 											/>
 										</div>
-									) : (
+									) : tab === "session" ? (
 										<div className="space-y-3">
 											<SteerComposer
 												issue={issue}
@@ -1323,6 +1324,8 @@ export function IssueFlyout({
 											/>
 											<SessionTailPanel issueId={issue.id} />
 										</div>
+									) : (
+										<AttachmentPanel issueId={issue.id} />
 									)}
 								</div>
 							</div>

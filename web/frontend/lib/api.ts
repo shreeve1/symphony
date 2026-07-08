@@ -190,6 +190,49 @@ export interface IssueOptions {
 	branches: string[];
 }
 
+// ── Attachments (#325) ──────────────────────────────────────────
+
+export interface IssueAttachment {
+	id: number;
+	issue_id: number;
+	display_name: string;
+	content_type: string;
+	size_bytes: number;
+	created_at: string;
+}
+
+export const fetchAttachments = (issueId: number) =>
+	getJSON<IssueAttachment[]>(`/api/issues/${issueId}/attachments`);
+
+export function attachmentDownloadUrl(issueId: number, attachmentId: number) {
+	return `/api/issues/${issueId}/attachments/${attachmentId}`;
+}
+
+export async function uploadAttachment(
+	issueId: number,
+	file: File,
+): Promise<IssueAttachment> {
+	const path = `/api/issues/${issueId}/attachments`;
+	const form = new FormData();
+	form.append("file", file);
+	const res = await fetch(path, { method: "POST", body: form });
+	if (!res.ok) {
+		throw new Error(`POST ${path} -> ${res.status} ${res.statusText}`);
+	}
+	return res.json() as Promise<IssueAttachment>;
+}
+
+export async function deleteAttachment(
+	issueId: number,
+	attachmentId: number,
+): Promise<void> {
+	const path = `/api/issues/${issueId}/attachments/${attachmentId}`;
+	const res = await fetch(path, { method: "DELETE" });
+	if (!res.ok) {
+		throw new Error(`DELETE ${path} -> ${res.status} ${res.statusText}`);
+	}
+}
+
 export interface FileEntry {
 	name: string;
 	path: string;
