@@ -575,10 +575,7 @@ function NewIssueModal({
 							Choose files
 						</button>
 						{stagedFiles.length > 0 && (
-							<ul
-								className="space-y-1"
-								data-testid="new-issue-staged-files"
-							>
+							<ul className="space-y-1" data-testid="new-issue-staged-files">
 								{stagedFiles.map((file, i) => (
 									<li
 										key={`${file.name}-${i}`}
@@ -589,9 +586,7 @@ function NewIssueModal({
 											type="button"
 											data-testid="new-issue-file-remove"
 											onClick={() =>
-												setStagedFiles((prev) =>
-													prev.filter((_, j) => j !== i),
-												)
+												setStagedFiles((prev) => prev.filter((_, j) => j !== i))
 											}
 											className="text-muted-foreground hover:text-foreground"
 										>

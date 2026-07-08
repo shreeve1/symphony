@@ -263,7 +263,9 @@ test("create with attachment: stage file, submit, verify upload", async ({
 	await created;
 
 	// Modal closes after upload succeeds; card lands in Todo.
-	await expect(page.getByTestId("new-issue-modal")).toBeHidden({ timeout: 10_000 });
+	await expect(page.getByTestId("new-issue-modal")).toBeHidden({
+		timeout: 10_000,
+	});
 	const todoCard = page
 		.getByTestId("column-todo")
 		.getByTestId("issue-card")
