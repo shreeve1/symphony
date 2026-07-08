@@ -100,7 +100,7 @@ export function AttachmentPanel({ issueId }: { issueId: number }) {
 	};
 
 	const list = attachments.data ?? [];
-	const rows: (IssueAttachment | UploadSlot & { key: string })[] = [
+	const rows: (IssueAttachment | (UploadSlot & { key: string }))[] = [
 		...slots.map((s) => ({ ...s, key: `slot-${s.file.name}` })),
 		...list,
 	];
@@ -234,5 +234,3 @@ export function AttachmentPanel({ issueId }: { issueId: number }) {
 		</div>
 	);
 }
-
-

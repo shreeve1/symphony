@@ -1,11 +1,6 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import {
-	expect,
-	expectCleanConsole,
-	seedIssue,
-	test,
-} from "./fixtures";
+import { expect, expectCleanConsole, seedIssue, test } from "./fixtures";
 
 // Attachment golden path (#325). Runs against throwaway e2e repos only.
 // The last test asserts that live binding repos were never touched.
@@ -14,7 +9,11 @@ test("upload, list, download link, delete attachment", async ({
 	page,
 	problems,
 }) => {
-	const { issueId } = seedIssue("homelab", "Attachment upload test", "in_review");
+	const { issueId } = seedIssue(
+		"homelab",
+		"Attachment upload test",
+		"in_review",
+	);
 	await page.goto(`/homelab?issue=${issueId}`);
 	await expect(page.getByTestId("flyout-title")).toHaveText(
 		"Attachment upload test",
