@@ -200,6 +200,34 @@ class IssueData:
     comments_md: str = ""
     context_md: str = ""
     preferred_skill: str | None = None
+    attachments: tuple = ()
+
+
+def _render_attachment_block(attachments: tuple) -> str:
+    """Render an Issue Attachments block with resolved absolute paths.
+
+    Omitted when the attachments tuple is empty.  Display names and content
+    types are escaped just like any other untrusted block content.
+    """
+    if not attachments:
+        return ""
+    lines = [
+        "## Issue Attachments",
+        "The following files were uploaded to this issue.  Their absolute paths",
+        "below are valid for this execution environment.",
+        "",
+    ]
+    for att in attachments:
+        name = _escape_untrusted_block(getattr(att, "display_name", ""))
+        ctype = _escape_untrusted_block(getattr(att, "content_type", ""))
+        size = getattr(att, "size_bytes", 0)
+        path = getattr(att, "resolved_path", "")
+        lines.append(
+            f"- `{path}` ({size} bytes, {ctype})"
+            if name in ("", path)
+            else f"- **{name}** `{path}` ({size} bytes, {ctype})"
+        )
+    return "\n".join(lines)
 
 
 def _escape_issue_content(text: str) -> str:
@@ -389,6 +417,10 @@ def render_prompt(
         if comments_block:
             rendered = f"{rendered}\n\n{comments_block}"
 
+    attachment_block = _render_attachment_block(issue.attachments)
+    if attachment_block:
+        rendered = f"{rendered}\n\n{attachment_block}" if rendered else attachment_block
+
     issue_block = (
         f"<issue>\n"
         f"# {issue.identifier}: {_escape_issue_content(issue.name)}\n\n"
@@ -421,6 +453,9 @@ def render_prompt(
             schedule_context = _render_schedule_context(issue)
             if schedule_context:
                 parts.append(schedule_context)
+        attachment_block = _render_attachment_block(issue.attachments)
+        if attachment_block:
+            parts.append(attachment_block)
         if delta_block:
             parts.append(delta_block)
         prompt = "\n\n".join(parts)

@@ -58,6 +58,30 @@ from .transient_retry import count_retries, retry_cooldown_expired
 LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_attachment_paths(
+    candidate: CandidateIssue,
+    *,
+    local_repo_root: Path,
+    remote_repo_root: Path | None = None,
+    is_remote: bool = False,
+) -> CandidateIssue:
+    """Resolve attachment ``storage_rel_path`` to ``resolved_path``
+    for the dispatch environment.
+
+    Local bindings resolve against ``local_repo_root`` (the main checkout
+    — worktrees share it).  Remote bindings resolve against
+    ``remote_repo_root``.
+    """
+    if not candidate.attachments:
+        return candidate
+    repo_root = remote_repo_root if is_remote and remote_repo_root else local_repo_root
+    resolved = tuple(
+        replace(a, resolved_path=str(repo_root / a.storage_rel_path))
+        for a in candidate.attachments
+    )
+    return replace(candidate, attachments=resolved)
+
+
 async def _select_run_tick_candidate(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -338,6 +362,13 @@ async def _prepare_run_tick_dispatch(
             candidate,
             fresh_issue,
             binding=binding,
+        )
+        # Resolve attachment paths for the dispatch environment.
+        candidate = _resolve_attachment_paths(
+            candidate,
+            local_repo_root=config.homelab_repo_path,
+            remote_repo_root=binding.repo_path if binding is not None else None,
+            is_remote=binding is not None and binding.is_remote,
         )
         candidate, prompt = await _render_for_dispatch(
             config,

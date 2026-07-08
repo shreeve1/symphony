@@ -109,6 +109,7 @@ def _render_candidate_prompt(
         comments_md=getattr(issue, "comments_md", ""),
         context_md=getattr(issue, "context_md", ""),
         preferred_skill=getattr(issue, "preferred_skill", None),
+        attachments=getattr(issue, "attachments", ()),
     )
     # Resolve preamble path relative to repo (ADR-0032).
     _preamble_path: Path | None = None

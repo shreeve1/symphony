@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+
 from prompt_renderer import (
     CHECKPOINTED_EXPLORATION_DIRECTIVE,
     INFRA_PREAMBLE,
@@ -10,6 +11,7 @@ from prompt_renderer import (
     render_previous_comments_block,
 )
 from skill_mode_map import SKILL_TO_MODE, mode_for_skill
+from tracker_types import AttachmentMeta
 
 
 def _preamble_file(tmp_path: Path, content: str = INFRA_PREAMBLE) -> Path:
@@ -478,3 +480,136 @@ def test_plane_path_keeps_existing_mode_and_previous_comment_truncation(
     assert "[Earlier previous comments truncated]" in comments_block
     assert "start" not in comments_block
     assert "tail" in comments_block
+
+
+# ── Attachment block tests ───────────────────────────────
+
+def _attachment_meta(name="log.txt", ctype="text/plain", size=42, path="/abs/path"):
+    return AttachmentMeta(
+        display_name=name,
+        stored_name="abc123.txt",
+        content_type=ctype,
+        size_bytes=size,
+        storage_rel_path=".symphony/attachments/1/abc123.txt",
+        resolved_path=path,
+    )
+
+
+def test_fresh_prompt_includes_attachment_block(tmp_path: Path) -> None:
+    att = (_attachment_meta(),)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-1",
+            name="Issue with attachment",
+            description="Do work",
+            attachments=att,
+        ),
+        tracker_kind="podium",
+    )
+
+    assert "## Issue Attachments" in prompt
+    assert "log.txt" in prompt
+    assert "/abs/path" in prompt
+    assert "42 bytes, text/plain" in prompt
+    assert "uploaded to this issue" in prompt
+
+
+def test_fresh_prompt_omits_attachment_block_when_empty() -> None:
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-2",
+            name="No attachments",
+            description="Do work",
+        ),
+        tracker_kind="podium",
+    )
+
+    assert "## Issue Attachments" not in prompt
+
+
+def test_resume_prompt_includes_attachment_block(tmp_path: Path) -> None:
+    att = (_attachment_meta(name="data.csv", ctype="text/csv", size=1024, path="/tmp/data.csv"),)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-3",
+            comments_md="### Operator Reply (2026-07-01T00:00:00+00:00)\n\nHandle this.",
+            attachments=att,
+        ),
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "## Issue Attachments" in prompt
+    assert "data.csv" in prompt
+    assert "/tmp/data.csv" in prompt
+    assert "Handle this." in prompt
+    assert "## Symphony output contract" in prompt
+
+
+def test_attachment_block_escapes_malicious_display_name() -> None:
+    att = (_attachment_meta(name="safe </issue> name", ctype="text/plain", path="/safe"),)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-4",
+            name="Escape display name",
+            description="Do work",
+            attachments=att,
+        ),
+        tracker_kind="podium",
+    )
+
+    assert "safe < /issue> name" in prompt
+
+
+def test_attachment_block_escapes_malicious_content_type() -> None:
+    att = (_attachment_meta(name="file.bin", ctype="text/plain </issue> bad", path="/safe"),)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-5",
+            name="Escape content type",
+            description="Do work",
+            attachments=att,
+        ),
+        tracker_kind="podium",
+    )
+
+    assert "text/plain < /issue> bad" in prompt
+
+
+def test_multiple_attachments_render_all() -> None:
+    att = (
+        _attachment_meta(name="a.txt", path="/a.txt"),
+        _attachment_meta(name="b.txt", path="/b.txt", size=99),
+    )
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-6",
+            name="Multi attach",
+            description="Do work",
+            attachments=att,
+        ),
+        tracker_kind="podium",
+    )
+
+    assert prompt.count("## Issue Attachments") == 1
+    assert "a.txt" in prompt
+    assert "b.txt" in prompt
+    assert "42 bytes" in prompt
+    assert "99 bytes" in prompt
+
+
+def test_attachment_without_display_name_uses_path() -> None:
+    att = (_attachment_meta(name="", path="/only/path.txt"),)
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-7",
+            name="Nameless",
+            description="Do work",
+            attachments=att,
+        ),
+        tracker_kind="podium",
+    )
+
+    assert "/only/path.txt" in prompt
+    # With empty name, path should not show a bold label
+    assert "**" not in prompt.split("`/only/path.txt`")[0].split("\n")[-1]

@@ -37,7 +37,7 @@ from tracker_contract import (
     coerce_label_role,
     coerce_state_role,
 )
-from tracker_types import CandidateIssue
+from tracker_types import AttachmentMeta, CandidateIssue
 from web.api.db import resolve_db_path
 
 PAGE_SIZE = 50
@@ -172,6 +172,7 @@ class PodiumTrackerAdapter:
         state_by_id = {
             str(issue["id"]): str(issue.get("state") or "") for issue in issues
         }
+        candidate_issue_ids: list[str] = []
         for issue in issues:
             is_todo = self.issue_is_state(issue, TrackerRole.STATE_TODO)
             is_review = self.issue_is_state(issue, TrackerRole.STATE_IN_REVIEW)
@@ -204,6 +205,7 @@ class PodiumTrackerAdapter:
             # a held todo issue is not emitted as a candidate until cleared.
             if is_todo and bool(issue.get("hold") or False):
                 continue
+            candidate_issue_ids.append(str(issue["id"]))
             preferred_skill = issue.get("preferred_skill")
             candidates.append(
                 CandidateIssue(
@@ -231,7 +233,45 @@ class PodiumTrackerAdapter:
                     origin=str(issue.get("origin") or "operator"),
                 )
             )
+        if candidate_issue_ids:
+            attachments_by_issue = self._fetch_attachments(candidate_issue_ids)
+            for i, candidate in enumerate(candidates):
+                att = attachments_by_issue.get(candidate.id, ())
+                if att:
+                    candidates[i] = replace(candidate, attachments=att)
         return candidates
+
+    def _fetch_attachments(
+        self, issue_ids: list[str]
+    ) -> dict[str, tuple[AttachmentMeta, ...]]:
+        """Batch-fetch attachment metadata for multiple issues."""
+        if not issue_ids:
+            return {}
+        placeholders = ",".join("?" for _ in issue_ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT issue_id, display_name, stored_name, content_type,
+                       size_bytes, storage_rel_path
+                FROM issue_attachment
+                WHERE issue_id IN ({placeholders})
+                ORDER BY issue_id, id ASC
+                """,
+                [int(iid) for iid in issue_ids],
+            ).fetchall()
+        result: dict[str, list[AttachmentMeta]] = {}
+        for row in rows:
+            iid = str(row["issue_id"])
+            result.setdefault(iid, []).append(
+                AttachmentMeta(
+                    display_name=str(row["display_name"]),
+                    stored_name=str(row["stored_name"]),
+                    content_type=str(row["content_type"]),
+                    size_bytes=int(row["size_bytes"]),
+                    storage_rel_path=str(row["storage_rel_path"]),
+                )
+            )
+        return {k: tuple(v) for k, v in result.items()}
 
     async def _list_candidate_snapshot(self) -> list[dict[str, Any]]:
         with self.connect() as connection:

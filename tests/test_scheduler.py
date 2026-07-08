@@ -46,6 +46,8 @@ from tracker_contract import (
     TrackerContract,
     TrackerRole,
 )
+from tracker_types import AttachmentMeta
+from scheduler.tick import _resolve_attachment_paths
 
 
 class FakeTransport:
@@ -7522,3 +7524,74 @@ async def test_operator_reland_finishes_run_row(
     assert len(adapter2.run_updates) == 1
     assert adapter2.run_updates[0]["state"] == "succeeded"
     assert adapter2.run_updates[0]["verdict"] == "done"
+
+
+# ── Attachment path resolution tests ────────────────────
+
+
+
+def _attachment_candidate(path=".symphony/attachments/1/abc.txt"):
+    return _candidate("issue-att").__class__(
+        id="issue-att",
+        identifier="issue-att",
+        name="Test",
+        description="",
+        labels=(),
+        created_at="2026-05-04T00:00:00+00:00",
+        attachments=(
+            AttachmentMeta(
+                display_name="file.txt",
+                stored_name="abc.txt",
+                content_type="text/plain",
+                size_bytes=42,
+                storage_rel_path=path,
+            ),
+        ),
+    )
+
+
+def test_resolve_attachment_paths_local():
+    candidate = _attachment_candidate()
+    result = _resolve_attachment_paths(
+        candidate,
+        local_repo_root=Path("/home/user/repo"),
+    )
+    assert result.attachments[0].resolved_path == str(
+        Path("/home/user/repo") / ".symphony/attachments/1/abc.txt"
+    )
+
+
+def test_resolve_attachment_paths_remote():
+    candidate = _attachment_candidate()
+    result = _resolve_attachment_paths(
+        candidate,
+        local_repo_root=Path("/home/user/repo"),
+        remote_repo_root=Path("/srv/remote/repo"),
+        is_remote=True,
+    )
+    assert result.attachments[0].resolved_path == str(
+        Path("/srv/remote/repo") / ".symphony/attachments/1/abc.txt"
+    )
+
+
+def test_resolve_attachment_paths_no_attachments_is_noop():
+    candidate = _candidate("issue-1")
+    result = _resolve_attachment_paths(
+        candidate,
+        local_repo_root=Path("/home/user/repo"),
+    )
+    assert result.attachments == ()
+
+
+def test_resolve_attachment_paths_worktree_uses_local_repo():
+    """Worktrees share the main checkout for attachments."""
+    candidate = _attachment_candidate()
+    result = _resolve_attachment_paths(
+        candidate,
+        local_repo_root=Path("/home/user/repo"),
+        remote_repo_root=Path("/home/user/repo/worktrees/wt1"),
+        is_remote=False,
+    )
+    assert result.attachments[0].resolved_path == str(
+        Path("/home/user/repo") / ".symphony/attachments/1/abc.txt"
+    )

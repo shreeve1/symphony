@@ -13,6 +13,18 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class AttachmentMeta:
+    """Attachment metadata — no file bytes, only resolved absolute paths."""
+
+    display_name: str
+    stored_name: str
+    content_type: str
+    size_bytes: int
+    storage_rel_path: str
+    resolved_path: str = ""
+
+
+@dataclass(frozen=True)
 class CandidateIssue:
     id: str
     identifier: str
@@ -44,6 +56,7 @@ class CandidateIssue:
     locks: tuple[str, ...] = ()
     review_dispatch: bool = False
     origin: str = "operator"
+    attachments: tuple[AttachmentMeta, ...] = ()
 
 
 @dataclass
@@ -241,6 +254,7 @@ def _next_cursor(
 
 
 __all__ = [
+    "AttachmentMeta",
     "CandidateIssue",
     "CommentPayload",
     "IssuePayload",
