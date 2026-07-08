@@ -8,6 +8,7 @@ dependencies = [
   "bcrypt>=4.3",
   "fastapi>=0.124",
   "httpx>=0.27",
+  "python-multipart>=0.0.20",
   "pyyaml>=6.0.3",
   "uvicorn>=0.38",
   "websockets>=14",

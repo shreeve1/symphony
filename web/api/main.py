@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -79,6 +79,7 @@ if __package__:
     _steer_queue = import_module(f"{__package__}.steer_queue")
     _wake_signal = import_module(f"{__package__}.wake_signal")
     _files = import_module(f"{__package__}.files")
+    _attachments = import_module(f"{__package__}.attachments")
 else:  # pragma: no cover - supports uvicorn main:app from web/api
     _auth = import_module("auth")
     _db = import_module("db")
@@ -87,6 +88,7 @@ else:  # pragma: no cover - supports uvicorn main:app from web/api
     _steer_queue = import_module("steer_queue")
     _wake_signal = import_module("wake_signal")
     _files = import_module("files")
+    _attachments = import_module("attachments")
 
 COOKIE_NAME = _auth.COOKIE_NAME
 SESSION_MAX_AGE_SECONDS = _auth.SESSION_MAX_AGE_SECONDS
@@ -2406,12 +2408,12 @@ def _purge_archived_issues(connection: sqlite3.Connection) -> None:
     """Hard-delete archived issues whose ``updated_at`` is > 14 days old.
 
     FK-safe per-issue transaction:
-      1. Collect run log_path values.
+      1. Collect run log_path and attachment stored_name values.
       2. NULL issue.latest_run_id.
       3. DELETE FROM run WHERE issue_id = ?.
-      4. DELETE FROM issue WHERE id = ?.
-    After commit, best-effort unlink collected log files and defensively
-    remove any persistent worktree.
+      4. DELETE FROM issue WHERE id = ? (cascades to issue_attachment).
+    After commit, best-effort unlink collected log/attachment files and
+    defensively remove any persistent worktree.
     """
     cutoff = (datetime.now(UTC) - timedelta(days=PURGE_AFTER_DAYS)).isoformat()
 
@@ -2433,6 +2435,18 @@ def _purge_archived_issues(connection: sqlite3.Connection) -> None:
         ).fetchall()
         log_paths = [str(r["log_path"]) for r in runs if r["log_path"]]
 
+        # Collect attachment stored_names for post-commit file cleanup.
+        attachment_names: list[str] = []
+        att_repo: Path | None = None
+        if not _is_remote_binding(binding_name):
+            att_repo = _repo_path_for_binding(binding_name)
+            if att_repo is not None:
+                att_rows = connection.execute(
+                    "SELECT stored_name FROM issue_attachment WHERE issue_id = ?",
+                    (issue_id,),
+                ).fetchall()
+                attachment_names = [str(r["stored_name"]) for r in att_rows]
+
         try:
             connection.execute(
                 "UPDATE issue SET latest_run_id = NULL WHERE id = ?", (issue_id,)
@@ -2451,6 +2465,18 @@ def _purge_archived_issues(connection: sqlite3.Connection) -> None:
                 Path(log_path_str).unlink(missing_ok=True)
             except Exception:
                 logger.warning("archive_purge_log_unlink_failed path=%s", log_path_str)
+
+        # Post-commit: best-effort unlink attachment files.
+        if attachment_names and att_repo is not None:
+            for stored_name in attachment_names:
+                try:
+                    _attachments.delete_local(att_repo, issue_id, stored_name)
+                except Exception:
+                    logger.warning(
+                        "archive_purge_attachment_unlink_failed issue_id=%d stored_name=%s",
+                        issue_id,
+                        stored_name,
+                    )
 
         # Remote bindings (ADR-0012) have no local worktree; skip the local
         # git/Path probe/removal (the remote repo_path is not local).
@@ -2550,6 +2576,183 @@ def _tail_bytes(path: Path, limit: int = 1_048_576) -> bytes:
         size = handle.tell()
         handle.seek(max(0, size - limit))
         return handle.read()
+
+
+# ── Attachment endpoints ──────────────────────────────────────────
+
+
+@app.post("/api/issues/{issue_id}/attachments", status_code=201)
+async def create_attachment(
+    issue_id: int,
+    file: UploadFile = File(...),
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    _get_issue_or_404(connection, issue_id)
+    issue = connection.execute(
+        "SELECT binding_name FROM issue WHERE id = ?", (issue_id,)
+    ).fetchone()
+    binding_name = str(issue["binding_name"])
+
+    if _is_remote_binding(binding_name):
+        raise HTTPException(status_code=400, detail="attachments not supported for remote bindings")
+
+    repo_path = _repo_path_for_binding(binding_name)
+    if repo_path is None:
+        raise HTTPException(status_code=400, detail="binding has no repo_path")
+
+    raw_name = file.filename or "unnamed"
+    try:
+        display_name = _attachments.normalize_display_name(raw_name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid display name") from None
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="attachment content is empty")
+    if len(content) > _attachments.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"attachment size {len(content)} exceeds {_attachments.MAX_UPLOAD_BYTES} byte limit",
+        )
+
+    content_type = file.content_type or "application/octet-stream"
+    stored_name = _attachments.generate_stored_name(display_name)
+
+    # Write bytes before DB insert; remove file if insert fails.
+    try:
+        _attachments.write_local(repo_path, issue_id, stored_name, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO issue_attachment(
+              issue_id, display_name, stored_name, content_type, size_bytes, storage_rel_path, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                issue_id,
+                display_name,
+                stored_name,
+                content_type,
+                len(content),
+                f"{_attachments.STORAGE_DIR}/{issue_id}/{stored_name}",
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        attachment_id = cursor.lastrowid
+        if attachment_id is None:
+            raise RuntimeError("insert did not return an attachment id")
+        connection.commit()
+    except Exception:
+        _attachments.delete_local(repo_path, issue_id, stored_name)
+        raise
+
+    _attachments.ensure_git_exclude(repo_path)
+
+    row = connection.execute(
+        "SELECT * FROM issue_attachment WHERE id = ?", (attachment_id,)
+    ).fetchone()
+    return _row(row)
+
+
+@app.get("/api/issues/{issue_id}/attachments")
+def list_attachments(
+    issue_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> list[dict[str, Any]]:
+    _get_issue_or_404(connection, issue_id)
+    rows = connection.execute(
+        """
+        SELECT id, issue_id, display_name, content_type, size_bytes, created_at
+        FROM issue_attachment
+        WHERE issue_id = ?
+        ORDER BY created_at DESC, id DESC
+        """,
+        (issue_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "issue_id": row["issue_id"],
+            "display_name": row["display_name"],
+            "content_type": row["content_type"],
+            "size_bytes": row["size_bytes"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+@app.get("/api/issues/{issue_id}/attachments/{attachment_id}")
+def download_attachment(
+    issue_id: int,
+    attachment_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> Response:
+    _get_issue_or_404(connection, issue_id)
+    row = connection.execute(
+        "SELECT * FROM issue_attachment WHERE id = ? AND issue_id = ?",
+        (attachment_id, issue_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+
+    binding_name = str(
+        connection.execute(
+            "SELECT binding_name FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()["binding_name"]
+    )
+    if _is_remote_binding(binding_name):
+        raise HTTPException(status_code=400, detail="attachments not supported for remote bindings")
+    repo_path = _repo_path_for_binding(binding_name)
+    if repo_path is None:
+        raise HTTPException(status_code=500, detail="binding has no repo_path")
+
+    stored_name = str(row["stored_name"])
+    try:
+        content = _attachments.read_local(repo_path, issue_id, stored_name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="attachment file not found on disk") from None
+
+    return Response(
+        content=content,
+        media_type=str(row["content_type"]),
+        headers={
+            "Content-Disposition": f'inline; filename="{row["display_name"]}"',
+        },
+    )
+
+
+@app.delete("/api/issues/{issue_id}/attachments/{attachment_id}")
+def delete_attachment(
+    issue_id: int,
+    attachment_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, bool]:
+    _get_issue_or_404(connection, issue_id)
+    row = connection.execute(
+        "SELECT * FROM issue_attachment WHERE id = ? AND issue_id = ?",
+        (attachment_id, issue_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+
+    binding_name = str(
+        connection.execute(
+            "SELECT binding_name FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()["binding_name"]
+    )
+    if not _is_remote_binding(binding_name):
+        repo_path = _repo_path_for_binding(binding_name)
+        if repo_path is not None:
+            _attachments.delete_local(repo_path, issue_id, str(row["stored_name"]))
+
+    connection.execute("DELETE FROM issue_attachment WHERE id = ?", (attachment_id,))
+    connection.commit()
+
+    return {"deleted": True}
 
 
 def _get_binding_or_404(connection: sqlite3.Connection, name: str) -> None:
