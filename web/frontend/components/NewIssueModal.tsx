@@ -8,8 +8,10 @@ import {
 	fetchBindings,
 	fetchIssueOptions,
 	fetchSkills,
+	uploadAttachment,
 	type Issue,
 	type IssueCreate,
+	type IssueDetail,
 	type ModelOption,
 } from "@/lib/api";
 import {
@@ -311,6 +313,12 @@ function NewIssueModal({
 	const [scheduleDraft, setScheduleDraft] =
 		useState<ScheduleDraft>(defaultScheduleDraft);
 	const descRef = useRef<HTMLTextAreaElement | null>(null);
+	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const queryClient = useQueryClient();
+
+	const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+	const [uploadError, setUploadError] = useState<string | null>(null);
+	const [uploading, setUploading] = useState(false);
 
 	const bindings = useQuery({ queryKey: ["bindings"], queryFn: fetchBindings });
 	const bindingType =
@@ -378,15 +386,37 @@ function NewIssueModal({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onClose]);
 
+	const handlePostCreate = async (row: IssueDetail) => {
+		if (stagedFiles.length === 0) {
+			onClose();
+			return;
+		}
+		setUploading(true);
+		setUploadError(null);
+		const failed: string[] = [];
+		for (const file of stagedFiles) {
+			try {
+				await uploadAttachment(row.id, file);
+				queryClient.invalidateQueries({ queryKey: ["attachments", row.id] });
+			} catch {
+				failed.push(file.name);
+			}
+		}
+		queryClient.invalidateQueries({ queryKey: ["issues", binding] });
+		setUploading(false);
+		if (failed.length > 0) {
+			setUploadError(
+				`${failed.length} attachment(s) failed: ${failed.join(", ")}`,
+			);
+		} else {
+			onClose();
+		}
+	};
+
 	const submit = (e: React.FormEvent) => {
 		e.preventDefault();
 		const trimmed = description.trim();
-		if (!trimmed || create.isPending) return;
-		// The optimistic card carries the board UI immediately, but the modal only
-		// closes on success: on failure the temp card silently rolls back, so the
-		// still-open modal (typed values intact + error line) is the only place
-		// the operator learns the create didn't land.
-		// Only send what the operator set; omitted keys take server defaults.
+		if (!trimmed || create.isPending || uploading) return;
 		const schedule = isInfra ? schedulePayloadFromDraft(scheduleDraft) : null;
 		create.mutate(
 			{
@@ -399,7 +429,7 @@ function NewIssueModal({
 				...(base.trim() && { base_branch: base.trim() }),
 				...(hold && { hold: true }),
 			},
-			{ onSuccess: onClose },
+			{ onSuccess: handlePostCreate },
 		);
 	};
 
@@ -514,9 +544,76 @@ function NewIssueModal({
 						Hold (don't dispatch)
 					</label>
 
+					{/* File staging — upload happens after issue creation */}
+					<div className="space-y-1">
+						<span className="text-xs font-medium text-muted-foreground">
+							Attachments
+						</span>
+						<input
+							ref={fileInputRef}
+							type="file"
+							multiple
+							data-testid="new-issue-file-input"
+							className="sr-only"
+							onChange={(e) => {
+								if (e.target.files && e.target.files.length > 0) {
+									setStagedFiles((prev) => [
+										...prev,
+										...Array.from(e.target.files!),
+									]);
+									setUploadError(null);
+								}
+								if (fileInputRef.current) fileInputRef.current.value = "";
+							}}
+						/>
+						<button
+							type="button"
+							data-testid="new-issue-file-pick"
+							onClick={() => fileInputRef.current?.click()}
+							className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40"
+						>
+							Choose files
+						</button>
+						{stagedFiles.length > 0 && (
+							<ul
+								className="space-y-1"
+								data-testid="new-issue-staged-files"
+							>
+								{stagedFiles.map((file, i) => (
+									<li
+										key={`${file.name}-${i}`}
+										className="flex items-center gap-2 text-xs"
+									>
+										<span className="flex-1 truncate">{file.name}</span>
+										<button
+											type="button"
+											data-testid="new-issue-file-remove"
+											onClick={() =>
+												setStagedFiles((prev) =>
+													prev.filter((_, j) => j !== i),
+												)
+											}
+											className="text-muted-foreground hover:text-foreground"
+										>
+											×
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
+
 					{create.isError && (
 						<p data-testid="new-issue-error" className="text-xs text-red-500">
 							Failed to create issue — check the API and try again.
+						</p>
+					)}
+					{uploadError && (
+						<p
+							data-testid="new-issue-upload-error"
+							className="text-xs text-red-500"
+						>
+							{uploadError}
 						</p>
 					)}
 
@@ -531,10 +628,10 @@ function NewIssueModal({
 						<button
 							type="submit"
 							data-testid="new-issue-submit"
-							disabled={!description.trim() || create.isPending}
+							disabled={!description.trim() || create.isPending || uploading}
 							className="rounded-md border bg-foreground px-3 py-1.5 text-sm font-medium text-background transition disabled:opacity-40"
 						>
-							Create
+							{uploading ? "Uploading…" : "Create"}
 						</button>
 					</div>
 				</form>

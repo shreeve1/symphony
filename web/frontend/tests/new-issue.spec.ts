@@ -230,6 +230,58 @@ test("agent-aware model preselect switches default with agent", async ({
 	expectCleanConsole(problems);
 });
 
+test("create with attachment: stage file, submit, verify upload", async ({
+	page,
+	problems,
+}) => {
+	const desc = `e2e attach issue ${Date.now()}`;
+	const fileName = "e2e-attach.txt";
+
+	await page.goto("/dotfiles");
+	await page.getByTestId("new-issue-button").click();
+	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+
+	await page.getByTestId("new-issue-description").fill(desc);
+
+	// Stage a file
+	await page.setInputFiles('[data-testid="new-issue-file-input"]', {
+		name: fileName,
+		mimeType: "text/plain",
+		buffer: Buffer.from("e2e staged content"),
+	});
+	await expect(
+		page.getByTestId("new-issue-staged-files").getByText(fileName),
+	).toBeVisible();
+
+	const created = page.waitForResponse(
+		(res) =>
+			res.url().includes("/api/bindings/dotfiles/issues") &&
+			res.request().method() === "POST" &&
+			res.status() === 201,
+	);
+	await page.getByTestId("new-issue-submit").click();
+	await created;
+
+	// Modal closes after upload succeeds; card lands in Todo.
+	await expect(page.getByTestId("new-issue-modal")).toBeHidden({ timeout: 10_000 });
+	const todoCard = page
+		.getByTestId("column-todo")
+		.getByTestId("issue-card")
+		.filter({ hasText: desc });
+	await expect(todoCard).toBeVisible();
+
+	// Open flyout, check attachments tab for uploaded file
+	await todoCard.click();
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await page.getByTestId("tab-attachments").click();
+	await expect(page.getByTestId("tabpanel-attachments")).toBeVisible();
+	await expect(
+		page.getByTestId("attachment-list").getByText(fileName),
+	).toBeVisible({ timeout: 10_000 });
+
+	expectCleanConsole(problems);
+});
+
 test("model preselect clears when agent has no default", async ({
 	page,
 	problems,
