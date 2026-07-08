@@ -2602,11 +2602,8 @@ async def create_attachment(
     ).fetchone()
     binding_name = str(issue["binding_name"])
 
-    if _is_remote_binding(binding_name):
-        raise HTTPException(
-            status_code=400, detail="attachments not supported for remote bindings"
-        )
-
+    is_remote = _is_remote_binding(binding_name)
+    remote = _remote_for_binding(binding_name) if is_remote else None
     repo_path = _repo_path_for_binding(binding_name)
     if repo_path is None:
         raise HTTPException(status_code=400, detail="binding has no repo_path")
@@ -2631,7 +2628,10 @@ async def create_attachment(
 
     # Write bytes before DB insert; remove file if insert fails.
     try:
-        _attachments.write_local(repo_path, issue_id, stored_name, content)
+        if is_remote:
+            _attachments.write_remote(remote, repo_path, issue_id, stored_name, content)
+        else:
+            _attachments.write_local(repo_path, issue_id, stored_name, content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2657,10 +2657,14 @@ async def create_attachment(
             raise RuntimeError("insert did not return an attachment id")
         connection.commit()
     except Exception:
-        _attachments.delete_local(repo_path, issue_id, stored_name)
+        if is_remote:
+            _attachments.delete_remote(remote, repo_path, issue_id, stored_name)
+        else:
+            _attachments.delete_local(repo_path, issue_id, stored_name)
         raise
 
-    _attachments.ensure_git_exclude(repo_path)
+    if not is_remote:
+        _attachments.ensure_git_exclude(repo_path)
 
     row = connection.execute(
         "SELECT * FROM issue_attachment WHERE id = ?", (attachment_id,)
@@ -2715,18 +2719,19 @@ def download_attachment(
             "SELECT binding_name FROM issue WHERE id = ?", (issue_id,)
         ).fetchone()["binding_name"]
     )
-    if _is_remote_binding(binding_name):
-        raise HTTPException(
-            status_code=400, detail="attachments not supported for remote bindings"
-        )
     repo_path = _repo_path_for_binding(binding_name)
     if repo_path is None:
         raise HTTPException(status_code=500, detail="binding has no repo_path")
 
+    is_remote = _is_remote_binding(binding_name)
+    remote = _remote_for_binding(binding_name) if is_remote else None
     stored_name = str(row["stored_name"])
     try:
-        content = _attachments.read_local(repo_path, issue_id, stored_name)
-    except FileNotFoundError:
+        if is_remote:
+            content = _attachments.read_remote(remote, repo_path, issue_id, stored_name)
+        else:
+            content = _attachments.read_local(repo_path, issue_id, stored_name)
+    except (FileNotFoundError, subprocess.CalledProcessError):
         raise HTTPException(
             status_code=404, detail="attachment file not found on disk"
         ) from None
@@ -2759,9 +2764,15 @@ def delete_attachment(
             "SELECT binding_name FROM issue WHERE id = ?", (issue_id,)
         ).fetchone()["binding_name"]
     )
-    if not _is_remote_binding(binding_name):
-        repo_path = _repo_path_for_binding(binding_name)
-        if repo_path is not None:
+    is_remote = _is_remote_binding(binding_name)
+    remote = _remote_for_binding(binding_name) if is_remote else None
+    repo_path = _repo_path_for_binding(binding_name)
+    if repo_path is not None:
+        if is_remote:
+            _attachments.delete_remote(
+                remote, repo_path, issue_id, str(row["stored_name"])
+            )
+        else:
             _attachments.delete_local(repo_path, issue_id, str(row["stored_name"]))
 
     connection.execute("DELETE FROM issue_attachment WHERE id = ?", (attachment_id,))
