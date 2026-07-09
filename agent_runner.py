@@ -43,6 +43,9 @@ PI_HELP_TIMEOUT_SECONDS = 30
 PI_PROBE_TIMEOUT_SECONDS = 30
 PI_RPC_PROBE_TIMEOUT_SECONDS = 20
 RPC_STEER_POLL_INTERVAL_SECONDS = 0.5
+# When a remote issue carries this preferred_skill, remote dispatch forwards the
+# reverse tunnel to the Podium API port and exports PODIUM_* env (ADR-0036).
+PODIUM_ISSUES_REMOTE_SKILL = "podium-issues-remote"
 # Cap the live-tail spool so a verbose/long remote run can't grow unbounded on
 # the tmpfs runtime dir (/run). Matches the run-log ceiling; the full output is
 # still captured in the (also-capped) run log at exit. ponytail: hard stop at
@@ -456,14 +459,27 @@ def _remote_callback_port(api_url: str) -> int:
     return int(match.group(1)) if match else 8000
 
 
+def _wants_podium_api(issue: CandidateIssue) -> bool:
+    """True when this issue's skill is the remote Podium slice-author (ADR-0036)."""
+
+    return getattr(issue, "preferred_skill", "") == PODIUM_ISSUES_REMOTE_SKILL
+
+
 def _remote_exports(
-    config: SymphonyConfig, issue: CandidateIssue, *, binding: ProjectBinding
+    config: SymphonyConfig,
+    issue: CandidateIssue,
+    *,
+    binding: ProjectBinding,
+    source_env: Mapping[str, str],
 ) -> dict[str, str]:
     """Tracker-callback env forwarded to the remote agent.
 
     Mirrors the SYMPHONY_* keys from ``_agent_env`` but omits local-only values
     (PATH/HOME/PYTHONPATH/TMPDIR) — the remote host supplies its own. Plane
-    callback keys are included only for Plane bindings.
+    callback keys are included only for Plane bindings. When the issue requests
+    the ``podium-issues-remote`` skill, the Podium API base/token/binding-name
+    are exported so the bundled client can POST slices over the reverse tunnel
+    (ADR-0036).
     """
 
     exports = {
@@ -473,6 +489,21 @@ def _remote_exports(
     }
     if _uses_plane_tracker(config, binding):
         exports.update(_tracker_callback_env(config))
+    if _wants_podium_api(issue):
+        port = _remote_callback_port(config.podium_api_url)
+        # The reverse tunnel always terminates on the remote's loopback, so the
+        # remote must POST to 127.0.0.1:<port> — never config.podium_api_url
+        # verbatim, which could be an externally-set base URL that bypasses the
+        # tunnel.
+        token = source_env.get("PODIUM_API_TOKEN") or ""
+        if not token:
+            raise AgentRunnerError(
+                "PODIUM_API_TOKEN not set; required for "
+                "podium-issues-remote dispatch"
+            )
+        exports["PODIUM_BASE_URL"] = f"http://127.0.0.1:{port}"
+        exports["PODIUM_API_TOKEN"] = token
+        exports["SYMPHONY_BINDING_NAME"] = binding.name
     return exports
 
 
@@ -615,7 +646,10 @@ def run_remote_agent(
         session_id=session_id,
     )
 
-    port = _remote_callback_port(config.plane_api_url)
+    if _wants_podium_api(issue):
+        port = _remote_callback_port(config.podium_api_url)
+    else:
+        port = _remote_callback_port(config.plane_api_url)
     dispatch_repo_path = binding.repo_path
     if getattr(issue, "worktree_active", False):
         remote_worktree = import_module("remote_worktree")
@@ -630,7 +664,9 @@ def run_remote_agent(
 
     remote_command = _build_remote_command(
         repo_path=str(dispatch_repo_path),
-        exports=_remote_exports(config, issue, binding=binding),
+        exports=_remote_exports(
+            config, issue, binding=binding, source_env=source_env
+        ),
         pi_command=pi_command,
         helper_dir=remote_tmp if ship_plane_helper else "",
     )

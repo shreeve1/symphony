@@ -105,6 +105,72 @@ def _issue() -> CandidateIssue:
     )
 
 
+def test_run_remote_agent_gated_forwards_podium_tunnel_and_env(
+    tmp_path: Path,
+) -> None:
+    popen_calls: list[list[str]] = []
+    issue = replace(
+        _issue(), preferred_skill="podium-issues-remote", binding_name="n8n"
+    )
+
+    run_remote_agent(
+        _config(tmp_path),
+        issue,
+        "spec",
+        binding=_remote_binding(),
+        run_func=lambda *a, **k: Completed(returncode=0),
+        popen_factory=lambda c, **k: (
+            popen_calls.append(c) or FakeRpcProcess(_rpc_done("done"))
+        ),
+        environ={"PODIUM_API_TOKEN": "test-token"},
+    )
+
+    exec_cmd = popen_calls[0]
+    assert "-R" in exec_cmd
+    assert "8090:127.0.0.1:8090" in exec_cmd
+    remote_command = exec_cmd[-1]
+    assert "export PODIUM_BASE_URL=http://127.0.0.1:8090;" in remote_command
+    assert "export PODIUM_API_TOKEN=test-token;" in remote_command
+    assert "export SYMPHONY_BINDING_NAME=n8n;" in remote_command
+
+
+def test_run_remote_agent_non_gated_podium_binding_unchanged(tmp_path: Path) -> None:
+    popen_calls: list[list[str]] = []
+
+    run_remote_agent(
+        _config(tmp_path),
+        _issue(),
+        "do the work",
+        binding=_remote_binding(),
+        run_func=lambda *a, **k: Completed(returncode=0),
+        popen_factory=lambda c, **k: (
+            popen_calls.append(c) or FakeRpcProcess(_rpc_done("done"))
+        ),
+        environ={"PODIUM_API_TOKEN": "test-token"},
+    )
+
+    exec_cmd = popen_calls[0]
+    assert "8000:127.0.0.1:8000" in exec_cmd
+    remote_command = exec_cmd[-1]
+    assert "PODIUM_BASE_URL" not in remote_command
+    assert "PODIUM_API_TOKEN" not in remote_command
+    assert "SYMPHONY_BINDING_NAME" not in remote_command
+
+
+def test_run_remote_agent_gated_without_token_raises(tmp_path: Path) -> None:
+    issue = replace(_issue(), preferred_skill="podium-issues-remote")
+    with pytest.raises(AgentRunnerError, match="PODIUM_API_TOKEN not set"):
+        run_remote_agent(
+            _config(tmp_path),
+            issue,
+            "spec",
+            binding=_remote_binding(),
+            run_func=lambda *a, **k: Completed(returncode=0),
+            popen_factory=lambda c, **k: FakeRpcProcess(_rpc_done("done")),
+            environ={},
+        )
+
+
 def test_remote_callback_port_parses_and_defaults() -> None:
     assert _remote_callback_port("http://127.0.0.1:8000") == 8000
     assert _remote_callback_port("http://127.0.0.1:8000/") == 8000

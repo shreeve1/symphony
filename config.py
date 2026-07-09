@@ -197,6 +197,7 @@ class SymphonyConfig:
     telegram_chat_id: str | None = None
     plane_frontend_url: str = ""
     plane_dashboard_url: str = ""
+    podium_api_url: str = "http://127.0.0.1:8090"
     worktrees_root: Path | None = None
     worktree_default: bool = True
     blocked_reconciler_enabled: bool = True
@@ -325,6 +326,11 @@ class SymphonyConfig:
             or source.get("TELEGRAM_HOME_CHANNEL"),
             plane_frontend_url=(_tracker_env(source, "frontend_url") or "").rstrip("/"),
             plane_dashboard_url=_tracker_env(source, "dashboard_url") or "",
+            podium_api_url=(
+                source.get("PODIUM_BASE_URL")
+                or source.get("PODIUM_API_URL")
+                or "http://127.0.0.1:8090"
+            ).rstrip("/"),
             worktrees_root=(
                 Path(source["SYMPHONY_WORKTREES_ROOT"])
                 if source.get("SYMPHONY_WORKTREES_ROOT")
@@ -408,6 +414,7 @@ class SymphonyConfig:
             f"telegram_chat_id={telegram_chat_id!r}, "
             f"plane_frontend_url={self.plane_frontend_url!r}, "
             f"plane_dashboard_url={self.plane_dashboard_url!r}, "
+            f"podium_api_url={self.podium_api_url!r}, "
             f"base_branch={self.base_branch!r}, "
             f"blocked_reconciler_enabled={self.blocked_reconciler_enabled!r}, "
             f"blocked_reconciler_apply={self.blocked_reconciler_apply!r}, "

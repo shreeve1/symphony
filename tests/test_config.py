@@ -175,6 +175,16 @@ def test_plane_dashboard_url_defaults_to_empty():
     assert config.plane_dashboard_url == ""
 
 
+def test_podium_api_url_defaults_to_loopback_8090():
+    config = SymphonyConfig.from_env(_env())
+    assert config.podium_api_url == "http://127.0.0.1:8090"
+
+
+def test_podium_api_url_overridden_by_env():
+    config = SymphonyConfig.from_env(_env(PODIUM_BASE_URL="http://127.0.0.1:9999/"))
+    assert config.podium_api_url == "http://127.0.0.1:9999"
+
+
 def test_plane_dashboard_url_loaded_from_env():
     config = SymphonyConfig.from_env(
         _env(PLANE_DASHBOARD_URL="http://plane.example.test/dash/")
