@@ -1163,11 +1163,14 @@ async def create_binding_issue(
         origin = "patrol"
     else:
         origin = "operator"
-    # Temporal patrols post as deepseek-v4-flash unless the caller pinned a
-    # model explicitly; scheduler still validates it against models.yml at
-    # dispatch (fails loudly if the catalog entry is removed).
+    # Temporal patrols always post as deepseek-v4-flash — the model is forced
+    # for origin=='patrol', overriding any caller-pinned value (operator
+    # decision, issue #343: patrols are cost-sensitive and must never run on a
+    # heavier model). Operator-created issues keep their explicit model. The
+    # scheduler still validates the id against models.yml at dispatch (fails
+    # loudly if the catalog entry is removed).
     preferred_model = issue.preferred_model
-    if origin == "patrol" and preferred_model is None:
+    if origin == "patrol":
         preferred_model = PATROL_DEFAULT_MODEL
     # Instant fallback title so create never blocks on a slow pi call; the
     # real title is regenerated in a background thread below.

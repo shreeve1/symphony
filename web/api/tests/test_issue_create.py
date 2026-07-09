@@ -190,7 +190,9 @@ def test_patrol_origin_defaults_preferred_model_to_deepseek_flash(
     assert response.json()["preferred_model"] == "deepseek-v4-flash"
 
 
-def test_patrol_explicit_model_wins_over_default(client: TestClient) -> None:
+def test_patrol_origin_forces_flash_over_pinned_model(client: TestClient) -> None:
+    """Patrols are unconditionally flash (issue #343): a caller-pinned heavier
+    model is overridden, not honored."""
     response = client.post(
         "/api/bindings/symphony/issues",
         json={
@@ -200,7 +202,7 @@ def test_patrol_explicit_model_wins_over_default(client: TestClient) -> None:
         },
     )
     assert response.status_code == 201
-    assert response.json()["preferred_model"] == "deepseek-v4-pro"
+    assert response.json()["preferred_model"] == "deepseek-v4-flash"
 
 
 def test_operator_origin_leaves_preferred_model_unset(client: TestClient) -> None:
