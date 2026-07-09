@@ -1091,6 +1091,87 @@ def test_drain_rpc_events_spools_assistant_deltas(tmp_path: Path) -> None:
     assert spool.read_text() == "Working on it"
 
 
+def test_drain_rpc_events_accumulates_usage_from_message_end() -> None:
+    """Per-turn pi usage blocks (input/output/cacheRead + cost.total) accumulate
+    across message_end events into drain.usage (issue #343)."""
+
+    def message_end(inp: int, out: int, cache: int, cost: float) -> str:
+        return (
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "usage": {
+                            "input": inp,
+                            "output": out,
+                            "cacheRead": cache,
+                            "cacheWrite": 0,
+                            "totalTokens": inp + out,
+                            "cost": {"total": cost},
+                        }
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    process = FakeRpcProcess(
+        [
+            message_end(1000, 30, 800, 0.01),
+            message_end(500, 20, 400, 0.005),
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+    read_line, close_reader = agent_runner_module._rpc_line_reader(process)
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        1_000_000.0,
+        "55",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=read_line,
+        close_reader=close_reader,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        source_env={},
+    )
+
+    assert drain.usage == {
+        "input_tokens": 1500,
+        "output_tokens": 50,
+        "cache_read_tokens": 1200,
+        "cost_usd": 0.015,
+    }
+
+
+def test_drain_rpc_events_usage_none_when_no_usage_block() -> None:
+    """A dispatch with no usage-bearing message_end leaves drain.usage None so
+    the run-record fallback (SYMPHONY_* markers) still applies."""
+    process = FakeRpcProcess(
+        [
+            json.dumps({"type": "message_update", "delta": "hi"}) + "\n",
+            json.dumps({"type": "agent_end", "exit_code": 0}) + "\n",
+        ]
+    )
+    read_line, close_reader = agent_runner_module._rpc_line_reader(process)
+
+    drain = agent_runner_module._drain_rpc_events(
+        process,
+        1_000_000.0,
+        "55",
+        read_queued_steers=None,
+        steer_offset=0,
+        read_line=read_line,
+        close_reader=close_reader,
+        kill_process_group=lambda pid, sig: None,
+        clock=lambda: 0.0,
+        source_env={},
+    )
+
+    assert drain.usage is None
+
+
 def test_drain_rpc_events_separates_text_blocks(tmp_path: Path) -> None:
     """Distinct assistant text blocks (narration between tool calls) are joined
     with a blank line, not mashed together ("explore.This is")."""

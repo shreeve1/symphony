@@ -471,10 +471,11 @@ class PodiumTrackerAdapter:
                 """
                 INSERT INTO run(
                   issue_id, agent, provider, model, state, verdict, summary,
-                  exit_code, cost_usd, input_tokens, output_tokens, worktree_path,
+                  exit_code, cost_usd, input_tokens, output_tokens,
+                  cache_read_tokens, worktree_path,
                   branch_name, base_branch, log_path, skill_invoked, started_at,
                   ended_at, agent_session_sha, resumed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -746,6 +747,7 @@ _RUN_INSERT_COLUMNS = (
     "cost_usd",
     "input_tokens",
     "output_tokens",
+    "cache_read_tokens",
     "worktree_path",
     "branch_name",
     "base_branch",

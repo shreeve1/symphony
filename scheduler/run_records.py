@@ -35,6 +35,18 @@ LOGGER = logging.getLogger(__name__)
 LOG_MAX_BYTES = 1_048_576
 
 
+def _run_metrics(result: AgentResult) -> dict[str, Any]:
+    """Token/cost columns for a finished run.
+
+    Prefer pi RPC usage harvested from the event stream (input/output/
+    cache-read tokens + computed cost). Fall back to SYMPHONY_* stdout markers
+    for non-RPC agents (print-mode pi, Claude) that don't stream usage.
+    """
+    if result.usage:
+        return {key: value for key, value in result.usage.items() if value}
+    return _parse_run_metrics(result.stdout)
+
+
 def write_run_log(log_path: Path, stdout: str, stderr: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
@@ -238,7 +250,7 @@ async def finish_run_record(
                 "exit_code": result.exit_code,
                 "ended_at": ended_at,
                 "log_path": str(log_path),
-                **_parse_run_metrics(result.stdout),
+                **_run_metrics(result),
             },
         )
     )

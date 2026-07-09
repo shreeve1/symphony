@@ -119,6 +119,10 @@ class AgentResult:
     timed_out: bool
     stdout: str = ""
     stderr: str = ""
+    # Per-dispatch token/cost totals harvested from pi RPC message_end usage
+    # blocks (input_tokens/output_tokens/cache_read_tokens/cost_usd). None for
+    # non-RPC agents, which report via SYMPHONY_* stdout markers instead.
+    usage: dict[str, float] | None = None
 
 
 def _build_pi_command(
@@ -752,6 +756,7 @@ def run_remote_agent(
                 True,
                 "".join(drain.assistant_parts),
                 "".join(drain.stderr_parts),
+                usage=drain.usage,
             )
         if drain.stalled:
             duration_ms = int((clock() - started) * 1000)
@@ -762,7 +767,9 @@ def run_remote_agent(
                 issue.id,
                 duration_ms,
             )
-            return AgentResult(-1, duration_ms, False, stdout, stderr)
+            return AgentResult(
+                -1, duration_ms, False, stdout, stderr, usage=drain.usage
+            )
 
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
@@ -808,7 +815,9 @@ def run_remote_agent(
             )
             if silent_result is not None:
                 return silent_result
-        return AgentResult(exit_code, duration_ms, False, stdout, stderr)
+        return AgentResult(
+            exit_code, duration_ms, False, stdout, stderr, usage=drain.usage
+        )
     finally:
         if run_id:
             with suppress(Exception):
@@ -956,12 +965,15 @@ def run_pi_rpc_agent(
                 True,
                 "".join(drain.assistant_parts),
                 "".join(drain.stderr_parts),
+                usage=drain.usage,
             )
         if drain.stalled:
             duration_ms = int((clock() - started) * 1000)
             stdout = "".join(drain.assistant_parts)
             stderr = STALL_WATCHDOG_SENTINEL + "\n" + "".join(drain.stderr_parts)
-            return AgentResult(-1, duration_ms, False, stdout, stderr)
+            return AgentResult(
+                -1, duration_ms, False, stdout, stderr, usage=drain.usage
+            )
 
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
@@ -990,6 +1002,7 @@ def run_pi_rpc_agent(
             False,
             "".join(drain.assistant_parts),
             "".join(drain.stderr_parts),
+            usage=drain.usage,
         )
     finally:
         if run_id:
@@ -1255,6 +1268,13 @@ def _drain_rpc_events(
     """
     assistant_parts: list[str] = []
     stderr_parts: list[str] = []
+    usage_totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost_usd": 0.0,
+    }
+    usage_seen = False
     error_seen = False
     event_exit_code: int | None = None
     current_steer_offset = steer_offset
@@ -1283,6 +1303,7 @@ def _drain_rpc_events(
                 return _DrainResult(
                     assistant_parts=assistant_parts,
                     stderr_parts=stderr_parts,
+                    usage=usage_totals if usage_seen else None,
                     error_seen=error_seen,
                     event_exit_code=event_exit_code,
                     timed_out=True,
@@ -1299,6 +1320,7 @@ def _drain_rpc_events(
                 return _DrainResult(
                     assistant_parts=assistant_parts,
                     stderr_parts=stderr_parts,
+                    usage=usage_totals if usage_seen else None,
                     error_seen=error_seen,
                     event_exit_code=event_exit_code,
                     timed_out=False,
@@ -1391,6 +1413,19 @@ def _drain_rpc_events(
                     err = message.get("errorMessage") or message.get("error", "")
                     if err:
                         stderr_parts.append(str(err))
+                # Each assistant message_end carries a per-turn pi usage block
+                # (input/output/cacheRead + a computed cost). Accumulate across
+                # turns so the run row records the whole dispatch's spend. pi
+                # nests cost under usage.cost.total.
+                usage = message.get("usage")
+                if isinstance(usage, dict):
+                    usage_seen = True
+                    usage_totals["input_tokens"] += _as_int(usage.get("input"))
+                    usage_totals["output_tokens"] += _as_int(usage.get("output"))
+                    usage_totals["cache_read_tokens"] += _as_int(usage.get("cacheRead"))
+                    cost = usage.get("cost")
+                    if isinstance(cost, dict):
+                        usage_totals["cost_usd"] += _as_float(cost.get("total"))
             elif event_type == "agent_end":
                 raw_code = event.get("exit_code", 0)
                 try:
@@ -1407,6 +1442,7 @@ def _drain_rpc_events(
     return _DrainResult(
         assistant_parts=assistant_parts,
         stderr_parts=stderr_parts,
+        usage=usage_totals if usage_seen else None,
         error_seen=error_seen,
         event_exit_code=event_exit_code,
         timed_out=False,
@@ -1425,6 +1461,21 @@ class _DrainResult:
     timed_out: bool
     steer_offset: int
     stalled: bool = False
+    usage: dict[str, float] | None = None
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_float(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _close_rpc_stdin(process: RpcProcessLike) -> None:

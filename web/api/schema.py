@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0017_issue_attachments"
+INITIAL_REVISION = "0018_run_cache_read_tokens"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -98,7 +98,10 @@ CREATE TABLE IF NOT EXISTS run(
   -- Binding-repo git short-sha at dispatch (NOT the agent session id);
   -- resume eligibility re-feeds on sha drift. See session_continuity.evaluate_resume_eligibility.
   agent_session_sha TEXT,
-  resumed BOOLEAN DEFAULT FALSE
+  resumed BOOLEAN DEFAULT FALSE,
+  -- Appended by migration 0018 (issue #343); ALTER ADD COLUMN lands last, so
+  -- SCHEMA_SQL must keep it last too for the alembic-baseline fingerprint.
+  cache_read_tokens INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS issue_attachment(
