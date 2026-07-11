@@ -37,3 +37,11 @@ models:
   - id: openrouter/auto
     agent: pi
     provider: openrouter
+  - id: Fusion
+    agent: pi
+    provider: pi-moa
+    label: Pi MoA Fusion
+  - id: Fusion Fast
+    agent: pi
+    provider: pi-moa
+    label: Pi MoA Fusion Fast

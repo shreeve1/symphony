@@ -1004,7 +1004,7 @@ def list_inbox_issues(
 KNOWN_AGENTS = _model_catalog.KNOWN_AGENTS
 
 # Temporal patrols post issues on this model unless the caller pins one.
-PATROL_DEFAULT_MODEL = "deepseek-v4-flash"
+PATROL_DEFAULT_MODEL = "Fusion Fast"
 
 # Kept as module-level names: the symphony-models skill and tests import
 # _load_models/_validate_models from web.api.main.
