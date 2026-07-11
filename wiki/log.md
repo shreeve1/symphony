@@ -1,5 +1,15 @@
 # Wiki Log
 
+## [2026-07-11] session-update | patrol default model → Fusion Fast + pi-moa catalog entries (issue #371)
+
+- Actor: agent (Claude), operator-directed `update wiki` after landing symphony `05890bd`.
+- **Input**: issue #371 — add pi models `pi-moa/Fusion` + `pi-moa/Fusion Fast`, make `Fusion Fast` the patrol-run default. Operator clarified target = `PATROL_DEFAULT_MODEL` (not a per-binding default; operator-opened homelab issues out of scope).
+- **Change**: `models.yml` registers two pi/`pi-moa` entries (ids `Fusion`, `Fusion Fast`) matching the local dotfiles MoA extension's virtual-model ids; `web/api/main.py` `PATROL_DEFAULT_MODEL` flipped `deepseek-v4-flash`→`Fusion Fast`; two issue-create patrol-default tests updated. `resolve_model` disambiguates via `provider/id`; dispatch builds `pi --provider pi-moa --model "Fusion Fast":high`; pi-moa entries have no `efforts:` list so effort gate skips them.
+- **Verification**: issue-create + catalog + alembic-baseline suites green (68+2); `resolve_model` resolves both `Fusion Fast` and `pi-moa/Fusion`. Deploy = `podium-api.service` restart (pending; create endpoint is in the API).
+- **Claims**: C-0366 (config-fact, ADMIT) supersedes C-0357's *value* only (force-mechanism intact). C-0357 marked `superseded`.
+- **Index/ROUTING**: dispatch-contract row + date bumped; analysis paragraph + frontmatter updated; ROUTING keywords add pi-moa/Fusion/Fusion Fast/MoA/#371/C-0366.
+- **Not superseded**: alembic `0019` backfill (past one-time migration to `deepseek-v4-flash`, deliberately untouched); C-0142/C-0169 catalog-default path unchanged.
+
 ## [2026-07-06] session-update | ADR-0034 carrier-disruption persistence (two layers)
 
 - Actor: agent (Pi), dev-build + dev-test + symphony-restart + wiki-update.
