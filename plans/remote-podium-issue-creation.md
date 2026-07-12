@@ -130,7 +130,7 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will
 parallelize independent groups automatically.
 
 ### 1. Config: podium_api_url
-- [ ] [1.1] In `config.py`, add a `podium_api_url: str = "http://127.0.0.1:8090"`
+- [x] [1.1] In `config.py`, add a `podium_api_url: str = "http://127.0.0.1:8090"`
       field to the frozen `SymphonyConfig` dataclass. In `from_env` (line ~300),
       populate it: `podium_api_url=(source.get("PODIUM_BASE_URL") or
       source.get("PODIUM_API_URL") or "http://127.0.0.1:8090").rstrip("/")`. AND
@@ -139,16 +139,16 @@ parallelize independent groups automatically.
       logs and assertion failures — every other field follows this pattern.
       `__post_init__` needs no change (the default is not derived from other
       fields).
-- [ ] [1.2] Confirm `CandidateIssue` exposes the owning binding name for dispatch;
+- [x] [1.2] Confirm `CandidateIssue` exposes the owning binding name for dispatch;
       if `binding_name` is absent, plan to pass `binding.name` in step 2 (no
       schema change).
 
 ### 2. Harness: skill-gated tunnel + env
-- [ ] [2.1] In `agent_runner.py`, add a module-level constant
+- [x] [2.1] In `agent_runner.py`, add a module-level constant
       `PODIUM_ISSUES_REMOTE_SKILL = "podium-issues-remote"` and a helper
       `_wants_podium_api(issue) -> bool` returning
       `getattr(issue, "preferred_skill", "") == PODIUM_ISSUES_REMOTE_SKILL`.
-- [ ] [2.2] In `run_remote_agent`, when `_wants_podium_api(issue)`, set
+- [x] [2.2] In `run_remote_agent`, when `_wants_podium_api(issue)`, set
       `port = _remote_callback_port(config.podium_api_url)` (else keep the
       existing `config.plane_api_url` derivation). The existing
       `_ssh_base_args(remote, reverse_port=port)` call then forwards `:port`.
@@ -158,7 +158,7 @@ parallelize independent groups automatically.
       without a port, the tunnel would open on 8000 while the API listens on
       8090 — acceptable for now (documented risk in Notes), since the default is
       port-explicit.
-- [ ] [2.3] Change the `_remote_exports` signature to
+- [x] [2.3] Change the `_remote_exports` signature to
       `_remote_exports(config, issue, *, binding, source_env) -> dict[str, str]`
       and update the call site in `run_remote_agent` (line ~631) to pass
       `source_env=source_env` (already defined at line ~592 as
@@ -175,13 +175,13 @@ parallelize independent groups automatically.
       `source_env` (not `os.environ` directly) is what makes T.2.2 testable via
       the `environ=` kwarg. Non-gated runs add none of these — behavior
       unchanged.
-- [ ] [2.4] Ensure `needs_remote_tmp` / skill shipping already covers this skill
+- [x] [2.4] Ensure `needs_remote_tmp` / skill shipping already covers this skill
       (it does, via `skill_source`); no change to the ship path, but verify the
       skill dir tar includes `create_issues.py` (whole-parent-dir tar already
       does).
 
 ### 3. Skill: podium-issues-remote
-- [ ] [3.1] Create `.claude/skills/podium-issues-remote/SKILL.md`: front matter
+- [x] [3.1] Create `.claude/skills/podium-issues-remote/SKILL.md`: front matter
       (`disable-model-invocation: true`, name, description), authoring rules
       copied from `podium-issues` (vertical slices, objective acceptance,
       single-backtick verification, migration lock C-0335), and a create step
@@ -199,7 +199,7 @@ parallelize independent groups automatically.
       model in the plan — and warn that a bad model name is caught only at
       dispatch (a broken `todo` row), not at create. Omitting is the safe
       default.
-- [ ] [3.2] Create `.claude/skills/podium-issues-remote/create_issues.py`:
+- [x] [3.2] Create `.claude/skills/podium-issues-remote/create_issues.py`:
       stdlib-only, shebang `#!/usr/bin/env python3`. Read `PODIUM_BASE_URL`,
       `PODIUM_API_TOKEN`, `SYMPHONY_BINDING_NAME` from env (fail loud if any
       missing). Parse JSON spec (list of slices: key, title, description,
@@ -220,31 +220,31 @@ parallelize independent groups automatically.
       (surface the API's error body).
 
 ### 4. Tests
-- [ ] [4.1] In `tests/test_config.py`, assert `podium_api_url` default is
+- [x] [4.1] In `tests/test_config.py`, assert `podium_api_url` default is
       `http://127.0.0.1:8090` and that `PODIUM_BASE_URL` overrides it.
-- [ ] [4.2] In `tests/test_remote_agent.py`, add a positive test: Podium remote
+- [x] [4.2] In `tests/test_remote_agent.py`, add a positive test: Podium remote
       binding + an issue with `preferred_skill=podium-issues-remote`, called as
       `run_remote_agent(config, issue, "spec", binding=..., environ={"PODIUM_API_TOKEN": "test-token"}, ...)`.
       Assert SSH argv contains `-R 8090:127.0.0.1:8090` AND the remote command
       string contains `PODIUM_BASE_URL=`, `PODIUM_API_TOKEN=test-token`, and
       `SYMPHONY_BINDING_NAME=`. (Passing the token via `environ=` is required —
       `_remote_exports` reads it from `source_env`, per 2.3.)
-- [ ] [4.3] In `tests/test_remote_agent.py`, add a negative test: Podium remote
+- [x] [4.3] In `tests/test_remote_agent.py`, add a negative test: Podium remote
       binding with a different/no `preferred_skill` → argv still `-R 8000:...`
       and NO `PODIUM_*` exports (behavior unchanged), even when
       `environ={"PODIUM_API_TOKEN": "test-token"}` is passed. Confirm the
       existing `test_run_remote_agent_omits_plane_env_and_helper_for_podium`
       still passes.
-- [ ] [4.3b] In `tests/test_remote_agent.py`, add a test: gated skill with an
+- [x] [4.3b] In `tests/test_remote_agent.py`, add a test: gated skill with an
       empty/missing `PODIUM_API_TOKEN` (call with `environ={}`) raises
       `AgentRunnerError` before dispatch (no `Bearer ` shipped).
-- [ ] [4.4] Create `tests/test_podium_issues_remote.py`: load `create_issues.py`
+- [x] [4.4] Create `tests/test_podium_issues_remote.py`: load `create_issues.py`
       by path (`importlib`), monkeypatch `urllib.request.urlopen` to capture
       requests and return canned `{"id": N}` responses; assert blockers POST
       before dependents, dependent `blocked_by` carries the real returned ids,
       description contains acceptance+verification, and `--dry-run` issues zero
       requests.
-- [ ] [4.5] Run the full suite (relocation/new-module safety per C-0335 /
+- [x] [4.5] Run the full suite (relocation/new-module safety per C-0335 /
       podium-issues refactor rule).
 
 ## Testing Strategy
@@ -263,33 +263,33 @@ parallelize independent groups automatically.
 ## Tests
 
 ### T.1. Client (create_issues.py)
-- [ ] [T.1.1] blockers POST before dependents (topo order)
-- [ ] [T.1.2] dependent `blocked_by` contains real returned int ids
-- [ ] [T.1.3] description folds acceptance + verification; auto_land/worktree_active set
-- [ ] [T.1.4] `--dry-run` performs zero HTTP requests
-- [ ] [T.1.5] missing `PODIUM_API_TOKEN`/`PODIUM_BASE_URL`/`SYMPHONY_BINDING_NAME` fails loud
-- [ ] [T.1.6] dependency cycle raises
+- [x] [T.1.1] blockers POST before dependents (topo order)
+- [x] [T.1.2] dependent `blocked_by` contains real returned int ids
+- [x] [T.1.3] description folds acceptance + verification; auto_land/worktree_active set
+- [x] [T.1.4] `--dry-run` performs zero HTTP requests
+- [x] [T.1.5] missing `PODIUM_API_TOKEN`/`PODIUM_BASE_URL`/`SYMPHONY_BINDING_NAME` fails loud
+- [x] [T.1.6] dependency cycle raises
 
 ### T.2. Harness (run_remote_agent)
-- [ ] [T.2.1] gated: argv has `-R 8090:127.0.0.1:8090`
-- [ ] [T.2.2] gated: exports include `PODIUM_BASE_URL`, `PODIUM_API_TOKEN`, `SYMPHONY_BINDING_NAME`
-- [ ] [T.2.3] non-gated Podium binding: argv unchanged (`8000`), no `PODIUM_*` exports
-- [ ] [T.2.4] Plane binding path unaffected
+- [x] [T.2.1] gated: argv has `-R 8090:127.0.0.1:8090`
+- [x] [T.2.2] gated: exports include `PODIUM_BASE_URL`, `PODIUM_API_TOKEN`, `SYMPHONY_BINDING_NAME`
+- [x] [T.2.3] non-gated Podium binding: argv unchanged (`8000`), no `PODIUM_*` exports
+- [x] [T.2.4] Plane binding path unaffected
 
 ### T.3. Config
-- [ ] [T.3.1] `podium_api_url` default `http://127.0.0.1:8090`
-- [ ] [T.3.2] `PODIUM_BASE_URL` env overrides it
+- [x] [T.3.1] `podium_api_url` default `http://127.0.0.1:8090`
+- [x] [T.3.2] `PODIUM_BASE_URL` env overrides it
 
 ## Progress
 **Phase Status:**
-- Build: `pending`
-- Test: `pending`
+- Build: `complete`
+- Test: `complete`
 
 **Task Counts:**
-- Implementation: `0/14` tasks complete
-- Tests: `0/12` tests passing
+- Implementation: `14/14` tasks complete
+- Tests: `12/12` tests passing
 
-**Last Updated:** `---`
+**Last Updated:** `2026-06-19`
 
 ## Acceptance Criteria
 

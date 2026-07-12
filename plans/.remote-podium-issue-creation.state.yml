@@ -1,43 +1,15 @@
 plan_file: plans/remote-podium-issue-creation.md
-prompt: "Create a plan for ADR-0036: remote podium issue creation over the dispatch tunnel (podium-issues-remote skill + skill-gated tunnel/env injection in agent_runner)."
-reviewer: pi
-reviewer_model: null
-max_rounds: 2
-current_round: 2
-status: hard_stopped
-exit_reason: "Reached MAX_ROUNDS=2; round 2 found 1 new CRITICAL (loopback URL bug) + 1 WARNING + 2 NOTE, all fixed inline"
-phase_8_findings:
-  critical: []
-  warning: []
-  note:
-    - "[NOTE] task 1.2 uncertainty (binding_name presence) resolved inline: CandidateIssue.binding_name exists at tracker_types.py:45; plan updated to read-only."
-rounds:
-  - round: 1
+status: build_only
+build_audits:
+  - wave: 1
+    outcome: passed
+    reviewer: pi
+    model: openai-codex/gpt-5.5
+    diff: /tmp/build_wave_1_diff.patch
     findings:
-      critical:
-        - "[CRITICAL] _remote_exports has no pathway to read PODIUM_API_TOKEN as currently specified (no source_env param; call site line 631 passes none)"
-        - "[CRITICAL] SymphonyConfig.__repr__ (config.py:391) enumerates every field; podium_api_url must be added there"
-        - "[CRITICAL] No model validation at create time; remote client relies on deferred dispatch-time failure (SKILL.md must warn)"
-      warning:
-        - "[WARNING] T.2.2 cannot verify PODIUM_API_TOKEN export without environ= injection into the test"
-        - "[WARNING] Plan claims mirrors local _description() but does not give exact format contract"
-        - "[WARNING] python3 binary unqualified on remote; SKILL.md should state Python3 requirement"
-        - "[WARNING] origin field omitted -> issues default origin=operator (correct, but note to preempt implementor adding origin=patrol)"
-      note:
-        - "[NOTE] from_env binding for podium_api_url should be source.get(PODIUM_BASE_URL) or source.get(PODIUM_API_URL) or default"
-        - "[NOTE] binding_name is str default '' always populated; binding.name fallback correct"
-        - "[NOTE] worktree_active always true mirrors local skill; consistent"
-        - "[NOTE] cycle detection exists both client and server side; client raise fine"
-    counts: { critical: 3, warning: 4, note: 6 }
-    revision_summary: "Specified _remote_exports(config, issue, *, binding, source_env) signature + call-site update; added __repr__ line for podium_api_url; added from_env binding detail; added deferred-model-validation NOTE + SKILL.md warning; pinned exact _description() format string; stated Python3 remote requirement; added origin=operator omit comment; tightened T.2.2/T.2.3 to use environ= kwarg."
-  - round: 2
-    findings:
-      critical:
-        - "[CRITICAL] Remote PODIUM_BASE_URL used config value verbatim; an externally-set PODIUM_BASE_URL in scheduler env would make remote POST bypass the tunnel"
-      warning:
-        - "[WARNING] SKILL.md 'reference symphony-models skill' unreachable on remote (skill not shipped)"
-      note:
-        - "[NOTE] PODIUM_API_TOKEN silently defaults to '' -> empty Bearer 401s cryptically"
-        - "[NOTE] podium_api_url port parsing has silent 8000 fallback divergent from 8090 default"
-    counts: { critical: 1, warning: 1, note: 2 }
-    revision_summary: "Fixed 2.3 to export PODIUM_BASE_URL=http://127.0.0.1:{port} (loopback, never config verbatim); raise AgentRunnerError on empty token; changed SKILL.md guidance to omit model/agent (symphony-models unreachable); added [4.3b] empty-token-raises test; documented port-explicit-default risk in 2.2 + Notes."
+      critical: 0
+      warning: 2
+      note: 0
+    warnings:
+      - "Remote client drops authored slice titles — REJECTED: IssueCreate is extra=forbid with no title field; title is server-generated from description (web/api/main.py). Sending it would 400. Correct per 'no API changes'."
+      - "Missing-token check after skill-ship/worktree — ACCEPTED as designed: plan task 2.3 explicitly raises AgentRunnerError at _remote_exports; misconfig leaks a remote worktree but fails loudly. Not critical."
