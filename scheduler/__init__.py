@@ -757,6 +757,7 @@ async def _maybe_transient_review_retry(
     now: Callable[[], datetime],
     mode: str,
     comments_md: str | None = None,
+    summary: str | None = None,
 ) -> TickResult | None:
     if not getattr(candidate, "review_dispatch", False):
         return None
@@ -798,6 +799,8 @@ async def _maybe_transient_review_retry(
 
     if prior >= cap:
         msg = f"Transient review failure retry cap exhausted after {prior} retries."
+        if summary:
+            msg += f"\n\n{summary}"
         await _finish_run_record(
             adapter,
             run_id,
@@ -806,7 +809,7 @@ async def _maybe_transient_review_retry(
             secrets=secrets,
             state="failed",
             verdict="blocked",
-            summary=retry_summary or msg,
+            summary=summary or retry_summary or msg,
             ended_at=now_dt.isoformat(),
         )
         _iu, _du = _build_urls(config, candidate.id)
@@ -867,9 +870,12 @@ async def _block_retry_ceiling(
     notifier: TelegramNotifier | None,
     now: Callable[[], datetime],
     mode: str,
+    summary: str | None = None,
 ) -> TickResult:
     total = count_all_retries(getattr(candidate, "comments_md", "") or "")
     msg = f"Combined retry ceiling exhausted after {total} retries."
+    if summary:
+        msg += f"\n\n{summary}"
     now_dt = now()
     await _finish_run_record(
         adapter,
@@ -879,7 +885,7 @@ async def _block_retry_ceiling(
         secrets=secrets,
         state="failed",
         verdict="blocked",
-        summary=_extract_summary(result, secrets, include_stderr=parse_stderr) or msg,
+        summary=summary or msg,
         ended_at=now_dt.isoformat(),
     )
     _iu, _du = _build_urls(config, candidate.id)
@@ -910,6 +916,7 @@ async def _maybe_retry_stall(
     now: Callable[[], datetime],
     mode: str,
     comments_md: str,
+    summary: str | None = None,
 ) -> TickResult | None:
     # ADR-0034: broaden beyond the RPC stall sentinel (ADR-0027) to also match
     # any pi-retry extension tag — provider-stream stalls where pi keeps
@@ -926,6 +933,8 @@ async def _maybe_retry_stall(
     prior = count_stall_retries(comments_md)
     if prior >= MAX_STALL_RETRIES:
         msg = f"Stall retry cap exhausted after {prior} retries."
+        if summary:
+            msg += f"\n\n{summary}"
         await _finish_run_record(
             adapter,
             run_id,
@@ -934,8 +943,7 @@ async def _maybe_retry_stall(
             secrets=secrets,
             state="failed",
             verdict="blocked",
-            summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
-            or msg,
+            summary=summary or msg,
             ended_at=now_dt.isoformat(),
         )
         _iu, _du = _build_urls(config, candidate.id)
@@ -1064,6 +1072,22 @@ async def _classify_terminal(
 ) -> TickResult:
     """Classify terminal agent output and apply final tracker/run transitions."""
 
+    # Capture the agent's natural turn once, up front, so every terminal branch
+    # — including the retry-exhaustion blocks and the failure branches below —
+    # can surface the real prose the agent emitted instead of a terse stub.
+    # Falls back to a SYMPHONY_SUMMARY block only when the turn is empty.
+    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
+    summary = _capture_natural_turn(
+        result,
+        secrets,
+        scheduling=scheduling,
+        is_claude=agent == "claude",
+        binding_name=binding.name if binding else "",
+        homelab_repo_path=str(config.homelab_repo_path),
+    )
+    if summary is None:
+        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+
     if result.timed_out or result.exit_code != 0:
         comments_md = getattr(candidate, "comments_md", "") or ""
         if count_all_retries(comments_md) >= MAX_COMBINED_RETRIES:
@@ -1079,6 +1103,7 @@ async def _classify_terminal(
                 notifier=notifier,
                 now=now,
                 mode=mode,
+                summary=summary,
             )
         try:
             fresh_comments_md = await _fresh_retry_comments_text(adapter, candidate)
@@ -1103,6 +1128,7 @@ async def _classify_terminal(
                 notifier=notifier,
                 now=now,
                 mode=mode,
+                summary=summary,
             )
         stall_retry = await _maybe_retry_stall(
             config,
@@ -1117,6 +1143,7 @@ async def _classify_terminal(
             now=now,
             mode=mode,
             comments_md=comments_md,
+            summary=summary,
         )
         if stall_retry is not None:
             return stall_retry
@@ -1133,6 +1160,7 @@ async def _classify_terminal(
             now=now,
             mode=mode,
             comments_md=comments_md,
+            summary=summary,
         )
         if transient_retry is not None:
             return transient_retry
@@ -1154,7 +1182,8 @@ async def _classify_terminal(
     if result.timed_out:
         msg = f"Agent timed out after {result.duration_ms} ms"
         _stdout, stderr = _format_report(result, secrets)
-        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+        if summary:
+            msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
         await _finish_run_record(
@@ -1183,7 +1212,8 @@ async def _classify_terminal(
     if result.exit_code != 0:
         msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
         _stdout, stderr = _format_report(result, secrets)
-        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
+        if summary:
+            msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
         await _finish_run_record(
@@ -1236,21 +1266,12 @@ async def _classify_terminal(
             return TickResult(True, scheduled_after_agent, candidate.id, mode=mode)
 
     verdict = _parse_result_marker(class_stdout)
-    agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
-    summary = _capture_natural_turn(
-        result,
-        secrets,
-        scheduling=scheduling,
-        is_claude=agent == "claude",
-        binding_name=binding.name if binding else "",
-        homelab_repo_path=str(config.homelab_repo_path),
-    )
-    if summary is None:
-        summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
     question = _extract_question(result, secrets, include_stderr=parse_stderr)
 
     if _hit_permission_gate(class_stdout, class_stderr):
         msg = "Agent could not complete because required tool access was denied."
+        if summary:
+            msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
         await _finish_run_record(
@@ -1291,6 +1312,8 @@ async def _classify_terminal(
                     f"Agent requested schedule but not_before={not_before.isoformat()} "
                     f"is in the past. Cannot schedule into the past."
                 )
+                if summary:
+                    msg += f"\n\n{summary}"
                 await _finish_run_record(
                     adapter,
                     run_id,
@@ -1299,10 +1322,7 @@ async def _classify_terminal(
                     secrets=secrets,
                     state="failed",
                     verdict="blocked",
-                    summary=_extract_summary(
-                        result, secrets, include_stderr=parse_stderr
-                    )
-                    or msg,
+                    summary=summary or msg,
                     ended_at=now_dt.isoformat(),
                 )
                 _iu, _du = _build_urls(config, candidate.id)
@@ -1323,12 +1343,12 @@ async def _classify_terminal(
             schedule_comment = format_schedule_comment(
                 not_before=not_before, reason=reason
             )
-            await adapter.add_comment(
-                candidate.id, CommentPayload(body=schedule_comment)
+            schedule_body = (
+                f"{schedule_comment}\n\n{summary}" if summary else schedule_comment
             )
+            await adapter.add_comment(candidate.id, CommentPayload(body=schedule_body))
             await adapter.add_labels(candidate.id, [TrackerRole.SCHEDULED])
             await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
-            summary = _extract_summary(result, secrets, include_stderr=parse_stderr)
             await _finish_run_record(
                 adapter,
                 run_id,
@@ -1354,6 +1374,8 @@ async def _classify_terminal(
                 "Agent emitted a malformed SYMPHONY_SCHEDULE marker: "
                 "could not parse not_before or reason is empty."
             )
+            if summary:
+                msg += f"\n\n{summary}"
             await _finish_run_record(
                 adapter,
                 run_id,
@@ -1362,8 +1384,7 @@ async def _classify_terminal(
                 secrets=secrets,
                 state="failed",
                 verdict="blocked",
-                summary=_extract_summary(result, secrets, include_stderr=parse_stderr)
-                or msg,
+                summary=summary or msg,
                 ended_at=now_dt.isoformat(),
             )
             _iu, _du = _build_urls(config, candidate.id)
@@ -1387,6 +1408,8 @@ async def _classify_terminal(
         and _hit_approval_gate(class_stdout, class_stderr)
     ):
         msg = "Agent could not complete because operator approval is required."
+        if summary:
+            msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
         await _finish_run_record(

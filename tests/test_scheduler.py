@@ -1082,7 +1082,11 @@ async def test_fourth_stall_failure_blocks_at_combined_ceiling(
         _config(tmp_path),
         _adapter(transport),
         agent_runner=lambda issue, prompt: AgentResult(
-            -1, 10, False, stderr=STALL_WATCHDOG_SENTINEL
+            -1,
+            10,
+            False,
+            stdout="Investigated the mount before stalling.",
+            stderr=STALL_WATCHDOG_SENTINEL,
         ),
         render_prompt=lambda issue: "prompt",
         poller=lambda adapter: [replace(_candidate("issue-1"), comments_md=prior)],
@@ -1094,6 +1098,12 @@ async def test_fourth_stall_failure_blocks_at_combined_ceiling(
     assert (
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    # The natural turn surfaces in the retry-ceiling block comment rather than
+    # being dropped to the run log.
+    assert (
+        "Investigated the mount before stalling."
+        in transport.comments["issue-1"][0]["comment_html"]
     )
 
 
@@ -1345,26 +1355,27 @@ async def test_timeout_retries_once_then_blocks(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_tick_omits_stdout_in_blocked_comments(tmp_path: Path) -> None:
-    for agent_result, reason in [
-        (AgentResult(2, 10, False, stdout="Error: connection refused"), "nonzero"),
-        (AgentResult(-1, 20, True, stdout="Partial output before timeout"), "timeout"),
-    ]:
-        transport = FakeTransport()
-        transport.issues["issue-1"] = _issue("issue-1")
-        await run_tick(
-            _config(tmp_path),
-            _adapter(transport),
-            agent_runner=lambda issue, prompt, result=agent_result: result,
-            render_prompt=lambda issue: "prompt",
-            lock_path=tmp_path / f"lock-{reason}-stdout",
-            poller=lambda adapter: [_candidate("issue-1")],
-            repo_dirty=lambda path: False,
-        )
+async def test_run_tick_surfaces_natural_turn_in_blocked_comments(
+    tmp_path: Path,
+) -> None:
+    agent_result = AgentResult(2, 10, False, stdout="Error: connection refused")
+    transport = FakeTransport()
+    transport.issues["issue-1"] = _issue("issue-1")
+    await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: agent_result,
+        render_prompt=lambda issue: "prompt",
+        lock_path=tmp_path / "lock-nonzero-stdout",
+        poller=lambda adapter: [_candidate("issue-1")],
+        repo_dirty=lambda path: False,
+    )
 
-        blocked_comment = transport.comments["issue-1"][0]["comment_html"]
-        assert "Agent Output:" not in blocked_comment
-        assert agent_result.stdout not in blocked_comment
+    blocked_comment = transport.comments["issue-1"][0]["comment_html"]
+    assert "Agent Output:" not in blocked_comment
+    # The agent's natural turn now surfaces on failure branches so the
+    # posted comment matches what the run produced, not a terse stub.
+    assert agent_result.stdout in blocked_comment
 
 
 @pytest.mark.asyncio
@@ -2219,7 +2230,8 @@ async def test_run_tick_stderr_appears_in_blocked_timeout_comment(
 
     blocked_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Agent Output:" not in blocked_comment
-    assert "partial" not in blocked_comment
+    # Natural turn now surfaces alongside the diagnostic and stderr summary.
+    assert "partial" in blocked_comment
     assert "Stderr summary:" in blocked_comment
     assert "timeout error detail" in blocked_comment
 
@@ -3203,7 +3215,13 @@ async def test_transient_review_retry_cap_blocks_and_notifies(tmp_path: Path) ->
         adapter,
         agent_runner=lambda issue, prompt: (
             seen_review_dispatch.append(issue.review_dispatch)
-            or AgentResult(1, 10, False, stderr="service_unavailable")
+            or AgentResult(
+                1,
+                10,
+                False,
+                stdout="Reviewed the diff before the provider dropped.",
+                stderr="service_unavailable",
+            )
         ),
         render_prompt=lambda issue: "prompt",
         run_blocked_reconciler=False,
@@ -3216,6 +3234,8 @@ async def test_transient_review_retry_cap_blocks_and_notifies(tmp_path: Path) ->
     issue = await adapter.get_issue(issue_id)
     assert issue["state"] == "blocked"
     assert "retry cap exhausted after 2 retries" in issue["comments_md"]
+    # The natural turn surfaces in the exhaustion block comment.
+    assert "Reviewed the diff before the provider dropped." in issue["comments_md"]
     assert seen_review_dispatch == [True]
     assert notifier.messages
 
@@ -4145,6 +4165,9 @@ async def test_schedule_marker_schedules_issue(tmp_path: Path) -> None:
     assert "Symphony-Schedule:" in scheduled_comment
     assert "not_before=2026-05-05T00:00:00+00:00" in scheduled_comment
     assert 'reason="upgrade window"' in scheduled_comment
+    # The agent's natural turn is surfaced alongside the schedule notice
+    # rather than discarded to the run log.
+    assert "All good. Will do the restart during maintenance." in scheduled_comment
     scheduled_label_id = DEFAULT_CONTRACT.label_ids[PlaneLabel.SCHEDULED.value]
     assert scheduled_label_id in transport.issues["issue-1"]["labels"]
     assert adapter.runs["run-1"]["state"] == "succeeded"
