@@ -299,9 +299,7 @@ def _agent_env(
     # without this the agent silently falls back (observed Run #1650).
     pi_bin_dir = str(Path(config.pi_bin).parent)
     base_path = source_env.get("PATH", "")
-    path_with_pi = (
-        f"{pi_bin_dir}{os.pathsep}{base_path}" if base_path else pi_bin_dir
-    )
+    path_with_pi = f"{pi_bin_dir}{os.pathsep}{base_path}" if base_path else pi_bin_dir
     env.update(
         {
             "PATH": f"{temp_dir}{os.pathsep}{path_with_pi}",

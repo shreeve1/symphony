@@ -45,3 +45,6 @@ models:
     agent: pi
     provider: pi-moa
     label: Pi MoA Fusion Fast
+  - id: minimax/minimax-m3
+    agent: pi
+    provider: minimax
