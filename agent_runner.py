@@ -614,8 +614,12 @@ def run_remote_agent(
     provider = getattr(issue, "resolved_provider", "") or config.pi_provider
     model = getattr(issue, "resolved_model", "") or config.pi_model
     # Remote PATH resolves the agent binary; the local absolute pi_bin path does
-    # not exist on the remote, so dispatch by basename (probe confirmed `pi` is
-    # on the remote PATH). A per-binding remote pi path is a future refinement.
+    # not exist on the remote, so dispatch by basename. NB: the startup probe
+    # (verify_pi_support) only checks the *local* pi_bin -- it does NOT confirm
+    # remote PATH. The SSH command is non-interactive, so ~/.zshrc/~/.bashrc are
+    # NOT sourced; the remote must place the agent on PATH via ~/.zshenv (zsh)
+    # or ~/.profile-independent means. A per-binding remote pi path is a future
+    # refinement.
     pi_name = Path(config.pi_bin).name or "pi"
     remote_skill_source = ""
     session_id = getattr(issue, "agent_session_id", "") or derive_session_id(issue.id)
