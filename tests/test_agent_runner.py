@@ -642,6 +642,39 @@ def test_run_agent_sets_pi_argv_env_cwd_and_process_group(tmp_path: Path) -> Non
     assert env.get("NO_COLOR") == "1"
 
 
+def test_run_agent_puts_pi_bin_dir_on_path(tmp_path: Path) -> None:
+    # A nested bare `pi` the agent spawns (e.g. pi-moa grounding) must resolve;
+    # under systemd the service PATH lacks the npm-global bin dir where pi
+    # lives, so the child PATH must include the pi binary's own directory
+    # (regression: Run #1650 fell back because nested `pi` was not on PATH).
+    temp_dir = tmp_path / "temp-helper"
+    helper = tmp_path / "plane_cli.py"
+    helper.write_text("print('helper')\n")
+    captured: dict[str, object] = {}
+
+    def fake_popen(command, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    run_agent(
+        _config_with_model(tmp_path),
+        _issue(),
+        "rendered prompt",
+        plane_cli_source=helper,
+        popen_factory=fake_popen,
+        mkdtemp=lambda **k: str(temp_dir),
+        clock=iter([10.0, 10.25]).__next__,
+        environ={"PATH": "/usr/bin", "HOME": "/home/james"},
+    )
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    parts = env["PATH"].split(os.pathsep)
+    assert parts[0] == str(temp_dir)
+    assert parts[1] == "/usr/local/bin"  # dirname of pi_bin=/usr/local/bin/pi
+    assert "/usr/bin" in parts
+
+
 def test_run_agent_passes_telegram_env_only_when_issue_notifications_enabled(
     tmp_path: Path,
 ) -> None:

@@ -293,9 +293,18 @@ def _agent_env(
         "PI_CODING_AGENT_SESSION_DIR",
     }
     env = {k: v for k, v in source_env.items() if k in allowed_keys}
+    # Prepend the pi binary's own directory so a nested bare `pi` the agent
+    # spawns (e.g. pi-moa grounding) resolves. Under systemd the service PATH
+    # is the default and lacks the npm-global bin dir where pi lives, so
+    # without this the agent silently falls back (observed Run #1650).
+    pi_bin_dir = str(Path(config.pi_bin).parent)
+    base_path = source_env.get("PATH", "")
+    path_with_pi = (
+        f"{pi_bin_dir}{os.pathsep}{base_path}" if base_path else pi_bin_dir
+    )
     env.update(
         {
-            "PATH": f"{temp_dir}{os.pathsep}{source_env.get('PATH', '')}",
+            "PATH": f"{temp_dir}{os.pathsep}{path_with_pi}",
             "HOME": source_env.get("HOME", f"/home/{os.getenv('USER', 'james')}"),
             "TERM": "dumb",
             "NO_COLOR": "1",
@@ -502,8 +511,7 @@ def _remote_exports(
         token = source_env.get("PODIUM_API_TOKEN") or ""
         if not token:
             raise AgentRunnerError(
-                "PODIUM_API_TOKEN not set; required for "
-                "podium-issues-remote dispatch"
+                "PODIUM_API_TOKEN not set; required for podium-issues-remote dispatch"
             )
         exports["PODIUM_BASE_URL"] = f"http://127.0.0.1:{port}"
         exports["PODIUM_API_TOKEN"] = token
@@ -672,9 +680,7 @@ def run_remote_agent(
 
     remote_command = _build_remote_command(
         repo_path=str(dispatch_repo_path),
-        exports=_remote_exports(
-            config, issue, binding=binding, source_env=source_env
-        ),
+        exports=_remote_exports(config, issue, binding=binding, source_env=source_env),
         pi_command=pi_command,
         helper_dir=remote_tmp if ship_plane_helper else "",
     )
