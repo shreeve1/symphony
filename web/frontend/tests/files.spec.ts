@@ -69,3 +69,60 @@ test("browse, expand, open, edit, save, persist; no Monaco CDN", async ({
 	);
 	expectCleanConsole(problems);
 });
+
+test("expand toggle hides tree, restores it, persists across reload", async ({
+	page,
+	problems,
+}) => {
+	// Wipe the key once on first navigation. (`addInitScript` would re-clear
+	// it on every reload and defeat the persistence half of this test.)
+	await page.goto("/homelab/files");
+	await page.evaluate(() => {
+		try {
+			window.localStorage.removeItem("podium-files-expanded");
+		} catch {
+			/* ignore */
+		}
+	});
+	await page.reload();
+
+	const tree = page.getByTestId("files-tree");
+	await expect(tree).toBeVisible();
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
+		"Maximize",
+	);
+
+	// Toggle 1 → tree hidden, control moves to the bottom-right Restore.
+	await page.getByTestId("files-expand-toggle").click();
+	await expect(page.getByTestId("files-restore-toggle")).toHaveText(
+		"Restore",
+	);
+	await expect(tree).toBeHidden();
+
+	// Toggle 2 → tree visible, control moves back to the tree pane header.
+	await page.getByTestId("files-restore-toggle").click();
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
+		"Maximize",
+	);
+	await expect(tree).toBeVisible();
+
+	// Persist: expand, reload, key survived.
+	await page.getByTestId("files-expand-toggle").click();
+	await expect(page.getByTestId("files-restore-toggle")).toHaveText("Restore");
+	await page.reload();
+	await expect(page.getByTestId("files-restore-toggle")).toHaveText(
+		"Restore",
+	);
+	await expect(page.getByTestId("files-tree")).toBeHidden();
+
+	// Cleanup so other tests don't inherit the persisted true.
+	await page.evaluate(() => {
+		try {
+			window.localStorage.removeItem("podium-files-expanded");
+		} catch {
+			/* ignore */
+		}
+	});
+
+	expectCleanConsole(problems);
+});
