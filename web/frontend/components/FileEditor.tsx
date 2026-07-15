@@ -86,7 +86,8 @@ export function FileEditor({
 		},
 	});
 
-	const canSave = Boolean(path) && dirty && !readOnly && !saveMutation.isPending;
+	const canSave =
+		Boolean(path) && dirty && !readOnly && !saveMutation.isPending;
 
 	// Keep a stable ref the Monaco keybinding can call without re-mounting.
 	saveRef.current = () => {
@@ -105,9 +106,8 @@ export function FileEditor({
 	}, []);
 
 	const handleMount: OnMount = (editor, monaco) => {
-		editor.addCommand(
-			monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-			() => saveRef.current(),
+		editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
+			saveRef.current(),
 		);
 	};
 
@@ -200,10 +200,7 @@ export function FileEditor({
 					<p className="p-4 text-sm text-muted-foreground">Loading…</p>
 				)}
 				{isError && (
-					<p
-						data-testid="file-load-error"
-						className="p-4 text-sm text-red-500"
-					>
+					<p data-testid="file-load-error" className="p-4 text-sm text-red-500">
 						{errorMessage(error)}
 					</p>
 				)}

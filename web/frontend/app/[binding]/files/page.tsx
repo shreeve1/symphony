@@ -68,7 +68,8 @@ export default function BindingFilesPage() {
 
 	const handleDelete = useCallback(() => {
 		if (!selectedPath) return;
-		if (!window.confirm(`Delete ${selectedPath}? This cannot be undone.`)) return;
+		if (!window.confirm(`Delete ${selectedPath}? This cannot be undone.`))
+			return;
 		deleteMutation.mutate(selectedPath);
 	}, [selectedPath, deleteMutation]);
 

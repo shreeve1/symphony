@@ -157,10 +157,7 @@ function DirNode({
 								targetDir === entry.path && "bg-accent font-medium",
 							)}
 						>
-							<span
-								aria-hidden
-								className="w-3 shrink-0 text-muted-foreground"
-							>
+							<span aria-hidden className="w-3 shrink-0 text-muted-foreground">
 								{expanded.has(entry.path) ? "▾" : "▸"}
 							</span>
 							<span className="truncate">{entry.name}</span>
