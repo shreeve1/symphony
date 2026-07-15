@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # staged-static-check — ruff check on staged .py files before git commit/push.
-# exit 2 blocks the commit. Reads {tool_input:{command}} on stdin. Only acts on
-# git commit/push; every other bash command passes through (exit 0).
+# ADVISORY ONLY: warns on stderr but always exits 0, never blocks the commit.
+# symphony runs agents unattended (bypassPermissions) and deliberately removed
+# blocking pre-git hooks (commits 20fc650, 704b4b4: "Hooks break autonomous
+# runs"); the standing CLAUDE.md pre-commit obligation is the real gate.
+# Reads {tool_input:{command}} on stdin. Only acts on git commit/push; every
+# other bash command passes through (exit 0).
 # Fires in Claude (PreToolUse Bash) and Pi. ruff only — mypy/pyright omitted
 # (no project config → per-file import noise). Whole-project pytest is left to
 # CI/dev-test (flaky concurrent test + ADR-0028 slice latency).
@@ -48,7 +52,6 @@ for f in "${files[@]}"; do
 done
 
 if [ "$failed" -ne 0 ]; then
-  printf 'Blocked by harness-gate staged-static-check:\n%b' "$failure_msg" >&2
-  exit 2
+  printf 'harness-gate staged-static-check (advisory, non-blocking):\n%b' "$failure_msg" >&2
 fi
 exit 0
