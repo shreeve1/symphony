@@ -236,6 +236,7 @@ export async function deleteAttachment(
 export interface FileEntry {
 	name: string;
 	path: string;
+	absolute_path: string;
 	is_directory: boolean;
 }
 

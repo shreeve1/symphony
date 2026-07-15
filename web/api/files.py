@@ -335,6 +335,7 @@ def list_directory(
             {
                 "name": entry.name,
                 "path": f"{path}/{entry.name}" if path else entry.name,
+                "absolute_path": str(repo_root / entry.name),
                 "is_directory": is_dir,
             }
         )

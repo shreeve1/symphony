@@ -43,7 +43,7 @@ function FileRow({
 		e.stopPropagation();
 		void (async () => {
 			try {
-				await navigator.clipboard.writeText(entry.path);
+				await navigator.clipboard.writeText(entry.absolute_path);
 				setCopied(true);
 				setTimeout(() => setCopied(false), 1500);
 			} catch {
