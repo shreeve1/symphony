@@ -179,7 +179,7 @@ def test_create_explicit_origin_patrol_persists(client: TestClient) -> None:
     assert client.get(f"/api/issues/{body['id']}").json()["origin"] == "patrol"
 
 
-def test_patrol_origin_defaults_preferred_model_to_fusion_fast(
+def test_patrol_origin_defaults_preferred_model_to_pi_duo(
     client: TestClient,
 ) -> None:
     response = client.post(
@@ -187,11 +187,11 @@ def test_patrol_origin_defaults_preferred_model_to_fusion_fast(
         json={"description": "patrol", "origin": "patrol"},
     )
     assert response.status_code == 201
-    assert response.json()["preferred_model"] == "Fusion Fast"
+    assert response.json()["preferred_model"] == "pi-duo"
 
 
-def test_patrol_origin_forces_fusion_fast_over_pinned_model(client: TestClient) -> None:
-    """Patrols are unconditionally Fusion Fast (issue #371): a caller-pinned
+def test_patrol_origin_forces_pi_duo_over_pinned_model(client: TestClient) -> None:
+    """Patrols are unconditionally pi-duo: a caller-pinned
     model is overridden, not honored."""
     response = client.post(
         "/api/bindings/symphony/issues",
@@ -202,7 +202,7 @@ def test_patrol_origin_forces_fusion_fast_over_pinned_model(client: TestClient) 
         },
     )
     assert response.status_code == 201
-    assert response.json()["preferred_model"] == "Fusion Fast"
+    assert response.json()["preferred_model"] == "pi-duo"
 
 
 def test_operator_origin_leaves_preferred_model_unset(client: TestClient) -> None:

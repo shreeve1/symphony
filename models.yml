@@ -13,7 +13,6 @@ models:
   - id: deepseek-v4-pro
     agent: pi
     provider: deepseek
-    default: true
   - id: gpt-5.5
     agent: pi
     provider: openai-codex
@@ -37,14 +36,10 @@ models:
   - id: openrouter/auto
     agent: pi
     provider: openrouter
-  - id: Fusion
-    agent: pi
-    provider: pi-moa
-    label: Pi MoA Fusion
-  - id: Fusion Fast
-    agent: pi
-    provider: pi-moa
-    label: Pi MoA Fusion Fast
   - id: minimax/minimax-m3
     agent: pi
     provider: minimax
+  - id: Duo
+    agent: pi
+    provider: pi-duo
+    default: true

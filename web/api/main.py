@@ -1004,7 +1004,7 @@ def list_inbox_issues(
 KNOWN_AGENTS = _model_catalog.KNOWN_AGENTS
 
 # Temporal patrols post issues on this model unless the caller pins one.
-PATROL_DEFAULT_MODEL = "Fusion Fast"
+PATROL_DEFAULT_MODEL = "pi-duo"
 
 # Kept as module-level names: the symphony-models skill and tests import
 # _load_models/_validate_models from web.api.main.
@@ -1163,7 +1163,7 @@ async def create_binding_issue(
         origin = "patrol"
     else:
         origin = "operator"
-    # Temporal patrols always post as deepseek-v4-flash — the model is forced
+    # Temporal patrols always post as pi-duo — the model is forced
     # for origin=='patrol', overriding any caller-pinned value (operator
     # decision, issue #343: patrols are cost-sensitive and must never run on a
     # heavier model). Operator-created issues keep their explicit model. The
