@@ -324,6 +324,34 @@ export async function saveFile(
 	return res.json() as Promise<{ message: string; path: string; size: number }>;
 }
 
+export async function createFile(
+	binding: string,
+	path: string,
+): Promise<{ message: string; path: string }> {
+	const url = `/api/bindings/${encodeURIComponent(binding)}/files`;
+	const res = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path }),
+	});
+	if (!res.ok) {
+		throw new Error(`POST ${url} -> ${res.status} ${res.statusText}`);
+	}
+	return res.json() as Promise<{ message: string; path: string }>;
+}
+
+export async function deleteFile(
+	binding: string,
+	path: string,
+): Promise<{ message: string; path: string }> {
+	const url = `/api/bindings/${encodeURIComponent(binding)}/files/content?path=${encodeURIComponent(path)}`;
+	const res = await fetch(url, { method: "DELETE" });
+	if (!res.ok) {
+		throw new Error(`DELETE ${url} -> ${res.status} ${res.statusText}`);
+	}
+	return res.json() as Promise<{ message: string; path: string }>;
+}
+
 export async function login(password: string): Promise<void> {
 	const res = await fetch("/api/auth/login", {
 		method: "POST",

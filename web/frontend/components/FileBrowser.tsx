@@ -11,6 +11,8 @@ interface FileBrowserProps {
 	binding: string;
 	selectedPath: string | null;
 	onSelect: (path: string) => void;
+	targetDir: string;
+	onTargetDir: (path: string) => void;
 }
 
 interface DirNodeProps {
@@ -19,6 +21,8 @@ interface DirNodeProps {
 	depth: number;
 	selectedPath: string | null;
 	onSelect: (path: string) => void;
+	targetDir: string;
+	onTargetDir: (path: string) => void;
 }
 
 function rowPadding(depth: number): React.CSSProperties {
@@ -96,6 +100,8 @@ function DirNode({
 	depth,
 	selectedPath,
 	onSelect,
+	targetDir,
+	onTargetDir,
 }: DirNodeProps) {
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ["files", binding, dirPath],
@@ -141,9 +147,15 @@ function DirNode({
 						<button
 							type="button"
 							data-testid="dir-row"
-							onClick={() => toggle(entry.path)}
+							onClick={() => {
+								toggle(entry.path);
+								onTargetDir(entry.path);
+							}}
 							style={rowPadding(depth)}
-							className="flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm transition-colors hover:bg-accent"
+							className={cn(
+								"flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm transition-colors hover:bg-accent",
+								targetDir === entry.path && "bg-accent font-medium",
+							)}
 						>
 							<span
 								aria-hidden
@@ -160,6 +172,8 @@ function DirNode({
 								depth={depth + 1}
 								selectedPath={selectedPath}
 								onSelect={onSelect}
+								targetDir={targetDir}
+								onTargetDir={onTargetDir}
 							/>
 						)}
 					</div>
@@ -181,6 +195,8 @@ export function FileBrowser({
 	binding,
 	selectedPath,
 	onSelect,
+	targetDir,
+	onTargetDir,
 }: FileBrowserProps) {
 	return (
 		<div data-testid="file-browser" className="flex flex-col gap-0.5">
@@ -190,6 +206,8 @@ export function FileBrowser({
 				depth={0}
 				selectedPath={selectedPath}
 				onSelect={onSelect}
+				targetDir={targetDir}
+				onTargetDir={onTargetDir}
 			/>
 		</div>
 	);

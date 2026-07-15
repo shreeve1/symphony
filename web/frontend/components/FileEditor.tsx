@@ -22,6 +22,10 @@ const Editor = dynamic(
 interface FileEditorProps {
 	binding: string;
 	path: string | null;
+	isExpanded: boolean;
+	onToggleExpanded: () => void;
+	onNew: () => void;
+	onDelete: () => void;
 }
 
 // getJSON throws `Error("<url> -> <status> <statusText>")`. Pull the numeric
@@ -45,7 +49,14 @@ function errorMessage(error: unknown): string {
 	}
 }
 
-export function FileEditor({ binding, path }: FileEditorProps) {
+export function FileEditor({
+	binding,
+	path,
+	isExpanded,
+	onToggleExpanded,
+	onNew,
+	onDelete,
+}: FileEditorProps) {
 	const queryClient = useQueryClient();
 	const [buffer, setBuffer] = useState("");
 	const saveRef = useRef<() => void>(() => {});
@@ -100,13 +111,60 @@ export function FileEditor({ binding, path }: FileEditorProps) {
 		);
 	};
 
+	// Toolbar sits at the top-right of the editor pane in every state (empty
+	// too), so New/Save/Delete/Maximize stay in one fixed spot.
+	const toolbar = (
+		<div className="flex shrink-0 items-center gap-2">
+			<button
+				type="button"
+				data-testid="file-new"
+				onClick={onNew}
+				className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent"
+			>
+				New
+			</button>
+			<button
+				type="button"
+				data-testid="file-save"
+				onClick={() => saveMutation.mutate()}
+				disabled={!canSave}
+				className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+			>
+				{saveMutation.isPending ? "Saving…" : "Save"}
+			</button>
+			<button
+				type="button"
+				data-testid="file-delete"
+				onClick={onDelete}
+				disabled={!path}
+				className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50 hover:bg-accent"
+			>
+				Delete
+			</button>
+			<button
+				type="button"
+				data-testid="files-expand-toggle"
+				aria-pressed={isExpanded}
+				onClick={onToggleExpanded}
+				className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent"
+			>
+				{isExpanded ? "Restore" : "Maximize"}
+			</button>
+		</div>
+	);
+
 	if (!path) {
 		return (
-			<div
-				data-testid="file-editor-empty"
-				className="flex h-full items-center justify-center text-sm text-muted-foreground"
-			>
-				Select a file
+			<div data-testid="file-editor" className="flex h-full flex-col">
+				<div className="flex items-center justify-end gap-2 border-b px-4 py-2">
+					{toolbar}
+				</div>
+				<div
+					data-testid="file-editor-empty"
+					className="flex flex-1 items-center justify-center text-sm text-muted-foreground"
+				>
+					Select a file
+				</div>
 			</div>
 		);
 	}
@@ -125,15 +183,7 @@ export function FileEditor({ binding, path }: FileEditorProps) {
 						</p>
 					)}
 				</div>
-				<button
-					type="button"
-					data-testid="file-save"
-					onClick={() => saveMutation.mutate()}
-					disabled={!canSave}
-					className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
-				>
-					{saveMutation.isPending ? "Saving…" : "Save"}
-				</button>
+				{toolbar}
 			</div>
 
 			{saveMutation.isError && (

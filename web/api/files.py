@@ -309,6 +309,10 @@ class FileWrite(BaseModel):
     content: str
 
 
+class FileCreate(BaseModel):
+    path: str
+
+
 @files_router.get("/api/bindings/{name}/files")
 def list_directory(
     name: str,
@@ -411,3 +415,47 @@ def write_file(
     target.write_text(body.content, encoding="utf-8")
 
     return {"message": "File saved", "path": body.path, "size": len(encoded)}
+
+
+@files_router.post("/api/bindings/{name}/files")
+def create_file(
+    name: str,
+    body: FileCreate,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict:
+    _require_binding_row(connection, name)
+    repo_root = _binding_repo_root(name)
+    target = _safe_resolve(repo_root, body.path)
+
+    if not _is_editable(target):
+        raise HTTPException(status_code=400, detail="file type is not editable")
+    if target.exists():
+        raise HTTPException(status_code=409, detail="file already exists")
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, NotADirectoryError) as exc:
+        # A path component is an existing file, not a directory.
+        raise HTTPException(status_code=400, detail="invalid parent path") from exc
+    target.write_text("", encoding="utf-8")
+
+    return {"message": "File created", "path": body.path}
+
+
+@files_router.delete("/api/bindings/{name}/files/content")
+def delete_file(
+    name: str,
+    path: str = Query(...),
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict:
+    _require_binding_row(connection, name)
+    repo_root = _binding_repo_root(name)
+    target = _safe_resolve(repo_root, path)
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+    if target.is_dir():
+        raise HTTPException(status_code=400, detail="cannot delete directory")
+    target.unlink()
+
+    return {"message": "File deleted", "path": path}

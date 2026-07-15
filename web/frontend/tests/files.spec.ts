@@ -29,7 +29,9 @@ test("browse, expand, open, edit, save, persist; no Monaco CDN", async ({
 
 	// T.3.1: expand docs/ → its child file lazy-loads.
 	await docsDir.click();
-	const nestedFile = page.getByTestId("file-row").filter({ hasText: "note.md" });
+	const nestedFile = page
+		.getByTestId("file-row")
+		.filter({ hasText: "note.md" });
 	await expect(nestedFile).toBeVisible();
 
 	// Open the root sample.md and wait for Monaco to mount with its content.
@@ -64,9 +66,54 @@ test("browse, expand, open, edit, save, persist; no Monaco CDN", async ({
 	await expect(page.locator(".monaco-editor")).toContainText(newContent);
 
 	// Monaco self-hosting: zero CDN requests.
-	expect(cdnHits, `unexpected Monaco CDN requests:\n${cdnHits.join("\n")}`).toEqual(
-		[],
+	expect(
+		cdnHits,
+		`unexpected Monaco CDN requests:\n${cdnHits.join("\n")}`,
+	).toEqual([]);
+	expectCleanConsole(problems);
+});
+
+test("new file into clicked folder, then delete it", async ({
+	page,
+	problems,
+}) => {
+	await page.goto("/homelab/files");
+	await expect(page.getByTestId("file-browser")).toBeVisible();
+
+	const fname = `e2e-${Date.now()}.md`;
+
+	// Click docs/ → it becomes the create target (and expands).
+	await page.getByTestId("dir-row").filter({ hasText: "docs" }).click();
+
+	// New → prompt asks for a filename; answer with our name.
+	page.once("dialog", (d) => d.accept(fname));
+	const created = page.waitForResponse(
+		(res) =>
+			res.url().includes("/api/bindings/homelab/files") &&
+			res.request().method() === "POST" &&
+			res.ok(),
 	);
+	await page.getByTestId("file-new").click();
+	await created;
+
+	// New file appears under docs/ and auto-opens in the editor.
+	const newRow = page.getByTestId("file-row").filter({ hasText: fname });
+	await expect(newRow).toBeVisible();
+	await page.waitForSelector(".monaco-editor");
+
+	// Delete → confirm dialog; row disappears and editor returns to empty state.
+	page.once("dialog", (d) => d.accept());
+	const deleted = page.waitForResponse(
+		(res) =>
+			res.url().includes("/api/bindings/homelab/files/content") &&
+			res.request().method() === "DELETE" &&
+			res.ok(),
+	);
+	await page.getByTestId("file-delete").click();
+	await deleted;
+	await expect(newRow).toHaveCount(0);
+	await expect(page.getByTestId("file-editor-empty")).toBeVisible();
+
 	expectCleanConsole(problems);
 });
 
@@ -88,31 +135,23 @@ test("expand toggle hides tree, restores it, persists across reload", async ({
 
 	const tree = page.getByTestId("files-tree");
 	await expect(tree).toBeVisible();
-	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
-		"Maximize",
-	);
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText("Maximize");
 
 	// Toggle 1 → tree hidden, control stays in the same spot, label flips.
 	await page.getByTestId("files-expand-toggle").click();
-	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
-		"Restore",
-	);
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText("Restore");
 	await expect(tree).toBeHidden();
 
 	// Toggle 2 → tree visible again, label flips back to Maximize.
 	await page.getByTestId("files-expand-toggle").click();
-	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
-		"Maximize",
-	);
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText("Maximize");
 	await expect(tree).toBeVisible();
 
 	// Persist: expand, reload, key survived.
 	await page.getByTestId("files-expand-toggle").click();
 	await expect(page.getByTestId("files-expand-toggle")).toHaveText("Restore");
 	await page.reload();
-	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
-		"Restore",
-	);
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText("Restore");
 	await expect(page.getByTestId("files-tree")).toBeHidden();
 
 	// Cleanup so other tests don't inherit the persisted true.

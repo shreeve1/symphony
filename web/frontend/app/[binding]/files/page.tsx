@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { FileBrowser } from "@/components/FileBrowser";
 import { FileEditor } from "@/components/FileEditor";
+import { createFile, deleteFile } from "@/lib/api";
 
 // Persisted state key for the file-pane "expand over tree" toggle. Mirrors
 // `podium-flyout-maximized` (IssueFlyout) so the two features don't share
@@ -13,7 +15,10 @@ const EXPANDED_KEY = "podium-files-expanded";
 
 export default function BindingFilesPage() {
 	const { binding } = useParams<{ binding: string }>();
+	const queryClient = useQueryClient();
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
+	// Folder that "New" creates into. "" = repo root; set by clicking a folder.
+	const [targetDir, setTargetDir] = useState("");
 	const [isExpanded, setIsExpanded] = useState(false);
 
 	// SSR-safe hydration from localStorage. Mirrors the IssueFlyout pattern:
@@ -39,12 +44,38 @@ export default function BindingFilesPage() {
 		});
 	}, []);
 
+	const createMutation = useMutation({
+		mutationFn: (path: string) => createFile(binding, path),
+		onSuccess: (_data, path) => {
+			queryClient.invalidateQueries({ queryKey: ["files", binding] });
+			setSelectedPath(path);
+		},
+	});
+
+	const deleteMutation = useMutation({
+		mutationFn: (path: string) => deleteFile(binding, path),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["files", binding] });
+			setSelectedPath(null);
+		},
+	});
+
+	const handleNew = useCallback(() => {
+		const name = window.prompt(`New file name (in ${targetDir || "root"}):`);
+		if (!name) return;
+		createMutation.mutate(targetDir ? `${targetDir}/${name}` : name);
+	}, [targetDir, createMutation]);
+
+	const handleDelete = useCallback(() => {
+		if (!selectedPath) return;
+		if (!window.confirm(`Delete ${selectedPath}? This cannot be undone.`)) return;
+		deleteMutation.mutate(selectedPath);
+	}, [selectedPath, deleteMutation]);
+
 	return (
 		<div className="relative flex h-full">
 			{/* Tree pane — hidden but mounted when expanded, so its open-dir
-			    state and scroll position survive a toggle round-trip. No Maximize
-			    button in this header: the toggle is anchored bottom-right of the
-			    page so it stays in the same spot in both states. */}
+			    state and scroll position survive a toggle round-trip. */}
 			<div
 				data-testid="files-tree"
 				className={`flex w-[280px] shrink-0 flex-col overflow-hidden border-r ${
@@ -59,24 +90,21 @@ export default function BindingFilesPage() {
 						binding={binding}
 						selectedPath={selectedPath}
 						onSelect={setSelectedPath}
+						targetDir={targetDir}
+						onTargetDir={setTargetDir}
 					/>
 				</div>
 			</div>
 			<div className="min-w-0 flex-1">
-				<FileEditor binding={binding} path={selectedPath} />
+				<FileEditor
+					binding={binding}
+					path={selectedPath}
+					isExpanded={isExpanded}
+					onToggleExpanded={toggleExpanded}
+					onNew={handleNew}
+					onDelete={handleDelete}
+				/>
 			</div>
-			{/* Single control, anchored bottom-right of the page in both states.
-			    Stays clear of the FileEditor's top-right Save button, doesn't
-			    shift position when toggled, and the label flips Maximize ↔ Restore. */}
-			<button
-				type="button"
-				data-testid="files-expand-toggle"
-				aria-pressed={isExpanded}
-				onClick={toggleExpanded}
-				className="absolute bottom-3 right-3 z-10 rounded-md border bg-background px-3 py-1.5 text-sm shadow-sm hover:bg-accent"
-			>
-				{isExpanded ? "Restore" : "Maximize"}
-			</button>
 		</div>
 	);
 }

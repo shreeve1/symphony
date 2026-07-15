@@ -102,7 +102,9 @@ def test_list_subdir(files_client: TestClient) -> None:
     assert items["nested.py"]["is_directory"] is False
 
 
-def test_list_absolute_path_includes_subdir(files_client: TestClient, repo: Path) -> None:
+def test_list_absolute_path_includes_subdir(
+    files_client: TestClient, repo: Path
+) -> None:
     # Regression: prior commit computed `repo_root / entry.name`, dropping
     # the subdir, which produced wrong absolute paths for any nested file
     # (e.g. operator copying `<repo>/plans/foo.md` got just `<repo>/foo.md`).
@@ -216,6 +218,63 @@ def test_write_non_editable_rejected(files_client: TestClient) -> None:
         json={"path": "evil.png", "content": "nope"},
     )
     assert resp.status_code == 400
+
+
+# ──────────────────────── create ────────────────────────
+
+
+def test_create_file(files_client: TestClient, repo: Path) -> None:
+    resp = files_client.post("/api/bindings/demo/files", json={"path": "sub/fresh.md"})
+    assert resp.status_code == 200
+    assert resp.json()["path"] == "sub/fresh.md"
+    assert (repo / "sub" / "fresh.md").read_text(encoding="utf-8") == ""
+
+
+def test_create_existing_conflict(files_client: TestClient) -> None:
+    resp = files_client.post("/api/bindings/demo/files", json={"path": "README.md"})
+    assert resp.status_code == 409
+
+
+def test_create_non_editable_rejected(files_client: TestClient) -> None:
+    resp = files_client.post("/api/bindings/demo/files", json={"path": "new.png"})
+    assert resp.status_code == 400
+
+
+def test_create_traversal_rejected(files_client: TestClient) -> None:
+    resp = files_client.post("/api/bindings/demo/files", json={"path": "../escape.md"})
+    assert resp.status_code == 403
+
+
+# ──────────────────────── delete ────────────────────────
+
+
+def test_delete_file(files_client: TestClient, repo: Path) -> None:
+    resp = files_client.delete(
+        "/api/bindings/demo/files/content", params={"path": "README.md"}
+    )
+    assert resp.status_code == 200
+    assert not (repo / "README.md").exists()
+
+
+def test_delete_missing_404(files_client: TestClient) -> None:
+    resp = files_client.delete(
+        "/api/bindings/demo/files/content", params={"path": "nope.md"}
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_directory_rejected(files_client: TestClient) -> None:
+    resp = files_client.delete(
+        "/api/bindings/demo/files/content", params={"path": "sub"}
+    )
+    assert resp.status_code == 400
+
+
+def test_delete_traversal_rejected(files_client: TestClient) -> None:
+    resp = files_client.delete(
+        "/api/bindings/demo/files/content", params={"path": "../secret"}
+    )
+    assert resp.status_code == 403
 
 
 # ──────────────────────── path safety ────────────────────────
