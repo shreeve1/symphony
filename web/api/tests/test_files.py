@@ -102,6 +102,20 @@ def test_list_subdir(files_client: TestClient) -> None:
     assert items["nested.py"]["is_directory"] is False
 
 
+def test_list_absolute_path_includes_subdir(files_client: TestClient, repo: Path) -> None:
+    # Regression: prior commit computed `repo_root / entry.name`, dropping
+    # the subdir, which produced wrong absolute paths for any nested file
+    # (e.g. operator copying `<repo>/plans/foo.md` got just `<repo>/foo.md`).
+    root_resp = files_client.get("/api/bindings/demo/files")
+    root_items = {i["name"]: i for i in root_resp.json()["items"]}
+    assert root_items["README.md"]["absolute_path"] == str(repo / "README.md")
+    assert root_items["sub"]["absolute_path"] == str(repo / "sub")
+
+    sub_resp = files_client.get("/api/bindings/demo/files", params={"path": "sub"})
+    sub_items = {i["name"]: i for i in sub_resp.json()["items"]}
+    assert sub_items["nested.py"]["absolute_path"] == str(repo / "sub" / "nested.py")
+
+
 # ──────────────────────── read ────────────────────────
 
 
