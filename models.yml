@@ -5,8 +5,6 @@ models:
     default: true
   - id: claude-sonnet-4-6
     agent: claude
-  - id: claude-haiku-4-5
-    agent: claude
   - id: deepseek-v4-flash
     agent: pi
     provider: deepseek
@@ -21,9 +19,9 @@ models:
     # letting the provider fail the run. Models without an `efforts:` list are
     # not effort-validated (back-compat).
     efforts: [none, low, medium, high, xhigh]
-  - id: claude-haiku-4-5-20251001
+  - id: gpt-5.6-terra
     agent: pi
-    provider: cliproxy
+    provider: openai-codex
   - id: claude-opus-4-8
     agent: pi
     provider: cliproxy
@@ -33,12 +31,6 @@ models:
   - id: glm-5.2
     agent: pi
     provider: zai
-  - id: openrouter/auto
-    agent: pi
-    provider: openrouter
-  - id: minimax/minimax-m3
-    agent: pi
-    provider: minimax
   - id: Duo
     agent: pi
     provider: pi-duo
