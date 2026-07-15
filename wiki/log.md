@@ -1,5 +1,16 @@
 # Wiki Log
 
+## [2026-07-15] session-update | harness gates re-established (advisory posture, global safety gates, Pi precedence)
+
+- Actor: agent (Claude), operator-directed via /harness-apply audit consumption + gap review.
+- **Input**: AI-readiness audit (`artifacts/specs/ai-readiness-symphony-2026-07-15-143322.md`) flagged harness gates missing on all surfaces. Operator ran /harness-apply (global then project), requested a gap review, then approved "update all" fixes.
+- **Change**: GLOBAL (dotfiles `b1ff50e`) `block-bash-pattern.sh` (catastrophic rm/dd/mkfs/wipefs/device wipes + split flags) + `block-path-access.sh` (secret writes by basename + self-disarm of `.claude/hooks`+`settings*.json`; `~/.claude/.harness-unlock` escape hatch; earlier outside-root write block removed). PROJECT (symphony `dfde739`/`93630ba`/`66a31bb`) `format-on-edit.sh` (ruff format .py) + `staged-static-check.sh` (ruff check + ruff format --check, ADVISORY exit 0). Pi harness-gates adapter (`index.js`) discovery fixed global-wins → project-over-global.
+- **Verification**: gate dry-tests (destructive block/pass, self-disarm block, unlock lift, secrets always block); staged gate advisory exit 0; Pi delegation probe (`rm -rf ~` / `.env` → `block:true`); `tests/harness-gates-smoke.sh` 8/8.
+- **Claims**: C-0369 (adapter project-over-global), C-0370 (global gates + unlock sentinel), C-0371 (advisory posture, supersedes C-0130). C-0130 is a legacy-format (10-col) row describing the removed blocking harness — flagged for supersession but NOT hand-edited (no gate supersede-apply; non-canonical row; hand-edit would risk `audit`). C-0371 carries the `supersedes C-0130` note.
+- **Index/ROUTING**: promoted `analyses/analysis-session-harness-gates-reestablished.md`; `analyses/claude-code-harness-profile.md` banner-superseded (posture) + index row marked; ROUTING Skills & Tooling page list + keywords extended.
+- **Deploy**: no service restart (hooks fire in Claude/Pi sessions, not `symphony-host`). Project hooks live in a Claude session only after restart + /hooks; Pi enforces immediately.
+- **Open**: Phase 3 golden-case eval (#req-AR3) via /dev-plan; C-0130 supersession pending a canonical-row migration or a gate supersede-apply path.
+
 ## [2026-07-14] session-update | patrol default model → pi-duo + per-agent pi default → Duo (operator dual-scope flip)
 
 - Actor: agent (Claude), operator-directed catalog + repoint + restart.
