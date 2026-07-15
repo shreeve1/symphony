@@ -92,15 +92,15 @@ test("expand toggle hides tree, restores it, persists across reload", async ({
 		"Maximize",
 	);
 
-	// Toggle 1 → tree hidden, control moves to the bottom-right Restore.
+	// Toggle 1 → tree hidden, control stays in the same spot, label flips.
 	await page.getByTestId("files-expand-toggle").click();
-	await expect(page.getByTestId("files-restore-toggle")).toHaveText(
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
 		"Restore",
 	);
 	await expect(tree).toBeHidden();
 
-	// Toggle 2 → tree visible, control moves back to the tree pane header.
-	await page.getByTestId("files-restore-toggle").click();
+	// Toggle 2 → tree visible again, label flips back to Maximize.
+	await page.getByTestId("files-expand-toggle").click();
 	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
 		"Maximize",
 	);
@@ -108,9 +108,9 @@ test("expand toggle hides tree, restores it, persists across reload", async ({
 
 	// Persist: expand, reload, key survived.
 	await page.getByTestId("files-expand-toggle").click();
-	await expect(page.getByTestId("files-restore-toggle")).toHaveText("Restore");
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText("Restore");
 	await page.reload();
-	await expect(page.getByTestId("files-restore-toggle")).toHaveText(
+	await expect(page.getByTestId("files-expand-toggle")).toHaveText(
 		"Restore",
 	);
 	await expect(page.getByTestId("files-tree")).toBeHidden();

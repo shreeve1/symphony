@@ -42,30 +42,18 @@ export default function BindingFilesPage() {
 	return (
 		<div className="relative flex h-full">
 			{/* Tree pane — hidden but mounted when expanded, so its open-dir
-			    state and scroll position survive a toggle round-trip. The
-			    Maximize/Restore control lives in this pane's header strip so it
-			    doesn't overlap the FileEditor's Save button at the top-right of
-			    the editor. */}
+			    state and scroll position survive a toggle round-trip. No Maximize
+			    button in this header: the toggle is anchored bottom-right of the
+			    page so it stays in the same spot in both states. */}
 			<div
 				data-testid="files-tree"
 				className={`flex w-[280px] shrink-0 flex-col overflow-hidden border-r ${
 					isExpanded ? "hidden" : ""
 				}`}
 			>
-				<div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-					<h2 className="truncate text-sm font-semibold tracking-tight">
-						{binding}
-					</h2>
-					<button
-						type="button"
-						data-testid="files-expand-toggle"
-						aria-pressed={isExpanded}
-						onClick={toggleExpanded}
-						className="shrink-0 rounded-md border bg-background px-2.5 py-1 text-xs hover:bg-accent"
-					>
-						Maximize
-					</button>
-				</div>
+				<h2 className="border-b px-3 py-2 text-sm font-semibold tracking-tight">
+					{binding}
+				</h2>
 				<div className="flex-1 overflow-y-auto p-2">
 					<FileBrowser
 						binding={binding}
@@ -77,20 +65,18 @@ export default function BindingFilesPage() {
 			<div className="min-w-0 flex-1">
 				<FileEditor binding={binding} path={selectedPath} />
 			</div>
-			{/* When expanded the tree pane (and its toggle) is gone — anchor a
-			    floating Restore handle bottom-right of the editor so the user
-			    can still bring the tree back. */}
-			{isExpanded && (
-				<button
-					type="button"
-					data-testid="files-restore-toggle"
-					aria-pressed={true}
-					onClick={toggleExpanded}
-					className="absolute bottom-3 right-3 z-10 rounded-md border bg-background px-3 py-1.5 text-sm shadow-sm hover:bg-accent"
-				>
-					Restore
-				</button>
-			)}
+			{/* Single control, anchored bottom-right of the page in both states.
+			    Stays clear of the FileEditor's top-right Save button, doesn't
+			    shift position when toggled, and the label flips Maximize ↔ Restore. */}
+			<button
+				type="button"
+				data-testid="files-expand-toggle"
+				aria-pressed={isExpanded}
+				onClick={toggleExpanded}
+				className="absolute bottom-3 right-3 z-10 rounded-md border bg-background px-3 py-1.5 text-sm shadow-sm hover:bg-accent"
+			>
+				{isExpanded ? "Restore" : "Maximize"}
+			</button>
 		</div>
 	);
 }
