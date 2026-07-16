@@ -1737,3 +1737,7 @@ Append entries with this format:
 - **Wiki**: C-0367 (decision) admitted; new `analyses/adr-0037-natural-turn-every-terminal-branch.md` (promoted); `index.md` Analyses row appended; `ROUTING.md` output-contract Pages + keyword line extended.
 - **Deploy**: NOT deployed at capture — ships in `symphony-host.service` (scheduler imported at process start), needs a restart. Pre-existing uncommitted `model_catalog.py`/`models.yml`/`agent_runner.py` changes were already in the tree (not part of this task).
 - **Unresolved**: none. (Interactive operator-driven wiki pass — not a slice run, ADR-0028 exemption N/A.)
+
+## [2026-07-16] query | symphony-host restart pre-sanity
+
+- Read `wiki/index.md`, `wiki/ROUTING.md`, and `wiki/concepts/symphony-operations.md` for the host restart ritual. No durable facts or decisions qualified for promotion.
