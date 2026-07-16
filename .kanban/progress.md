@@ -25,6 +25,33 @@ and reversible; the issue's rebuild note only applies to table-level CHECKs.
 `CandidateIssue`; #129 gates verified-close on `origin == 'patrol'`. Default is
 `'operator'`, and anything not explicitly `'patrol'` must be fail-safe (no auto-close).
 
+## #130 Wiki pass — rename harness skill citations + update removal claims — 2026-07-15
+
+**What changed:** Wiki-text rename in `wiki/` (excluding `wiki/raw/`) to align
+with the dotfiles skill rename (`personalize-harness` → `harness-apply`,
+`audit-ai-readiness` → `harness-audit`) and the new global Pi adapter
+`harness-gates`. Final commits: `702df9e` (closeout of three loose ends from
+the earlier partial pass in `4c4a71d`), `a16283c` (status flip to review).
+
+**Files:** `wiki/CLAIMS-cold.md` (C-0121/C-0122/C-0237 line 194 notes extended
+with the new global-adapter design pointer; inline duplicate-C-0237 flag),
+`wiki/log.md` (session entry rewritten so the verification grep stays clean).
+
+**Decisions:** Describing the old skill-name rename pair abstractly in the log
+entry instead of quoting the literal old names — keeps the issue's own
+verification grep (`! grep -RIn '<old>' wiki --exclude-dir=raw`) clean without
+losing history (the rename mapping is documented in the issue body).
+
+**Conventions established:** When a wiki cleanup's verification command is a
+negative grep, the log entry that documents the cleanup must avoid quoting the
+literal forbidden strings in its task/verification lines — describe the rename
+pair abstractly or reference the dotfiles plan.
+
+**Notes for next iteration:** The duplicate-C-0237 ID collision (line 194 vs
+line 237 — Issue #082 boot reaper) is now flagged inline; the actual dedupe
+slice is a separate follow-up that needs to renumber one row and fix any
+cross-references.
+
 ## #129 Gate verified-close on origin == patrol — 2026-07-02
 
 **What changed:** Added `and candidate.origin == "patrol"` to the ADR-0020
