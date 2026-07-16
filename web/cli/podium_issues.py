@@ -210,6 +210,9 @@ def _insert_issue(
     approval_required = (
         bool(approval.get("enabled")) if isinstance(approval, dict) else False
     )
+    worktree_default = binding.get("worktree_default")
+    if worktree_default is None:
+        worktree_default = binding.get("type", "infra") == "coding"
     cursor = connection.execute(
         """
         INSERT INTO issue(
@@ -217,7 +220,7 @@ def _insert_issue(
           preferred_model, preferred_skill, reasoning_effort, worktree_active,
           approval_required, approved, auto_land, scheduled_for, base_branch, comments_md,
           context_md, external_id, blocked_by, locks, created_at, updated_at
-        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, NULL, 'high', 1, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, 'todo', ?, ?, ?, NULL, 'high', ?, ?, 0, 1, NULL, ?, '', '', NULL, ?, ?, ?, ?)
         """,
         (
             str(binding["name"]),
@@ -226,6 +229,7 @@ def _insert_issue(
             slice_.priority,
             slice_.agent or str(binding.get("default_agent") or "pi"),
             slice_.model,
+            int(bool(worktree_default)),
             int(approval_required),
             str(binding.get("base_branch") or "main"),
             json.dumps(blocked_by_ids),

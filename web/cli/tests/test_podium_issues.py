@@ -28,26 +28,27 @@ def _make_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _make_bindings(tmp_path: Path, repo: Path, *, tracker: str = "podium") -> Path:
+def _make_bindings(
+    tmp_path: Path,
+    repo: Path,
+    *,
+    tracker: str = "podium",
+    binding_type: str = "coding",
+    worktree_default: bool | None = None,
+) -> Path:
     path = tmp_path / "bindings.yml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "bindings": [
-                    {
-                        "name": "demo",
-                        "tracker": tracker,
-                        "type": "coding",
-                        "repo_path": str(repo),
-                        "base_branch": "main",
-                        "default_agent": "pi",
-                        "approval": {"enabled": False},
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
+    binding = {
+        "name": "demo",
+        "tracker": tracker,
+        "type": binding_type,
+        "repo_path": str(repo),
+        "base_branch": "main",
+        "default_agent": "pi",
+        "approval": {"enabled": False},
+    }
+    if worktree_default is not None:
+        binding["worktree_default"] = worktree_default
+    path.write_text(yaml.safe_dump({"bindings": [binding]}), encoding="utf-8")
     return path
 
 
@@ -151,12 +152,9 @@ def test_create_plan_issues_in_dependency_order_with_real_blockers(
     assert sentinel.read_text(encoding="utf-8") == before
 
 
-def test_created_slices_stamp_worktree_active(
+def test_created_slices_use_coding_worktree_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The /podium-issues slicer stamps worktree_active=1 so every slice
-    # dispatches into its own per-issue worktree; the operator-authored
-    # worktree opt-out (worktree_active=false, main-checkout) does not apply.
     repo = _make_repo(tmp_path)
     bindings = _make_bindings(tmp_path, repo)
     plan = _make_plan(tmp_path)
@@ -166,6 +164,22 @@ def test_created_slices_stamp_worktree_active(
 
     rows = _issue_rows(db_path)
     assert [bool(r[10]) for r in rows] == [True, True]
+
+
+def test_created_slices_honor_disabled_worktree_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    bindings = _make_bindings(
+        tmp_path, repo, binding_type="infra", worktree_default=False
+    )
+    plan = _make_plan(tmp_path)
+    db_path = _init_db(tmp_path, monkeypatch)
+
+    create_plan_issues(repo, plan, bindings_path=bindings)
+
+    rows = _issue_rows(db_path)
+    assert [bool(r[10]) for r in rows] == [False, False]
 
 
 def test_dry_run_writes_nothing(
