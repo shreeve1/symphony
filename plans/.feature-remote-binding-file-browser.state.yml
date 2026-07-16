@@ -1,0 +1,65 @@
+plan_file: plans/feature-remote-binding-file-browser.md
+prompt: "Create a plan to implement full existing file browser support for remote bindings."
+reviewer: pi
+reviewer_model: null
+max_rounds: 2
+current_round: 2
+status: converged
+exit_reason: "Zero critical findings; warnings and notes addressed inline"
+phase_8_findings:
+  critical: []
+  warning: []
+  note: []
+rounds:
+  - round: 1
+    findings:
+      critical:
+        - |-
+          [CRITICAL] JSON protocol mechanism unspecified — no remote parser exists
+            Detail: The draft required JSON-safe request/response data without defining the remote parser or runtime.
+            Suggested fix: Specify the remote command payload and test its portability.
+        - |-
+          [CRITICAL] Plan says "avoid shell interpolation" but every existing SSH operation uses it
+            Detail: Existing attachments/worktree operations rely on shlex.quote.
+            Suggested fix: Reconcile with the established quoting policy or specify a replacement.
+        - |-
+          [CRITICAL] Remote containment check requires multiple SSH round-trips per operation
+            Detail: Separating resolution, containment, and action would make browsing slow.
+            Suggested fix: Batch containment and action into one SSH invocation.
+      warning:
+        - |-
+          [WARNING] No mechanism specified for remote file-size check before reading
+            Detail: The remote protocol needs a pre-read size check.
+            Suggested fix: Make stat-before-read explicit.
+        - |-
+          [WARNING] Plan references ssh_support.ssh_base_args but not where it lives
+            Detail: ssh_support.py is project-root and attachments imports it directly.
+            Suggested fix: Name the import path.
+        - |-
+          [WARNING] RemotePolicy instance construction path unclear
+            Detail: main._remote_for_binding(name) already constructs the policy.
+            Suggested fix: Name that helper explicitly.
+      note:
+        - |-
+          [NOTE] absolute_path changes semantic host meaning for remote bindings.
+        - |-
+          [NOTE] Test mock target (web.api.files.subprocess.run) does not exist yet.
+        - |-
+          [NOTE] Remote fixture must not conflict with the local-only files_client fixture.
+    counts: { critical: 3, warning: 3, note: 3 }
+    revision_summary: "Specified one SSH python3 helper with stdin writes and JSON envelopes, batched containment/action/stat, named main and ssh helpers, documented remote absolute_path, and scoped remote fixtures."
+  - round: 2
+    findings:
+      critical: []
+      warning:
+        - |-
+          [WARNING] Embedded python3 -c script quoting unspecified — fragile for non-trivial scripts
+            Detail: A multiline helper passed directly through SSH shell parsing is vulnerable to quoting errors and is not compiled by the listed validation commands.
+            Suggested fix: Use a robust script embedding mechanism and compile it in tests.
+      note:
+        - |-
+          [NOTE] Test mock path becomes valid after files.py imports subprocess.
+        - |-
+          [NOTE] Request-time private main helpers are consistent with existing files.py behavior but remain a technical-debt boundary.
+    counts: { critical: 0, warning: 1, note: 2 }
+    revision_summary: "Base64/bootstrap embedding removes multiline SSH quoting, JSON stdin carries writes, tests compile the decoded helper, and notes document subprocess import plus intentionally scoped private-helper reuse."
