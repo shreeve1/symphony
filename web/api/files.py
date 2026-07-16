@@ -26,9 +26,13 @@ repo-relevant noise filters only:
 
 from __future__ import annotations
 
+import base64
 import fnmatch
+import json
 import os
+import shlex
 import sqlite3
+import subprocess
 import sys
 from datetime import UTC, datetime
 from importlib import import_module
@@ -36,6 +40,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from ssh_support import ssh_base_args
 
 try:
     from .db import get_connection
@@ -301,6 +306,231 @@ def _safe_resolve(repo_root: Path, user_rel: str) -> Path:
         raise HTTPException(status_code=403, detail="access denied") from exc
 
 
+# The source stays out of the remote shell command: SSH receives a fixed
+# bootstrap plus a base64 argument, then this helper receives only JSON stdin.
+_REMOTE_HELPER = r"""
+import fnmatch
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+
+def fail(error):
+    print(json.dumps({"ok": False, "error": error}))
+    raise SystemExit
+
+
+def contained(root, target):
+    return target == root or os.path.commonpath([root, target]) == root
+
+
+def target_for(root, path):
+    if os.path.isabs(path) or os.path.normpath(path).startswith(".."):
+        fail("access_denied")
+    root = os.path.realpath(root)
+    target = os.path.realpath(os.path.join(root, path))
+    if not contained(root, target):
+        fail("access_denied")
+    return root, target
+
+
+def main():
+    request = json.load(sys.stdin)
+    root, target = target_for(request["root"], request["path"])
+    action = request["action"]
+
+    if action == "list":
+        if not os.path.exists(target):
+            fail("missing")
+        if not os.path.isdir(target):
+            fail("not_directory")
+        items = []
+        for entry in os.scandir(target):
+            is_dir = entry.is_dir()
+            if is_dir and entry.name in request["ignore_dirs"]:
+                continue
+            if any(fnmatch.fnmatch(entry.name, pattern) for pattern in request["ignore_patterns"]):
+                continue
+            items.append({"name": entry.name, "absolute_path": os.path.join(target, entry.name), "is_directory": is_dir})
+        items.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
+        print(json.dumps({"ok": True, "items": items}))
+        return
+
+    if action == "read":
+        if not os.path.exists(target):
+            fail("missing")
+        if os.path.isdir(target):
+            fail("is_directory")
+        stat = os.stat(target)
+        if stat.st_size > request["max_file_size"]:
+            fail("too_large")
+        if os.path.splitext(target)[1].lower() in request["binary_extensions"]:
+            fail("binary")
+        try:
+            with open(target, encoding="utf-8") as handle:
+                content = handle.read()
+        except UnicodeDecodeError:
+            fail("binary")
+        print(json.dumps({"ok": True, "content": content, "size": stat.st_size, "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()}))
+        return
+
+    if action in {"write", "create"}:
+        parent = os.path.realpath(os.path.dirname(target))
+        if not contained(root, parent):
+            fail("access_denied")
+        if action == "create" and os.path.exists(target):
+            fail("exists")
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except (FileExistsError, NotADirectoryError):
+            fail("invalid_parent")
+        parent = os.path.realpath(parent)
+        target = os.path.realpath(os.path.join(parent, os.path.basename(target)))
+        if not contained(root, parent) or not contained(root, target):
+            fail("access_denied")
+        if os.path.isdir(target):
+            fail("is_directory")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(request.get("content", ""))
+        print(json.dumps({"ok": True, "size": len(request.get("content", "").encode("utf-8"))}))
+        return
+
+    if action == "delete":
+        if not os.path.exists(target):
+            fail("missing")
+        if os.path.isdir(target):
+            fail("is_directory")
+        os.unlink(target)
+        print(json.dumps({"ok": True}))
+        return
+
+    fail("invalid_action")
+
+
+main()
+"""
+_REMOTE_HELPER_B64 = base64.b64encode(_REMOTE_HELPER.encode()).decode()
+_REMOTE_BOOTSTRAP = (
+    "import base64,sys;exec(compile(base64.b64decode(sys.argv[1]), "
+    "'<remote_file_browser>', 'exec'))"
+)
+_REMOTE_COMMAND = (
+    f"python3 -c {shlex.quote(_REMOTE_BOOTSTRAP)} {shlex.quote(_REMOTE_HELPER_B64)}"
+)
+
+
+def _remote_file_operation(
+    name: str, action: str, path: str, content: str | None = None
+) -> dict:
+    if os.path.isabs(path) or os.path.normpath(path).startswith(".."):
+        raise HTTPException(status_code=403, detail="access denied")
+    main_mod = sys.modules.get("web.api.main") or sys.modules.get("main")
+    if main_mod is None:
+        raise HTTPException(status_code=404, detail="binding not found")
+    remote = main_mod._remote_for_binding(name)
+    repo_root = main_mod._repo_path_for_binding(name)
+    if remote is None or repo_root is None:
+        raise HTTPException(status_code=502, detail="remote binding unavailable")
+
+    request = {
+        "action": action,
+        "root": str(repo_root),
+        "path": path,
+        "max_file_size": MAX_FILE_SIZE,
+        "binary_extensions": sorted(BINARY_EXTENSIONS),
+        "ignore_dirs": sorted(IGNORE_DIRS),
+        "ignore_patterns": sorted(IGNORE_NAME_PATTERNS),
+    }
+    if content is not None:
+        request["content"] = content
+    try:
+        result = subprocess.run(
+            ssh_base_args(remote) + [_REMOTE_COMMAND],
+            input=json.dumps(request),
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=504, detail="remote file operation timed out"
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=502, detail="remote file operation failed"
+        ) from exc
+    if result.returncode:
+        raise HTTPException(status_code=502, detail="remote file operation failed")
+    try:
+        response = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=502, detail="invalid remote file response"
+        ) from exc
+    if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
+        raise HTTPException(status_code=502, detail="invalid remote file response")
+    if response["ok"]:
+        expected_fields = {
+            "list": {"items": list},
+            "read": {"content": str, "size": int, "modified": str},
+            "write": {"size": int},
+            "create": {},
+            "delete": {},
+        }[action]
+        if not all(
+            type(response.get(field)) is int
+            if kind is int
+            else isinstance(response.get(field), kind)
+            for field, kind in expected_fields.items()
+        ):
+            raise HTTPException(status_code=502, detail="invalid remote file response")
+        if action == "list" and not all(
+            isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and isinstance(item.get("absolute_path"), str)
+            and isinstance(item.get("is_directory"), bool)
+            for item in response["items"]
+        ):
+            raise HTTPException(status_code=502, detail="invalid remote file response")
+        return response
+
+    error = response.get("error")
+    details = {
+        "access_denied": (403, "access denied"),
+        "too_large": (413, "file too large"),
+        "binary": (400, "binary file - cannot edit"),
+        "exists": (409, "file already exists"),
+        "invalid_parent": (400, "invalid parent path"),
+    }
+    if error in details:
+        status, detail = details[error]
+    elif error == "missing":
+        status, detail = (
+            404,
+            ("directory not found" if action == "list" else "file not found"),
+        )
+    elif error == "not_directory":
+        status, detail = 400, "not a directory"
+    elif error == "is_directory":
+        status, detail = (
+            400,
+            {
+                "read": "cannot read directory",
+                "delete": "cannot delete directory",
+            }.get(action, "cannot write directory"),
+        )
+    else:
+        raise HTTPException(status_code=502, detail="invalid remote file response")
+    raise HTTPException(status_code=status, detail=detail)
+
+
+def _is_remote_binding(name: str) -> bool:
+    main_mod = sys.modules.get("web.api.main") or sys.modules.get("main")
+    return bool(main_mod and main_mod._is_remote_binding(name))
+
+
 files_router = APIRouter()
 
 
@@ -320,6 +550,16 @@ def list_directory(
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict:
     _require_binding_row(connection, name)
+    if _is_remote_binding(name):
+        result = _remote_file_operation(name, "list", path)
+        return {
+            "items": [
+                {**item, "path": f"{path}/{item['name']}" if path else item["name"]}
+                for item in result["items"]
+            ],
+            "path": path,
+        }
+
     repo_root = _binding_repo_root(name)
     target = _safe_resolve(repo_root, path)
 
@@ -355,6 +595,17 @@ def read_file(
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict:
     _require_binding_row(connection, name)
+    if _is_remote_binding(name):
+        result = _remote_file_operation(name, "read", path)
+        return {
+            "path": path,
+            "content": result["content"],
+            "size": result["size"],
+            "modified": result["modified"],
+            "editable": _is_editable(path),
+            "language": _language_for(path),
+        }
+
     repo_root = _binding_repo_root(name)
     target = _safe_resolve(repo_root, path)
 
@@ -396,6 +647,15 @@ def write_file(
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict:
     _require_binding_row(connection, name)
+    if _is_remote_binding(name):
+        if not _is_editable(body.path):
+            raise HTTPException(status_code=400, detail="file type is not editable")
+        encoded = body.content.encode("utf-8")
+        if len(encoded) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="file too large")
+        result = _remote_file_operation(name, "write", body.path, body.content)
+        return {"message": "File saved", "path": body.path, "size": result["size"]}
+
     repo_root = _binding_repo_root(name)
     target = _safe_resolve(repo_root, body.path)
 
@@ -424,6 +684,12 @@ def create_file(
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict:
     _require_binding_row(connection, name)
+    if _is_remote_binding(name):
+        if not _is_editable(body.path):
+            raise HTTPException(status_code=400, detail="file type is not editable")
+        _remote_file_operation(name, "create", body.path)
+        return {"message": "File created", "path": body.path}
+
     repo_root = _binding_repo_root(name)
     target = _safe_resolve(repo_root, body.path)
 
@@ -449,6 +715,10 @@ def delete_file(
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict:
     _require_binding_row(connection, name)
+    if _is_remote_binding(name):
+        _remote_file_operation(name, "delete", path)
+        return {"message": "File deleted", "path": path}
+
     repo_root = _binding_repo_root(name)
     target = _safe_resolve(repo_root, path)
 

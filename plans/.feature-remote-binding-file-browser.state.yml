@@ -63,3 +63,45 @@ rounds:
           [NOTE] Request-time private main helpers are consistent with existing files.py behavior but remain a technical-debt boundary.
     counts: { critical: 0, warning: 1, note: 2 }
     revision_summary: "Base64/bootstrap embedding removes multiline SSH quoting, JSON stdin carries writes, tests compile the decoded helper, and notes document subprocess import plus intentionally scoped private-helper reuse."
+
+build_audits:
+  - wave: 1
+    reviewer: pi
+    reviewer_model: openai-codex/gpt-5.5
+    outcome: auto_fixed
+    skip_reason: null
+    files_audited: [web/api/files.py, web/api/tests/test_files.py]
+    attempts:
+      - attempt: 1
+        kind: initial
+        findings:
+          critical:
+            - "Malformed successful remote responses can crash handlers."
+            - "SSH launch failures escape transport error mapping."
+          warning:
+            - "Remote write/create return editable errors before containment errors."
+            - "Remote helper containment is not exercised."
+          note: []
+        counts: {critical: 2, warning: 2, note: 0}
+        fix_summary: "Validated successful envelopes, mapped OSError to 502, pre-rejected unsafe paths, and exercised helper containment."
+        files_edited: [web/api/files.py, web/api/tests/test_files.py]
+        validation_command: "uv run pytest web/api/tests/test_files.py -q && uv run ruff check web/api/files.py web/api/tests/test_files.py && uv run python -m py_compile web/api/files.py"
+        validation_passed: true
+      - attempt: 2
+        kind: post_fix_reaudit
+        findings:
+          critical: []
+          warning:
+            - "Remote helper should support older python3 versions."
+            - "Boolean size values should be rejected."
+          note:
+            - "Absolute-path and real symlink-escape coverage was absent."
+        counts: {critical: 0, warning: 2, note: 1}
+      - attempt: 3
+        kind: final_reaudit
+        findings:
+          critical: []
+          warning: []
+          note:
+            - "No findings — diff looks correct."
+        counts: {critical: 0, warning: 0, note: 1}

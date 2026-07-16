@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import json
+import subprocess
+import sys
 from collections.abc import Iterator
 from importlib import import_module
 from pathlib import Path
@@ -14,13 +18,18 @@ main = cast(Any, import_module("web.api.main"))
 app = cast(Any, main.app)
 
 
-def _binding_entry(name: str, repo_path: Path) -> dict:
-    return {
+def _binding_entry(
+    name: str, repo_path: Path, *, remote: bool = False
+) -> dict[str, Any]:
+    binding: dict[str, Any] = {
         "name": name,
         "base_branch": "main",
         "default_agent": "pi",
         "repo_path": str(repo_path),
     }
+    if remote:
+        binding["remote"] = {"host": "remote.test", "user": "operator"}
+    return binding
 
 
 def _seed_binding_row(db_path: Path, name: str) -> None:
@@ -70,6 +79,23 @@ def files_client(
     with TestClient(app) as client:
         login(client)
         _seed_binding_row(db_path, "demo")
+        yield client
+
+
+@pytest.fixture()
+def remote_files_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[TestClient]:
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        main,
+        "_bindings_override",
+        [_binding_entry("remote", Path("/remote/repo"), remote=True)],
+    )
+    with TestClient(app) as client:
+        login(client)
+        _seed_binding_row(db_path, "remote")
         yield client
 
 
@@ -173,7 +199,7 @@ def test_write_roundtrip(files_client: TestClient, repo: Path) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["message"] == "File saved"
-    assert body["size"] == len("updated content\n".encode("utf-8"))
+    assert body["size"] == len("updated content\n")
     assert (repo / "README.md").read_text(encoding="utf-8") == "updated content\n"
     # re-read via API
     re = files_client.get(
@@ -347,3 +373,288 @@ def test_endpoint_honors_bindings_override(
         )
         assert resp.status_code == 200
         assert resp.json()["content"] == "override target\n"
+
+
+# ──────────────────────── remote bindings ────────────────────────
+
+
+def test_remote_helper_compiles() -> None:
+    source = base64.b64decode(main._files._REMOTE_HELPER_B64)
+    compile(source, "<remote_file_browser>", "exec")
+
+
+def test_remote_helper_rejects_traversal_and_symlink_escape(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "escape").symlink_to(tmp_path)
+    bootstrap = (
+        "import base64,sys;exec(compile(base64.b64decode(sys.argv[1]), "
+        "'<remote_file_browser>', 'exec'))"
+    )
+    for path in ("../secret", "escape/secret"):
+        result = subprocess.run(
+            [sys.executable, "-c", bootstrap, main._files._REMOTE_HELPER_B64],
+            input=json.dumps(
+                {
+                    "action": "read",
+                    "root": str(root),
+                    "path": path,
+                    "max_file_size": main._files.MAX_FILE_SIZE,
+                    "binary_extensions": [],
+                    "ignore_dirs": [],
+                    "ignore_patterns": [],
+                }
+            ),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        assert json.loads(result.stdout) == {"ok": False, "error": "access_denied"}
+
+
+def test_remote_endpoint_parity_and_transport(
+    monkeypatch: pytest.MonkeyPatch, remote_files_client: TestClient
+) -> None:
+    responses = {
+        "list": {
+            "ok": True,
+            "items": [
+                {
+                    "name": "sub",
+                    "absolute_path": "/remote/repo/sub",
+                    "is_directory": True,
+                }
+            ],
+        },
+        "read": {
+            "ok": True,
+            "content": "remote text\n",
+            "size": 12,
+            "modified": "2026-07-16T00:00:00+00:00",
+        },
+        "write": {"ok": True, "size": 8},
+        "create": {"ok": True, "size": 0},
+        "delete": {"ok": True},
+    }
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        request = json.loads(kwargs["input"])
+        calls.append((args, request))
+        return subprocess.CompletedProcess(
+            args, 0, json.dumps(responses[request["action"]]), ""
+        )
+
+    monkeypatch.setattr(main._files.subprocess, "run", fake_run)
+
+    assert remote_files_client.get(
+        "/api/bindings/remote/files", params={"path": "sub"}
+    ).json() == {
+        "items": [
+            {
+                "name": "sub",
+                "path": "sub/sub",
+                "absolute_path": "/remote/repo/sub",
+                "is_directory": True,
+            }
+        ],
+        "path": "sub",
+    }
+    assert (
+        remote_files_client.get(
+            "/api/bindings/remote/files/content", params={"path": "README.md"}
+        ).json()["content"]
+        == "remote text\n"
+    )
+    assert remote_files_client.put(
+        "/api/bindings/remote/files/content",
+        json={"path": "README.md", "content": "updated\n"},
+    ).json() == {"message": "File saved", "path": "README.md", "size": 8}
+    assert remote_files_client.post(
+        "/api/bindings/remote/files", json={"path": "fresh.md"}
+    ).json() == {"message": "File created", "path": "fresh.md"}
+    assert remote_files_client.delete(
+        "/api/bindings/remote/files/content", params={"path": "fresh.md"}
+    ).json() == {"message": "File deleted", "path": "fresh.md"}
+
+    assert [request["action"] for _, request in calls] == [
+        "list",
+        "read",
+        "write",
+        "create",
+        "delete",
+    ]
+    for args, request in calls:
+        assert args[:-1] == [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=4",
+            "operator@remote.test",
+        ]
+        assert args[-1].startswith("python3 -c ")
+        assert request["root"] == "/remote/repo"
+        assert request["path"] in {"sub", "README.md", "fresh.md"}
+    assert calls[2][1]["content"] == "updated\n"
+
+
+@pytest.mark.parametrize(
+    ("method", "url", "payload", "response", "status"),
+    [
+        (
+            "get",
+            "/api/bindings/remote/files/content?path=../secret",
+            None,
+            {"ok": False, "error": "access_denied"},
+            403,
+        ),
+        (
+            "get",
+            "/api/bindings/remote/files/content?path=escape/secret",
+            None,
+            {"ok": False, "error": "access_denied"},
+            403,
+        ),
+        (
+            "get",
+            "/api/bindings/remote/files/content?path=big.txt",
+            None,
+            {"ok": False, "error": "too_large"},
+            413,
+        ),
+        (
+            "get",
+            "/api/bindings/remote/files/content?path=broken.txt",
+            None,
+            {"ok": False, "error": "binary"},
+            400,
+        ),
+        (
+            "get",
+            "/api/bindings/remote/files/content?path=missing.txt",
+            None,
+            {"ok": False, "error": "missing"},
+            404,
+        ),
+        (
+            "get",
+            "/api/bindings/remote/files/content?path=dir",
+            None,
+            {"ok": False, "error": "is_directory"},
+            400,
+        ),
+        (
+            "post",
+            "/api/bindings/remote/files",
+            {"path": "exists.md"},
+            {"ok": False, "error": "exists"},
+            409,
+        ),
+        (
+            "put",
+            "/api/bindings/remote/files/content",
+            {"path": "file/child.md", "content": "x"},
+            {"ok": False, "error": "invalid_parent"},
+            400,
+        ),
+    ],
+)
+def test_remote_domain_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    remote_files_client: TestClient,
+    method: str,
+    url: str,
+    payload: dict[str, str] | None,
+    response: dict[str, Any],
+    status: int,
+) -> None:
+    calls = 0
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(args, 0, json.dumps(response), "")
+
+    monkeypatch.setattr(main._files.subprocess, "run", fake_run)
+    request = getattr(remote_files_client, method)
+    response_obj = request(url) if payload is None else request(url, json=payload)
+    assert response_obj.status_code == status
+    assert calls == (0 if "../" in url else 1)
+
+
+def test_remote_write_rejects_binary_before_ssh(
+    monkeypatch: pytest.MonkeyPatch, remote_files_client: TestClient
+) -> None:
+    monkeypatch.setattr(
+        main._files.subprocess, "run", lambda *args, **kwargs: pytest.fail("ssh called")
+    )
+    response = remote_files_client.put(
+        "/api/bindings/remote/files/content", json={"path": "image.png", "content": "x"}
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("kind", ["malformed", "failure", "oserror", "timeout"])
+def test_remote_transport_failures(
+    monkeypatch: pytest.MonkeyPatch, remote_files_client: TestClient, kind: str
+) -> None:
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if kind == "timeout":
+            raise subprocess.TimeoutExpired(args, 30)
+        if kind == "oserror":
+            raise OSError("ssh unavailable")
+        if kind == "failure":
+            return subprocess.CompletedProcess(args, 1, "", "ssh failed")
+        return subprocess.CompletedProcess(args, 0, "not json", "")
+
+    monkeypatch.setattr(main._files.subprocess, "run", fake_run)
+    response = remote_files_client.get("/api/bindings/remote/files")
+    assert response.status_code == (504 if kind == "timeout" else 502)
+
+
+@pytest.mark.parametrize("response", [{"ok": True}, {"ok": True, "items": [{}]}])
+def test_remote_malformed_success_response_is_502(
+    monkeypatch: pytest.MonkeyPatch,
+    remote_files_client: TestClient,
+    response: dict[str, Any],
+) -> None:
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, json.dumps(response), "")
+
+    monkeypatch.setattr(main._files.subprocess, "run", fake_run)
+    assert remote_files_client.get("/api/bindings/remote/files").status_code == 502
+
+
+@pytest.mark.parametrize(
+    ("path", "response"),
+    [
+        (
+            "/api/bindings/remote/files/content?path=README.md",
+            {"ok": True, "content": "x", "size": True, "modified": "now"},
+        ),
+        (
+            "/api/bindings/remote/files/content",
+            {"ok": True, "size": True},
+        ),
+    ],
+)
+def test_remote_boolean_size_response_is_502(
+    monkeypatch: pytest.MonkeyPatch,
+    remote_files_client: TestClient,
+    path: str,
+    response: dict[str, Any],
+) -> None:
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, json.dumps(response), "")
+
+    monkeypatch.setattr(main._files.subprocess, "run", fake_run)
+    if path.endswith("content"):
+        result = remote_files_client.put(
+            path, json={"path": "README.md", "content": "x"}
+        )
+    else:
+        result = remote_files_client.get(path)
+    assert result.status_code == 502
