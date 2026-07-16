@@ -1761,3 +1761,7 @@ Append entries with this format:
 - **Wiki**: immutable source `wiki/raw/sessions/2026-07-16-symphony-restart-remote-startup-delay.md`; updated `wiki/concepts/symphony-operations.md`, root index, and operations routing; C-0372 admitted through `gate.py`.
 - **Verification**: `uv run pytest tests/skills/test_restart_troubleshooter.py` — 3 passed.
 - **Unresolved**: remote probe timing can exceed the former 90-second lifecycle-wait guidance; investigate only if startup latency becomes operationally material.
+
+## [2026-07-16] query | model catalog maintenance
+
+- Read `wiki/index.md`, `wiki/ROUTING.md`, and `wiki/analyses/podium-issue-dispatch-contract.md` before adding a catalog model. No durable facts or decisions qualified for promotion.
