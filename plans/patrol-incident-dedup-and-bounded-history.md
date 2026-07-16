@@ -226,25 +226,25 @@ and roll back the homelab caller first if the endpoint contract fails.
 IMPORTANT: Execute every step in order when running manually. `/dev-build` will parallelize independent groups automatically.
 
 ### 1. Define pure Incident contracts [parallel-safe]
-- [ ] [1.1] Create `patrol_incident.py` with canonical severity values/ranks,
+- [x] [1.1] Create `patrol_incident.py` with canonical severity values/ranks,
   deterministic family/resource key derivation, typed recurrence inputs/actions,
   and a pure decision function covering create-and-dispatch, silent update,
   queued escalation, escalation release, Done reopen, pass confirmation, and
   recovery. Treat scheduled holds and queued/running Runs as dispatch barriers;
   never inspect titles or diagnostics for identity.
-- [ ] [1.2] Create
+- [x] [1.2] Create
   `/home/james/homelab/automation/homelab-stack/src/homelab_worker/incident_coalescer.py`
   with a pure grouping function. Highest severity wins; equal-severity ties use a
   stable key independent of input order; sibling evidence and each member's exact
   legacy external id are sorted, bounded, and retained; missing family/resource
   falls back to exact check/alert plus series fingerprint (then instance/check
   name), never to a broader resource.
-- [ ] [1.3] Update
+- [x] [1.3] Update
   `/home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_models.py`
   so `CheckResult` carries optional `incident_family`, `incident_resource`, and
   bounded sibling evidence using Temporal-safe primitives. Preserve current
   external-id behavior when both explicit fields are absent.
-- [ ] [1.4] Update
+- [x] [1.4] Update
   `/home/james/homelab/automation/homelab-stack/src/homelab_router/ticket_types.py`
   with neutral `IncidentObservation` and `IncidentWriteOutcome` DTOs, including a
   bounded `legacy_external_ids` tuple for cutover adoption; diagnostics remain

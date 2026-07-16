@@ -223,3 +223,57 @@ build_audits:
           Suggested fix: Use tuple identity keys or collision-safe encoding instead of delimiter join.
       note: []
     counts: {critical: 1, warning: 2, note: 0}
+- wave: 1
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T21:13:32Z"
+  files_audited: [patrol_incident.py, tests/test_patrol_incident.py]
+  outcome: passed
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: manual_remediation
+    started: "2026-07-16T21:13:32Z"
+    findings:
+      critical: []
+      warning: []
+      note:
+      - "[NOTE] No findings — diff looks correct."
+    counts: {critical: 0, warning: 0, note: 1}
+    fix_summary: Added explicit recovery, dispatch, pending-severity, archived-lineage, and pre-first-Run policy inputs with matrix coverage.
+    files_edited: [patrol_incident.py, tests/test_patrol_incident.py]
+    validation_command: uv run pytest tests/test_patrol_incident.py -q
+    validation_passed: true
+- wave: 1
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T21:13:32Z"
+  files_audited:
+  - /home/james/homelab/automation/homelab-stack/src/homelab_worker/incident_coalescer.py
+  - /home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_models.py
+  - /home/james/homelab/automation/homelab-stack/tests/test_incident_coalescer.py
+  outcome: passed
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: manual_remediation
+    started: "2026-07-16T21:13:32Z"
+    findings:
+      critical: []
+      warning:
+      - |-
+        [WARNING] Legacy-ID normalization fix lacks regression coverage
+          Detail: automation/homelab-stack/src/homelab_worker/patrol_models.py:304
+          Affected files: automation/homelab-stack/src/homelab_worker/patrol_models.py, automation/homelab-stack/tests/test_incident_coalescer.py
+          Suggested fix: Add an over-limit shuffled legacy IDs test with duplicates/lexically earlier IDs after the old truncation boundary; assert `tuple(sorted(set(ids)))[:LEGACY_EXTERNAL_IDS_LIMIT]`.
+      note: []
+    counts: {critical: 0, warning: 1, note: 0}
+    fix_summary: Added tagged tuple identities, sorted group output, full-field deterministic tie-breaking, and normalize-before-truncate legacy IDs.
+    files_edited:
+    - /home/james/homelab/automation/homelab-stack/src/homelab_worker/incident_coalescer.py
+    - /home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_models.py
+    - /home/james/homelab/automation/homelab-stack/tests/test_incident_coalescer.py
+    validation_command: uv run pytest tests/test_incident_coalescer.py tests/test_patrol_models.py -q
+    validation_passed: true

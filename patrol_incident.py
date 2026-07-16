@@ -66,6 +66,7 @@ class IssueStatus(Enum):
     IN_REVIEW = auto()
     BLOCKED = auto()
     DONE = auto()
+    ARCHIVED = auto()
 
 
 class RecurrenceAction(Enum):
@@ -99,9 +100,12 @@ class RecurrenceInput:
     issue_exists: bool
     issue_status: IssueStatus | None
     last_dispatched_severity: Severity | None
-    escalation_pending: bool
-    finding_changed: bool
-    dispatch_blocked: bool
+    pending_severity: Severity | None = None
+    finding_changed: bool = False
+    dispatch_count: int = 0
+    active_run: bool = False
+    scheduled_hold: bool = False
+    recovery_confirmed: bool = False
 
 
 def decide(input: RecurrenceInput) -> RecurrenceAction:
@@ -115,9 +119,10 @@ def decide(input: RecurrenceInput) -> RecurrenceAction:
     # ── Pass (healthy) findings ──────────────────────────────────────────
     if f.is_pass:
         if (
-            input.issue_exists
-            and input.issue_status is not IssueStatus.DONE
-            and not input.dispatch_blocked
+            input.recovery_confirmed
+            and input.issue_exists
+            and input.issue_status not in (IssueStatus.DONE, IssueStatus.ARCHIVED)
+            and not input.active_run
         ):
             return RecurrenceAction.RECOVERY_EVENT
         return RecurrenceAction.PASS_CONFIRMATION
@@ -126,33 +131,32 @@ def decide(input: RecurrenceInput) -> RecurrenceAction:
     if not input.issue_exists:
         return RecurrenceAction.CREATE_AND_DISPATCH
 
-    # ── Done → reopen ────────────────────────────────────────────────────
+    # ── Done / Archived → reopen / create-new ────────────────────────────
     if input.issue_status is IssueStatus.DONE:
         return RecurrenceAction.REOPEN_AND_DISPATCH
 
+    if input.issue_status is IssueStatus.ARCHIVED:
+        return RecurrenceAction.CREATE_AND_DISPATCH
+
+    # ── Pre-first-Run: already created but no Run yet → silent update ────
+    if input.dispatch_count == 0:
+        return RecurrenceAction.SILENT_UPDATE
+
     # ── Active issue (Todo / Running / InReview / Blocked) ───────────────
-    # Severity escalation — check before finding_changed so a severity
-    # increase is never silently swallowed.
+    dispatch_blocked = input.active_run or input.scheduled_hold
+
+    # Severity escalation
     current_rank = f.severity.rank
     last_rank = (
         input.last_dispatched_severity.rank if input.last_dispatched_severity else 0
     )
+
     if current_rank > last_rank:
-        if input.dispatch_blocked:
+        if dispatch_blocked:
             return RecurrenceAction.QUEUED_ESCALATION
         return RecurrenceAction.ESCALATION_RELEASE
 
-    # Pending escalation still blocked
-    if input.escalation_pending and input.dispatch_blocked:
-        return RecurrenceAction.QUEUED_ESCALATION
-
-    # Pending escalation cleared → release
-    if input.escalation_pending and not input.dispatch_blocked:
-        return RecurrenceAction.ESCALATION_RELEASE
-
-    # Finding unchanged → silent
-    if not input.finding_changed:
-        return RecurrenceAction.SILENT_UPDATE
-
-    # Evidence changed but not an escalation
+    # A pending severity is historical bookkeeping only. Once the latest
+    # observation no longer exceeds the last dispatched severity, it is stale.
+    # Finding unchanged or not an escalation → silent.
     return RecurrenceAction.SILENT_UPDATE
