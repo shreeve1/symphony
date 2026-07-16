@@ -594,3 +594,131 @@ def test_purge_defensive_worktree_removal_ignores_stale_flag(
 
     assert _count_issues(db_path, issue_id) == 0
     assert not wt_path.is_dir()
+
+
+# ── Patrol archive retention ──────────────────────────────────────
+
+
+def test_patrol_archived_survives_purge(monkeypatch, tmp_path: Path) -> None:
+    """Old archived patrol issue survives the 14-day purge."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setattr(main, "_bindings_override", [_binding_entry("trading")])
+    _seed_binding(db_path)
+
+    conn = main.connect(db_path)
+    try:
+        updated_at = _old_ts(20)
+        cursor = conn.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, priority, preferred_agent,
+              reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+              origin, created_at, updated_at,
+              patrol_incident_family, patrol_incident_resource,
+              patrol_occurrence_count, patrol_current_severity
+            ) VALUES (?, ?, ?, 'archived', 'med', 'pi',
+              'high', FALSE, 'main', '', '',
+              'patrol', ?, ?,
+              'disk', 'srv1',
+              5, 'high')
+            """,
+            ("trading", "patrol-archive", "test", _old_ts(21), updated_at),
+        )
+        issue_id = int(cursor.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app):
+        login(TestClient(app))
+
+    assert _count_issues(db_path, issue_id) == 1
+    # Metadata preserved
+    conn = main.connect(db_path)
+    try:
+        row = conn.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+        assert row["patrol_incident_family"] == "disk"
+        assert row["patrol_occurrence_count"] == 5
+    finally:
+        conn.close()
+
+
+def test_non_patrol_archived_still_purged(monkeypatch, tmp_path: Path) -> None:
+    """Old non-patrol archived issue is still purged after 14 days."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setattr(main, "_bindings_override", [_binding_entry("trading")])
+    _seed_binding(db_path)
+
+    conn = main.connect(db_path)
+    try:
+        updated_at = _old_ts(20)
+        cursor = conn.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, priority, preferred_agent,
+              reasoning_effort, worktree_active, base_branch, comments_md, context_md,
+              origin, created_at, updated_at
+            ) VALUES (?, ?, ?, 'archived', 'med', 'pi',
+              'high', FALSE, 'main', '', '',
+              'operator', ?, ?)
+            """,
+            ("trading", "op-archive", "test", _old_ts(21), updated_at),
+        )
+        op_id = int(cursor.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app):
+        login(TestClient(app))
+
+    assert _count_issues(db_path, op_id) == 0
+
+
+def test_patrol_and_non_patrol_mixed_purge(monkeypatch, tmp_path: Path) -> None:
+    """Mixed old archives: patrol survives, non-patrol purges."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    monkeypatch.setattr(main, "_bindings_override", [_binding_entry("trading")])
+    _seed_binding(db_path)
+
+    conn = main.connect(db_path)
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, state, priority, preferred_agent,
+              reasoning_effort, base_branch, comments_md, context_md,
+              origin, created_at, updated_at
+            ) VALUES (?, ?, 'archived', 'med', 'pi',
+              'high', 'main', '', '',
+              'patrol', ?, ?)
+            """,
+            ("trading", "patrol-mixed", _old_ts(21), _old_ts(20)),
+        )
+        patrol_id = int(cursor.lastrowid)
+
+        cursor2 = conn.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, state, priority, preferred_agent,
+              reasoning_effort, base_branch, comments_md, context_md,
+              origin, created_at, updated_at
+            ) VALUES (?, ?, 'archived', 'med', 'pi',
+              'high', 'main', '', '',
+              'operator', ?, ?)
+            """,
+            ("trading", "op-mixed", _old_ts(21), _old_ts(20)),
+        )
+        op_id = int(cursor2.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app):
+        login(TestClient(app))
+
+    assert _count_issues(db_path, patrol_id) == 1
+    assert _count_issues(db_path, op_id) == 0

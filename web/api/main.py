@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import hashlib
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import socket
 import sqlite3
 import subprocess
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -73,6 +75,17 @@ except ModuleNotFoundError:
         derive_session_id,
         session_file_path,
     )
+
+from patrol_incident import (
+    Finding,
+    IssueStatus,
+    RecurrenceAction,
+    RecurrenceInput,
+    Severity,
+    decide,
+    derive_key,
+)
+
 
 _count_commit_redispatches = count_commit_redispatches
 
@@ -635,6 +648,25 @@ class IssueCreate(BaseModel):
     origin: Literal["operator", "patrol"] | None = None
     blocked_by: list[int] | None = None
     locks: list[str] | None = None
+
+
+class IncidentObservation(BaseModel):
+    """Atomic patrol observation payload for POST .../incidents/observe.
+
+    The caller MUST send a canonical coalesced finding (one identity per call).
+    extra="forbid" rejects unknown keys as HTTP 400.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    incident_family: str = Field(min_length=1)
+    incident_resource: str = Field(min_length=1)
+    severity: Literal["informational", "low", "medium", "high", "critical"]
+    evidence: str = Field(min_length=1)
+    is_pass: bool = False
+    legacy_external_ids: list[str] | None = None
+    sibling_evidence: list[str] | None = None
+    recovery_confirmed: bool = False
 
 
 class ReplyCreate(BaseModel):
@@ -1347,6 +1379,15 @@ def _binding_claude_persist_for(name: str) -> bool:
     return False
 
 
+def _patrol_external_id(name: str, key: Any | None) -> str:
+    """Deterministic external_id from binding+family+resource (std hash, stable)."""
+    if key is None:
+        return str(uuid.uuid4())
+    return hashlib.sha256(
+        f"patrol/{name}/{key.family}/{key.resource}".encode()
+    ).hexdigest()[:16]
+
+
 def _base_branch_for(name: str) -> str:
     """New-issue base_branch default comes from bindings.yml (#014 spec); the
     binding table doesn't store it. A missing or malformed file (or a binding
@@ -1456,6 +1497,14 @@ async def patch_issue(
     if worktree_done_case:
         stored_changed.pop("state", None)
         stored_changed.pop("worktree_active", None)
+    # Patrol archive: sever the active dedup key atomically (ADR-0015).
+    # Done and non-patrol transitions leave external_id unchanged.
+    is_patrol_archive = (
+        changed.get("state") == "archived" and current.get("origin") == "patrol"
+    )
+    if is_patrol_archive:
+        stored_changed["external_id"] = None
+
     for key in ("blocked_by", "locks"):
         if key in stored_changed:
             stored_changed[key] = json.dumps(stored_changed[key])
@@ -2444,7 +2493,7 @@ def _purge_archived_issues(connection: sqlite3.Connection) -> None:
 
     eligible = connection.execute(
         "SELECT id, binding_name, worktree_active FROM issue "
-        "WHERE state = 'archived' AND updated_at < ?",
+        "WHERE state = 'archived' AND origin != 'patrol' AND updated_at < ?",
         (cutoff,),
     ).fetchall()
 
@@ -2818,6 +2867,411 @@ def _get_run_or_404(connection: sqlite3.Connection, run_id: int) -> sqlite3.Row:
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
     return row
+
+
+# ---------------------------------------------------------------------------
+# Patrol Incident observation endpoint
+# ---------------------------------------------------------------------------
+
+
+PATROL_DEFAULT_PRIORITY: dict[str, str | None] = {
+    "informational": None,
+    "low": "low",
+    "medium": "med",
+    "high": "high",
+    "critical": "urgent",
+}
+
+_SEVERITY_MAP: dict[str, Severity] = {
+    "informational": Severity.INFORMATIONAL,
+    "low": Severity.LOW,
+    "medium": Severity.MEDIUM,
+    "high": Severity.HIGH,
+    "critical": Severity.CRITICAL,
+}
+
+_STATUS_MAP: dict[str, IssueStatus] = {
+    "todo": IssueStatus.TODO,
+    "running": IssueStatus.RUNNING,
+    "in_review": IssueStatus.IN_REVIEW,
+    "blocked": IssueStatus.BLOCKED,
+    "done": IssueStatus.DONE,
+    "archived": IssueStatus.ARCHIVED,
+}
+
+
+@app.post("/api/bindings/{name}/incidents/observe")
+async def observe_incident(
+    name: str,
+    body: dict[str, Any],
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    _get_binding_or_404(connection, name)
+
+    try:
+        observation = IncidentObservation.model_validate(body)
+    except ValidationError as exc:
+        errors = exc.errors(include_url=False)
+        status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
+        raise HTTPException(status_code=status, detail=errors) from exc
+
+        # ---- BEGIN IMMEDIATE before first read ----
+        connection.execute("BEGIN IMMEDIATE")
+
+    try:
+        _released = False
+        key = derive_key(observation.incident_family, observation.incident_resource)
+        severity = _SEVERITY_MAP[observation.severity]
+
+        # Phase 1: active family/resource match
+        row = None
+        if key is not None:
+            row = connection.execute(
+                "SELECT * FROM issue WHERE binding_name = ? AND origin = 'patrol'"
+                " AND state != 'archived'"
+                " AND patrol_incident_family = ? AND patrol_incident_resource = ?",
+                (name, key.family, key.resource),
+            ).fetchone()
+
+        # Phase 2: legacy external_ids (adoption path)
+        if row is None and observation.legacy_external_ids:
+            legacy_ids = observation.legacy_external_ids
+            placeholders = ",".join("?" for _ in legacy_ids)
+            rows = connection.execute(
+                f"SELECT * FROM issue WHERE binding_name = ? AND origin = 'patrol'"
+                f" AND state != 'archived'"
+                f" AND external_id IN ({placeholders})"
+                f" ORDER BY CASE patrol_current_severity"
+                f"  WHEN 'critical' THEN 5 WHEN 'high' THEN 4"
+                f"  WHEN 'medium' THEN 3 WHEN 'low' THEN 2 WHEN 'informational' THEN 1"
+                f"  ELSE 0 END DESC, updated_at DESC",
+                (name, *legacy_ids),
+            ).fetchall()
+            if rows:
+                row = rows[0]
+                # Adopt: populate Incident columns while preserving external_id
+                connection.execute(
+                    "UPDATE issue SET patrol_incident_family = ?, patrol_incident_resource = ?"
+                    " WHERE id = ?",
+                    (
+                        key.family if key else observation.incident_family,
+                        key.resource if key else observation.incident_resource,
+                        row["id"],
+                    ),
+                )
+
+        now = datetime.now(UTC).isoformat()
+        counters = {
+            "created": 0,
+            "coalesced": 0,
+            "silent_update": 0,
+            "escalated": 0,
+            "archive_severed": 0,
+            "pruned_rows": 0,
+            "pruned_logs": 0,
+        }
+
+        # Build Finding early — used by both no-issue and existing-issue paths
+        finding = Finding(
+            severity=severity,
+            incident_family=observation.incident_family,
+            incident_resource=observation.incident_resource,
+            evidence=observation.evidence,
+            is_pass=observation.is_pass,
+        )
+
+        if row is None:
+            # Use decide() even without an issue: pass findings must not create
+            inp = RecurrenceInput(
+                finding=finding,
+                issue_exists=False,
+                issue_status=None,
+                last_dispatched_severity=None,
+                dispatch_count=0,
+                active_run=False,
+                scheduled_hold=False,
+                recovery_confirmed=observation.recovery_confirmed,
+            )
+            action = decide(inp)
+
+            if action is RecurrenceAction.CREATE_AND_DISPATCH:
+                title = (
+                    f"[{observation.incident_family}/{observation.incident_resource}]"
+                    f" {observation.severity}"
+                )
+                priority = PATROL_DEFAULT_PRIORITY[observation.severity]
+                description = observation.evidence
+                if observation.sibling_evidence:
+                    for sib in observation.sibling_evidence:
+                        description += f"\n\n---\n{sib}"
+
+                cursor = connection.execute(
+                    """INSERT INTO issue(
+                      binding_name, title, description, state, priority,
+                      preferred_agent, preferred_model, reasoning_effort,
+                      worktree_active, base_branch, comments_md, context_md,
+                      external_id, origin, created_at, updated_at,
+                      patrol_incident_family, patrol_incident_resource,
+                      patrol_first_seen_at, patrol_last_seen_at,
+                      patrol_occurrence_count, patrol_current_severity,
+                      patrol_last_dispatched_severity, patrol_pending_severity,
+                      patrol_consecutive_passes, patrol_dispatch_count
+                    ) VALUES (?, ?, ?, 'todo', ?,
+                      'pi', ?, 'high',
+                      FALSE, 'main', '', '',
+                      ?, 'patrol', ?, ?,
+                      ?, ?,
+                      ?, ?,
+                      1, ?,
+                      NULL, NULL,
+                      0, 0)""",
+                    (
+                        name,
+                        title,
+                        description,
+                        priority,
+                        PATROL_DEFAULT_MODEL,
+                        _patrol_external_id(name, key),
+                        now,
+                        now,
+                        key.family if key else observation.incident_family,
+                        key.resource if key else observation.incident_resource,
+                        now,
+                        now,
+                        observation.severity,
+                    ),
+                )
+                issue_id = cursor.lastrowid
+                counters["created"] = 1
+            else:
+                # PASS_CONFIRMATION: no issue exists, nothing to do
+                issue_id = 0
+        else:
+            issue_id = int(row["id"])
+            issue_status = _STATUS_MAP.get(str(row["state"]), IssueStatus.TODO)
+
+            last_dispatched_str = row["patrol_last_dispatched_severity"]
+            last_dispatched = (
+                _SEVERITY_MAP[str(last_dispatched_str)] if last_dispatched_str else None
+            )
+            pending_str = row["patrol_pending_severity"]
+            pending_severity = _SEVERITY_MAP[str(pending_str)] if pending_str else None
+
+            active_run = bool(
+                row["latest_run_state"]
+                and str(row["latest_run_state"]) in ("queued", "running")
+            )
+            scheduled_hold = bool(row["hold"]) or bool(row["scheduled_for"])
+            dispatch_count = int(row["patrol_dispatch_count"] or 0)
+
+            inp = RecurrenceInput(
+                finding=finding,
+                issue_exists=True,
+                issue_status=issue_status,
+                last_dispatched_severity=last_dispatched,
+                pending_severity=pending_severity,
+                dispatch_count=dispatch_count,
+                active_run=active_run,
+                scheduled_hold=scheduled_hold,
+                recovery_confirmed=observation.recovery_confirmed,
+            )
+
+            action = decide(inp)
+
+            if action is RecurrenceAction.SILENT_UPDATE:
+                title = (
+                    f"[{observation.incident_family}/{observation.incident_resource}]"
+                    f" {observation.severity}"
+                )
+                priority = PATROL_DEFAULT_PRIORITY[observation.severity]
+                description = observation.evidence
+                if observation.sibling_evidence:
+                    for sib in observation.sibling_evidence:
+                        description += f"\n\n---\n{sib}"
+
+                connection.execute(
+                    """UPDATE issue SET
+                      description = ?, title = ?, priority = ?,
+                      patrol_last_seen_at = ?,
+                      patrol_occurrence_count = patrol_occurrence_count + 1,
+                      patrol_current_severity = ?,
+                      updated_at = ?
+                    WHERE id = ?""",
+                    (
+                        description,
+                        title,
+                        priority,
+                        now,
+                        observation.severity,
+                        now,
+                        issue_id,
+                    ),
+                )
+                counters["silent_update"] = 1
+
+            elif action is RecurrenceAction.QUEUED_ESCALATION:
+                connection.execute(
+                    """UPDATE issue SET
+                      patrol_pending_severity = ?,
+                      patrol_last_seen_at = ?,
+                      patrol_occurrence_count = patrol_occurrence_count + 1,
+                      patrol_current_severity = ?,
+                      updated_at = ?
+                    WHERE id = ?""",
+                    (observation.severity, now, observation.severity, now, issue_id),
+                )
+                counters["escalated"] = 1
+
+            elif action is RecurrenceAction.ESCALATION_RELEASE:
+                event = (
+                    f"**Escalated to {observation.severity}** — {observation.evidence}"
+                )
+                cur = connection.execute(
+                    """UPDATE issue SET
+                      patrol_pending_severity = NULL,
+                      state = 'todo',
+                      patrol_last_seen_at = ?,
+                      patrol_occurrence_count = patrol_occurrence_count + 1,
+                      patrol_current_severity = ?,
+                      comments_md = COALESCE(comments_md, '') || ?,
+                      updated_at = ?
+                    WHERE id = ? AND (patrol_pending_severity IS NOT NULL
+                                      OR patrol_current_severity != ?)""",
+                    (
+                        now,
+                        observation.severity,
+                        "\n\n" + event,
+                        now,
+                        issue_id,
+                        observation.severity,
+                    ),
+                )
+                _released = cur.rowcount > 0
+                counters["escalated"] = 1
+
+            elif action is RecurrenceAction.REOPEN_AND_DISPATCH:
+                event = (
+                    f"**Reopened — {observation.severity}** — {observation.evidence}"
+                )
+                connection.execute(
+                    """UPDATE issue SET
+                      state = 'todo',
+                      patrol_last_seen_at = ?,
+                      patrol_occurrence_count = patrol_occurrence_count + 1,
+                      patrol_current_severity = ?,
+                      comments_md = COALESCE(comments_md, '') || ?,
+                      updated_at = ?
+                    WHERE id = ?""",
+                    (now, observation.severity, "\n\n" + event, now, issue_id),
+                )
+
+            elif action is RecurrenceAction.RECOVERY_EVENT:
+                event = f"✓ **Recovered** — {observation.evidence}"
+                connection.execute(
+                    """UPDATE issue SET
+                      comments_md = COALESCE(comments_md, '') || ?,
+                      state = 'done',
+                      patrol_last_seen_at = ?,
+                      patrol_occurrence_count = patrol_occurrence_count + 1,
+                      patrol_consecutive_passes = patrol_consecutive_passes + 1,
+                      patrol_current_severity = ?,
+                      updated_at = ?
+                    WHERE id = ?""",
+                    ("\n\n" + event, now, observation.severity, now, issue_id),
+                )
+
+            elif action is RecurrenceAction.CREATE_AND_DISPATCH:
+                # Archived issue: release lineage, create new
+                # (ACTIVE lookup above excludes archived, so CREATE here means
+                # the issue status was ARCHIVED in decide().  We create a new
+                # issue. The archived row retains its metadata per [4.1] for
+                # the PATCH path; here in observe we only see non-archived.)
+                counters["archive_severed"] = 1
+                title = (
+                    f"[{observation.incident_family}/{observation.incident_resource}]"
+                    f" {observation.severity}"
+                )
+                priority = PATROL_DEFAULT_PRIORITY[observation.severity]
+                description = observation.evidence
+                if observation.sibling_evidence:
+                    for sib in observation.sibling_evidence:
+                        description += f"\n\n---\n{sib}"
+
+                cursor = connection.execute(
+                    """INSERT INTO issue(
+                      binding_name, title, description, state, priority,
+                      preferred_agent, preferred_model, reasoning_effort,
+                      worktree_active, base_branch, comments_md, context_md,
+                      external_id, origin, created_at, updated_at,
+                      patrol_incident_family, patrol_incident_resource,
+                      patrol_first_seen_at, patrol_last_seen_at,
+                      patrol_occurrence_count, patrol_current_severity,
+                      patrol_last_dispatched_severity, patrol_pending_severity,
+                      patrol_consecutive_passes, patrol_dispatch_count
+                    ) VALUES (?, ?, ?, 'todo', ?,
+                      'pi', ?, 'high',
+                      FALSE, 'main', '', '',
+                      ?, 'patrol', ?, ?,
+                      ?, ?,
+                      ?, ?,
+                      1, ?,
+                      NULL, NULL,
+                      0, 0)""",
+                    (
+                        name,
+                        title,
+                        description,
+                        priority,
+                        PATROL_DEFAULT_MODEL,
+                        _patrol_external_id(name, key),
+                        now,
+                        now,
+                        key.family if key else observation.incident_family,
+                        key.resource if key else observation.incident_resource,
+                        now,
+                        now,
+                        observation.severity,
+                    ),
+                )
+                issue_id = cursor.lastrowid
+
+            elif action is RecurrenceAction.PASS_CONFIRMATION:
+                connection.execute(
+                    """UPDATE issue SET
+                      patrol_consecutive_passes = patrol_consecutive_passes + 1,
+                      patrol_last_seen_at = ?,
+                      updated_at = ?
+                    WHERE id = ?""",
+                    (now, now, issue_id),
+                )
+
+        connection.commit()
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail="observation rollback") from None
+
+    # Re-fetch and publish (skip for PASS_CONFIRMATION with no issue)
+    if issue_id:
+        row = connection.execute(
+            "SELECT * FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        result = _row(row) if row else {}
+        await websocket_hub.publish(
+            {"type": "issue.updated", "id": issue_id, "row": result}
+        )
+
+        # Wake sentinel only for actions that make a Todo dispatchable
+        if action in {
+            RecurrenceAction.CREATE_AND_DISPATCH,
+            RecurrenceAction.ESCALATION_RELEASE,
+            RecurrenceAction.REOPEN_AND_DISPATCH,
+        } and (action is not RecurrenceAction.ESCALATION_RELEASE or _released):
+            touch_wake_sentinel()
+
+    return {"action": action.name, "issue_id": issue_id, **counters}
 
 
 # Register the file browser/editor router. require_auth (defined above) gates

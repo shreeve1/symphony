@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+
+import web.api.main as main
 
 # (field, valid value) — one happy-path case per editable field.
 HAPPY_CASES = [
@@ -184,7 +187,6 @@ def test_patch_allows_worktree_active_for_remote_binding(
 ) -> None:
     # Remote coding bindings use SSH-created per-issue worktrees too.
     import os
-    from pathlib import Path
 
     import web.api.main as main
     from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
@@ -230,7 +232,6 @@ def test_list_skills_filters_per_binding(client: TestClient, monkeypatch) -> Non
     # ADR-0033: a binding sees host-global skills (binding_name NULL, matching
     # host) plus its own repo-local skills, never a sibling binding's skills.
     import os
-    from pathlib import Path
 
     import web.api.main as main
     from web.api.tests.conftest import REMOTE_BINDING_ENTRY, REMOTE_BINDING_NAME
@@ -265,3 +266,127 @@ def test_list_skills_filters_per_binding(client: TestClient, monkeypatch) -> Non
     assert "global-n8n" in n8n
     assert "symphony-only" not in n8n
     assert "global-local" not in n8n
+
+
+# ── Patrol archive tests ─────────────────────────────────────────
+
+
+def test_patrol_archive_releases_external_id(
+    client: TestClient, issue_id: int, monkeypatch
+) -> None:
+    """Archiving a patrol issue sets external_id=NULL atomically."""
+    import os
+
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET origin = 'patrol', external_id = 'pat-ext-001'"
+            " WHERE id = ?",
+            (issue_id,),
+        )
+        connection.commit()
+
+    resp = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "archived"
+    assert resp.json()["external_id"] is None
+    assert resp.json()["origin"] == "patrol"
+    # Incident columns retained
+    assert "patrol_incident_family" in resp.json()
+
+    # Re-read to confirm persisted
+    fetched = client.get(f"/api/issues/{issue_id}").json()
+    assert fetched["external_id"] is None
+
+
+def test_patrol_archive_retains_incident_metadata(
+    client: TestClient, issue_id: int
+) -> None:
+    """Archived patrol issue retains Incident columns and description."""
+    import os
+
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET origin = 'patrol', external_id = 'pat-ext-002',"
+            " patrol_incident_family = 'disk', patrol_incident_resource = 'srv1',"
+            " patrol_occurrence_count = 5, patrol_current_severity = 'high',"
+            " description = 'original description' WHERE id = ?",
+            (issue_id,),
+        )
+        connection.commit()
+
+    resp = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["patrol_incident_family"] == "disk"
+    assert body["patrol_incident_resource"] == "srv1"
+    assert body["patrol_occurrence_count"] == 5
+    assert body["patrol_current_severity"] == "high"
+    assert body["description"] == "original description"
+    assert body["external_id"] is None
+
+
+def test_done_patrol_keeps_external_id(client: TestClient, issue_id: int) -> None:
+    """Done on a patrol issue preserves external_id."""
+    import os
+
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET origin = 'patrol', external_id = 'pat-ext-done'"
+            " WHERE id = ?",
+            (issue_id,),
+        )
+        connection.commit()
+
+    resp = client.patch(f"/api/issues/{issue_id}", json={"state": "done"})
+    assert resp.status_code == 200
+    assert resp.json()["external_id"] == "pat-ext-done"
+
+
+def test_non_patrol_archive_keeps_external_id(
+    client: TestClient, issue_id: int
+) -> None:
+    """Archiving a non-patrol (operator) issue preserves external_id."""
+    import os
+
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET external_id = 'op-ext-003' WHERE id = ?",
+            (issue_id,),
+        )
+        connection.commit()
+
+    resp = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
+    assert resp.status_code == 200
+    assert resp.json()["external_id"] == "op-ext-003"
+
+
+def test_archive_patrol_uniqueness_rollback_on_conflict(
+    client: TestClient, issue_id: int
+) -> None:
+    """Archiving a patrol issue frees the key so another issue can claim it."""
+    import os
+
+    db_path = Path(os.environ["PODIUM_DB_PATH"])
+    with main.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET origin = 'patrol', external_id = 'unique-key'"
+            " WHERE id = ?",
+            (issue_id,),
+        )
+        connection.commit()
+
+    # Archive → releases key
+    resp = client.patch(f"/api/issues/{issue_id}", json={"state": "archived"})
+    assert resp.status_code == 200
+    assert resp.json()["external_id"] is None
+
+    # Create a new issue with the same external_id (should succeed now that key is free)
+    resp2 = client.post(
+        "/api/bindings/symphony/issues",
+        json={"description": "new issue with freed key", "external_id": "unique-key"},
+    )
+    assert resp2.status_code == 201
