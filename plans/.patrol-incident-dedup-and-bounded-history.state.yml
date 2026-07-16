@@ -82,3 +82,144 @@ build_audits:
     files_edited: []
     validation_command: null
     validation_passed: null
+- wave: 1
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T20:18:23Z"
+  files_audited: [patrol_incident.py, tests/test_patrol_incident.py]
+  outcome: escalated_to_user
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: initial
+    started: "2026-07-16T20:18:23Z"
+    findings:
+      critical:
+      - |-
+        [CRITICAL] Blocked pending escalation is downgraded to silent update
+          Detail: patrol_incident.py:131-136 returns SILENT_UPDATE when escalation_pending=True, dispatch_blocked=True, finding_changed=False.
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Return QUEUED_ESCALATION while pending escalation is still blocked; add that test.
+      - |-
+        [CRITICAL] Severity escalation is suppressed when evidence text is unchanged
+          Detail: patrol_incident.py:134-144 checks finding_changed before comparing severity to last_dispatched_severity.
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Compare severity first; only silent-update unchanged non-escalations. Add higher-severity/finding_changed=False test.
+      - |-
+        [CRITICAL] Pass handling ignores Done/active-run barriers
+          Detail: patrol_incident.py:115-119 returns RECOVERY_EVENT for any existing issue, including Done or dispatch_blocked active-run cases.
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Emit RECOVERY_EVENT only for active unresolved issues with no dispatch barrier; otherwise PASS_CONFIRMATION. Add Done-pass and blocked-pass tests.
+      warning:
+      - |-
+        [WARNING] Archived recurrence state is unrepresentable in the policy
+          Detail: patrol_incident.py:61-68 omits ARCHIVED despite the plan requiring archived-state recurrence coverage.
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Add ARCHIVED with explicit create-new semantics, or test/enforce archived lookup as issue_exists=False.
+      note: []
+    counts: {critical: 3, warning: 1, note: 0}
+    fix_summary: Reordered escalation checks and gated recovery events for Done/active-run cases.
+    files_edited: [patrol_incident.py, tests/test_patrol_incident.py]
+    validation_command: uv run pytest tests/test_patrol_incident.py -q
+    validation_passed: true
+  - attempt: 2
+    kind: post_fix_reaudit
+    started: "2026-07-16T20:24:16Z"
+    findings:
+      critical:
+      - |-
+        [CRITICAL] Routine pass closes as recovery with no confirmation input
+          Detail: patrol_incident.py:115; plans/patrol-incident-dedup-and-bounded-history.md:512
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Add recovery_confirmed/active_run inputs; routine pass => PASS_CONFIRMATION, confirmed pass => RECOVERY_EVENT only with no active Run.
+      - |-
+        [CRITICAL] Pending escalation releases after de-escalation
+          Detail: patrol_incident.py:145; plans/patrol-incident-dedup-and-bounded-history.md:509
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Store pending severity, not bool; release only if pending/current still exceeds last dispatched.
+      - |-
+        [CRITICAL] Pre-first-Run repeat is misclassified as escalation
+          Detail: patrol_incident.py:136; plans/patrol-incident-dedup-and-bounded-history.md:289
+          Affected files: patrol_incident.py, tests/test_patrol_incident.py
+          Suggested fix: Distinguish awaiting initial dispatch from true escalation; unchanged repeat before first Run should silent-update.
+      warning:
+      - |-
+        [WARNING] Required state/barrier matrix is missing
+          Detail: tests/test_patrol_incident.py:101; plans/patrol-incident-dedup-and-bounded-history.md:302
+          Affected files: tests/test_patrol_incident.py
+          Suggested fix: Add table cases for RUNNING, IN_REVIEW, BLOCKED, archived, scheduled hold vs active Run, recovery confirmation, de-escalated pending, and pre-first-Run race.
+      note: []
+    counts: {critical: 3, warning: 1, note: 0}
+- wave: 1
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T20:18:23Z"
+  files_audited:
+  - /home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_models.py
+  - /home/james/homelab/automation/homelab-stack/src/homelab_worker/incident_coalescer.py
+  - /home/james/homelab/automation/homelab-stack/src/homelab_router/ticket_types.py
+  - /home/james/homelab/automation/homelab-stack/tests/test_incident_coalescer.py
+  - /home/james/homelab/automation/homelab-stack/tests/test_patrol_models.py
+  outcome: escalated_to_user
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: initial
+    started: "2026-07-16T20:18:23Z"
+    findings:
+      critical:
+      - |-
+        [CRITICAL] Legacy external IDs are computed then dropped
+          Detail: automation/homelab-stack/src/homelab_worker/incident_coalescer.py:106
+          Affected files: automation/homelab-stack/src/homelab_worker/incident_coalescer.py, automation/homelab-stack/src/homelab_worker/patrol_models.py
+          Suggested fix: Add a bounded `legacy_external_ids: tuple[str, ...]` carrier to `CheckResult` or returned canonical DTO, pass `tuple(ext_ids)` into it, and test sorted/deduped/bounded output.
+      warning:
+      - |-
+        [WARNING] Coalesced output order depends on input order
+          Detail: automation/homelab-stack/src/homelab_worker/incident_coalescer.py:97
+          Affected files: automation/homelab-stack/src/homelab_worker/incident_coalescer.py, automation/homelab-stack/tests/test_incident_coalescer.py
+          Suggested fix: Iterate groups by sorted identity key and make the shuffle test compare raw output order, not sorted output.
+      - |-
+        [WARNING] Equal-severity duplicate tie can still select by input order
+          Detail: automation/homelab-stack/src/homelab_worker/incident_coalescer.py:56
+          Affected files: automation/homelab-stack/src/homelab_worker/incident_coalescer.py, automation/homelab-stack/tests/test_incident_coalescer.py
+          Suggested fix: Include deterministic secondary fields such as summary/diagnostic in the tiebreak key when external-id material is identical, and add a reversed-input regression.
+      - |-
+        [WARNING] Incident identity string key can collide when fields contain `::`
+          Detail: automation/homelab-stack/src/homelab_worker/patrol_models.py:313
+          Affected files: automation/homelab-stack/src/homelab_worker/patrol_models.py, automation/homelab-stack/src/homelab_worker/incident_coalescer.py
+          Suggested fix: Use a tuple `(incident_family, incident_resource)` as the group key instead of joining with a delimiter.
+      note: []
+    counts: {critical: 1, warning: 3, note: 0}
+    fix_summary: Added a sorted, deduplicated, bounded legacy_external_ids carrier to canonical CheckResult output.
+    files_edited:
+    - /home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_models.py
+    - /home/james/homelab/automation/homelab-stack/src/homelab_worker/incident_coalescer.py
+    - /home/james/homelab/automation/homelab-stack/tests/test_incident_coalescer.py
+    validation_command: uv run pytest tests/test_incident_coalescer.py tests/test_patrol_models.py -q
+    validation_passed: true
+  - attempt: 2
+    kind: post_fix_reaudit
+    started: "2026-07-16T20:24:16Z"
+    findings:
+      critical:
+      - |-
+        [CRITICAL] Coalescer output is still input-order dependent
+          Detail: automation/homelab-stack/src/homelab_worker/incident_coalescer.py:60 and automation/homelab-stack/src/homelab_worker/incident_coalescer.py:95
+          Affected files: automation/homelab-stack/src/homelab_worker/incident_coalescer.py, automation/homelab-stack/tests/test_incident_coalescer.py
+          Suggested fix: Add full deterministic tiebreak fields, iterate groups by sorted key, and assert raw shuffled outputs match.
+      warning:
+      - |-
+        [WARNING] legacy_external_ids truncates before dedupe/sort
+          Detail: automation/homelab-stack/src/homelab_worker/patrol_models.py:305
+          Affected files: automation/homelab-stack/src/homelab_worker/patrol_models.py
+          Suggested fix: Sort/dedupe the full input first, then slice to LEGACY_EXTERNAL_IDS_LIMIT.
+      - |-
+        [WARNING] Incident identity key can collide on `::`
+          Detail: automation/homelab-stack/src/homelab_worker/patrol_models.py:327
+          Affected files: automation/homelab-stack/src/homelab_worker/patrol_models.py, automation/homelab-stack/src/homelab_worker/incident_coalescer.py
+          Suggested fix: Use tuple identity keys or collision-safe encoding instead of delimiter join.
+      note: []
+    counts: {critical: 1, warning: 2, note: 0}
