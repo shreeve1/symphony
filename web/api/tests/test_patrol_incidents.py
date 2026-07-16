@@ -11,9 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 
 import web.api.main as main
 from web.api.tests.conftest import login
-
 
 PAYLOAD: dict[str, Any] = {
     "incident_family": "disk",
@@ -616,3 +615,117 @@ def test_no_diagnostic_logging(monkeypatch, db_and_client):
     for msg in records:
         assert "98% full" not in msg
         assert "evidence" not in msg.lower()
+
+
+def test_concurrent_observations_both_return_200(db_and_client):
+    """Two concurrent first observations both return 200; one issue remains."""
+    db_path, client = db_and_client
+
+    results: list[dict[str, Any]] = []
+    errors: list[Exception] = []
+
+    def observe():
+        try:
+            # Each thread uses its own TestClient (independent SQLite connection)
+            c = TestClient(main.app)
+            login(c)
+            resp = c.post("/api/bindings/trading/incidents/observe", json=PAYLOAD)
+            results.append(resp.json())
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=observe) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"thread errors: {errors}"
+    assert len(results) == 2
+    # Both threads got 200
+    # With BEGIN IMMEDIATE serializing access, one becomes CREATE_AND_DISPATCH
+    # and the other becomes SILENT_UPDATE — both are 200 responses.
+    actions = {r.get("action") for r in results}
+    assert actions.issubset({"CREATE_AND_DISPATCH", "SILENT_UPDATE"})
+    assert "CREATE_AND_DISPATCH" in actions
+    # Exactly one issue exists
+    assert _count_patrol_issues(db_path) == 1
+    # Same issue_id for both
+    ids = [r.get("issue_id") for r in results if r.get("issue_id")]
+    assert len(set(ids)) == 1
+
+
+def test_legacy_null_severity_escalation_release(db_and_client):
+    """Legacy NULL patrol_current_severity does not block ESCALATION_RELEASE."""
+    db_path, client = db_and_client
+    resp = client.post("/api/bindings/trading/incidents/observe", json=PAYLOAD)
+    issue_id = resp.json()["issue_id"]
+
+    # Simulate: dispatched once but patrol_current_severity is NULL (legacy row)
+    conn = main.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE issue SET patrol_dispatch_count = 1,"
+            " patrol_last_dispatched_severity = NULL,"
+            " patrol_current_severity = NULL"
+            " WHERE id = ?",
+            (issue_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Escalate — should release even though current_severity is NULL
+    resp2 = client.post(
+        "/api/bindings/trading/incidents/observe",
+        json={**PAYLOAD, "severity": "critical"},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["action"] == "ESCALATION_RELEASE"
+    assert resp2.json()["escalated"] == 1
+
+    issue = _get_issue(db_path, issue_id)
+    assert issue["patrol_pending_severity"] is None
+    assert issue["state"] == "todo"
+
+
+def test_archive_restore_observe_creates_new_issue(db_and_client):
+    """Restore an archived patrol row then observe: creates new issue because
+    external_id was severed on archive and active lookup requires IS NOT NULL."""
+    db_path, client = db_and_client
+    resp = client.post("/api/bindings/trading/incidents/observe", json=PAYLOAD)
+    old_issue_id = resp.json()["issue_id"]
+    old_external_id = _get_issue(db_path, old_issue_id)["external_id"]
+    assert old_external_id is not None
+
+    # Archive patrol issue → external_id set to NULL
+    resp_archive = client.patch(
+        f"/api/issues/{old_issue_id}", json={"state": "archived"}
+    )
+    assert resp_archive.status_code == 200
+    archived = _get_issue(db_path, old_issue_id)
+    assert archived["external_id"] is None
+    assert archived["state"] == "archived"
+
+    # Restore: set back to todo (simulate operator restoring from archive)
+    conn = main.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE issue SET state = 'todo',"
+            " patrol_incident_family = 'disk',"
+            " patrol_incident_resource = 'nas1:/data'"
+            " WHERE id = ?",
+            (old_issue_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Same observation — should NOT match the restored row (external_id IS NULL)
+    resp3 = client.post("/api/bindings/trading/incidents/observe", json=PAYLOAD)
+    assert resp3.status_code == 200
+    assert resp3.json()["action"] == "CREATE_AND_DISPATCH"
+    assert resp3.json()["issue_id"] != old_issue_id
+
+    # Two patrol issues exist: the archived one and the new one
+    assert _count_patrol_issues(db_path) == 2

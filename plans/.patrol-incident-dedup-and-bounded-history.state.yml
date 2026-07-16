@@ -391,3 +391,34 @@ build_audits:
           Suggested fix: Forbid patrol unarchive or exclude lineage-severed rows from active lookup.
       note: []
     counts: {critical: 1, warning: 2, note: 0}
+- wave: 3
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T23:55:18Z"
+  files_audited: [web/api/main.py, web/api/tests/test_patrol_incidents.py]
+  outcome: passed
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: manual_remediation
+    started: "2026-07-16T23:55:18Z"
+    findings:
+      critical: []
+      warning:
+      - |-
+        [WARNING] Duplicate serialized escalation can return `ESCALATION_RELEASE`/`escalated=1` after the conditional UPDATE matched 0 rows, skipping recurrence updates.
+          Detail: web/api/main.py:3134-3160
+          Affected files: web/api/main.py
+          Suggested fix: If `cur.rowcount == 0`, convert to `SILENT_UPDATE` and apply/count the normal silent recurrence update; add concurrent escalation coverage.
+      - |-
+        [WARNING] The “both return 200” concurrency test never asserts HTTP status and filters falsey/missing IDs.
+          Detail: web/api/tests/test_patrol_incidents.py:620-655
+          Affected files: web/api/tests/test_patrol_incidents.py
+          Suggested fix: Store `(status_code, body)` per thread; assert both statuses are 200 and both positive `issue_id`s are equal.
+      note: []
+    counts: {critical: 0, warning: 2, note: 0}
+    fix_summary: Restored reachable BEGIN IMMEDIATE before reads, added concurrent success coverage, excluded severed lineage, and handled legacy NULL severity.
+    files_edited: [web/api/main.py, web/api/tests/test_patrol_incidents.py]
+    validation_command: uv run pytest web/api/tests/test_patrol_incidents.py web/api/tests/test_issue_patch.py -q
+    validation_passed: true

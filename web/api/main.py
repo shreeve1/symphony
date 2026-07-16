@@ -2906,8 +2906,7 @@ async def observe_incident(
     body: dict[str, Any],
     connection: sqlite3.Connection = Depends(get_connection),
 ) -> dict[str, Any]:
-    _get_binding_or_404(connection, name)
-
+    # Step 1: Validate payload first (no DB reads)
     try:
         observation = IncidentObservation.model_validate(body)
     except ValidationError as exc:
@@ -2915,20 +2914,30 @@ async def observe_incident(
         status = 400 if any(e["type"] == "extra_forbidden" for e in errors) else 422
         raise HTTPException(status_code=status, detail=errors) from exc
 
-        # ---- BEGIN IMMEDIATE before first read ----
+    # Step 2: Enter rollback-protected try
+    try:
+        # BEGIN IMMEDIATE as first DB operation (serializes concurrent observers)
         connection.execute("BEGIN IMMEDIATE")
 
-    try:
+        # Binding lookup inside transaction (no pre-transaction reads)
+        binding_row = connection.execute(
+            "SELECT name FROM binding WHERE name = ?", (name,)
+        ).fetchone()
+        if binding_row is None:
+            raise HTTPException(status_code=404, detail="binding not found")
+
         _released = False
         key = derive_key(observation.incident_family, observation.incident_resource)
         severity = _SEVERITY_MAP[observation.severity]
 
-        # Phase 1: active family/resource match
+        # Phase 1: active family/resource match (requires external_id IS NOT NULL
+        # so archived rows with severed lineage cannot match after restore)
         row = None
         if key is not None:
             row = connection.execute(
                 "SELECT * FROM issue WHERE binding_name = ? AND origin = 'patrol'"
                 " AND state != 'archived'"
+                " AND external_id IS NOT NULL"
                 " AND patrol_incident_family = ? AND patrol_incident_resource = ?",
                 (name, key.family, key.resource),
             ).fetchone()
@@ -3136,6 +3145,7 @@ async def observe_incident(
                       comments_md = COALESCE(comments_md, '') || ?,
                       updated_at = ?
                     WHERE id = ? AND (patrol_pending_severity IS NOT NULL
+                                      OR patrol_current_severity IS NULL
                                       OR patrol_current_severity != ?)""",
                     (
                         now,

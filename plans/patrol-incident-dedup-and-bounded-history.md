@@ -272,7 +272,7 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   payloads or UI behavior.
 
 ### 3. Implement atomic recurrence handling [sequential]
-- [ ] [3.1] In `web/api/main.py`, add a validated
+- [x] [3.1] In `web/api/main.py`, add a validated
   `POST /api/bindings/{name}/incidents/observe` payload and call the pure
   `patrol_incident.py` policy inside one explicit transaction: execute
   `BEGIN IMMEDIATE` before the first lookup, perform read/decide/write on that
@@ -286,7 +286,7 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   row but do not merge/delete the others (historical duplicate merge is out of
   scope). Cover busy/uniqueness failures with clean rollback rather than asking
   the client to retry a GET/PATCH sequence.
-- [ ] [3.2] In `web/api/main.py`, implement action writes: first detection inserts
+- [x] [3.2] In `web/api/main.py`, implement action writes: first detection inserts
   one patrol Todo; silent recurrence replaces description/title/priority/current
   evidence and increments `last_seen_at`/occurrence count without touching
   comments/state/schedule; escalation sets pending severity and only moves to Todo
@@ -294,16 +294,16 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   row; confirmed recovery appends one concise event and closes only when no Run is
   active. Copy lower-severity sibling evidence into the current description, not
   separate issues/comments.
-- [ ] [3.3] In `web/api/main.py`, append comments only when the policy returns
+- [x] [3.3] In `web/api/main.py`, append comments only when the policy returns
   first detection, released escalation, Done recurrence, or confirmed recovery.
   Return a stable action enum and counters, publish one `issue.updated` event, and
   touch the wake sentinel only for actions that actually make Todo dispatchable.
   Emit low-cardinality structured logs without diagnostic text.
-- [ ] [3.4] In `tests/test_patrol_incident.py`, cover the full state/severity/run
+- [x] [3.4] In `tests/test_patrol_incident.py`, cover the full state/severity/run
   matrix (`todo`, `running`, `in_review`, `blocked`, `done`, `archived`; unchanged,
   escalation, lower severity, recovery; active/inactive; scheduled hold), including
   comparison to last-dispatched rather than latest-observed severity.
-- [ ] [3.5] In `web/api/tests/test_patrol_incidents.py`, prove atomic first create,
+- [x] [3.5] In `web/api/tests/test_patrol_incidents.py`, prove atomic first create,
   silent updates, one queued/released escalation, and no duplicate escalation
   under concurrent observations from two independent SQLite connections/threads.
   Also cover rollback after policy/write failure, Done same-id reopen, distinct
@@ -312,15 +312,15 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   idempotency, valid websocket/wake behavior, and no diagnostic leakage in logs.
 
 ### 4. Make Archive the patrol lineage boundary [parallel-safe]
-- [ ] [4.1] Update `web/api/main.py` `patch_issue` so a transition of an
+- [x] [4.1] Update `web/api/main.py` `patch_issue` so a transition of an
   `origin='patrol'` row to `archived` includes `external_id=NULL` in the same SQL
   transaction as the state change. Retain Incident columns and description;
   restoring the archived row later must not silently reclaim the released key.
   Done and non-patrol transitions remain unchanged.
-- [ ] [4.2] Update `web/api/main.py` archived purge selection to exclude patrol
+- [x] [4.2] Update `web/api/main.py` archived purge selection to exclude patrol
   issues, preserving archived Incident metadata while leaving the current 14-day
   non-patrol purge contract intact.
-- [ ] [4.3] Extend `web/api/tests/test_issue_patch.py` with atomic release,
+- [x] [4.3] Extend `web/api/tests/test_issue_patch.py` with atomic release,
   recurrence-after-Archive new-id, Done recurrence same-id, and uniqueness rollback
   coverage. Extend `web/api/tests/test_archive_purge.py` to retain old patrol
   archives and still purge old operator/coding archives.
