@@ -277,3 +277,59 @@ build_audits:
     - /home/james/homelab/automation/homelab-stack/tests/test_incident_coalescer.py
     validation_command: uv run pytest tests/test_incident_coalescer.py tests/test_patrol_models.py -q
     validation_passed: true
+- wave: 2
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T21:44:02Z"
+  files_audited:
+  - web/api/schema.py
+  - web/api/main.py
+  - web/api/migrations/versions/0021_patrol_incident_history.py
+  - web/api/tests/test_alembic_baseline.py
+  outcome: auto_fixed
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: initial
+    started: "2026-07-16T21:44:02Z"
+    findings:
+      critical:
+      - |-
+        [CRITICAL] Downgrade corrupts migration state
+          Detail: web/api/migrations/versions/0021_patrol_incident_history.py:91-94 no-ops, so Alembic can stamp DB back to 0020 while 0021 columns remain; re-upgrade then crashes on duplicate ADD COLUMN.
+          Affected files: web/api/migrations/versions/0021_patrol_incident_history.py
+          Suggested fix: Recreate tables/drop columns on downgrade, or make downgrade explicitly unsupported and test it.
+      warning:
+      - |-
+        [WARNING] Parity test misses defaults/nullability/check constraints
+          Detail: web/api/tests/test_alembic_baseline.py:277-285 compares only `(name, type)` sets, ignoring order, NOT NULL, defaults, PKs, and CHECK constraints.
+          Affected files: web/api/tests/test_alembic_baseline.py
+          Suggested fix: Compare full ordered `PRAGMA table_info` rows plus normalized `sqlite_schema.sql` or explicit constraint/default tests.
+      note:
+      - |-
+        [NOTE] Migration docstring claims work the code skips
+          Detail: web/api/migrations/versions/0021_patrol_incident_history.py:7 says it recovers legacy identity, but web/api/migrations/versions/0021_patrol_incident_history.py:70-80 leaves family/resource NULL.
+    counts: {critical: 1, warning: 1, note: 1}
+    fix_summary: Implemented real SQLite DROP COLUMN downgrade and corrected migration documentation.
+    files_edited: [web/api/migrations/versions/0021_patrol_incident_history.py]
+    validation_command: uv run pytest tests/test_alembic_baseline.py web/api/tests/test_alembic_baseline.py -q
+    validation_passed: true
+  - attempt: 2
+    kind: post_fix_reaudit
+    started: "2026-07-16T21:50:01Z"
+    findings:
+      critical: []
+      warning:
+      - |-
+        [WARNING] 0021 downgrade fix is untested
+          Detail: web/api/tests/test_alembic_baseline.py:125-285 upgrades to head but never downgrades 0021→0020, so the fixed failure mode could regress while Alembic stamps back to 0020 with 0021 columns still present.
+          Affected files: web/api/tests/test_alembic_baseline.py
+          Suggested fix: Extend the test to downgrade to 0020, assert all 10 patrol issue columns plus run.agent_session_id are gone, then re-upgrade head.
+      - |-
+        [WARNING] Severity CHECK constraints are not covered
+          Detail: web/api/tests/test_alembic_baseline.py:187-285 verifies columns/defaults, but [8.1] requires every new check; invalid patrol severity values would not be caught.
+          Affected files: web/api/tests/test_alembic_baseline.py
+          Suggested fix: Assert invalid values raise sqlite3.IntegrityError for patrol_current_severity, patrol_last_dispatched_severity, and patrol_pending_severity, or compare normalized table DDL.
+      note: []
+    counts: {critical: 0, warning: 2, note: 0}

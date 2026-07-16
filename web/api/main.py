@@ -961,7 +961,12 @@ def list_binding_issues(
           approval_required, approved, auto_land, hold, scheduled_for,
           base_branch, created_at, updated_at,
           latest_run_id, latest_verdict, latest_run_state, last_event_at,
-          external_id, blocked_by, locks
+          external_id, blocked_by, locks,
+          patrol_incident_family, patrol_incident_resource,
+          patrol_first_seen_at, patrol_last_seen_at,
+          patrol_occurrence_count, patrol_current_severity,
+          patrol_last_dispatched_severity, patrol_pending_severity,
+          patrol_consecutive_passes, patrol_dispatch_count
         FROM issue
         WHERE {" AND ".join(clauses)}
         ORDER BY updated_at DESC, id DESC
@@ -984,7 +989,12 @@ def list_inbox_issues(
           i.approval_required, i.approved, i.auto_land, i.hold, i.scheduled_for,
           i.base_branch, i.created_at, i.updated_at,
           i.latest_run_id, i.latest_verdict, i.latest_run_state, i.last_event_at,
-          i.inbox_dismissed_at, i.blocked_by, i.locks
+          i.inbox_dismissed_at, i.blocked_by, i.locks,
+          i.patrol_incident_family, i.patrol_incident_resource,
+          i.patrol_first_seen_at, i.patrol_last_seen_at,
+          i.patrol_occurrence_count, i.patrol_current_severity,
+          i.patrol_last_dispatched_severity, i.patrol_pending_severity,
+          i.patrol_consecutive_passes, i.patrol_dispatch_count
         FROM issue i
         INNER JOIN binding b ON b.name = i.binding_name
         WHERE i.state IN ('in_review', 'blocked')

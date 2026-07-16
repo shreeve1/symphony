@@ -251,14 +251,14 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   redacted/truncated before crossing the HTTP boundary.
 
 ### 2. Add and backfill Podium Incident persistence [sequential]
-- [ ] [2.1] Create
+- [x] [2.1] Create
   `web/api/migrations/versions/0021_patrol_incident_history.py` and update
   `web/api/schema.py` with patrol-only Issue columns for family/resource,
   first/last seen, occurrence count, current severity, last-dispatched severity,
   pending severity, consecutive passes, and dispatch count, plus
   `run.agent_session_id`. Keep defaults/nullability safe for operator issues and
   constrain severity values to the canonical order.
-- [ ] [2.2] In
+- [x] [2.2] In
   `web/api/migrations/versions/0021_patrol_incident_history.py`, backfill
   `patrol_dispatch_count` from all persisted existing Run rows before any pruning
   (startup reconciliation will terminalize orphaned queued rows). Recover
@@ -267,7 +267,7 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   guessing or merging historical duplicates. Populate old Run session ids with
   the legacy issue-derived id only where safe; a null remains an explicit legacy
   fallback.
-- [ ] [2.3] Update `web/api/main.py` issue SELECT/decoration paths and create
+- [x] [2.3] Update `web/api/main.py` issue SELECT/decoration paths and create
   defaults so Incident fields round-trip without changing operator-created issue
   payloads or UI behavior.
 
@@ -410,7 +410,7 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   operator/non-patrol continuity is unchanged.
 
 ### 8. Complete migration and cross-repo regression coverage [parallel-safe]
-- [ ] [8.1] Extend `web/api/tests/test_alembic_baseline.py` to upgrade from 0020,
+- [x] [8.1] Extend `web/api/tests/test_alembic_baseline.py` to upgrade from 0020,
   verify every new column/index/check, backfill an oversized patrol issue's full
   pre-prune dispatch count, leave operator rows at defaults, and match
   `SCHEMA_SQL` exactly.

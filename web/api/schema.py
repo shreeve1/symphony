@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0020_patrol_issues_force_pi_duo"
+INITIAL_REVISION = "0021_patrol_incident_history"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -70,6 +70,16 @@ CREATE TABLE IF NOT EXISTS issue(
   auto_land BOOLEAN NOT NULL DEFAULT FALSE,
   hold BOOLEAN NOT NULL DEFAULT FALSE,
   origin TEXT NOT NULL DEFAULT 'operator' CHECK (origin IN ('operator','patrol')),
+  patrol_incident_family TEXT,
+  patrol_incident_resource TEXT,
+  patrol_first_seen_at TIMESTAMP,
+  patrol_last_seen_at TIMESTAMP,
+  patrol_occurrence_count INTEGER NOT NULL DEFAULT 0,
+  patrol_current_severity TEXT CHECK (patrol_current_severity IS NULL OR patrol_current_severity IN ('informational','low','medium','high','critical')),
+  patrol_last_dispatched_severity TEXT CHECK (patrol_last_dispatched_severity IS NULL OR patrol_last_dispatched_severity IN ('informational','low','medium','high','critical')),
+  patrol_pending_severity TEXT CHECK (patrol_pending_severity IS NULL OR patrol_pending_severity IN ('informational','low','medium','high','critical')),
+  patrol_consecutive_passes INTEGER NOT NULL DEFAULT 0,
+  patrol_dispatch_count INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (latest_run_id) REFERENCES run(id)
 );
 
@@ -101,7 +111,8 @@ CREATE TABLE IF NOT EXISTS run(
   resumed BOOLEAN DEFAULT FALSE,
   -- Appended by migration 0018 (issue #343); ALTER ADD COLUMN lands last, so
   -- SCHEMA_SQL must keep it last too for the alembic-baseline fingerprint.
-  cache_read_tokens INTEGER
+  cache_read_tokens INTEGER,
+  agent_session_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS issue_attachment(
