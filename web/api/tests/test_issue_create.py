@@ -187,7 +187,7 @@ def test_patrol_origin_defaults_preferred_model_to_pi_duo(
         json={"description": "patrol", "origin": "patrol"},
     )
     assert response.status_code == 201
-    assert response.json()["preferred_model"] == "pi-duo"
+    assert response.json()["preferred_model"] == "pi-duo/Duo"
 
 
 def test_patrol_origin_forces_pi_duo_over_pinned_model(client: TestClient) -> None:
@@ -202,7 +202,7 @@ def test_patrol_origin_forces_pi_duo_over_pinned_model(client: TestClient) -> No
         },
     )
     assert response.status_code == 201
-    assert response.json()["preferred_model"] == "pi-duo"
+    assert response.json()["preferred_model"] == "pi-duo/Duo"
 
 
 def test_operator_origin_leaves_preferred_model_unset(client: TestClient) -> None:

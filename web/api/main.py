@@ -1004,7 +1004,10 @@ def list_inbox_issues(
 KNOWN_AGENTS = _model_catalog.KNOWN_AGENTS
 
 # Temporal patrols post issues on this model unless the caller pins one.
-PATROL_DEFAULT_MODEL = "pi-duo"
+# Stored in provider/id form so model_catalog.resolve_model() can locate the
+# catalog entry by splitting on `/` — a bare provider name like "pi-duo" fails
+# the dispatch gate with "model 'pi-duo' is not in models.yml" (issue #413).
+PATROL_DEFAULT_MODEL = "pi-duo/Duo"
 
 # Kept as module-level names: the symphony-models skill and tests import
 # _load_models/_validate_models from web.api.main.
