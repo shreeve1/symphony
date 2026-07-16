@@ -3,10 +3,11 @@ title: "Podium issue-field dispatch contract (model catalog, effort, skill, clau
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-07-11
+updated: 2026-07-16
 sources:
   - wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md
   - wiki/raw/sessions/2026-06-24-podium-api-model-dropdown-stale-validator.md
+  - wiki/raw/sessions/2026-07-16-patrol-default-model-bare-name-trap.md
   - model_catalog.py
   - models.yml
   - scheduler.py
@@ -20,9 +21,11 @@ sources:
   - tests/test_dispatch_gate.py
   - tests/test_model_catalog.py
   - web/api/main.py
+  - web/api/migrations/versions/0020_patrol_issues_force_pi_duo.py
   - web/api/tests/test_issue_create.py
+  - web/api/tests/test_alembic_baseline.py
 confidence: high
-tags: [podium, dispatch, models, skills, reasoning-effort, claude]
+tags: [podium, dispatch, models, skills, reasoning-effort, claude, patrol-default, bare-name-trap]
 ---
 
 # Podium issue-field dispatch contract
@@ -92,6 +95,27 @@ NOT `symphony-host`/`symphony-restart`, which is the scheduler, not the API/UI
 ## Patrol-origin default model (2026-07-04)
 
 Temporal patrol-created issues default `preferred_model` to **`pi-duo`** unless the caller pins a model explicitly (C-0368, 2026-07-14; supersedes C-0366's `Fusion Fast` value and C-0357's `deepseek-v4-flash` value). The default is applied at the Podium create endpoint (`create_binding_issue`, `web/api/main.py`), not in the patrol worker: after origin is resolved (`origin == "patrol"` — explicit `origin` field, or the `external_id`-backstop for un-migrated callers), `issue.preferred_model` is replaced with the module constant `PATROL_DEFAULT_MODEL = "pi-duo"` before the INSERT, **forcing** it over any caller-pinned value [source: web/api/main.py]. Operator-origin issues are untouched (their `preferred_model` stays null → per-agent catalog default applies, `Duo` for pi via C-0368). This is origin-scoped, not binding-scoped — it applies to every patrol issue across all bindings, not homelab only (there is no per-binding `default_model` field); the operator's "patrol home lab infra runs issues" request resolved to `PATROL_DEFAULT_MODEL` (and additionally flipped the per-agent `pi` default `deepseek-v4-pro`→`Duo`, 2026-07-14), and operator-opened issues on any binding stay on the catalog default. `Duo` is registered as a `pi`/`pi-duo` entry in `models.yml`; `resolve_model` disambiguates via `provider/id`, dispatch builds `pi --provider pi-duo --model "Duo":<effort>`; the `pi-duo` entry has no `efforts:` list so the effort gate skips it (back-compat). The `Fusion` and `Fusion Fast` `pi-moa` entries were removed from `models.yml` on 2026-07-14 alongside this change; the `pi-moa` MoA extension in `~/dotfiles/.pi/agent/extensions/pi-moa` is unchanged but no longer dispatched through Symphony. The value is a plain string that the scheduler still validates against `models.yml` at dispatch via the fail-loud gate above, so removing the `pi-duo`/`Duo` catalog entry would block patrol issues loudly rather than silently mis-dispatch. Tests: `test_patrol_origin_defaults_preferred_model_to_pi_duo`, `test_patrol_origin_forces_pi_duo_over_pinned_model`, `test_operator_origin_leaves_preferred_model_unset` (`web/api/tests/test_issue_create.py`). Deploy = `podium-api.service` restart (the create endpoint lives in the API, not the scheduler).
+
+## Patrol default model: bare-name trap + fix (2026-07-16, C-0373/C-0374, issue #413)
+
+The C-0368 constant `PATROL_DEFAULT_MODEL = "pi-duo"` is a **bare provider name**, and `model_catalog.resolve_model()` can't match it. The lookup in `model_catalog.py:96-129` accepts only an exact `entry["id"]` match OR a `provider/id` form: `"pi-duo".partition("/")` yields `("pi-duo", "", "")` — the empty `wanted_id` causes the `if wanted_id:` guard to skip the provider/id branch entirely, and the resolver falls through to raise `ModelResolutionError("model 'pi-duo' is not in models.yml for agent pi; add it to the catalog or clear preferred_model")`. The error message is misleading — the entry IS in the catalog (`{id: Duo, agent: pi, provider: pi-duo, default: true}`), but `resolve_model()` never gets a chance to find it because the slash-split path was guarded out.
+
+**Net effect:** every patrol issue created between 2026-07-14 and the 2026-07-16 fix stored `preferred_model="pi-duo"` and was immediately blocked at the dispatch gate with the misleading error above. Observed on homelab issues 406/407/399/411/408 — every comments_md line was the same `Dispatch blocked: model resolution failed: model 'pi-duo' is not in models.yml` message, the issue re-dispatching on every tick but never advancing. Issue #407 alone had 30+ identical blocking comments before the fix.
+
+**Same class of bug had also broken `Fusion Fast` (C-0366, 2026-07-11):** issue #380 in `podium.db` (created 2026-07-14, between the C-0366 and C-0368 flips) shows `preferred_model="Fusion Fast"` — a bare catalog `id` that happens to match the `id` field exactly, so it DID resolve (Fusion Fast works because the id field equals the model name). Wait — `Fusion Fast` IS an exact id match against `models.yml` `{id: Fusion Fast, provider: pi-moa}`, so it worked. The trap is specifically the provider-name-as-default pattern; the C-0368 `pi-duo` constant broke it because `pi-duo` is the **provider**, not the `id`.
+
+**Fix (symphony `1220493`, 2026-07-16, issue #413, C-0373):**
+
+1. `web/api/main.py:1007` — `PATROL_DEFAULT_MODEL = "pi-duo/Duo"` (provider/id form so the slash-split succeeds). Comment cites issue #413.
+2. The two `test_patrol_origin_*_pi_duo*` assertions in `web/api/tests/test_issue_create.py` updated to `"pi-duo/Duo"`.
+3. alembic migration `0020_patrol_issues_force_pi_duo.py` — backfills in-flight broken rows: `UPDATE issue SET preferred_model='pi-duo/Duo' WHERE origin='patrol' AND preferred_model='pi-duo'` (mirrors `0019`'s shape — data-only, irreversible, no-op downgrade).
+4. `test_0020_backfills_patrol_issues_to_pi_duo` in `web/api/tests/test_alembic_baseline.py` covers the migration end-to-end (heals broken rows, leaves operator rows and already-correct patrol rows alone).
+
+Dispatch is unchanged from the entry's perspective: `_apply_dispatch_gate` reads `resolved_provider`/`resolved_model` off the catalog entry, not the `preferred_model` string. Deploy = `alembic upgrade head` + `podium-api.service` restart (NOT `symphony-host`, which is the scheduler).
+
+**Regression guard pattern (C-0374, recommended for a follow-up slice):** the fix-shipped test (`test_patrol_origin_defaults_preferred_model_to_pi_duo`) only asserts the constant equals `"pi-duo/Duo"`. A stronger guard would assert `load_models()` contains an entry whose `(entry["agent"]=="pi", entry["provider"], entry["id"])` tuple equals the parsed-out `(None, "<x_provider>", "<x_id>")` — i.e. pin the constant to a real catalog tuple, not just a string. Without this guard, a future regression to `"pi-duo"` (bare provider) or `"Duo"` (bare id, would re-resolve) wouldn't fail the test. Also: `resolve_model()` could emit two near-miss error messages that would have caught C-0368 immediately — (a) when `wanted_provider` matches a known provider BUT `wanted_id` is empty → "model 'pi-duo' is missing the id half of provider/id"; (b) when `wanted_id` is non-empty but neither match succeeds → "model 'pi-duo/Duo' is not in models.yml for agent pi". Both are reachable from the `if wanted_id:` branch today but the error raises AFTER the `agent_matches == 0` check, which only runs when `wanted_id` was non-empty.
+
+[source: web/api/main.py, web/api/migrations/versions/0020_patrol_issues_force_pi_duo.py, web/api/tests/test_issue_create.py, web/api/tests/test_alembic_baseline.py, model_catalog.py, wiki/raw/sessions/2026-07-16-patrol-default-model-bare-name-trap.md]
 
 ## Supersedes
 
