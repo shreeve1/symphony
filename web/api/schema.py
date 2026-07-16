@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0019_patrol_issues_force_flash"
+INITIAL_REVISION = "0020_patrol_issues_force_pi_duo"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
