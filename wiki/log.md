@@ -1741,3 +1741,11 @@ Append entries with this format:
 ## [2026-07-16] query | symphony-host restart pre-sanity
 
 - Read `wiki/index.md`, `wiki/ROUTING.md`, and `wiki/concepts/symphony-operations.md` for the host restart ritual. No durable facts or decisions qualified for promotion.
+
+## [2026-07-16] session-update | remote binding startup delay (C-0372)
+
+- **Task**: restarted `symphony-host.service` after committing pending local harness/handoff files; verified the scheduler lifecycle.
+- **Evidence**: PID `2545958` logged `symphony_started` at `02:56:04`, `skill_sync_done` at `02:56:22`, `remote_repo_reachable binding=n8n` at `02:57:29`, then all seven `reconcile_startup_begin`/`done` and `run_reconcile_begin`/`done` pairs at `02:58:32`. Boot orphan sweep was `count=0`, Pi RPC probe passed, then dispatch loop continued without errors.
+- **Wiki**: immutable source `wiki/raw/sessions/2026-07-16-symphony-restart-remote-startup-delay.md`; updated `wiki/concepts/symphony-operations.md`, root index, and operations routing; C-0372 admitted through `gate.py`.
+- **Verification**: `uv run pytest tests/skills/test_restart_troubleshooter.py` — 3 passed.
+- **Unresolved**: remote probe timing can exceed the former 90-second lifecycle-wait guidance; investigate only if startup latency becomes operationally material.

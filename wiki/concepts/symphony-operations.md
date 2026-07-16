@@ -3,7 +3,7 @@ title: Symphony operations
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-06-23
+updated: 2026-07-16
 sources:
   - wiki/raw/runbook-symphony.md
   - wiki/raw/symphony-context.md
@@ -35,7 +35,7 @@ Distilled operational model for `symphony-host.service` on `aidev`. Source: home
 
 ## Restart ritual
 
-Use the `symphony-restart` skill: pre-sanity → ask James → restart → verify-log-lines (`symphony_started`, `reconcile_startup_*`, `dispatch_completed`).
+Use the `symphony-restart` skill: pre-sanity → ask James → restart → verify-log-lines (`symphony_started`, `reconcile_startup_*`, `dispatch_completed`). With remote bindings, scope the journal to the new PID and wait through `skill_sync_done` plus `remote_repo_reachable`: the 2026-07-16 restart did not begin reconciliation until about 148 seconds after `symphony_started`, so a 90-second wait is not a stall verdict [source: wiki/raw/sessions/2026-07-16-symphony-restart-remote-startup-delay.md#durable-facts].
 
 Autonomous healthcheck remediation may restart `symphony-host.service` and `homelab-temporal-patrol-worker.service` with cooldowns and post-restart verification. Human approval is required for `systemctl stop`, non-remediation changes, direct Plane mutations outside approved automation, Temporal schedule changes, smoke requeues, env edits, destructive actions [source: wiki/raw/runbook-symphony.md#68-75].
 
