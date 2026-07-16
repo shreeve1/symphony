@@ -56,3 +56,29 @@ rounds:
     warning: 2
     note: 2
   revision_summary: Added bounded legacy-external-id adoption to prevent cutover-created duplicates, guarded dispatch-count updates by patrol origin, and kept agent_session_id immutable after Run creation.
+build_audits:
+- wave: 0
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-16T19:33:16Z"
+  files_audited:
+  - tests/test_main.py
+  - /home/james/homelab/automation/homelab-stack/tests/test_security_patrol_rootcheck.py
+  outcome: passed
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: initial
+    started: "2026-07-16T19:33:16Z"
+    findings:
+      critical: []
+      warning: []
+      note:
+      - "[NOTE] No findings — diff looks correct."
+      - "[NOTE] No findings — diff looks correct."
+    counts: {critical: 0, warning: 0, note: 2}
+    fix_summary: null
+    files_edited: []
+    validation_command: null
+    validation_passed: null

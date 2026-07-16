@@ -19,10 +19,13 @@ class StopLoop(Exception):
 def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_render(issue_data, *, preamble_path=None, binding_type="infra"):
+    def fake_render(
+        issue_data, *, preamble_path=None, binding_type="infra", scheduling=False
+    ):
         captured["issue"] = issue_data
         captured["preamble_path"] = preamble_path
         captured["binding_type"] = binding_type
+        captured["scheduling"] = scheduling
         return "rendered prompt"
 
     monkeypatch.setattr(main, "render_prompt", fake_render)
@@ -52,6 +55,7 @@ def test_render_candidate_prompt_maps_plane_issue(monkeypatch, tmp_path):
     # ADR-0032: _render_candidate_prompt passes preamble_path (resolved from binding.preamble).
     # With no preamble configured, it passes None.
     assert captured["preamble_path"] is None
+    assert captured["scheduling"] is False
     assert captured["issue"].schedule_not_before == "2026-05-08T20:00:00+00:00"
     assert captured["issue"].schedule_not_after == "2026-05-08T22:00:00+00:00"
     assert captured["issue"].schedule_reason == "maintenance window"
