@@ -1070,6 +1070,58 @@ async def _maybe_retry_transient_implement(
     return TickResult(True, "transient-retry-implement", candidate.id, mode=mode)
 
 
+async def _emit_blocked_terminal(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    result: AgentResult,
+    *,
+    run_id: str | None,
+    run_log_path: Path | None,
+    secrets: Sequence[str],
+    notifier: TelegramNotifier | None,
+    mode: str,
+    msg: str,
+    reason: str,
+    fallback_summary: str,
+    summary: str | None,
+    ended_at: str,
+) -> TickResult:
+    """Shared emit for the 6 blocked-terminal reasons in ``_classify_terminal``.
+
+    Callers pre-build ``msg`` (base + summary + optional stderr), pick a
+    ``fallback_summary`` for the run record when ``summary`` is empty, and
+    supply ``ended_at`` (most call sites use ``now().isoformat()``; the two
+    ``agent-scheduled-malformed`` branches pass a pre-computed ``now_dt``).
+    ponytail: extracted from 7 nearly-identical blocks (6 reason strings: timeout,
+    nonzero, permission-gate, approval-gate, agent-marker-blocked,
+    agent-scheduled-malformed). Tests in tests/test_scheduler.py are the safety net.
+    """
+    await _finish_run_record(
+        adapter,
+        run_id,
+        run_log_path,
+        result=result,
+        secrets=secrets,
+        state="failed",
+        verdict="blocked",
+        summary=summary or fallback_summary,
+        ended_at=ended_at,
+    )
+    _iu, _du = _build_urls(config, candidate.id)
+    await _block_issue(
+        adapter,
+        candidate.id,
+        msg,
+        issue_name=candidate.name,
+        issue_identifier=candidate.identifier,
+        notifier=notifier,
+        issue_url=_iu,
+        dashboard_url=_du,
+    )
+    return TickResult(True, reason, candidate.id, mode=mode)
+
+
 async def _classify_terminal(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -1204,29 +1256,22 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        await _finish_run_record(
+        return await _emit_blocked_terminal(
+            config,
             adapter,
-            run_id,
-            run_log_path,
-            result=result,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
             secrets=secrets,
-            state="failed",
-            verdict="blocked",
-            summary=summary or "Agent timed out.",
+            notifier=notifier,
+            mode=mode,
+            msg=msg,
+            reason="timeout",
+            fallback_summary="Agent timed out.",
+            summary=summary,
             ended_at=now().isoformat(),
         )
-        _iu, _du = _build_urls(config, candidate.id)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            msg,
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return TickResult(True, "timeout", candidate.id, mode=mode)
     if result.exit_code != 0:
         msg = f"Agent failed with exit code {result.exit_code} after {result.duration_ms} ms"
         _stdout, stderr = _format_report(result, secrets)
@@ -1234,29 +1279,22 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        await _finish_run_record(
+        return await _emit_blocked_terminal(
+            config,
             adapter,
-            run_id,
-            run_log_path,
-            result=result,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
             secrets=secrets,
-            state="failed",
-            verdict="blocked",
-            summary=summary or f"Agent failed with exit code {result.exit_code}.",
+            notifier=notifier,
+            mode=mode,
+            msg=msg,
+            reason="nonzero",
+            fallback_summary=f"Agent failed with exit code {result.exit_code}.",
+            summary=summary,
             ended_at=now().isoformat(),
         )
-        _iu, _du = _build_urls(config, candidate.id)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            msg,
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return TickResult(True, "nonzero", candidate.id, mode=mode)
 
     stdout, stderr = _format_report(result, secrets)
     # Verdict marker and permission/approval gates classify from the raw,
@@ -1292,29 +1330,22 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        await _finish_run_record(
+        return await _emit_blocked_terminal(
+            config,
             adapter,
-            run_id,
-            run_log_path,
-            result=result,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
             secrets=secrets,
-            state="failed",
-            verdict="blocked",
-            summary=summary or msg,
+            notifier=notifier,
+            mode=mode,
+            msg=msg,
+            reason="permission-gate",
+            fallback_summary=msg,
+            summary=summary,
             ended_at=now().isoformat(),
         )
-        _iu, _du = _build_urls(config, candidate.id)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            msg,
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return TickResult(True, "permission-gate", candidate.id, mode=mode)
 
     # Schedule marker: scheduling-capable bindings can emit SYMPHONY_SCHEDULE:
     # to defer an issue into a maintenance window. Permission/tool failures
@@ -1332,30 +1363,21 @@ async def _classify_terminal(
                 )
                 if summary:
                     msg += f"\n\n{summary}"
-                await _finish_run_record(
+                return await _emit_blocked_terminal(
+                    config,
                     adapter,
-                    run_id,
-                    run_log_path,
-                    result=result,
+                    candidate,
+                    result,
+                    run_id=run_id,
+                    run_log_path=run_log_path,
                     secrets=secrets,
-                    state="failed",
-                    verdict="blocked",
-                    summary=summary or msg,
-                    ended_at=now_dt.isoformat(),
-                )
-                _iu, _du = _build_urls(config, candidate.id)
-                await _block_issue(
-                    adapter,
-                    candidate.id,
-                    msg,
-                    issue_name=candidate.name,
-                    issue_identifier=candidate.identifier,
                     notifier=notifier,
-                    issue_url=_iu,
-                    dashboard_url=_du,
-                )
-                return TickResult(
-                    True, "agent-scheduled-malformed", candidate.id, mode=mode
+                    mode=mode,
+                    msg=msg,
+                    reason="agent-scheduled-malformed",
+                    fallback_summary=msg,
+                    summary=summary,
+                    ended_at=now_dt.isoformat(),
                 )
 
             schedule_comment = format_schedule_comment(
@@ -1394,30 +1416,21 @@ async def _classify_terminal(
             )
             if summary:
                 msg += f"\n\n{summary}"
-            await _finish_run_record(
+            return await _emit_blocked_terminal(
+                config,
                 adapter,
-                run_id,
-                run_log_path,
-                result=result,
+                candidate,
+                result,
+                run_id=run_id,
+                run_log_path=run_log_path,
                 secrets=secrets,
-                state="failed",
-                verdict="blocked",
-                summary=summary or msg,
-                ended_at=now_dt.isoformat(),
-            )
-            _iu, _du = _build_urls(config, candidate.id)
-            await _block_issue(
-                adapter,
-                candidate.id,
-                msg,
-                issue_name=candidate.name,
-                issue_identifier=candidate.identifier,
                 notifier=notifier,
-                issue_url=_iu,
-                dashboard_url=_du,
-            )
-            return TickResult(
-                True, "agent-scheduled-malformed", candidate.id, mode=mode
+                mode=mode,
+                msg=msg,
+                reason="agent-scheduled-malformed",
+                fallback_summary=msg,
+                summary=summary,
+                ended_at=now_dt.isoformat(),
             )
 
     if (
@@ -1430,29 +1443,22 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        await _finish_run_record(
+        return await _emit_blocked_terminal(
+            config,
             adapter,
-            run_id,
-            run_log_path,
-            result=result,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
             secrets=secrets,
-            state="failed",
-            verdict="blocked",
-            summary=summary or msg,
+            notifier=notifier,
+            mode=mode,
+            msg=msg,
+            reason="approval-gate",
+            fallback_summary=msg,
+            summary=summary,
             ended_at=now().isoformat(),
         )
-        _iu, _du = _build_urls(config, candidate.id)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            msg,
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return TickResult(True, "approval-gate", candidate.id, mode=mode)
 
     if verdict == "blocked":
         if summary:
@@ -1461,29 +1467,22 @@ async def _classify_terminal(
             msg = "Agent reported a blocked result."
             if stderr:
                 msg += f"\n\n{_format_stderr_summary(stderr)}"
-        await _finish_run_record(
+        return await _emit_blocked_terminal(
+            config,
             adapter,
-            run_id,
-            run_log_path,
-            result=result,
+            candidate,
+            result,
+            run_id=run_id,
+            run_log_path=run_log_path,
             secrets=secrets,
-            state="failed",
-            verdict="blocked",
-            summary=summary or "Agent reported a blocked result.",
+            notifier=notifier,
+            mode=mode,
+            msg=msg,
+            reason="agent-marker-blocked",
+            fallback_summary="Agent reported a blocked result.",
+            summary=summary,
             ended_at=now().isoformat(),
         )
-        _iu, _du = _build_urls(config, candidate.id)
-        await _block_issue(
-            adapter,
-            candidate.id,
-            msg,
-            issue_name=candidate.name,
-            issue_identifier=candidate.identifier,
-            notifier=notifier,
-            issue_url=_iu,
-            dashboard_url=_du,
-        )
-        return TickResult(True, "agent-marker-blocked", candidate.id, mode=mode)
 
     if question:
         question_body = f"**Symphony question:**\n\n{question}"
