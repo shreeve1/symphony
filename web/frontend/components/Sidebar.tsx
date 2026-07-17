@@ -191,13 +191,22 @@ export function Sidebar() {
 										<span className="truncate">{label}</span>
 									</Link>
 									{active === binding.name && (
-										<Link
-											href={`/${binding.name}/files`}
-											data-testid="binding-files-link"
-											className="ml-4 flex items-center rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent"
-										>
-											Files
-										</Link>
+										<div className="ml-4 flex flex-col">
+											<Link
+												href={`/${binding.name}/files`}
+												data-testid="binding-files-link"
+												className="flex items-center rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent"
+											>
+												Files
+											</Link>
+											<Link
+												href={`/${binding.name}/automations`}
+												data-testid="binding-automations-link"
+												className="flex items-center rounded-md px-2 py-1 text-xs text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent"
+											>
+												Automations
+											</Link>
+										</div>
 									)}
 								</div>
 							);

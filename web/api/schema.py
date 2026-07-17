@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0021_patrol_incident_history"
+INITIAL_REVISION = "0022_automation"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -131,4 +131,23 @@ CREATE INDEX IF NOT EXISTS ix_issue_attachment_issue_id
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_issue_attachment_issue_stored
   ON issue_attachment(issue_id, stored_name);
+CREATE TABLE IF NOT EXISTS automation(
+  id INTEGER PRIMARY KEY,
+  binding_name TEXT NOT NULL REFERENCES binding(name) ON DELETE CASCADE,
+  mode TEXT NOT NULL CHECK (mode IN ('spawn','loop')),
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  template_title TEXT NOT NULL,
+  template_body TEXT NOT NULL,
+  spawn_interval_seconds INTEGER,
+  spawn_run_count INTEGER,
+  occurrences_fired INTEGER NOT NULL DEFAULT 0,
+  next_fire_at TIMESTAMP,
+  loop_iteration_cap INTEGER,
+  loop_completion_marker TEXT NOT NULL DEFAULT 'DONE.md',
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_automation_binding_name ON automation(binding_name);
+
 """

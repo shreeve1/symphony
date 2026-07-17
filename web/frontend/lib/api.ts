@@ -233,6 +233,92 @@ export async function deleteAttachment(
 	}
 }
 
+// ── Automations (ADR-0038) ────────────────────────────────────────
+
+export interface Automation {
+	id: number;
+	binding_name: string;
+	mode: "spawn" | "loop";
+	enabled: boolean;
+	template_title: string;
+	template_body: string;
+	spawn_interval_seconds: number | null;
+	spawn_run_count: number | null;
+	occurrences_fired: number;
+	next_fire_at: string | null;
+	loop_iteration_cap: number | null;
+	loop_completion_marker: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface AutomationCreate {
+	mode: "spawn" | "loop";
+	template_title: string;
+	template_body: string;
+	spawn_interval_seconds?: number;
+	spawn_run_count?: number | null;
+	loop_iteration_cap?: number;
+	loop_completion_marker?: string;
+}
+
+export interface AutomationPatch {
+	enabled?: boolean;
+	template_title?: string;
+	template_body?: string;
+	spawn_interval_seconds?: number | null;
+	spawn_run_count?: number | null;
+	loop_iteration_cap?: number | null;
+	loop_completion_marker?: string;
+}
+
+export const fetchAutomations = (binding: string) =>
+	getJSON<Automation[]>(`/api/bindings/${encodeURIComponent(binding)}/automations`);
+
+export async function createAutomation(
+	binding: string,
+	body: AutomationCreate,
+): Promise<Automation> {
+	const path = `/api/bindings/${encodeURIComponent(binding)}/automations`;
+	const res = await fetch(path, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		throw new Error(`POST ${path} -> ${res.status} ${res.statusText}`);
+	}
+	return res.json() as Promise<Automation>;
+}
+
+export async function updateAutomation(
+	binding: string,
+	id: number,
+	patch: AutomationPatch,
+): Promise<Automation> {
+	const path = `/api/bindings/${encodeURIComponent(binding)}/automations/${id}`;
+	const res = await fetch(path, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(patch),
+	});
+	if (!res.ok) {
+		throw new Error(`PATCH ${path} -> ${res.status} ${res.statusText}`);
+	}
+	return res.json() as Promise<Automation>;
+}
+
+export async function deleteAutomation(
+	binding: string,
+	id: number,
+): Promise<void> {
+	const path = `/api/bindings/${encodeURIComponent(binding)}/automations/${id}`;
+	const res = await fetch(path, { method: "DELETE" });
+	if (!res.ok) {
+		throw new Error(`DELETE ${path} -> ${res.status} ${res.statusText}`);
+	}
+}
+
 export interface FileEntry {
 	name: string;
 	path: string;
