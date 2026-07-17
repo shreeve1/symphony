@@ -1,7 +1,7 @@
 ---
 title: "Call-graph trace through `_classify_terminal` — dispatcher spine + repeated blocked-terminal pattern"
 type: analysis
-status: candidate
+status: promoted
 created: 2026-07-17
 updated: 2026-07-17
 sources:

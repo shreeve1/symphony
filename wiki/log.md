@@ -1,5 +1,22 @@
 # Wiki Log
 
+## [2026-07-17] session-update | Verify Issue 464 Pi `/login` repair
+
+- **Trigger/fix**: operator ran Pi `/login` on the Mac and entered the MiniMax key through Pi's supported authentication flow.
+- **Verification**: in the same batch-mode noninteractive SSH context Symphony uses, `pi --list-models` now includes `minimax/MiniMax-M3`; the exact `pi --provider pi-duo --model Duo --print --no-session "ping"` smoke returned `pong`/exit 0; a fresh-session `--mode rpc` prompt also exited 0. No paid lifecycle Issue was created or requeued.
+- **Correction to prior next step**: Pi's own auth store supplies the credential noninteractively, so this incident does not require `.zshenv`, a shell credential file, a Duo/catalog change, or a Symphony restart.
+- **Wiki**: added `wiki/raw/sessions/2026-07-17-issue-464-pi-login-fix-verified.md`; updated dispatch-contract analysis/index/routing/eval; admitted C-0383 (runbook-step).
+- **Safety**: no credential values or auth-store contents read; no service, DB, Issue, remote config file, or code mutation.
+
+## [2026-07-17] session-update | Correct Issue 464 to interactive-vs-noninteractive shell environment
+
+- **Trigger**: operator reported that `pi-duo/Duo` and the equivalent direct Pi command work on the Mac, contradicting the first diagnosis's “host registry lacks `MiniMax-M3`” wording.
+- **Correction**: paired presence-only and filtered-model probes used the same `/opt/homebrew/bin/pi` 0.80.6. Login-interactive `zsh` had the MiniMax credential and listed `MiniMax-M3`; default noninteractive SSH lacked the credential and omitted MiniMax models. The prior model-absence assertion was an environment artifact, not host-wide registry state.
+- **Launch-path evidence**: `agent_runner.run_remote_agent()` documents that remote SSH dispatch is noninteractive and does not source `.zshrc`/`.bashrc`; `_remote_exports()` forwards bounded Symphony callback variables, not arbitrary provider credentials; `_build_remote_command()` invokes `pi --mode rpc` directly.
+- **Wiki**: added immutable correction capture `wiki/raw/sessions/2026-07-17-issue-464-shell-environment-correction.md`; corrected the dispatch-contract analysis/index/routing/eval entry; C-0382 admitted and C-0380 marked superseded through the gated consolidation path.
+- **Verification**: no paid prompt required; `gate.py audit` clean (`active=66`, `maintenance_due=false`); the new model-catalog eval passes (overall 21/24, with the same three unrelated pre-existing ADR-0026 misses); secret-shape scan found no captured credential values. No shell profile reads, DB writes, service changes, Issue mutations, or remote configuration changes.
+- **Next**: make the provider credentials available through a secure noninteractive host path or an explicit restricted loader, then smoke the actual Symphony SSH/RPC path.
+
 ## [2026-07-17] session-update | Issue 464 remote Pi Duo nested-model failure
 
 - Actor: agent (Pi), read-only `/diagnose` + `/symphony-troubleshooter` investigation.
@@ -1818,3 +1835,11 @@ Append entries with this format:
 - **Wiki**: `wiki/candidates/analysis-session-call-graph-classify-terminal.md` and `wiki/raw/sessions/2026-07-17-call-graph-trace-classify-terminal.md` updated; no new claims, no index/ROUTING edits required (claims C-0377/C-0378/C-0379 still accurate; the `_emit_blocked_terminal` claim C-0378 wording is general enough to cover both "in flight" and "landed" — see "the same shape" framing in the captured-turn evidence).
 - **Verification**: `git show 3396c7a --stat` confirms the refactor is in place; `grep -nE "_emit_blocked_terminal\(" scheduler/__init__.py` shows 7 call sites.
 - **Unresolved**: the issue number `#465` is not in `.kanban/issues/` (which lists 127-130); the slice was running under a different issue ID or a manually-issued number. Worth investigating if parallel slice visibility matters.
+
+## [2026-07-17] session-update | promoted call-graph analysis candidate → analyses/ (lint pass)
+
+- **Task**: promote `wiki/candidates/analysis-session-call-graph-classify-terminal.md` to `wiki/analyses/analysis-session-call-graph-classify-terminal.md` after the previous session-update's lint review. Lint checks: frontmatter (with `type`) + sources + confidence + tags + citations section present; 0 wikilinks (`[[...]]`); 0 internal links via `(../` or `(wiki/`; all 10 cited source paths resolve; OKF-conformant (bundle-relative markdown links, `# Citations` section). The candidate had also been reconciled with the parallel slice #465 `_emit_blocked_terminal` land (commit `3396c7a`) — the body now references both the in-flight observation and the post-land state.
+- **Updates**: (a) `git mv wiki/candidates/... → wiki/analyses/...`; (b) frontmatter `status: candidate` → `status: promoted`; (c) `wiki/index.md`: removed candidate-queue row, added Analyses row with the same summary and the additional C-0381 reference; (d) `wiki/ROUTING.md`: Architecture keyword line updated to point at `analyses/analysis-session-call-graph-classify-terminal.md` (was `candidates/`); (e) `wiki/CLAIMS.md`: 4 claim rows (C-0377, C-0378 superseded, C-0379, C-0381) had their `Page` column mechanically updated from `wiki/candidates/...` to `wiki/analyses/...` — pure path-metadata correction, no claim content change.
+- **Wiki state**: 67 active / 320 budget, no problems, maintenance not due. `gate.py audit` clean.
+- **Verification**: `python3 ~/.claude/skills/wiki-update/gate.py --wiki wiki audit` exits 0; candidate file no longer in `wiki/candidates/`; analyses row present in `wiki/index.md`; ROUTING.md keyword line points at the promoted path; 0 stale `wiki/candidates/...` references in `wiki/CLAIMS.md`.
+- **Unresolved**: none. (Interactive operator-driven wiki pass, not a slice run, ADR-0028 exemption N/A.)
