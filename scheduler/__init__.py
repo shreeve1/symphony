@@ -10,6 +10,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from functools import partial
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
@@ -1142,6 +1143,22 @@ async def _classify_terminal(
 ) -> TickResult:
     """Classify terminal agent output and apply final tracker/run transitions."""
 
+    # Closure-bind the 9 cross-branch args so the 6 blocked-terminal branches
+    # only have to pass the 5 site-specific args (msg, reason, fallback_summary,
+    # summary, ended_at). ponytail: shrinks each call site from ~17 to ~7 LOC.
+    _emit = partial(
+        _emit_blocked_terminal,
+        config,
+        adapter,
+        candidate,
+        result,
+        run_id=run_id,
+        run_log_path=run_log_path,
+        secrets=secrets,
+        notifier=notifier,
+        mode=mode,
+    )
+
     # Capture the agent's natural turn once, up front, so every terminal branch
     # — including the retry-exhaustion blocks and the failure branches below —
     # can surface the real prose the agent emitted instead of a terse stub.
@@ -1256,16 +1273,7 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        return await _emit_blocked_terminal(
-            config,
-            adapter,
-            candidate,
-            result,
-            run_id=run_id,
-            run_log_path=run_log_path,
-            secrets=secrets,
-            notifier=notifier,
-            mode=mode,
+        return await _emit(
             msg=msg,
             reason="timeout",
             fallback_summary="Agent timed out.",
@@ -1279,16 +1287,7 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        return await _emit_blocked_terminal(
-            config,
-            adapter,
-            candidate,
-            result,
-            run_id=run_id,
-            run_log_path=run_log_path,
-            secrets=secrets,
-            notifier=notifier,
-            mode=mode,
+        return await _emit(
             msg=msg,
             reason="nonzero",
             fallback_summary=f"Agent failed with exit code {result.exit_code}.",
@@ -1330,16 +1329,7 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        return await _emit_blocked_terminal(
-            config,
-            adapter,
-            candidate,
-            result,
-            run_id=run_id,
-            run_log_path=run_log_path,
-            secrets=secrets,
-            notifier=notifier,
-            mode=mode,
+        return await _emit(
             msg=msg,
             reason="permission-gate",
             fallback_summary=msg,
@@ -1363,16 +1353,7 @@ async def _classify_terminal(
                 )
                 if summary:
                     msg += f"\n\n{summary}"
-                return await _emit_blocked_terminal(
-                    config,
-                    adapter,
-                    candidate,
-                    result,
-                    run_id=run_id,
-                    run_log_path=run_log_path,
-                    secrets=secrets,
-                    notifier=notifier,
-                    mode=mode,
+                return await _emit(
                     msg=msg,
                     reason="agent-scheduled-malformed",
                     fallback_summary=msg,
@@ -1416,16 +1397,7 @@ async def _classify_terminal(
             )
             if summary:
                 msg += f"\n\n{summary}"
-            return await _emit_blocked_terminal(
-                config,
-                adapter,
-                candidate,
-                result,
-                run_id=run_id,
-                run_log_path=run_log_path,
-                secrets=secrets,
-                notifier=notifier,
-                mode=mode,
+            return await _emit(
                 msg=msg,
                 reason="agent-scheduled-malformed",
                 fallback_summary=msg,
@@ -1443,16 +1415,7 @@ async def _classify_terminal(
             msg += f"\n\n{summary}"
         if stderr:
             msg += f"\n\n{_format_stderr_summary(stderr)}"
-        return await _emit_blocked_terminal(
-            config,
-            adapter,
-            candidate,
-            result,
-            run_id=run_id,
-            run_log_path=run_log_path,
-            secrets=secrets,
-            notifier=notifier,
-            mode=mode,
+        return await _emit(
             msg=msg,
             reason="approval-gate",
             fallback_summary=msg,
@@ -1467,16 +1430,7 @@ async def _classify_terminal(
             msg = "Agent reported a blocked result."
             if stderr:
                 msg += f"\n\n{_format_stderr_summary(stderr)}"
-        return await _emit_blocked_terminal(
-            config,
-            adapter,
-            candidate,
-            result,
-            run_id=run_id,
-            run_log_path=run_log_path,
-            secrets=secrets,
-            notifier=notifier,
-            mode=mode,
+        return await _emit(
             msg=msg,
             reason="agent-marker-blocked",
             fallback_summary="Agent reported a blocked result.",
