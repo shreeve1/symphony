@@ -151,6 +151,42 @@ with connect() as connection:
 	return runDbScript<{ issueId: number }>(script);
 }
 
+// Issue #461: origin is set at insert time (the API's IssuePatch never
+// accepts origin — only the spawn path writes 'automation'). Tests that
+// need a patrol or automation row seed directly via SQL.
+export function seedIssueWithOrigin(
+	binding: string,
+	title: string,
+	origin: "patrol" | "automation",
+	state = "todo",
+) {
+	const script = `
+import json
+from datetime import UTC, datetime
+from web.api.db import connect
+binding = ${JSON.stringify(binding)}
+title = ${JSON.stringify(title)}
+origin = ${JSON.stringify(origin)}
+state = ${JSON.stringify(state)}
+now = datetime.now(UTC).replace(microsecond=0).isoformat()
+with connect() as connection:
+    cursor = connection.execute(
+        """
+        INSERT INTO issue(
+          binding_name, title, description, state, priority, preferred_agent,
+          reasoning_effort, base_branch, comments_md, context_md, origin,
+          created_at, updated_at, last_event_at
+        ) VALUES (?, ?, ?, ?, 'med', 'pi', 'high', 'main', '', '', ?, ?, ?, ?)
+        """,
+        (binding, title, f"E2E {origin} fixture for {binding}.", state,
+         origin, now, now, now),
+    )
+    connection.commit()
+    print(json.dumps({"issueId": cursor.lastrowid}))
+`;
+	return runDbScript<{ issueId: number }>(script);
+}
+
 export function seedWorktreeIssue(
 	binding: string,
 	title: string,

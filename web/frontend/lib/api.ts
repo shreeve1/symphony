@@ -47,6 +47,10 @@ export interface Issue {
 	unsatisfied_blocked_by: number[];
 	lock_conflicts: string[];
 	hold: boolean;
+	// Issue #461: distinguish operator / patrol / automation origin so the
+	// UI can surface automation-spawned issues (issue #459 follow-up). Set
+	// in the API row from issue.origin; absent rows fall back to 'operator'.
+	origin: "operator" | "patrol" | "automation";
 }
 
 // Full issue record, including the markdown bodies the list endpoint omits.
@@ -295,7 +299,9 @@ export interface AutomationPatch {
 }
 
 export const fetchAutomations = (binding: string) =>
-	getJSON<Automation[]>(`/api/bindings/${encodeURIComponent(binding)}/automations`);
+	getJSON<Automation[]>(
+		`/api/bindings/${encodeURIComponent(binding)}/automations`,
+	);
 
 export async function createAutomation(
 	binding: string,

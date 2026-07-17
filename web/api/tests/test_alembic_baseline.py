@@ -283,3 +283,59 @@ def test_0021_adds_patrol_columns_and_backfills_dispatch_count(
             assert fresh_cols == migrated_cols, (
                 f"{table} columns differ: fresh={fresh_cols} migrated={migrated_cols}"
             )
+
+
+def test_0023_preserves_origin_patrol_operator_through_issue_rebuild(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """0023 (issue #459 follow-up, issue #461) rebuilds the issue table to
+    extend the origin CHECK with 'automation'. SQLite cannot ALTER a
+    column-level CHECK in place — the rebuild round-trips every row, and
+    origin='patrol' / origin='operator' must come through unchanged.
+    Regression guard for the migration's row-preservation path.
+    """
+    db_path = tmp_path / "rebuild.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "web/api/migrations"))
+
+    command.upgrade(config, "0022_automation")
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO issue(binding_name, state, origin, title)"
+            " VALUES (?, 'todo', ?, ?)",
+            [
+                ("homelab", "patrol", "patrol row 1"),
+                ("homelab", "patrol", "patrol row 2"),
+                ("homelab", "operator", "operator row 1"),
+                ("symphony", "operator", "operator row 2"),
+            ],
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        rows = sorted(
+            conn.execute(
+                "SELECT origin, title FROM issue ORDER BY origin, title"
+            ).fetchall()
+        )
+    assert rows == [
+        ("operator", "operator row 1"),
+        ("operator", "operator row 2"),
+        ("patrol", "patrol row 1"),
+        ("patrol", "patrol row 2"),
+    ], f"rebuild lost or scrambled origins: {rows}"
+
+    # And the new 'automation' value should now be insertable (Q2 of #459).
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO issue(binding_name, state, origin, title)"
+            " VALUES ('homelab', 'todo', 'automation', 'automation row')"
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT origin FROM issue WHERE title = 'automation row'"
+        ).fetchone()
+    assert row is not None and row[0] == "automation"

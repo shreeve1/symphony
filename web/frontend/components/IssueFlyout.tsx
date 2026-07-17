@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { RunDetailPanel } from "@/components/RunDetailPanel";
+import { OriginChip } from "@/components/badges";
 import {
 	DEFAULT_SCHEDULE_REASON,
 	latestScheduleNotBefore,
@@ -459,6 +460,7 @@ function MetadataChips({
 					options={STATE_KEYS}
 					onPatch={onPatch}
 				/>
+				<OriginChip origin={issue.origin} />
 				<ChipSelect
 					label="skill"
 					field="preferred_skill"

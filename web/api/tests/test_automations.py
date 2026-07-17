@@ -520,7 +520,7 @@ class TestPinFields:
             preferred_model="deepseek-v4-flash",
             reasoning_effort="low",
             base_branch="main",
-            worktree_active=False,  # loop force-true at fire-time, but column stores the value
+            worktree_active=True,  # loops require True on create (Q4)
         )
         resp = client.post("/api/bindings/symphony/automations", json=payload)
         assert resp.status_code == 201
@@ -530,7 +530,41 @@ class TestPinFields:
         assert body["preferred_model"] == "deepseek-v4-flash"
         assert body["reasoning_effort"] == "low"
         assert body["base_branch"] == "main"
-        assert body["worktree_active"] is False  # column stores raw value
+        assert body["worktree_active"] is True
+
+    def test_loop_rejects_explicit_worktree_active_false(self, client):
+        # Issue #461 (Q4): loops always run inside a persistent worktree;
+        # explicit False is rejected at the API gate instead of being
+        # silently overwritten by the fire path.
+        payload = _loop_payload(worktree_active=False)
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 422
+        assert "worktree_active" in resp.text
+
+    def test_loop_accepts_worktree_active_omitted(self, client):
+        # Issue #461 (Q4): the form omits worktree_active for loops and
+        # sends true explicitly; the default-omitted path must still work
+        # (server-side default isn't a rejection trigger).
+        payload = _loop_payload()
+        payload.pop("worktree_active", None)
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 201
+        assert resp.json()["worktree_active"] is False  # default; fire path forces True
+
+    def test_loop_patch_rejects_worktree_active_false(self, client):
+        # Issue #461 (Q4): PATCHing a loop row's worktree_active to False
+        # is a 422. Loops store True (the column value matches the fire-
+        # path output) and any explicit downgrade is rejected at the API.
+        created = client.post(
+            "/api/bindings/symphony/automations",
+            json=_loop_payload(worktree_active=True),
+        ).json()
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"worktree_active": False},
+        )
+        assert resp.status_code == 422
+        assert "worktree_active" in resp.text
 
     def test_create_pins_default_null(self, client):
         payload = _spawn_payload()

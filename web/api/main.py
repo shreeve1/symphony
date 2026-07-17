@@ -1040,7 +1040,7 @@ def list_binding_issues(
           approval_required, approved, auto_land, hold, scheduled_for,
           base_branch, created_at, updated_at,
           latest_run_id, latest_verdict, latest_run_state, last_event_at,
-          external_id, blocked_by, locks,
+          external_id, blocked_by, locks, origin,
           patrol_incident_family, patrol_incident_resource,
           patrol_first_seen_at, patrol_last_seen_at,
           patrol_occurrence_count, patrol_current_severity,

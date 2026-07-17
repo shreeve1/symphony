@@ -139,6 +139,17 @@ def _validate_create_for_mode(binding_name: str, body: AutomationCreate) -> None
                 status_code=422,
                 detail="loop mode requires a coding binding with persistent worktree capability",
             )
+        # Issue #461 (Q4): loops always run inside a persistent worktree.
+        # worktree_active=False on a loop is dead state — fire path forces
+        # True regardless — so reject explicit `false` rather than silently
+        # ignoring the operator's intent. Pydantic's default is False, so
+        # we gate on model_fields_set to avoid rejecting the default value
+        # when the form omits the field.
+        if "worktree_active" in body.model_fields_set and body.worktree_active is False:
+            raise HTTPException(
+                status_code=422,
+                detail="worktree_active must be true for loop mode; loop automations always use a persistent worktree (Q4)",
+            )
 
 
 # ── build SET clause from non-None fields ──────────────────────────────────
@@ -195,6 +206,18 @@ def _build_patch_set(
         raise HTTPException(
             status_code=422,
             detail="loop mode requires a coding binding with persistent worktree capability",
+        )
+    # Issue #461 (Q4): worktree_active is dead state on loop rows; reject
+    # explicit PATCHes rather than store a value the fire path will
+    # silently override.
+    if (
+        current_mode == "loop"
+        and "worktree_active" in body.model_fields_set
+        and body.worktree_active is False
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="worktree_active must be true for loop mode; loop automations always use a persistent worktree (Q4)",
         )
 
     return sets, params

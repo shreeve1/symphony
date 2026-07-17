@@ -10,11 +10,14 @@ import {
 	updateAutomation,
 	deleteAutomation,
 	fetchBindings,
+	fetchIssueOptions,
+	fetchSkills,
 	type Automation,
 	type AutomationCreate,
 	type AutomationPatch,
 } from "@/lib/api";
 import { formatAge } from "@/lib/issues";
+import { FieldCombobox } from "@/components/FieldCombobox";
 
 function countLabel(a: Automation): string {
 	if (a.mode === "loop") {
@@ -72,6 +75,32 @@ export default function AutomationsPage() {
 		queryFn: () => fetchAutomations(binding),
 		enabled: Boolean(binding),
 	});
+
+	// Issue #461: same skill catalog + agent/model options the New Issue modal
+	// uses, so the automations form can offer a typed combobox instead of
+	// free-text inputs that fail at dispatch when the operator typoes.
+	const { data: pinSkills } = useQuery({
+		queryKey: ["skills", binding],
+		queryFn: () => fetchSkills(binding),
+		enabled: Boolean(binding) && showPins,
+	});
+	const { data: pinOptions } = useQuery({
+		queryKey: ["issue-options", binding],
+		queryFn: () => fetchIssueOptions(binding),
+		enabled: Boolean(binding) && showPins,
+	});
+	const pinSkillOptions = (pinSkills ?? []).map((s) => ({
+		value: s.name,
+		label: s.name,
+	}));
+	const pinAgentOptions = (pinOptions?.agents ?? []).map((name) => ({
+		value: name,
+		label: name,
+	}));
+	const pinModelOptions = (pinOptions?.models ?? []).map((option) => ({
+		value: option.provider ? `${option.provider}/${option.id}` : option.id,
+		label: option.label ?? option.id,
+	}));
 
 	const createMut = useMutation({
 		mutationFn: (body: AutomationCreate) => createAutomation(binding, body),
@@ -177,10 +206,15 @@ export default function AutomationsPage() {
 		if (reasoningEffort.trim()) payload.reasoning_effort = reasoningEffort.trim();
 		if (baseBranch.trim()) payload.base_branch = baseBranch.trim();
 		// For loop mode, worktree_active is forced True at fire-time regardless
-		// of this checkbox (loops require a persistent worktree). The checkbox
-		// is hidden for loop mode below to avoid giving a false sense of
-		// control. For spawn mode, this is the actual override.
-		if (mode === "spawn") payload.worktree_active = worktreeActive;
+		// of this checkbox (loops require a persistent worktree, Q4 of #459).
+		// Send true explicitly so the API distinguishes a confirmed loop
+		// from a default-False that the validation gate would reject
+		// (issue #461). For spawn mode, this is the actual override.
+		if (mode === "spawn") {
+			payload.worktree_active = worktreeActive;
+		} else if (mode === "loop") {
+			payload.worktree_active = true;
+		}
 		if (editing) {
 			const { mode: _mode, ...patch } = payload;
 			updateMut.mutate({ id: editing.id, patch });
@@ -347,17 +381,14 @@ export default function AutomationsPage() {
 									className="space-y-3 rounded-md border p-3"
 								>
 									<div className="flex gap-3">
-										<label className="block flex-1 space-y-1">
-											<span className="text-xs font-medium text-muted-foreground">
-												Skill
-											</span>
-											<input
-												data-testid="automation-form-pin-skill"
-												value={preferredSkill}
-												onChange={(e) => setPreferredSkill(e.target.value)}
-												className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-											/>
-										</label>
+										<FieldCombobox
+											label="Skill"
+											testid="automation-form-pin-skill"
+											value={preferredSkill}
+											onChange={setPreferredSkill}
+											options={pinSkillOptions}
+											emptyHint="binding default"
+										/>
 										<label className="block flex-1 space-y-1">
 											<span className="text-xs font-medium text-muted-foreground">
 												Effort
@@ -379,29 +410,22 @@ export default function AutomationsPage() {
 										</label>
 									</div>
 									<div className="flex gap-3">
-										<label className="block flex-1 space-y-1">
-											<span className="text-xs font-medium text-muted-foreground">
-												Agent
-											</span>
-											<input
-												data-testid="automation-form-pin-agent"
-												value={preferredAgent}
-												onChange={(e) => setPreferredAgent(e.target.value)}
-												className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-											/>
-										</label>
-										<label className="block flex-1 space-y-1">
-											<span className="text-xs font-medium text-muted-foreground">
-												Model
-											</span>
-											<input
-												data-testid="automation-form-pin-model"
-												value={preferredModel}
-												onChange={(e) => setPreferredModel(e.target.value)}
-												placeholder="provider/id or id"
-												className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-											/>
-										</label>
+										<FieldCombobox
+											label="Agent"
+											testid="automation-form-pin-agent"
+											value={preferredAgent}
+											onChange={setPreferredAgent}
+											options={pinAgentOptions}
+											emptyHint="binding default"
+										/>
+										<FieldCombobox
+											label="Model"
+											testid="automation-form-pin-model"
+											value={preferredModel}
+											onChange={setPreferredModel}
+											options={pinModelOptions}
+											emptyHint="binding default"
+										/>
 									</div>
 									<label className="block space-y-1">
 										<span className="text-xs font-medium text-muted-foreground">
