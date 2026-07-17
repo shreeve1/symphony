@@ -396,6 +396,77 @@ class TestPatch:
         assert resp.status_code == 200
         assert resp.json()["spawn_run_count"] is None
 
+    def test_patch_start_delay_reschedules_next_fire(self, client):
+        # Issue #462: editing with start_delay_seconds sets next_fire_at.
+        created = client.post(
+            "/api/bindings/symphony/automations", json=_spawn_payload()
+        ).json()
+        assert created["next_fire_at"] is None
+        before = datetime.now(UTC)
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"start_delay_seconds": 3600},
+        )
+        assert resp.status_code == 200
+        next_fire_at = resp.json()["next_fire_at"]
+        assert next_fire_at is not None
+        fire_dt = datetime.fromisoformat(next_fire_at)
+        expected = before + timedelta(seconds=3600)
+        assert abs((fire_dt - expected).total_seconds()) < 60
+
+    def test_patch_start_immediately_clears_next_fire(self, client):
+        # Issue #462: start_immediately resets a scheduled next_fire_at to NULL.
+        created = client.post(
+            "/api/bindings/symphony/automations",
+            json=_spawn_payload(start_delay_seconds=3600),
+        ).json()
+        assert created["next_fire_at"] is not None
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"start_immediately": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["next_fire_at"] is None
+
+    def test_patch_without_scheduling_leaves_next_fire_untouched(self, client):
+        # Issue #462: editing other fields must not disturb a pending schedule.
+        created = client.post(
+            "/api/bindings/symphony/automations",
+            json=_spawn_payload(start_delay_seconds=3600),
+        ).json()
+        original = created["next_fire_at"]
+        assert original is not None
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"template_title": "Renamed"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["next_fire_at"] == original
+
+    def test_patch_reject_scheduling_on_loop(self, client):
+        # Issue #462: scheduling fields are spawn-only.
+        created = client.post(
+            "/api/bindings/symphony/automations", json=_loop_payload()
+        ).json()
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"start_immediately": True},
+        )
+        assert resp.status_code == 422
+
+    def test_patch_reject_null_delay_on_loop(self, client):
+        # Issue #462: an explicit start_delay_seconds:null is still spawn-only
+        # (present in model_fields_set), so it's rejected on a loop even when
+        # paired with an otherwise-valid update.
+        created = client.post(
+            "/api/bindings/symphony/automations", json=_loop_payload()
+        ).json()
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"start_delay_seconds": None, "template_title": "Renamed"},
+        )
+        assert resp.status_code == 422
+
     def test_patch_loop_iteration_cap(self, client):
         created = client.post(
             "/api/bindings/symphony/automations", json=_loop_payload()

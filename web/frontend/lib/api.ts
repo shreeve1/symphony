@@ -291,6 +291,10 @@ export interface AutomationPatch {
 	template_body?: string;
 	spawn_interval_seconds?: number | null;
 	spawn_run_count?: number | null;
+	// Issue #462: reschedule the next spawn fire on edit. start_immediately
+	// resets next_fire_at to NULL; start_delay_seconds sets now + delay.
+	start_immediately?: boolean;
+	start_delay_seconds?: number;
 	loop_iteration_cap?: number | null;
 	loop_completion_marker?: string;
 	preferred_skill?: string | null;

@@ -274,6 +274,50 @@ test.describe("Automations page", () => {
 		expectCleanConsole(problems);
 	});
 
+	test("edit shows delay/start-now and reschedules the next fire (#462)", async ({
+		page,
+		problems,
+	}) => {
+		// Scheduled spawn (next_fire_at set) → edit opens with start-now unchecked.
+		let automation = { ...FIXTURES.spawn };
+		let postedPatch: Record<string, unknown> = {};
+		await page.route("**/api/bindings/homelab/automations**", (route) => {
+			if (route.request().method() === "PATCH") {
+				postedPatch = JSON.parse(route.request().postData() ?? "{}");
+				automation = { ...automation, ...postedPatch };
+				return route.fulfill({ status: 200, json: automation });
+			}
+			if (route.request().method() === "GET") {
+				return route.fulfill({ status: 200, json: [automation] });
+			}
+			return route.fulfill({ status: 405 });
+		});
+
+		await page.goto("/homelab/automations");
+		await page.getByTestId("automation-edit-btn").click();
+
+		// Both controls are visible on the edit screen now.
+		await expect(page.getByTestId("automation-form-start-now")).toBeVisible();
+		// Scheduled automation → start-now unchecked, delay field enabled.
+		await expect(
+			page.getByTestId("automation-form-start-now"),
+		).not.toBeChecked();
+		await expect(page.getByTestId("automation-form-delay")).toBeEnabled();
+
+		// Enter a delay and save → patch carries start_delay_seconds.
+		await page.getByTestId("automation-form-delay").fill("30");
+		await page.getByTestId("automation-form-submit").click();
+		await expect.poll(() => postedPatch.start_delay_seconds).toBe(1800);
+
+		// Re-edit and check "Start immediately" → patch carries start_immediately.
+		await page.getByTestId("automation-edit-btn").click();
+		await page.getByTestId("automation-form-start-now").check();
+		await page.getByTestId("automation-form-submit").click();
+		await expect.poll(() => postedPatch.start_immediately).toBe(true);
+
+		expectCleanConsole(problems);
+	});
+
 	test("toggles automation enable/disable", async ({ page, problems }) => {
 		let automations = [{ ...FIXTURES.spawn, enabled: true }];
 		await page.route("**/api/bindings/homelab/automations**", (route) => {

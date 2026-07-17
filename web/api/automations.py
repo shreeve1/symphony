@@ -110,6 +110,11 @@ class AutomationPatch(BaseModel):
     template_body: str | None = Field(default=None, min_length=1)
     spawn_interval_seconds: PositiveInt | None = None
     spawn_run_count: PositiveInt | None = None
+    # Issue #462: reschedule the next spawn fire on edit. start_immediately
+    # resets next_fire_at to NULL (fires next tick); start_delay_seconds sets
+    # next_fire_at = now + delay. Spawn only; both omitted = leave unchanged.
+    start_immediately: bool | None = None
+    start_delay_seconds: PositiveInt | None = None
     loop_iteration_cap: PositiveInt | None = None
     loop_completion_marker: CompletionMarker | None = None
     preferred_skill: str | None = None
@@ -210,6 +215,30 @@ def _build_patch_set(
         if val is not None or (explicitly_set and field in nullable_patch_fields):
             sets.append(f"{field} = ?")
             params.append(val)
+
+    # Issue #462: reschedule the next fire (spawn only). start_immediately wins
+    # (next_fire_at = NULL); else a positive start_delay_seconds sets
+    # next_fire_at = now + delay. Both omitted leaves next_fire_at untouched.
+    scheduling_requested = (
+        "start_immediately" in body.model_fields_set
+        or "start_delay_seconds" in body.model_fields_set
+    )
+    if scheduling_requested:
+        if current_mode != "spawn":
+            raise HTTPException(
+                status_code=422,
+                detail="start_immediately/start_delay_seconds are only valid for spawn mode",
+            )
+        if body.start_immediately:
+            sets.append("next_fire_at = ?")
+            params.append(None)
+        elif body.start_delay_seconds is not None:
+            sets.append("next_fire_at = ?")
+            params.append(
+                (
+                    datetime.now(UTC) + timedelta(seconds=body.start_delay_seconds)
+                ).isoformat()
+            )
 
     if not sets:
         raise HTTPException(status_code=400, detail="no fields to update")

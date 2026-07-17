@@ -64,6 +64,10 @@ export default function AutomationsPage() {
 	// on the next tick; unchecking it delays the first fire by delayMin minutes.
 	const [startImmediately, setStartImmediately] = useState(true);
 	const [delayMin, setDelayMin] = useState("");
+	// Issue #462: on edit, only send scheduling fields once the operator actually
+	// touches these controls, so opening an edit across a scheduler tick doesn't
+	// silently rewrite next_fire_at (and cause an extra early fire).
+	const [scheduleTouched, setScheduleTouched] = useState(false);
 	const [iterCap, setIterCap] = useState("");
 	const [marker, setMarker] = useState("DONE.md");
 	// Per-Issue dispatch pins (issue #459). Each empty-string defaults to
@@ -196,6 +200,7 @@ export default function AutomationsPage() {
 		setRunCount("");
 		setStartImmediately(true);
 		setDelayMin("");
+		setScheduleTouched(false);
 		setIterCap("");
 		setMarker("DONE.md");
 		setPreferredSkill("");
@@ -217,6 +222,11 @@ export default function AutomationsPage() {
 				: "",
 		);
 		setRunCount(a.spawn_run_count?.toString() ?? "");
+		// Issue #462: reflect the current schedule — immediate when next_fire_at is
+		// NULL. Leaving the box unchecked with an empty delay keeps it unchanged.
+		setStartImmediately(a.next_fire_at == null);
+		setDelayMin("");
+		setScheduleTouched(false);
 		setIterCap(a.loop_iteration_cap?.toString() ?? "");
 		setMarker(a.loop_completion_marker);
 		setPreferredSkill(a.preferred_skill ?? "");
@@ -228,8 +238,10 @@ export default function AutomationsPage() {
 		setShowForm(true);
 	};
 
-	// Issue #462: a delayed start needs a positive delay; guard so unchecking
-	// "Start immediately" without a delay doesn't silently fire on the next tick.
+	// Issue #462: on create, a delayed start needs a positive delay; guard so
+	// unchecking "Start immediately" without a delay doesn't silently fire on the
+	// next tick. On edit, unchecking with an empty delay is valid — it means
+	// "leave the current schedule unchanged" — so the guard is create-only.
 	const delayRequired =
 		mode === "spawn" &&
 		!editing &&
@@ -249,10 +261,11 @@ export default function AutomationsPage() {
 			const mins = parseInt(intervalMin, 10);
 			if (!isNaN(mins) && mins > 0) payload.spawn_interval_seconds = mins * 60;
 			payload.spawn_run_count = runCount.trim() ? parseInt(runCount, 10) : null;
-			// Delay is create-only (AutomationPatch has no start_delay_seconds).
-			// "Start immediately" wins: when checked, omit the delay so the API
-			// leaves next_fire_at NULL and the first issue fires on the next tick.
-			if (!editing && !startImmediately) {
+			// Schedule the next fire. "Start immediately" wins → next_fire_at NULL
+			// (fires next tick); else a positive delay → next_fire_at = now + delay.
+			// On create, immediate is already the NULL default so nothing is sent;
+			// the edit branch below opts in via start_immediately.
+			if (!startImmediately) {
 				const delay = parseInt(delayMin, 10);
 				if (!isNaN(delay) && delay > 0)
 					payload.start_delay_seconds = delay * 60;
@@ -281,7 +294,18 @@ export default function AutomationsPage() {
 			payload.worktree_active = true;
 		}
 		if (editing) {
-			const { mode: _mode, ...patch } = payload;
+			const { mode: _mode, ...rest } = payload;
+			const patch: AutomationPatch = rest;
+			// Issue #462: reschedule the next fire on edit. Immediate opts in
+			// explicitly (next_fire_at NULL); a delay is carried by the payload;
+			// unchecked + empty delay sends neither, leaving the schedule as-is.
+			// Only reschedule when the operator touched the controls (else leave
+			// next_fire_at untouched). start_delay_seconds is already on the
+			// payload from the spawn branch when a delay was entered.
+			if (mode === "spawn" && scheduleTouched && startImmediately)
+				patch.start_immediately = true;
+			if (mode === "spawn" && !scheduleTouched)
+				delete patch.start_delay_seconds;
 			updateMut.mutate({ id: editing.id, patch });
 		} else {
 			createMut.mutate(payload);
@@ -395,34 +419,40 @@ export default function AutomationsPage() {
 										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
 									/>
 								</label>
-								{!editing && (
-									<label className="block flex-1 space-y-1">
-										<span className="text-xs font-medium text-muted-foreground">
-											Initial delay (minutes)
-										</span>
-										<input
-											data-testid="automation-form-delay"
-											type="number"
-											min="1"
-											disabled={startImmediately}
-											value={delayMin}
-											onChange={(e) => setDelayMin(e.target.value)}
-											className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40 disabled:opacity-40"
-										/>
-									</label>
-								)}
+								<label className="block flex-1 space-y-1">
+									<span className="text-xs font-medium text-muted-foreground">
+										Initial delay (minutes)
+									</span>
+									<input
+										data-testid="automation-form-delay"
+										type="number"
+										min="1"
+										disabled={startImmediately}
+										value={delayMin}
+										onChange={(e) => {
+											setDelayMin(e.target.value);
+											setScheduleTouched(true);
+										}}
+										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40 disabled:opacity-40"
+									/>
+								</label>
 							</div>
 						)}
-						{mode === "spawn" && !editing && (
+						{mode === "spawn" && (
 							<label className="flex items-center gap-2 text-xs text-muted-foreground">
 								<input
 									type="checkbox"
 									data-testid="automation-form-start-now"
 									checked={startImmediately}
-									onChange={(e) => setStartImmediately(e.target.checked)}
+									onChange={(e) => {
+										setStartImmediately(e.target.checked);
+										setScheduleTouched(true);
+									}}
 									className="h-3.5 w-3.5"
 								/>
-								Start immediately (fire the first issue on the next tick)
+								{editing
+									? "Start immediately (reschedule the next fire to the next tick)"
+									: "Start immediately (fire the first issue on the next tick)"}
 							</label>
 						)}
 
