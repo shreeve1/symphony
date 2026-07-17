@@ -1,5 +1,19 @@
 # Symphony — Agent Context
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues in `shreeve1/symphony` via `gh` CLI for ad-hoc engineering prep; Podium is the production issue surface for dispatch. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles for ad-hoc engineering prep issues: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: read `CONTEXT.md` + `docs/adr/`, then `wiki/index.md` for scheduler internals. See `docs/agents/domain.md`.
+
 ## Git Remote
 
 - Remote: `git@github-personal:shreeve1/symphony.git`
