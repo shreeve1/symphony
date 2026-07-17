@@ -39,6 +39,27 @@ def _config(tmp_path: Path) -> SymphonyConfig:
     return config.for_binding(binding)
 
 
+def _seed_attachment(db_path: Path, repo_path: Path, issue_id: int, name: str) -> int:
+    stored_name = f"stored-{name}"
+    rel_path = f".symphony/attachments/{issue_id}/{stored_name}"
+    path = repo_path / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(name, encoding="utf-8")
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO issue_attachment(
+              issue_id, display_name, stored_name, content_type,
+              size_bytes, storage_rel_path
+            ) VALUES (?, ?, ?, 'text/plain', ?, ?)
+            """,
+            (issue_id, name, stored_name, len(name), rel_path),
+        )
+        connection.commit()
+    assert cursor.lastrowid is not None
+    return cursor.lastrowid
+
+
 def _seed_db(path: Path) -> int:
     skill_file = path.parent / "skills" / "dev-build" / "SKILL.md"
     skill_file.parent.mkdir(parents=True, exist_ok=True)
@@ -134,6 +155,152 @@ async def test_engine_dispatch_cycle_against_podium(tmp_path: Path) -> None:
     finally:
         connection.close()
     assert run_skill is not None and run_skill[0] == "/dev-build"
+
+
+@pytest.mark.asyncio
+async def test_successful_run_consumes_only_dispatched_attachments(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    dispatched_id = _seed_attachment(db_path, tmp_path, issue_id, "first.txt")
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+        contract=binding.tracker_contract,
+    )
+    uploaded_during_run: list[int] = []
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        assert [attachment.id for attachment in issue.attachments] == [dispatched_id]
+        uploaded_during_run.append(
+            _seed_attachment(db_path, tmp_path, issue_id, "later.txt")
+        )
+        return AgentResult(0, 10, False, stdout="SYMPHONY_RESULT: done")
+
+    result = await run_tick(
+        config,
+        adapter,
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        remaining = connection.execute(
+            "SELECT id, stored_name FROM issue_attachment ORDER BY id"
+        ).fetchall()
+    assert result.dispatched is True
+    assert remaining == [(uploaded_during_run[0], "stored-later.txt")]
+    assert not (
+        tmp_path / f".symphony/attachments/{issue_id}/stored-first.txt"
+    ).exists()
+    assert (tmp_path / f".symphony/attachments/{issue_id}/stored-later.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_retains_attachment_for_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scheduler import tick as scheduler_tick
+
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    attachment_id = _seed_attachment(db_path, tmp_path, issue_id, "retry.txt")
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+        contract=binding.tracker_contract,
+    )
+
+    def fail_delete(*args) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(scheduler_tick.attachment_store, "delete_local", fail_delete)
+    result = await run_tick(
+        config,
+        adapter,
+        agent_runner=lambda issue, prompt: AgentResult(
+            0, 10, False, stdout="SYMPHONY_RESULT: done"
+        ),
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT id FROM issue_attachment WHERE id = ?", (attachment_id,)
+        ).fetchone()
+    assert result.dispatched is True
+    assert row == (attachment_id,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["crash", "timeout", "nonzero"])
+async def test_failed_run_retains_dispatched_attachments(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    attachment_id = _seed_attachment(db_path, tmp_path, issue_id, "retry.txt")
+    config = _config(tmp_path)
+    binding = config.bindings[0]
+    adapter = PodiumTrackerAdapter(
+        db_path=db_path,
+        binding_name="test",
+        contract=binding.tracker_contract,
+    )
+
+    def agent_runner(issue, rendered_prompt: str) -> AgentResult:
+        if failure == "crash":
+            raise RuntimeError("launch failed")
+        if failure == "timeout":
+            return AgentResult(0, 10, True)
+        return AgentResult(2, 10, False)
+
+    await run_tick(
+        config,
+        adapter,
+        agent_runner=agent_runner,
+        render_prompt=lambda issue: main._render_candidate_prompt(
+            issue,
+            contract=adapter.contract,
+            repo_path=tmp_path,
+            binding_type="coding",
+            tracker_kind="podium",
+        ),
+        repo_dirty=lambda path: False,
+        run_blocked_reconciler=False,
+        now=lambda: datetime(2026, 6, 11, tzinfo=UTC),
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT id FROM issue_attachment WHERE id = ?", (attachment_id,)
+        ).fetchone()
+    assert row == (attachment_id,)
+    assert (tmp_path / f".symphony/attachments/{issue_id}/stored-retry.txt").exists()
 
 
 @pytest.mark.asyncio

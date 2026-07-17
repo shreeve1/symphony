@@ -178,10 +178,11 @@ def delete_remote(
     issue_id: int,
     stored_name: str,
 ) -> None:
-    """Delete attachment file over SSH.  Missing file is tolerated (best-effort)."""
+    """Delete attachment file over SSH. Missing files are tolerated by ``rm -f``."""
     path = _remote_path(repo_path, issue_id, stored_name)
     subprocess.run(
         ssh_base_args(remote) + [f"rm -f {shlex.quote(str(path))}"],
         capture_output=True,
+        check=True,
         timeout=30,
     )

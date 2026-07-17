@@ -126,6 +126,60 @@ async def test_list_issues_candidates_and_state_helpers(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_candidate_attachment_id_supports_exact_row_consumption(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    with sqlite3.connect(db_path) as connection:
+        first = connection.execute(
+            """
+            INSERT INTO issue_attachment(
+              issue_id, display_name, stored_name, content_type,
+              size_bytes, storage_rel_path
+            ) VALUES (?, 'first.txt', 'first-stored.txt', 'text/plain', 5, ?)
+            """,
+            (issue_id, f".symphony/attachments/{issue_id}/first-stored.txt"),
+        )
+        second = connection.execute(
+            """
+            INSERT INTO issue_attachment(
+              issue_id, display_name, stored_name, content_type,
+              size_bytes, storage_rel_path
+            ) VALUES (?, 'later.txt', 'later-stored.txt', 'text/plain', 5, ?)
+            """,
+            (issue_id, f".symphony/attachments/{issue_id}/later-stored.txt"),
+        )
+        connection.commit()
+    assert first.lastrowid is not None
+    assert second.lastrowid is not None
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    attachment = (await adapter.list_candidates())[0].attachments[0]
+    consumed = await adapter.consume_attachment(
+        str(issue_id), attachment.id, attachment.stored_name
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        remaining = connection.execute(
+            "SELECT id FROM issue_attachment ORDER BY id"
+        ).fetchall()
+    assert attachment.id == first.lastrowid
+    assert consumed is True
+    assert remaining == [(second.lastrowid,)]
+    assert (
+        await adapter.consume_attachment(
+            str(issue_id), second.lastrowid, "reused-id-with-new-name.txt"
+        )
+        is False
+    )
+    assert (
+        await adapter.consume_attachment("999", second.lastrowid, "later-stored.txt")
+        is False
+    )
+
+
+@pytest.mark.asyncio
 async def test_hold_excludes_todo_issue_from_candidates_until_cleared(
     tmp_path: Path,
 ) -> None:

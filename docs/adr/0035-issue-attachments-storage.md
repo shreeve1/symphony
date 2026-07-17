@@ -41,6 +41,26 @@ size, relative path, timestamp). Bytes never enter the DB.
   subsequent best-effort file removal cleans `.symphony/attachments/<id>/` for
   the purged issue id, tolerating already-missing files.
 
+## Amendment — one-turn attachments (#474, 2026-07-17)
+
+Attachments are no longer durable context across multiple Runs. Each upload is
+pending context for the next normally completed agent turn only.
+
+- A dispatch snapshots the currently pending attachments and includes them in
+  both fresh and resumed prompts.
+- Launch failures, timeouts, and nonzero exits preserve that snapshot for retry.
+- After an exit-zero, non-timeout turn reaches its terminal Issue transition,
+  Symphony permanently deletes the exact files and metadata rows in that
+  dispatch snapshot.
+- Attachments uploaded while a Run is active are outside its snapshot and remain
+  pending for the next turn.
+- Consumed attachments have no history or archive copy.
+
+This amendment supersedes the original cross-dispatch durability and
+archive-inspection lifecycle. Checkout-local storage, path resolution, upload
+limits, manual deletion, and 14-day purge as a fallback for never-consumed
+attachments remain unchanged.
+
 ## Rejected alternatives
 
 1. **Store bytes in SQLite BLOBs.** Every upload and download goes through a

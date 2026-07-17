@@ -124,19 +124,14 @@ def test_delete_remote_rm_f() -> None:
     assert ".symphony/attachments/5/" in cmd
 
 
-def test_delete_remote_tolerates_missing_file() -> None:
-    """rm -f cannot fail, but even if SSH returns non-zero, delete won't raise
-    (check=False, no exception handler needed)."""
-    remote = _remote()
+def test_delete_remote_checks_ssh_failure() -> None:
+    """A transport failure must preserve attachment metadata for retry."""
     mock_run = MagicMock()
-    mock_run.return_value = MagicMock(returncode=1)
 
-    # Should not raise
     with patch.object(subprocess, "run", mock_run):
-        delete_remote(remote, Path("/srv/repo"), 9, "ghost.bin")
+        delete_remote(_remote(), Path("/srv/repo"), 9, "ghost.bin")
 
-    mock_run.assert_called_once()
-    # Delete remote doesn't pass check=True, so non-zero is tolerated natively
+    assert mock_run.call_args.kwargs["check"] is True
 
 
 def test_delete_remote_uses_ssh_args() -> None:

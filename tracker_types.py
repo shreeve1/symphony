@@ -22,6 +22,7 @@ class AttachmentMeta:
     size_bytes: int
     storage_rel_path: str
     resolved_path: str = ""
+    id: int = 0
 
 
 @dataclass(frozen=True)

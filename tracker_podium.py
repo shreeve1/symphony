@@ -274,7 +274,7 @@ class PodiumTrackerAdapter:
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT issue_id, display_name, stored_name, content_type,
+                SELECT id, issue_id, display_name, stored_name, content_type,
                        size_bytes, storage_rel_path
                 FROM issue_attachment
                 WHERE issue_id IN ({placeholders})
@@ -292,9 +292,23 @@ class PodiumTrackerAdapter:
                     content_type=str(row["content_type"]),
                     size_bytes=int(row["size_bytes"]),
                     storage_rel_path=str(row["storage_rel_path"]),
+                    id=int(row["id"]),
                 )
             )
         return {k: tuple(v) for k, v in result.items()}
+
+    async def consume_attachment(
+        self, issue_id: str, attachment_id: int, expected_stored_name: str
+    ) -> bool:
+        """Delete the exact attachment snapshot consumed by a Run."""
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM issue_attachment "
+                "WHERE issue_id = ? AND id = ? AND stored_name = ?",
+                (issue_id, attachment_id, expected_stored_name),
+            )
+            connection.commit()
+        return cursor.rowcount == 1
 
     async def _list_candidate_snapshot(self) -> list[dict[str, Any]]:
         with self.connect() as connection:

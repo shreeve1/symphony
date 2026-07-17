@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 from agent_runner import AgentResult
 from config import ProjectBinding, SymphonyConfig
@@ -23,6 +23,7 @@ from plane_adapter import PlaneRateLimitError
 from tracker_adapter import TrackerAdapter
 from tracker_contract import TrackerRole
 from tracker_types import CandidateIssue, CommentPayload, _extract_labels, _is_state
+from web.api import attachments as attachment_store
 
 from .bindings import binding_from_config as _binding_from_config
 from .dispatch_state import (
@@ -55,7 +56,54 @@ from .selection import (
 )
 from .transient_retry import count_retries, retry_cooldown_expired
 
+if TYPE_CHECKING:
+    from . import (
+        _RunTickAgentResult as RunTickAgentResultT,
+        _RunTickGate as RunTickGateT,
+        _RunTickPreparedDispatch as RunTickPreparedDispatchT,
+        _RunTickSelection as RunTickSelectionT,
+        TickResult as TickResultT,
+    )
+
 LOGGER = logging.getLogger(__name__)
+
+
+async def _consume_successful_attachments(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    candidate: CandidateIssue,
+    binding: ProjectBinding | None,
+) -> None:
+    consume = getattr(adapter, "consume_attachment", None)
+    if not callable(consume):
+        return
+    repo_path = binding.repo_path if binding is not None else config.homelab_repo_path
+    for attachment in candidate.attachments:
+        if attachment.id <= 0:
+            continue
+        try:
+            if binding is not None and binding.is_remote:
+                assert binding.remote is not None
+                attachment_store.delete_remote(
+                    binding.remote,
+                    repo_path,
+                    int(candidate.id),
+                    attachment.stored_name,
+                )
+            else:
+                attachment_store.delete_local(
+                    repo_path, int(candidate.id), attachment.stored_name
+                )
+            await _maybe_await(
+                consume(candidate.id, attachment.id, attachment.stored_name)
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "attachment_cleanup_failed issue_id=%s attachment_id=%s error=%s",
+                candidate.id,
+                attachment.id,
+                exc,
+            )
 
 
 def _resolve_attachment_paths(
@@ -92,7 +140,7 @@ async def _select_run_tick_candidate(
     dispatch_state: _DispatchState,
     binding: ProjectBinding | None,
     poller: Callable[[TrackerAdapter], Any] | None,
-) -> "_RunTickSelection | TickResult":  # noqa: F821
+) -> RunTickSelectionT | TickResultT:
     """Run tick selection/reconcile stage and reserve one candidate."""
 
     from . import (
@@ -260,10 +308,10 @@ async def _gate_run_tick_candidate(
     *,
     binding: ProjectBinding | None,
     notifier: TelegramNotifier | None,
-) -> "_RunTickGate | TickResult":  # noqa: F821
+) -> RunTickGateT | TickResultT:
     """Run tick gate stage before rendering or dispatch side effects."""
 
-    from . import (  # noqa: F811
+    from . import (
         TickResult,
         _RunTickGate,
         _apply_dispatch_gate,
@@ -341,10 +389,10 @@ async def _prepare_run_tick_dispatch(
     now: Callable[[], datetime],
     binding: ProjectBinding | None,
     notifier: TelegramNotifier | None,
-) -> "_RunTickPreparedDispatch | TickResult":  # noqa: F821
+) -> RunTickPreparedDispatchT | TickResultT:
     """Prepare prompt, Run record, and claim transition for dispatch."""
 
-    from . import (  # noqa: F811
+    from . import (
         TickResult,
         _RunTickPreparedDispatch,
         _block_issue,
@@ -456,10 +504,10 @@ async def _dispatch_run_tick_agent(
     now: Callable[[], datetime],
     binding: ProjectBinding | None,
     notifier: TelegramNotifier | None,
-) -> "_RunTickAgentResult | TickResult":  # noqa: F821
+) -> RunTickAgentResultT | TickResultT:
     """Dispatch the agent and retry once from a fresh prompt on resume failure."""
 
-    from . import (  # noqa: F811
+    from . import (
         TickResult,
         _RunTickAgentResult,
         _block_issue,
@@ -582,10 +630,10 @@ async def run_tick(
     run_blocked_reconciler: bool = True,
     dispatch_state: _DispatchState | None = None,
     binding: ProjectBinding | None = None,
-) -> "TickResult":  # noqa: F821
+) -> TickResultT:
     """Run one scheduler tick without sleeping forever."""
 
-    from . import TickResult, _classify_terminal  # noqa: F811
+    from . import TickResult, _classify_terminal
 
     tick_binding = binding or _binding_from_config(config)
     dispatch_state = dispatch_state or _new_dispatch_state(config, binding=tick_binding)
@@ -653,7 +701,7 @@ async def run_tick(
 
         await _close_run_record_steering(adapter, dispatched.run_id, dispatched.result)
 
-        return await _classify_terminal(
+        terminal = await _classify_terminal(
             config,
             adapter,
             dispatched.candidate,
@@ -670,5 +718,10 @@ async def run_tick(
             now=now,
             binding=tick_binding,
         )
+        if dispatched.result.exit_code == 0 and not dispatched.result.timed_out:
+            await _consume_successful_attachments(
+                config, adapter, dispatched.candidate, tick_binding
+            )
+        return terminal
     finally:
         await _release_candidate(candidate.id, dispatch_state=dispatch_state)
