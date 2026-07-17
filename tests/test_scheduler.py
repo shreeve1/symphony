@@ -6105,6 +6105,107 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
 
 
 @pytest.mark.asyncio
+async def test_run_loop_fires_due_spawn_automations_before_dispatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.schema import SCHEMA_SQL
+
+    class StopLoop(Exception):
+        pass
+
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        finite_id = connection.execute(
+            """
+            INSERT INTO automation(
+              binding_name, mode, enabled, template_title, template_body,
+              spawn_interval_seconds, spawn_run_count, occurrences_fired,
+              created_at, updated_at
+            ) VALUES ('test', 'spawn', 1, 'Finite {binding}', 'Every {interval}s',
+                      60, 1, 0, '2026-07-17T00:00:00+00:00',
+                      '2026-07-17T00:00:00+00:00')
+            """
+        ).lastrowid
+        unlimited_id = connection.execute(
+            """
+            INSERT INTO automation(
+              binding_name, mode, enabled, template_title, template_body,
+              spawn_interval_seconds, spawn_run_count, occurrences_fired,
+              created_at, updated_at
+            ) VALUES ('test', 'spawn', 1, 'Unlimited {binding}',
+                      'Every {interval}s', 60, NULL, 1,
+                      '2026-07-17T00:00:00+00:00',
+                      '2026-07-17T00:00:00+00:00')
+            """
+        ).lastrowid
+        connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, external_id, origin,
+              created_at, updated_at
+            ) VALUES ('test', 'Prior occurrence', '', 'blocked', ?, 'operator',
+                      '2026-07-17T00:00:00+00:00',
+                      '2026-07-17T00:00:00+00:00')
+            """,
+            (f"automation:{unlimited_id}:1",),
+        )
+
+    config = _config(tmp_path, poll_interval_ms=1)
+    binding = replace(
+        config.bindings[0], name="test", tracker="podium", base_branch="develop"
+    )
+    config = config.for_binding(binding)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    issue_counts_at_dispatch: list[int] = []
+
+    async def fake_dispatch_one(*args, **kwargs):
+        with sqlite3.connect(db_path) as connection:
+            issue_counts_at_dispatch.append(
+                connection.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
+            )
+        return scheduler.TickResult(False, "no-candidates")
+
+    async def fake_sleep(seconds):
+        raise StopLoop
+
+    monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
+    monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
+    monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        await scheduler.run_loop(
+            config,
+            adapter,
+            agent_runner=lambda issue, prompt: AgentResult(0, 1, False),
+            render_prompt=lambda issue: "prompt",
+            binding=binding,
+        )
+
+    with sqlite3.connect(db_path) as connection:
+        automations = {
+            row[0]: row[1:]
+            for row in connection.execute(
+                "SELECT id, enabled, occurrences_fired, next_fire_at FROM automation"
+            )
+        }
+        issues = connection.execute(
+            "SELECT external_id, state, base_branch FROM issue ORDER BY id"
+        ).fetchall()
+    assert issue_counts_at_dispatch == [3]
+    assert automations[finite_id][0:2] == (0, 1)
+    assert automations[unlimited_id][0:2] == (1, 2)
+    assert all(row[2] is not None for row in automations.values())
+    assert issues == [
+        (f"automation:{unlimited_id}:1", "blocked", None),
+        (f"automation:{finite_id}:1", "todo", "develop"),
+        (f"automation:{unlimited_id}:2", "todo", "develop"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_run_loop_remote_non_coding_clamps_concurrent_tasks(
     tmp_path: Path, monkeypatch
 ) -> None:

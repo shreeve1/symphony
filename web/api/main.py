@@ -111,6 +111,7 @@ if __package__:
     _files = import_module(f"{__package__}.files")
     _attachments = import_module(f"{__package__}.attachments")
     _automations = import_module(f"{__package__}.automations")
+    _issue_create = import_module(f"{__package__}.issue_create")
 else:  # pragma: no cover - supports uvicorn main:app from web/api
     _auth = import_module("auth")
     _db = import_module("db")
@@ -121,6 +122,7 @@ else:  # pragma: no cover - supports uvicorn main:app from web/api
     _files = import_module("files")
     _attachments = import_module("attachments")
     _automations = import_module("automations")
+    _issue_create = import_module("issue_create")
 
 COOKIE_NAME = _auth.COOKIE_NAME
 SESSION_MAX_AGE_SECONDS = _auth.SESSION_MAX_AGE_SECONDS
@@ -151,6 +153,7 @@ _load_bindings = _seed._load_bindings
 seed_if_empty = _seed.seed_if_empty
 touch_wake_sentinel = _wake_signal.touch_wake_sentinel
 write_steer_record = _steer_queue.write_steer_record
+insert_issue_row = _issue_create.insert_issue_row
 
 
 try:
@@ -1258,43 +1261,30 @@ async def create_binding_issue(
     # real title is regenerated in a background thread below.
     title = _title_generator._fallback_title(issue.description)
     try:
-        cursor = connection.execute(
-            """
-            INSERT INTO issue(
-              binding_name, title, description, state, priority, preferred_agent,
-              preferred_model, preferred_skill, reasoning_effort, worktree_active,
-              approval_required, approved, auto_land, hold, scheduled_for, base_branch, comments_md,
-              context_md, external_id, origin, blocked_by, locks, created_at, updated_at
-            ) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                name,
-                title,
-                issue.description,
-                issue.priority,
-                issue.preferred_agent,
-                preferred_model,
-                issue.preferred_skill,
-                issue.reasoning_effort,
-                issue.worktree_active,
-                issue.approval_required,
-                issue.approved,
-                issue.auto_land,
-                issue.hold,
-                scheduled_for,
-                issue.base_branch or _base_branch_for(name),
-                comments_md,
-                issue.external_id,
-                origin,
-                json.dumps(blocked_by),
-                json.dumps(locks),
-                now,
-                now,
-            ),
+        issue_id = insert_issue_row(
+            connection,
+            binding_name=name,
+            title=title,
+            description=issue.description,
+            priority=issue.priority,
+            preferred_agent=issue.preferred_agent,
+            preferred_model=preferred_model,
+            preferred_skill=issue.preferred_skill,
+            reasoning_effort=issue.reasoning_effort,
+            worktree_active=issue.worktree_active,
+            approval_required=issue.approval_required,
+            approved=issue.approved,
+            auto_land=issue.auto_land,
+            hold=issue.hold,
+            scheduled_for=scheduled_for,
+            base_branch=issue.base_branch or _base_branch_for(name),
+            comments_md=comments_md,
+            external_id=issue.external_id,
+            origin=origin,
+            blocked_by=blocked_by,
+            locks=locks,
+            created_at=now,
         )
-        issue_id = cursor.lastrowid
-        if issue_id is None:
-            raise RuntimeError("insert did not return an issue id")
         if _blocked_by_has_cycle(connection, issue_id, blocked_by):
             connection.rollback()
             raise HTTPException(status_code=400, detail="blocked_by cycle detected")

@@ -40,6 +40,7 @@ from tracker_contract import (
 )
 from tracker_types import AttachmentMeta, CandidateIssue
 from web.api.db import resolve_db_path
+from web.api.issue_create import insert_issue_row
 
 PAGE_SIZE = 50
 MAX_PAGES_PER_TICK = 3
@@ -639,24 +640,14 @@ class PodiumTrackerAdapter:
                 description = render_template(
                     str(row["template_body"]), self.binding_name, interval
                 )
-                connection.execute(
-                    """
-                    INSERT INTO issue(
-                      binding_name, title, description, state, priority,
-                      base_branch, comments_md, context_md, external_id, origin,
-                      blocked_by, locks, created_at, updated_at
-                    ) VALUES (?, ?, ?, 'todo', 'med', ?, '', '', ?, 'operator',
-                              '[]', '[]', ?, ?)
-                    """,
-                    (
-                        self.binding_name,
-                        title,
-                        description,
-                        base_branch,
-                        f"automation:{automation_id}:{ordinal}",
-                        now_iso,
-                        now_iso,
-                    ),
+                insert_issue_row(
+                    connection,
+                    binding_name=self.binding_name,
+                    title=title,
+                    description=description,
+                    base_branch=base_branch,
+                    external_id=f"automation:{automation_id}:{ordinal}",
+                    created_at=now_iso,
                 )
                 next_fire_at = compute_next_fire(
                     interval,
