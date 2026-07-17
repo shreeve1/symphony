@@ -559,6 +559,56 @@ test.describe("Automations page", () => {
 		expectCleanConsole(problems);
 	});
 
+	test("base branch combobox auto-populates the binding's branches/worktrees (#462)", async ({
+		page,
+		problems,
+	}) => {
+		await page.route("**/api/bindings/dotfiles/automations", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
+		});
+		await page.route("**/api/skills**", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
+		});
+		await page.route("**/api/bindings/dotfiles/options", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					agents: [],
+					models: [],
+					// Live local branches include per-issue worktree branches.
+					branches: ["main", "podium/dotfiles/42"],
+				}),
+			});
+		});
+		await page.goto("/dotfiles/automations");
+		await page.getByTestId("automation-create-btn").click();
+
+		// Base branch is now a combobox populated from the binding's branches,
+		// which include the worktree branch podium/dotfiles/42.
+		await page.getByTestId("automation-form-pin-base").click();
+		await expect(
+			page.getByTestId("automation-form-pin-base-option"),
+		).toHaveCount(3); // empty sentinel + main + worktree branch
+		await page
+			.getByTestId("automation-form-pin-base-option")
+			.filter({ hasText: "podium/dotfiles/42" })
+			.click();
+		await expect(page.getByTestId("automation-form-pin-base")).toHaveValue(
+			"podium/dotfiles/42",
+		);
+
+		expectCleanConsole(problems);
+	});
+
 	test("list shows 'pinned' badge when an automation has any pin field set (#459)", async ({
 		page,
 		problems,

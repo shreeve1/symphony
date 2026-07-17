@@ -114,6 +114,13 @@ export default function AutomationsPage() {
 		value: name,
 		label: name,
 	}));
+	// Issue #462: live local branches include per-issue worktree branches
+	// (podium/<binding>/<issue_id>), so the base-branch combobox auto-populates
+	// existing worktrees for the binding.
+	const pinBranchOptions = (pinOptions?.branches ?? []).map((name) => ({
+		value: name,
+		label: name,
+	}));
 	const pinModels = pinOptions?.models ?? [];
 	// Filter models to the selected agent so the operator can't pin a
 	// cross-agent model combo that resolve_model rejects at fire-time
@@ -224,7 +231,10 @@ export default function AutomationsPage() {
 	// Issue #462: a delayed start needs a positive delay; guard so unchecking
 	// "Start immediately" without a delay doesn't silently fire on the next tick.
 	const delayRequired =
-		mode === "spawn" && !editing && !startImmediately && !(parseInt(delayMin, 10) > 0);
+		mode === "spawn" &&
+		!editing &&
+		!startImmediately &&
+		!(parseInt(delayMin, 10) > 0);
 
 	const submit = (e: React.FormEvent) => {
 		e.preventDefault();
@@ -380,41 +390,41 @@ export default function AutomationsPage() {
 										data-testid="automation-form-count"
 										type="number"
 										min="1"
-								value={runCount}
-								onChange={(e) => setRunCount(e.target.value)}
-								className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-							/>
-							</label>
-							{!editing && (
-								<label className="block flex-1 space-y-1">
-									<span className="text-xs font-medium text-muted-foreground">
-										Initial delay (minutes)
-									</span>
-									<input
-										data-testid="automation-form-delay"
-										type="number"
-										min="1"
-										disabled={startImmediately}
-										value={delayMin}
-										onChange={(e) => setDelayMin(e.target.value)}
-										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40 disabled:opacity-40"
+										value={runCount}
+										onChange={(e) => setRunCount(e.target.value)}
+										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
 									/>
 								</label>
-							)}
-						</div>
-					)}
-					{mode === "spawn" && !editing && (
-						<label className="flex items-center gap-2 text-xs text-muted-foreground">
-							<input
-								type="checkbox"
-								data-testid="automation-form-start-now"
-								checked={startImmediately}
-								onChange={(e) => setStartImmediately(e.target.checked)}
-								className="h-3.5 w-3.5"
-							/>
-							Start immediately (fire the first issue on the next tick)
-						</label>
-					)}
+								{!editing && (
+									<label className="block flex-1 space-y-1">
+										<span className="text-xs font-medium text-muted-foreground">
+											Initial delay (minutes)
+										</span>
+										<input
+											data-testid="automation-form-delay"
+											type="number"
+											min="1"
+											disabled={startImmediately}
+											value={delayMin}
+											onChange={(e) => setDelayMin(e.target.value)}
+											className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40 disabled:opacity-40"
+										/>
+									</label>
+								)}
+							</div>
+						)}
+						{mode === "spawn" && !editing && (
+							<label className="flex items-center gap-2 text-xs text-muted-foreground">
+								<input
+									type="checkbox"
+									data-testid="automation-form-start-now"
+									checked={startImmediately}
+									onChange={(e) => setStartImmediately(e.target.checked)}
+									className="h-3.5 w-3.5"
+								/>
+								Start immediately (fire the first issue on the next tick)
+							</label>
+						)}
 
 						{mode === "loop" && !isInfra && (
 							<div className="flex gap-3">
@@ -507,17 +517,21 @@ export default function AutomationsPage() {
 									Run `podium skills refresh` to populate the skill list.
 								</p>
 							)}
-							<label className="block space-y-1">
-								<span className="text-xs font-medium text-muted-foreground">
-									Base branch (empty = bindings.yml default)
-								</span>
-								<input
-									data-testid="automation-form-pin-base"
+							{/* Issue #462: the binding's live local branches include the
+							    per-issue worktree branches (podium/<binding>/<issue_id>),
+							    so the combobox auto-populates existing worktrees while
+							    still accepting free text (mirrors the New Issue modal). */}
+							<div className="flex gap-3">
+								<FieldCombobox
+									label="Base branch (empty = bindings.yml default)"
+									testid="automation-form-pin-base"
 									value={baseBranch}
-									onChange={(e) => setBaseBranch(e.target.value)}
-									className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+									onChange={setBaseBranch}
+									options={pinBranchOptions}
+									emptyHint="bindings.yml default"
+									allowFreeText
 								/>
-							</label>
+							</div>
 							{mode === "spawn" && (
 								<label className="flex items-center gap-2 text-xs text-muted-foreground">
 									<input
