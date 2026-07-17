@@ -3,7 +3,7 @@ title: "Podium issue-field dispatch contract (model catalog, effort, skill, clau
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-07-16
+updated: 2026-07-17
 sources:
   - wiki/raw/sessions/2026-06-12-issue-dispatch-contract.md
   - wiki/raw/sessions/2026-06-24-podium-api-model-dropdown-stale-validator.md
@@ -116,6 +116,14 @@ Dispatch is unchanged from the entry's perspective: `_apply_dispatch_gate` reads
 **Regression guard pattern (C-0374, recommended for a follow-up slice):** the fix-shipped test (`test_patrol_origin_defaults_preferred_model_to_pi_duo`) only asserts the constant equals `"pi-duo/Duo"`. A stronger guard would assert `load_models()` contains an entry whose `(entry["agent"]=="pi", entry["provider"], entry["id"])` tuple equals the parsed-out `(None, "<x_provider>", "<x_id>")` — i.e. pin the constant to a real catalog tuple, not just a string. Without this guard, a future regression to `"pi-duo"` (bare provider) or `"Duo"` (bare id, would re-resolve) wouldn't fail the test. Also: `resolve_model()` could emit two near-miss error messages that would have caught C-0368 immediately — (a) when `wanted_provider` matches a known provider BUT `wanted_id` is empty → "model 'pi-duo' is missing the id half of provider/id"; (b) when `wanted_id` is non-empty but neither match succeeds → "model 'pi-duo/Duo' is not in models.yml for agent pi". Both are reachable from the `if wanted_id:` branch today but the error raises AFTER the `agent_matches == 0` check, which only runs when `wanted_id` was non-empty.
 
 [source: web/api/main.py, web/api/migrations/versions/0020_patrol_issues_force_pi_duo.py, web/api/tests/test_issue_create.py, web/api/tests/test_alembic_baseline.py, model_catalog.py, wiki/raw/sessions/2026-07-16-patrol-default-model-bare-name-trap.md]
+
+[source: web/api/main.py, web/api/migrations/versions/0020_patrol_issues_force_pi_duo.py, web/api/tests/test_issue_create.py, web/api/tests/test_alembic_baseline.py, model_catalog.py, wiki/raw/sessions/2026-07-16-patrol-default-model-bare-name-trap.md]
+
+## Patrol legacy migration: deepseek-v4-flash → pi-duo/Duo (2026-07-17, C-0375, issue #413 follow-up)
+
+The C-0373 fix only covered NEW patrol issues created post-deploy. ~10 pre-C-0368 homelab patrol issues (created 2026-06-20 through 2026-07-09) carried their stored `preferred_model='deepseek-v4-flash'` (the documented default at the time, C-0357) and re-dispatched on `provider=deepseek model=deepseek-v4-flash:high` every time the blocked-reconciler reopened them. The session-1 turn-1 guidance ("leave them on `deepseek-v4-flash` — it's the cheapest catalog entry") was overridden by the operator on 2026-07-17 08:56 UTC ("Yes migrate now") — uniformity on `pi-duo/Duo` was preferred over the per-token cost saving. Operator-initiated migration via direct `UPDATE issue SET preferred_model='pi-duo/Duo' WHERE binding_name='homelab' AND origin='patrol' AND preferred_model='deepseek-v4-flash' AND state NOT IN ('done','archived')` (no fourth alembic revision for a one-shot data fix; the C-0373 migration 0020 was scoped to the bare-provider trap, not legacy rows). The 11 affected rows now show `preferred_model='pi-duo/Duo'`; the dispatcher's next tick picks `provider=pi-duo model=Duo:high` for them, picking up the new default on re-dispatch. State=`blocked` rows wait for the blocked-reconciler to flip them to `todo`; state=`in_review` rows carry the new model forward to their next dispatches. Reverses the session-1 turn-1 guidance, recorded as decision C-0375.
+
+[source: C-0375, wiki/raw/sessions/2026-07-16-patrol-default-model-bare-name-trap.md (cross-ref to operator reply), wiki/log.md 2026-07-17 entry]
 
 ## Supersedes
 
