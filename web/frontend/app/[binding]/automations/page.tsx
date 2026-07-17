@@ -224,8 +224,7 @@ export default function AutomationsPage() {
 		};
 		if (mode === "spawn") {
 			const mins = parseInt(intervalMin, 10);
-			if (!isNaN(mins) && mins > 0)
-				payload.spawn_interval_seconds = mins * 60;
+			if (!isNaN(mins) && mins > 0) payload.spawn_interval_seconds = mins * 60;
 			payload.spawn_run_count = runCount.trim() ? parseInt(runCount, 10) : null;
 		} else {
 			const cap = parseInt(iterCap, 10);

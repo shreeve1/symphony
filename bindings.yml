@@ -109,3 +109,19 @@ bindings:
       host: 100.95.224.218 # n8n Tailscale IP; bare 'n8n' resolves to netbird addr where sshd refuses
       user: itadmin
       host_alias: n8n # ADR-0039 display-only sidebar grouping label
+  - name: mac-dotfiles
+    plane_project_id: mac-dotfiles
+    tracker: podium
+    type: coding
+    repo_path: /Users/james/dotfiles
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
+    remote:
+      host: 100.95.110.36
+      user: james
+      host_alias: mac

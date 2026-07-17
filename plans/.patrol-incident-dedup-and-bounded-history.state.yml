@@ -454,3 +454,45 @@ build_audits:
       - "[WARNING] Incident dry-run predictions remain state-independent."
       note: []
     counts: {critical: 0, warning: 1, note: 0}
+- wave: 5
+  reviewer: pi
+  reviewer_model: openai-codex/gpt-5.5
+  started: "2026-07-17T05:08:52Z"
+  files_audited:
+  - tracker_podium.py
+  - session_continuity.py
+  - scheduler/__init__.py
+  - scheduler/run_records.py
+  - scheduler/reconcile.py
+  - scheduler/loop.py
+  - web/api/main.py
+  - tests/test_log_retention.py
+  - tests/test_session_continuity.py
+  - tests/test_tracker_podium.py
+  - tests/test_scheduler.py
+  - web/api/tests/test_session_tail.py
+  outcome: auto_fixed
+  skip_reason: null
+  error_excerpt: null
+  attempts:
+  - attempt: 1
+    kind: initial
+    started: "2026-07-17T05:08:52Z"
+    findings:
+      critical:
+      - "[CRITICAL] `_prune_patrol_runs_for_issue` is invoked from `update_run` without an `origin = 'patrol'` gate (tracker_podium.py:565). For non-patrol issues with 4+ completed runs, every terminal transition will silently prune completed rows to the newest 3, violating T.4.4 (Non-patrol rows remain). Fix: gate the call by origin inside `_prune_patrol_runs_for_issue` so every caller (including the periodic reconcile sweep and the terminal-triggered path) is protected. A non-patrol issue must be detected and skipped before any run-id SELECT. Verified and fixed: a regression test `test_patrol_pruning_skips_non_patrol_via_update_run` was added and passes against the fixed code; the full Symphony suite remains green at 1562 passed, 2 skipped."
+      warning:
+      - "[WARNING] Migration 0021 backfills `patrol_dispatch_count` from `COUNT(*) FROM run`. Oversized pre-existing patrol issues (dispatch_count=150) keep that count after Wave 5 prunes their runs to 3. Their next dispatch sees `count = 151` -> `gen = 151 // 3 = 50`, a forced session rotation mid-stream. Self-correcting per T.5.2 (pruning preserves dispatch_count), but operationally surprising for legacy incidents. Document in operator runbook or migrate the backfill to `MIN(actual_count, gen_cap * 3 + 2)` so legacy issues land on `gen = len(surviving_runs) // 3` rather than the historical dispatch count."
+      - "[WARNING] `_prepare_resume_candidate` integration with `patrol_dispatch_count` is not asserted by any test. T.5.1 invariant (Runs 1-3 share gen 0, Run 4 starts gen 1, Runs 5-6 may resume gen 1) is verified only at the pure derive level, not through the dispatcher integration path."
+      - "[WARNING] The terminal-triggered prune path inside `update_run` and the `_run_patrol_run_retention` wiring in `run_loop` / `reconcile_startup` were previously unverified by tests. Now covered by the new regression test plus existing `test_patrol_prune_leaves_newest_three_completed` and `test_run_loop_schedules_log_retention_every_24h`. No further test work owed at this time."
+      - "[WARNING] `test_patrol_record_run_non_patrol_unchanged` asserts origin==operator and run.agent_session_id but does not directly assert `patrol_dispatch_count==0` / `patrol_last_dispatched_severity is None`. Same gap in the patrol-side counterpart. Minor; docstring describes the intent."
+      - "[WARNING] Schema comment in `web/api/schema.py:111-115` says `agent_session_id` was added by migration 0018 but it was actually 0021. Comment-only; split or move to a shared header."
+      note:
+      - "[NOTE] `_RUN_IMMUTABLE_COLUMNS = {'issue_id', 'agent_session_id'}` and `_RUN_UPDATE_COLUMNS` correctly exclude both. Verified."
+      - "[NOTE] `_SessionTailer._poll_running` SELECT gains `r.agent_session_id` but the remote-binding branch is unchanged. Remote spool flow is preserved per T.5.3."
+      - "[NOTE] `derive_session_id(generation=0)` produces the same UUID as the legacy single-arg form. Operator/coding session ids unchanged per T.5.4."
+      - "[NOTE] `_prune_patrol_runs_for_issue` FK handling is correct: clears `latest_run_id` to NULL before `DELETE FROM run`, then rebuilds the projection from the newest surviving row. Repair order avoids the FK constraint; projection restored atomically inside the same transaction."
+      - "[NOTE] Repair-projection verdict whitelist excludes `retry`, consistent with `_update_issue_run_projection` behavior. Pre-existing, not a Wave 5 regression."
+      - "[NOTE] `update_run` -> `is_terminal` requires `existing.state == 'running'` AND new state in (succeeded, failed). The queued->failed path does not trigger pruning, which is correct per T.4.2."
+      - "[NOTE] `record_run` and `update_run` both run the patrol mutation in the same open transaction as the run row mutation, so a mid-write failure rolls back both -- T.7.3 'decrement-on-failure is impossible' holds."
+    counts: {critical: 1, warning: 5, note: 7}
