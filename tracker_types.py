@@ -52,6 +52,7 @@ class CandidateIssue:
     # Binding-repo git short-sha at dispatch, not a session id; guards resume against code drift.
     agent_session_sha: str = ""
     resumed: bool = False
+    fresh_context: bool = False
     active_run_id: str = ""
     locks: tuple[str, ...] = ()
     review_dispatch: bool = False

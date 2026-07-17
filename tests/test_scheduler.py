@@ -6065,6 +6065,11 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
 
     calls: list[bool] = []
     automation_calls: list[str] = []
+    loop_calls: list[str] = []
+
+    async def fake_reconcile_loop_automations(config, adapter, *, now, binding=None):
+        loop_calls.append(str(getattr(binding, "name", "")))
+        return 0
 
     async def fake_fire_spawn_automations(config, adapter, *, now, binding=None):
         automation_calls.append(str(getattr(binding, "name", "")))
@@ -6087,6 +6092,9 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
 
     monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
     monkeypatch.setattr(
+        scheduler, "_reconcile_loop_automations", fake_reconcile_loop_automations
+    )
+    monkeypatch.setattr(
         scheduler, "_fire_spawn_automations", fake_fire_spawn_automations
     )
     monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
@@ -6102,6 +6110,7 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
 
     assert calls == [True]
     assert automation_calls == ["default"]
+    assert loop_calls == ["default"]
 
 
 @pytest.mark.asyncio
@@ -6820,6 +6829,13 @@ class _NoStoreAdapter:
     contract = DEFAULT_CONTRACT
 
 
+class _StoreAdapter(_NoStoreAdapter):
+    stores_context = True
+
+    async def get_run(self, run_id: str) -> dict[str, Any]:
+        return {"id": run_id, "agent": "pi", "agent_session_sha": "abc123"}
+
+
 class _ColumnsAdapter:
     """Adapter recording _update_issue_columns calls for archive tests."""
 
@@ -6848,6 +6864,131 @@ class _RecordingRepoHost:
     def code_sha(self) -> str:
         self.calls += 1
         return self.sha
+
+
+class _LoopAdapter:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.marker_found = False
+
+    async def reconcile_loop_automations(
+        self, *, now, base_branch, completion_marker_exists
+    ) -> int:
+        self.calls += 1
+        self.marker_found = completion_marker_exists("7", "DONE.md")
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_loop_automations_checks_marker_for_local_coding(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    binding = _local_coding_binding(config)
+    marker = binding.repo_path / "worktrees" / binding.name / "7" / "DONE.md"
+    marker.parent.mkdir(parents=True)
+    marker.touch()
+    adapter = _LoopAdapter()
+
+    changed = await scheduler._reconcile_loop_automations(
+        config, cast(TrackerAdapter, adapter), binding=binding
+    )
+
+    assert changed == 1
+    assert adapter.calls == 1
+    assert adapter.marker_found is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_loop_automations_rejects_unsupported_bindings(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    adapter = _LoopAdapter()
+    coding = _local_coding_binding(config)
+
+    assert (
+        await scheduler._reconcile_loop_automations(
+            config,
+            cast(TrackerAdapter, adapter),
+            binding=replace(coding, binding_type="infra"),
+        )
+        == 0
+    )
+    assert (
+        await scheduler._reconcile_loop_automations(
+            config, cast(TrackerAdapter, adapter), binding=_remote_binding(config)
+        )
+        == 0
+    )
+    assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_fresh_context_loop_skips_resume_and_comment_refeed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    binding = replace(_local_coding_binding(config), pi_mode="rpc")
+    candidate = replace(
+        _candidate("issue-1"),
+        description="static task",
+        comments_md="old comments",
+        context_md="old context",
+        fresh_context=True,
+        worktree_active=True,
+        binding_name=binding.name,
+    )
+    monkeypatch.setattr(
+        scheduler, "repo_host_for", lambda *a, **k: _RecordingRepoHost("abc123")
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "evaluate_resume_eligibility",
+        lambda *a, **k: pytest.fail("fresh loop context must not evaluate resume"),
+    )
+
+    prepared, decision = await scheduler._prepare_resume_candidate(
+        cast(TrackerAdapter, _StoreAdapter()),
+        config,
+        candidate,
+        {"latest_run_id": "17"},
+        binding=binding,
+    )
+    seen: dict[str, Any] = {}
+
+    def render(issue, *, resume=False):
+        seen.update(
+            description=issue.description,
+            comments=issue.comments_md,
+            context=issue.context_md,
+            resume=resume,
+        )
+        return "static prompt"
+
+    _, prompt = await scheduler._render_for_dispatch(
+        config,
+        cast(TrackerAdapter, _NoStoreAdapter()),
+        prepared,
+        render,
+        lambda issue, prompt: AgentResult(0, 1, False),
+        now=lambda: datetime(2026, 7, 17, tzinfo=UTC),
+        binding=binding,
+        comments_text="old comments",
+    )
+
+    assert decision is None
+    assert prepared.resumed is False
+    assert prepared.agent_session_id == scheduler.derive_session_id(
+        candidate.id, generation=17
+    )
+    assert seen == {
+        "description": "static task",
+        "comments": "",
+        "context": "",
+        "resume": False,
+    }
+    assert prompt == "static prompt"
 
 
 # T.6.1

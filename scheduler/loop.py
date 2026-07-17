@@ -114,6 +114,7 @@ async def run_loop(
         _dispatch_one,
         _fire_spawn_automations,
         _fixed_now,
+        _reconcile_loop_automations,
         _run_log_retention,
         _run_patrol_run_retention,
         _sleep_or_wake,
@@ -160,6 +161,21 @@ async def run_loop(
                 config,
                 adapter,
                 **retention_kwargs,
+            )
+
+        try:
+            await _reconcile_loop_automations(
+                config,
+                adapter,
+                now=_fixed_now(now_dt),
+                binding=loop_binding,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "loop_automation_reconcile_failed binding=%s error=%s",
+                loop_binding.name if loop_binding else "",
+                exc,
+                exc_info=True,
             )
 
         try:

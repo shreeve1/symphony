@@ -1,8 +1,30 @@
-"""Pure helpers for spawn-mode automations."""
+"""Pure helpers for binding automations."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+
+LOOP_ITERATION_PREFIX = "### Symphony Loop Iteration"
+LOOP_COMPLETE_PREFIX = "### Symphony Loop Complete"
+LOOP_CAP_PREFIX = "### Symphony Loop Cap Reached"
+
+
+def count_loop_iterations(comments_md: str | None) -> int:
+    """Count loop iterations from their durable comment markers."""
+    return (comments_md or "").count(LOOP_ITERATION_PREFIX)
+
+
+def loop_iteration_marker(iteration: int) -> str:
+    return f"{LOOP_ITERATION_PREFIX} · {iteration}"
+
+
+def loop_instructions(completion_marker: str) -> str:
+    return (
+        "## Symphony Loop\n\n"
+        "Each iteration starts with fresh agent context; the worktree is the only "
+        "memory. Record progress in the worktree, and create "
+        f"`{completion_marker}` only when the task is complete."
+    )
 
 
 def render_template(template: str, binding_name: str, interval_seconds: int) -> str:

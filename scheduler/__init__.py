@@ -273,11 +273,16 @@ async def _prepare_resume_candidate(
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
     # Patrol session generation: count // 3 before creation so Runs 1-3 share
     # generation 0, Run 4 starts generation 1, etc.  Non-patrol always gen 0.
-    patrol_generation: int = 0
-    if candidate.origin == "patrol":
+    session_generation = 0
+    if candidate.fresh_context:
+        # A loop Run must never reopen a prior native CLI session. Podium Run
+        # ids are monotonic, so the previous Run id gives every dispatch a new
+        # derived session id without adding persistence.
+        session_generation = int(fresh_issue.get("latest_run_id") or 0)
+    elif candidate.origin == "patrol":
         dc = int(fresh_issue.get("patrol_dispatch_count") or 0)
-        patrol_generation = dc // 3
-    session_id = derive_session_id(candidate.id, generation=patrol_generation)
+        session_generation = dc // 3
+    session_id = derive_session_id(candidate.id, generation=session_generation)
     current_cwd = _dispatch_cwd(config, candidate, binding=binding)
     current_sha = (
         repo_host_for(binding, cwd=current_cwd).code_sha()
@@ -291,6 +296,9 @@ async def _prepare_resume_candidate(
         resumed=False,
         worktree_active=_worktree_enabled(config, candidate, binding=binding),
     )
+    if candidate.fresh_context:
+        return base_candidate, None
+
     supports_resume = agent == "claude" or (
         agent == "pi" and getattr(binding, "pi_mode", "one-shot") == "rpc"
     )
@@ -353,9 +361,12 @@ async def _render_for_dispatch(
     binding: ProjectBinding | None = None,
     comments_text: str = "",
 ) -> tuple[CandidateIssue, str]:
+    prompt_candidate = candidate
+    if candidate.fresh_context:
+        prompt_candidate = replace(candidate, comments_md="", context_md="")
     prompt = _invoke_renderer(
         render_prompt,
-        candidate,
+        prompt_candidate,
         resume=getattr(candidate, "resumed", False),
     )
     # Podium's renderer already embeds comments_md as the canonical
@@ -365,6 +376,7 @@ async def _render_for_dispatch(
     if (
         comments_text
         and not getattr(candidate, "resumed", False)
+        and not candidate.fresh_context
         and not getattr(adapter, "stores_context", False)
     ):
         prompt = f"{prompt}\n\n{render_previous_comments_block(comments_text)}"
@@ -2401,6 +2413,7 @@ from .schedule import (  # noqa: E402
 # Re-exported reconcile functions (moved to .reconcile module for seam isolation).
 from .reconcile import (  # noqa: E402,F401  (re-exports: scheduler._NAME is the public test/patch surface)
     fire_spawn_automations as _fire_spawn_automations,
+    reconcile_loop_automations as _reconcile_loop_automations,
     reconcile_pending_review as _reconcile_pending_review,
     reconcile_stale_running as _reconcile_stale_running,
     reconcile_startup as _reconcile_startup,

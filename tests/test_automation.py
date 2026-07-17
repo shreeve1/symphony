@@ -1,4 +1,4 @@
-"""Pure spawn-automation helper tests."""
+"""Pure automation helper tests."""
 
 from __future__ import annotations
 
@@ -10,7 +10,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from automation import compute_next_fire, render_template  # noqa: E402
+from automation import (  # noqa: E402
+    compute_next_fire,
+    count_loop_iterations,
+    loop_iteration_marker,
+    render_template,
+)
+
+
+def test_count_loop_iterations_uses_durable_markers():
+    comments = f"{loop_iteration_marker(1)}\n\nnoise\n\n{loop_iteration_marker(2)}"
+    assert count_loop_iterations(comments) == 2
+    assert count_loop_iterations(None) == 0
 
 
 def test_render_template_replaces_supported_placeholders_only():

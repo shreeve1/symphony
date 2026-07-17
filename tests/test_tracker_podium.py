@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import scheduler
+from automation import LOOP_CAP_PREFIX, LOOP_COMPLETE_PREFIX, count_loop_iterations
 from plane_adapter import CommentPayload
 from tracker_contract import PlaneLabel, TrackerRole
 from web.api.schema import SCHEMA_SQL
@@ -53,6 +54,7 @@ def _seed_spawn_automation(
     occurrences: int = 0,
     next_fire_at: str | None = None,
     interval: int = 3600,
+    loop_cap: int = 3,
 ) -> int:
     with sqlite3.connect(path) as connection:
         connection.executescript(SCHEMA_SQL)
@@ -74,7 +76,7 @@ def _seed_spawn_automation(
                 run_count,
                 occurrences,
                 next_fire_at,
-                3 if mode == "loop" else None,
+                loop_cap if mode == "loop" else None,
             ),
         )
         assert cursor.lastrowid is not None
@@ -647,6 +649,121 @@ async def test_spawn_automation_finite_count_and_filters(tmp_path: Path):
     assert rows[disabled_id] == (0, 0)
     assert rows[loop_id] == (1, 0)
     assert external_ids == [f"automation:{final_id}:2"]
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_redispatches_one_issue_then_parks_at_cap(tmp_path: Path):
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=2)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="develop",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert issue["external_id"] == f"automation:{automation_id}:loop"
+    assert issue["worktree_active"] == 1
+    assert issue["auto_land"] == 0
+    assert issue["base_branch"] == "develop"
+    assert "## Symphony Loop" in issue["description"]
+    assert count_loop_iterations(issue["comments_md"]) == 1
+    candidate = (await adapter.list_candidates())[0]
+    assert candidate.fresh_context is True
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'in_review' WHERE id = ?", (issue["id"],)
+        )
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="develop",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        redispatched = dict(
+            connection.execute(
+                "SELECT * FROM issue WHERE id = ?", (issue["id"],)
+            ).fetchone()
+        )
+        assert connection.execute("SELECT COUNT(*) FROM issue").fetchone()[0] == 1
+    assert redispatched["state"] == "todo"
+    assert count_loop_iterations(redispatched["comments_md"]) == 2
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'in_review' WHERE id = ?", (issue["id"],)
+        )
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="develop",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        parked = dict(connection.execute("SELECT * FROM issue").fetchone())
+        automation = dict(
+            connection.execute(
+                "SELECT * FROM automation WHERE id = ?", (automation_id,)
+            ).fetchone()
+        )
+    assert parked["state"] == "in_review"
+    assert LOOP_CAP_PREFIX in parked["comments_md"]
+    assert automation["enabled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_done_marker_parks_in_review(tmp_path: Path):
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop")
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+        connection.execute(
+            "UPDATE issue SET state = 'in_review' WHERE id = ?", (issue_id,)
+        )
+
+    seen: list[tuple[str, str]] = []
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: (
+                seen.append((issue_id, marker)) or True
+            ),
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    assert seen == [(str(issue_id), "DONE.md")]
+    assert issue["state"] == "in_review"
+    assert LOOP_COMPLETE_PREFIX in issue["comments_md"]
+    assert enabled == 0
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,52 @@ async def reconcile_orphaned_runs(
     return reaped
 
 
+async def reconcile_loop_automations(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    binding: ProjectBinding | None = None,
+) -> int:
+    """Advance local coding loop automations; unsupported bindings are a no-op."""
+    reconcile = getattr(adapter, "reconcile_loop_automations", None)
+    if not callable(reconcile):
+        return 0
+    resolved_binding = binding or binding_from_config(config)
+    if (
+        resolved_binding is None
+        or resolved_binding.binding_type != "coding"
+        or resolved_binding.is_remote
+        or not resolved_binding.worktree_default
+    ):
+        return 0
+
+    from worktree_facade import worktree_dir
+
+    def completion_marker_exists(issue_id: str, marker: str) -> bool:
+        return (
+            worktree_dir(resolved_binding.repo_path, resolved_binding.name, issue_id)
+            / marker
+        ).is_file()
+
+    changed = int(
+        await maybe_await(
+            reconcile(
+                now=now(),
+                base_branch=resolved_binding.base_branch,
+                completion_marker_exists=completion_marker_exists,
+            )
+        )
+    )
+    if changed:
+        LOGGER.info(
+            "loop_automations_reconciled binding=%s count=%d",
+            resolved_binding.name,
+            changed,
+        )
+    return changed
+
+
 async def fire_spawn_automations(
     config: SymphonyConfig,
     adapter: TrackerAdapter,

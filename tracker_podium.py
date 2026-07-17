@@ -19,13 +19,22 @@ import json
 import logging
 import re
 import sqlite3
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from automation import compute_next_fire, render_template
+from automation import (
+    LOOP_CAP_PREFIX,
+    LOOP_COMPLETE_PREFIX,
+    compute_next_fire,
+    count_loop_iterations,
+    loop_instructions,
+    loop_iteration_marker,
+    render_template,
+)
 from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
 from skill_mode_map import mode_for_skill
 from tracker_contract import (
@@ -233,6 +242,10 @@ class PodiumTrackerAdapter:
                     locks=tuple(issue.get("locks") or ()),
                     review_dispatch=review_dispatch,
                     origin=str(issue.get("origin") or "operator"),
+                    fresh_context=(
+                        str(issue.get("external_id") or "").startswith("automation:")
+                        and str(issue.get("external_id") or "").endswith(":loop")
+                    ),
                 )
             )
         if candidate_issue_ids:
@@ -667,6 +680,111 @@ class PodiumTrackerAdapter:
                 fired_count += 1
             connection.commit()
         return fired_count
+
+    async def reconcile_loop_automations(
+        self,
+        *,
+        now: datetime,
+        base_branch: str,
+        completion_marker_exists: Callable[[str, str], bool],
+    ) -> int:
+        """Create or advance enabled loop automations atomically."""
+        if self.binding_name is None:
+            return 0
+        now_iso = now.isoformat()
+        changed = 0
+        with self.connect() as connection:
+            automations = connection.execute(
+                """
+                SELECT * FROM automation
+                WHERE binding_name = ? AND mode = 'loop' AND enabled = 1
+                ORDER BY id
+                """,
+                (self.binding_name,),
+            ).fetchall()
+            for automation in automations:
+                automation_id = int(automation["id"])
+                external_id = f"automation:{automation_id}:loop"
+                issue = connection.execute(
+                    "SELECT * FROM issue WHERE external_id = ?", (external_id,)
+                ).fetchone()
+                marker = str(automation["loop_completion_marker"] or "DONE.md")
+                if issue is None:
+                    title = str(automation["template_title"]).replace(
+                        "{binding}", self.binding_name
+                    )
+                    task = str(automation["template_body"]).replace(
+                        "{binding}", self.binding_name
+                    )
+                    description = f"{task.rstrip()}\n\n{loop_instructions(marker)}"
+                    insert_issue_row(
+                        connection,
+                        binding_name=self.binding_name,
+                        title=title,
+                        description=description,
+                        priority="med",
+                        base_branch=base_branch,
+                        comments_md=loop_iteration_marker(1),
+                        external_id=external_id,
+                        worktree_active=True,
+                        auto_land=False,
+                        created_at=now_iso,
+                    )
+                    changed += 1
+                    continue
+
+                if str(issue["state"]) != "in_review":
+                    continue
+
+                issue_id = str(issue["id"])
+                comments = str(issue["comments_md"] or "").rstrip()
+                iterations = count_loop_iterations(comments)
+                cap = int(automation["loop_iteration_cap"] or 0)
+                terminal_body = ""
+                if completion_marker_exists(issue_id, marker):
+                    terminal_body = (
+                        f"{LOOP_COMPLETE_PREFIX}\n\n"
+                        f"Found `{marker}` after {iterations} iteration(s)."
+                    )
+                elif iterations >= cap:
+                    terminal_body = (
+                        f"{LOOP_CAP_PREFIX}\n\n"
+                        f"Iteration cap ({cap}) reached without `{marker}`; "
+                        "worktree preserved for operator review."
+                    )
+
+                if terminal_body:
+                    updated_comments = (
+                        f"{comments}\n\n{terminal_body}".strip()
+                        if comments
+                        else terminal_body
+                    )
+                    connection.execute(
+                        "UPDATE issue SET comments_md = ?, updated_at = ? WHERE id = ?",
+                        (updated_comments, now_iso, issue["id"]),
+                    )
+                    connection.execute(
+                        "UPDATE automation SET enabled = 0, updated_at = ? WHERE id = ?",
+                        (now_iso, automation_id),
+                    )
+                    changed += 1
+                    continue
+
+                next_marker = loop_iteration_marker(iterations + 1)
+                updated_comments = (
+                    f"{comments}\n\n{next_marker}".strip() if comments else next_marker
+                )
+                connection.execute(
+                    """
+                    UPDATE issue
+                    SET state = 'todo', comments_md = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (updated_comments, now_iso, issue["id"]),
+                )
+                changed += 1
+            connection.commit()
+        return changed
 
     async def prune_run_logs(
         self,
