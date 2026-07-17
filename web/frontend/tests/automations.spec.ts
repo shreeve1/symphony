@@ -369,7 +369,7 @@ test.describe("Automations page", () => {
 		expectCleanConsole(problems);
 	});
 
-	test("advanced pins disclosure is hidden by default and reveals pin fields (#459)", async ({
+	test("skill/agent/model pin fields are shown inline by default (#462)", async ({
 		page,
 		problems,
 	}) => {
@@ -383,10 +383,14 @@ test.describe("Automations page", () => {
 		await page.goto("/dotfiles/automations");
 		await page.getByTestId("automation-create-btn").click();
 
-		// Pin section hidden until clicked.
-		await expect(page.getByTestId("automation-form-pins")).not.toBeVisible();
-		await page.getByTestId("automation-form-pins-toggle").click();
+		// Pin section is front-and-center: visible immediately, no toggle.
 		await expect(page.getByTestId("automation-form-pins")).toBeVisible();
+		await expect(
+			page.getByTestId("automation-form-pins-toggle"),
+		).not.toBeVisible();
+		await expect(page.getByTestId("automation-form-pin-skill")).toBeVisible();
+		await expect(page.getByTestId("automation-form-pin-agent")).toBeVisible();
+		await expect(page.getByTestId("automation-form-pin-model")).toBeVisible();
 
 		// Spawn mode shows the worktree checkbox; loop mode hides it.
 		await expect(page.getByTestId("automation-form-pin-worktree")).toBeVisible();

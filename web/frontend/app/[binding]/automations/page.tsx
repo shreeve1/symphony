@@ -60,7 +60,6 @@ export default function AutomationsPage() {
 	const [reasoningEffort, setReasoningEffort] = useState("");
 	const [baseBranch, setBaseBranch] = useState("");
 	const [worktreeActive, setWorktreeActive] = useState(false);
-	const [showPins, setShowPins] = useState(false);
 
 	const { data: bindings } = useQuery({
 		queryKey: ["bindings"],
@@ -82,12 +81,12 @@ export default function AutomationsPage() {
 	const { data: pinSkills } = useQuery({
 		queryKey: ["skills", binding],
 		queryFn: () => fetchSkills(binding),
-		enabled: Boolean(binding) && showPins,
+		enabled: Boolean(binding),
 	});
 	const { data: pinOptions } = useQuery({
 		queryKey: ["issue-options", binding],
 		queryFn: () => fetchIssueOptions(binding),
-		enabled: Boolean(binding) && showPins,
+		enabled: Boolean(binding),
 	});
 	const pinSkillOptions = (pinSkills ?? []).map((s) => ({
 		value: s.name,
@@ -150,7 +149,6 @@ export default function AutomationsPage() {
 		setReasoningEffort("");
 		setBaseBranch("");
 		setWorktreeActive(false);
-		setShowPins(false);
 	};
 
 	const openEdit = (a: Automation) => {
@@ -168,16 +166,6 @@ export default function AutomationsPage() {
 		setReasoningEffort(a.reasoning_effort ?? "");
 		setBaseBranch(a.base_branch ?? "");
 		setWorktreeActive(a.worktree_active);
-		setShowPins(
-			Boolean(
-				a.preferred_skill ||
-					a.preferred_agent ||
-					a.preferred_model ||
-					a.reasoning_effort ||
-					a.base_branch ||
-					a.worktree_active,
-			),
-		);
 		setShowForm(true);
 	};
 
@@ -363,101 +351,89 @@ export default function AutomationsPage() {
 							</div>
 						)}
 
-						{/* Per-Issue dispatch pins (issue #459). Hidden by default
-						    to keep the spawn form uncluttered; auto-opened when
-						    editing an automation that already has pins set. */}
-						<div className="space-y-1">
-							<button
-								type="button"
-								data-testid="automation-form-pins-toggle"
-								onClick={() => setShowPins((v) => !v)}
-								className="text-xs font-medium text-muted-foreground hover:text-foreground"
-							>
-								{showPins ? "▾" : "▸"} Advanced pins
-							</button>
-							{showPins && (
-								<div
-									data-testid="automation-form-pins"
-									className="space-y-3 rounded-md border p-3"
-								>
-									<div className="flex gap-3">
-										<FieldCombobox
-											label="Skill"
-											testid="automation-form-pin-skill"
-											value={preferredSkill}
-											onChange={setPreferredSkill}
-											options={pinSkillOptions}
-											emptyHint="binding default"
-										/>
-										<label className="block flex-1 space-y-1">
-											<span className="text-xs font-medium text-muted-foreground">
-												Effort
-											</span>
-											<select
-												data-testid="automation-form-pin-effort"
-												value={reasoningEffort}
-												onChange={(e) => setReasoningEffort(e.target.value)}
-												className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-											>
-												<option value="">(binding default)</option>
-												<option value="none">none</option>
-												<option value="minimal">minimal</option>
-												<option value="low">low</option>
-												<option value="medium">medium</option>
-												<option value="high">high</option>
-												<option value="xhigh">xhigh</option>
-											</select>
-										</label>
-									</div>
-									<div className="flex gap-3">
-										<FieldCombobox
-											label="Agent"
-											testid="automation-form-pin-agent"
-											value={preferredAgent}
-											onChange={setPreferredAgent}
-											options={pinAgentOptions}
-											emptyHint="binding default"
-										/>
-										<FieldCombobox
-											label="Model"
-											testid="automation-form-pin-model"
-											value={preferredModel}
-											onChange={setPreferredModel}
-											options={pinModelOptions}
-											emptyHint="binding default"
-										/>
-									</div>
-									<label className="block space-y-1">
-										<span className="text-xs font-medium text-muted-foreground">
-											Base branch (empty = bindings.yml default)
-										</span>
-										<input
-											data-testid="automation-form-pin-base"
-											value={baseBranch}
-											onChange={(e) => setBaseBranch(e.target.value)}
-											className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
-										/>
-									</label>
-									{mode === "spawn" && (
-										<label className="flex items-center gap-2 text-xs text-muted-foreground">
-											<input
-												type="checkbox"
-												data-testid="automation-form-pin-worktree"
-												checked={worktreeActive}
-												onChange={(e) =>
-													setWorktreeActive(e.target.checked)
-												}
-												className="h-3.5 w-3.5"
-											/>
-											Spawn each issue in a fresh worktree
-										</label>
-									)}
-									{mode === "loop" && (
-										<p className="text-xs text-muted-foreground">
-											Loop automations always use a persistent worktree.
-										</p>
-									)}
-								</div>
+						{/* Per-Issue dispatch pins (issues #459/#461/#462). Rendered
+						    inline and front-and-center; every field is optional and
+						    falls back to the binding default at fire-time when empty. */}
+						<div
+							data-testid="automation-form-pins"
+							className="space-y-3 rounded-md border p-3"
+						>
+							<div className="flex gap-3">
+								<FieldCombobox
+									label="Skill"
+									testid="automation-form-pin-skill"
+									value={preferredSkill}
+									onChange={setPreferredSkill}
+									options={pinSkillOptions}
+									emptyHint="binding default"
+								/>
+								<label className="block flex-1 space-y-1">
+									<span className="text-xs font-medium text-muted-foreground">
+										Effort
+									</span>
+									<select
+										data-testid="automation-form-pin-effort"
+										value={reasoningEffort}
+										onChange={(e) => setReasoningEffort(e.target.value)}
+										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+									>
+										<option value="">(binding default)</option>
+										<option value="none">none</option>
+										<option value="minimal">minimal</option>
+										<option value="low">low</option>
+										<option value="medium">medium</option>
+										<option value="high">high</option>
+										<option value="xhigh">xhigh</option>
+									</select>
+								</label>
+							</div>
+							<div className="flex gap-3">
+								<FieldCombobox
+									label="Agent"
+									testid="automation-form-pin-agent"
+									value={preferredAgent}
+									onChange={setPreferredAgent}
+									options={pinAgentOptions}
+									emptyHint="binding default"
+								/>
+								<FieldCombobox
+									label="Model"
+									testid="automation-form-pin-model"
+									value={preferredModel}
+									onChange={setPreferredModel}
+									options={pinModelOptions}
+									emptyHint="binding default"
+								/>
+							</div>
+							<label className="block space-y-1">
+								<span className="text-xs font-medium text-muted-foreground">
+									Base branch (empty = bindings.yml default)
+								</span>
+								<input
+									data-testid="automation-form-pin-base"
+									value={baseBranch}
+									onChange={(e) => setBaseBranch(e.target.value)}
+									className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+								/>
+							</label>
+							{mode === "spawn" && (
+								<label className="flex items-center gap-2 text-xs text-muted-foreground">
+									<input
+										type="checkbox"
+										data-testid="automation-form-pin-worktree"
+										checked={worktreeActive}
+										onChange={(e) =>
+											setWorktreeActive(e.target.checked)
+										}
+										className="h-3.5 w-3.5"
+									/>
+									Spawn each issue in a fresh worktree
+								</label>
+							)}
+							{mode === "loop" && (
+								<p className="text-xs text-muted-foreground">
+									Loop automations always use a persistent worktree.
+								</p>
 							)}
 						</div>
 
