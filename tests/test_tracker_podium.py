@@ -8,7 +8,15 @@ from pathlib import Path
 import pytest
 
 import scheduler
-from automation import LOOP_CAP_PREFIX, LOOP_COMPLETE_PREFIX, count_loop_iterations
+from automation import (
+    LOOP_BLOCKED_PREFIX,
+    LOOP_CAP_PREFIX,
+    LOOP_COMPLETE_PREFIX,
+    LOOP_RETRY_PREFIX,
+    count_loop_iterations,
+    count_loop_retries,
+    loop_retry_marker,
+)
 from plane_adapter import CommentPayload
 from tracker_contract import PlaneLabel, TrackerRole
 from web.api.schema import SCHEMA_SQL
@@ -1011,3 +1019,353 @@ async def test_spawn_automation_batch_rolls_back_on_invalid_interval(tmp_path: P
             )
         )
     assert rows == {valid_id: 0, invalid_id: 0}
+
+
+# ---------------------------------------------------------------------------
+# Issue #8 — Loop failure retry (ADR-0041)
+# A blocked loop Issue is re-dispatched up to 3 consecutive times; on the 3rd
+# consecutive block the loop terminates with `### Symphony Loop Blocked` and
+# the automation is disabled. A recovered iteration (state → in_review) resets
+# the failure count; retry budget is independent of the iteration cap.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_blocked_issue_is_redispatched_with_retry_marker(
+    tmp_path: Path,
+) -> None:
+    """First blocked iteration re-dispatches and appends ### Symphony Loop Retry."""
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=10)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    # First reconcile creates the loop Issue with iteration 1.
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+        connection.execute(
+            "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+        )
+
+    # Blocked → re-dispatch with retry marker.
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert issue["state"] == "todo"
+    assert LOOP_RETRY_PREFIX in issue["comments_md"]
+    assert count_loop_retries(issue["comments_md"]) == 1
+    # Retry markers must NOT consume the iteration cap.
+    assert count_loop_iterations(issue["comments_md"]) == 1
+    # Automation stays enabled — the loop is still being retried.
+    with sqlite3.connect(db_path) as connection:
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    assert enabled == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_third_consecutive_block_terminates_with_disabled(
+    tmp_path: Path,
+) -> None:
+    """3rd consecutive block appends ### Symphony Loop Blocked and disables automation."""
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=10)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+
+    # Three consecutive blocked iterations.
+    for _ in range(3):
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+            )
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    # The 3rd strike appends the terminal block marker.
+    assert LOOP_BLOCKED_PREFIX in issue["comments_md"]
+    # Retry markers in the comments trail: 2 (1st and 2nd strike) + block
+    # marker on the 3rd. The function returns the count of retry markers
+    # since the last productive iteration; the 3rd strike appends the block
+    # marker (not another retry), so this is 2.
+    assert count_loop_retries(issue["comments_md"]) == 2
+    # The Issue is left inspectable (worktree preserved) — NOT parked in_review.
+    assert issue["state"] == "blocked"
+    # Automation is disabled so it doesn't auto re-arm.
+    assert enabled == 0
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_success_resets_failure_count(tmp_path: Path) -> None:
+    """An iteration that reaches in_review resets the consecutive failure count."""
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=10)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+
+    # Two blocked iterations accumulate 2 retry markers.
+    for _ in range(2):
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+            )
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        comments = dict(
+            connection.execute(
+                "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+        )["comments_md"]
+    assert count_loop_retries(comments) == 2
+
+    # Now succeed: iteration completes and the agent parks the Issue in_review.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'in_review' WHERE id = ?", (issue_id,)
+        )
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+
+    # A fresh failure after recovery should be treated as the FIRST consecutive
+    # failure, not the third — so the loop must be re-dispatched (not terminated).
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+        )
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    # After recovery, the next block is treated as the 1st consecutive failure:
+    # retry marker appended, state back to todo, automation still enabled.
+    assert issue["state"] == "todo"
+    assert LOOP_RETRY_PREFIX in issue["comments_md"]
+    # Total retry markers = 2 prior + 1 new = 3 markers in comments,
+    # but only the most-recent consecutive run matters for the cap.
+    # Recovery (iteration marker after the failures) resets the consecutive
+    # count to zero, so the 1 new retry after the recovered iteration is the
+    # only one counted from the new consecutive run.
+    assert count_loop_retries(issue["comments_md"]) == 1
+    assert enabled == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_retry_budget_independent_of_iteration_cap(
+    tmp_path: Path,
+) -> None:
+    """Retry budget (3) does not consume the iteration cap (separate counters)."""
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=2)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+
+    # Two blocked iterations → 2 retry markers, automation still enabled.
+    for _ in range(2):
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+            )
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    # Iteration count is still 1 — retries did not advance iteration count.
+    assert count_loop_iterations(issue["comments_md"]) == 1
+    assert count_loop_retries(issue["comments_md"]) == 2
+    # Loop has not yet hit either cap — neither iteration cap nor retry cap.
+    assert enabled == 1
+    # The Issue is back in the dispatch queue.
+    assert issue["state"] == "todo"
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_blocked_before_iteration_cap_takes_retry_path(
+    tmp_path: Path,
+) -> None:
+    """Failure-vs-cap precedence: a blocked iteration that has NOT yet
+    exceeded the iteration cap is re-dispatched via the retry path even when
+    the automation's cap is small. The retry budget (3) is independent of the
+    iteration cap, so a cap of 1 must not consume the retry budget.
+    """
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=1)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+
+    # The first iteration blocks. The iteration cap (1) is not yet exceeded
+    # by a productive in_review iteration, so the retry path must fire:
+    # state goes blocked → todo, retry marker appended, automation stays
+    # enabled. No cap marker must be appended yet — the cap is reached only
+    # when an iteration lands in_review, not when one is blocked.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+        )
+    assert (
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = dict(connection.execute("SELECT * FROM issue").fetchone())
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    assert issue["state"] == "todo"
+    assert LOOP_RETRY_PREFIX in issue["comments_md"]
+    assert LOOP_CAP_PREFIX not in issue["comments_md"]
+    assert enabled == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_blocked_terminal_is_idempotent(tmp_path: Path) -> None:
+    """Once an Issue carries the LOOP_BLOCKED_PREFIX terminal marker, a second
+    reconciler tick must not append another marker or re-count failures; it
+    only ensures the automation is disabled and stops there.
+    """
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path, mode="loop", loop_cap=10)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    now = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        issue_id = connection.execute("SELECT id FROM issue").fetchone()[0]
+
+    # Three consecutive blocked iterations → terminates with block marker.
+    for _ in range(3):
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'blocked' WHERE id = ?", (issue_id,)
+            )
+        await adapter.reconcile_loop_automations(
+            now=now,
+            base_branch="main",
+            completion_marker_exists=lambda issue_id, marker: False,
+        )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        first = dict(connection.execute("SELECT * FROM issue").fetchone())
+        first_comments_len = len(first["comments_md"] or "")
+        first_marker_count = (first["comments_md"] or "").count(LOOP_BLOCKED_PREFIX)
+
+    # A second reconciler tick on the same terminated Issue must be a no-op
+    # for comments: no new block marker, no length growth, automation stays 0.
+    await adapter.reconcile_loop_automations(
+        now=now,
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        second = dict(connection.execute("SELECT * FROM issue").fetchone())
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    assert len(second["comments_md"] or "") == first_comments_len
+    assert (second["comments_md"] or "").count(
+        LOOP_BLOCKED_PREFIX
+    ) == first_marker_count
+    assert enabled == 0
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_retry_marker_helper_renders_expected_text(
+    tmp_path: Path,
+) -> None:
+    """Pure helper test: the marker is timestamped and follows the existing
+    Symphony Loop marker convention."""
+    from datetime import UTC
+
+    body = loop_retry_marker(datetime(2026, 7, 17, 12, tzinfo=UTC))
+    assert body.startswith(LOOP_RETRY_PREFIX)
+    assert "2026-07-17" in body

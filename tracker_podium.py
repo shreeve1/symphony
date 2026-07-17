@@ -27,12 +27,17 @@ from pathlib import Path
 from typing import Any
 
 from automation import (
+    LOOP_BLOCKED_PREFIX,
     LOOP_CAP_PREFIX,
     LOOP_COMPLETE_PREFIX,
+    MAX_LOOP_RETRIES,
     compute_next_fire,
     count_loop_iterations,
+    count_loop_retries,
+    loop_blocked_marker,
     loop_instructions,
     loop_iteration_marker,
+    loop_retry_marker,
     render_template,
 )
 from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
@@ -782,6 +787,68 @@ class PodiumTrackerAdapter:
                         auto_land=False,
                         origin="automation",
                         created_at=now_iso,
+                    )
+                    changed += 1
+                    continue
+
+                if str(issue["state"]) == "blocked":
+                    # Issue #8 (ADR-0041): a blocked loop iteration is
+                    # re-dispatched up to MAX_LOOP_RETRIES consecutive times.
+                    # On the Nth consecutive block, the loop terminates with
+                    # the LOOP_BLOCKED_PREFIX terminal marker and the
+                    # automation is disabled. count_loop_retries resets to
+                    # zero after any successful (in_review) iteration marker,
+                    # so the budget tracks the most recent consecutive-failure
+                    # run rather than the historical total.
+                    comments = str(issue["comments_md"] or "").rstrip()
+                    # Idempotence: if the Issue is already terminated
+                    # (LOOP_BLOCKED_PREFIX present) the reconciler must not
+                    # re-append another terminal marker or re-count failures.
+                    # This guards against a second reconciler tick observing
+                    # the same Issue before the operator clears it.
+                    if LOOP_BLOCKED_PREFIX in comments:
+                        if int(automation["enabled"] or 0) == 1:
+                            connection.execute(
+                                "UPDATE automation SET enabled = 0, updated_at = ? WHERE id = ?",
+                                (now_iso, automation_id),
+                            )
+                            changed += 1
+                        continue
+                    consecutive_failures = count_loop_retries(comments)
+                    if consecutive_failures + 1 < MAX_LOOP_RETRIES:
+                        retry_marker = loop_retry_marker(now)
+                        updated_comments = (
+                            f"{comments}\n\n{retry_marker}".strip()
+                            if comments
+                            else retry_marker
+                        )
+                        connection.execute(
+                            """
+                            UPDATE issue
+                            SET state = 'todo', comments_md = ?, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (updated_comments, now_iso, issue["id"]),
+                        )
+                        changed += 1
+                        continue
+                    # Retry budget exhausted — terminate the loop. Worktree is
+                    # preserved (we do NOT merge or close the Issue) so the
+                    # operator can inspect partial work; automation is disabled
+                    # so the loop does not auto re-arm.
+                    terminal_body = loop_blocked_marker(consecutive_failures + 1, now)
+                    updated_comments = (
+                        f"{comments}\n\n{terminal_body}".strip()
+                        if comments
+                        else terminal_body
+                    )
+                    connection.execute(
+                        "UPDATE issue SET comments_md = ?, updated_at = ? WHERE id = ?",
+                        (updated_comments, now_iso, issue["id"]),
+                    )
+                    connection.execute(
+                        "UPDATE automation SET enabled = 0, updated_at = ? WHERE id = ?",
+                        (now_iso, automation_id),
                     )
                     changed += 1
                     continue
