@@ -7,6 +7,13 @@ from datetime import UTC, datetime, timedelta
 LOOP_ITERATION_PREFIX = "### Symphony Loop Iteration"
 LOOP_COMPLETE_PREFIX = "### Symphony Loop Complete"
 LOOP_CAP_PREFIX = "### Symphony Loop Cap Reached"
+# Issue #8 — loop failure retry (ADR-0041). A blocked loop iteration is
+# re-dispatched up to MAX_LOOP_RETRIES consecutive times; on the Nth
+# consecutive block the loop terminates with LOOP_BLOCKED_PREFIX and the
+# automation is disabled.
+LOOP_RETRY_PREFIX = "### Symphony Loop Retry"
+LOOP_BLOCKED_PREFIX = "### Symphony Loop Blocked"
+MAX_LOOP_RETRIES = 3
 
 
 def count_loop_iterations(comments_md: str | None) -> int:
@@ -14,8 +21,37 @@ def count_loop_iterations(comments_md: str | None) -> int:
     return (comments_md or "").count(LOOP_ITERATION_PREFIX)
 
 
+def count_loop_retries(comments_md: str | None) -> int:
+    """Count consecutive loop retry markers from durable comment markers.
+
+    Resets to zero after any successful (in_review) iteration marker, so the
+    retry budget tracks the *most recent* consecutive-failure run rather than
+    the historical total. Mirrors `count_commit_redispatches` style.
+    """
+    if not comments_md:
+        return 0
+    # The most recent productive iteration marker resets the consecutive run.
+    last_iteration = comments_md.rfind(LOOP_ITERATION_PREFIX)
+    tail = comments_md[last_iteration:] if last_iteration != -1 else comments_md
+    return tail.count(LOOP_RETRY_PREFIX)
+
+
 def loop_iteration_marker(iteration: int) -> str:
     return f"{LOOP_ITERATION_PREFIX} · {iteration}"
+
+
+def loop_retry_marker(now: datetime) -> str:
+    """Render the durable marker used by the loop reconciler on re-dispatch."""
+    return f"{LOOP_RETRY_PREFIX} · {now.isoformat()}"
+
+
+def loop_blocked_marker(failures: int, now: datetime) -> str:
+    """Render the terminal marker when the retry budget is exhausted."""
+    return (
+        f"{LOOP_BLOCKED_PREFIX} · {failures} consecutive failures · {now.isoformat()}\n\n"
+        f"Loop terminated after {failures} consecutive blocked iterations; "
+        "worktree preserved for operator review."
+    )
 
 
 def loop_instructions(completion_marker: str) -> str:
