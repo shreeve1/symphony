@@ -38,6 +38,10 @@ worktrees/
 # Harness runtime sentinel (empty local marker that lifts self-disarm guard)
 .claude/.harness-unlock
 
+# /graphify outputs — knowledge-graph build artifacts, regenerated per run.
+# Inputs are tracked files; outputs are local-only state.
+graphify-out/
+
 # /youtube skill pulls — transcripts + yt-dlp metadata are regenerable from the URL.
 # Only the curated `transcript-extract.md` and `web-research.md` per slug are kept.
 youtube/*/raw/
