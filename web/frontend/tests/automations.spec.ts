@@ -393,11 +393,75 @@ test.describe("Automations page", () => {
 		await expect(page.getByTestId("automation-form-pin-model")).toBeVisible();
 
 		// Spawn mode shows the worktree checkbox; loop mode hides it.
-		await expect(page.getByTestId("automation-form-pin-worktree")).toBeVisible();
+		await expect(
+			page.getByTestId("automation-form-pin-worktree"),
+		).toBeVisible();
 		await page.getByTestId("automation-form-mode").selectOption("loop");
 		await expect(
 			page.getByTestId("automation-form-pin-worktree"),
 		).not.toBeVisible();
+
+		expectCleanConsole(problems);
+	});
+
+	test("model options filter to the selected agent and empty catalog hints (#462)", async ({
+		page,
+		problems,
+	}) => {
+		await page.route("**/api/bindings/dotfiles/automations", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
+		});
+		// Empty skill catalog → the operator gets a refresh hint instead of a
+		// silent empty dropdown.
+		await page.route("**/api/skills**", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
+		});
+		await page.route("**/api/bindings/dotfiles/options", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					agents: ["pi", "claude"],
+					models: [
+						{ id: "Duo", agent: "pi", provider: "pi-duo" },
+						{ id: "Sonnet", agent: "claude", provider: "anthropic" },
+					],
+					branches: [],
+				}),
+			});
+		});
+		await page.goto("/dotfiles/automations");
+		await page.getByTestId("automation-create-btn").click();
+
+		await expect(
+			page.getByTestId("automation-skill-catalog-empty"),
+		).toBeVisible();
+
+		// No agent picked → both models offered.
+		await page.getByTestId("automation-form-pin-model").click();
+		await expect(
+			page.getByTestId("automation-form-pin-model-option"),
+		).toHaveCount(3); // empty sentinel + 2 models
+
+		// Pick the pi agent → only the pi model remains selectable.
+		await page.getByTestId("automation-form-pin-agent").click();
+		await page
+			.getByTestId("automation-form-pin-agent-option")
+			.filter({ hasText: "pi" })
+			.first()
+			.click();
+		await page.getByTestId("automation-form-pin-model").click();
+		await expect(
+			page.getByTestId("automation-form-pin-model-option"),
+		).toHaveCount(2); // empty sentinel + pi-duo/Duo only
 
 		expectCleanConsole(problems);
 	});

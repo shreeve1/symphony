@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -15,9 +15,19 @@ import {
 	type Automation,
 	type AutomationCreate,
 	type AutomationPatch,
+	type ModelOption,
 } from "@/lib/api";
 import { formatAge } from "@/lib/issues";
 import { FieldCombobox } from "@/components/FieldCombobox";
+
+// Fallback effort list for models that don't declare an `efforts` set in the
+// catalog (mirrors NewIssueModal), so the operator can't pin an effort the
+// model will reject at fire-time.
+const DEFAULT_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+function modelValue(option: ModelOption): string {
+	return option.provider ? `${option.provider}/${option.id}` : option.id;
+}
 
 function countLabel(a: Automation): string {
 	if (a.mode === "loop") {
@@ -88,18 +98,48 @@ export default function AutomationsPage() {
 		queryFn: () => fetchIssueOptions(binding),
 		enabled: Boolean(binding),
 	});
-	const pinSkillOptions = (pinSkills ?? []).map((s) => ({
-		value: s.name,
-		label: s.name,
+	const pinSkillNames = (pinSkills ?? []).map((s) => s.name);
+	const pinSkillOptions = pinSkillNames.map((name) => ({
+		value: name,
+		label: name,
 	}));
+	const showEmptySkillHint = Boolean(pinSkills) && pinSkillNames.length === 0;
 	const pinAgentOptions = (pinOptions?.agents ?? []).map((name) => ({
 		value: name,
 		label: name,
 	}));
-	const pinModelOptions = (pinOptions?.models ?? []).map((option) => ({
-		value: option.provider ? `${option.provider}/${option.id}` : option.id,
-		label: option.label ?? option.id,
-	}));
+	const pinModels = pinOptions?.models ?? [];
+	// Filter models to the selected agent so the operator can't pin a
+	// cross-agent model combo that resolve_model rejects at fire-time
+	// (model_catalog.ModelResolutionError). No agent picked = show all.
+	const pinModelOptions = pinModels
+		.filter((option) => !preferredAgent || option.agent === preferredAgent)
+		.map((option) => ({
+			value: modelValue(option),
+			label: option.label ?? option.id,
+		}));
+	// Drive the effort list from the selected model's declared set, so the
+	// operator can't pin an effort the model rejects at dispatch.
+	const selectedModelEfforts = pinModels.find(
+		(option) => modelValue(option) === preferredModel,
+	)?.efforts;
+	const effortChoices = selectedModelEfforts ?? DEFAULT_EFFORTS;
+
+	// Clear a pinned model that doesn't belong to the newly selected agent, so
+	// the form never persists a cross-agent mismatch. Empty stays empty.
+	useEffect(() => {
+		if (!preferredModel || !preferredAgent) return;
+		const match = pinModels.find(
+			(option) => modelValue(option) === preferredModel,
+		);
+		if (match && match.agent !== preferredAgent) setPreferredModel("");
+	}, [preferredAgent, preferredModel, pinModels]);
+
+	// Clear a pinned effort the selected model doesn't support.
+	useEffect(() => {
+		if (reasoningEffort && !effortChoices.includes(reasoningEffort))
+			setReasoningEffort("");
+	}, [reasoningEffort, effortChoices]);
 
 	const createMut = useMutation({
 		mutationFn: (body: AutomationCreate) => createAutomation(binding, body),
@@ -191,7 +231,8 @@ export default function AutomationsPage() {
 		if (preferredSkill.trim()) payload.preferred_skill = preferredSkill.trim();
 		if (preferredAgent.trim()) payload.preferred_agent = preferredAgent.trim();
 		if (preferredModel.trim()) payload.preferred_model = preferredModel.trim();
-		if (reasoningEffort.trim()) payload.reasoning_effort = reasoningEffort.trim();
+		if (reasoningEffort.trim())
+			payload.reasoning_effort = reasoningEffort.trim();
 		if (baseBranch.trim()) payload.base_branch = baseBranch.trim();
 		// For loop mode, worktree_active is forced True at fire-time regardless
 		// of this checkbox (loops require a persistent worktree, Q4 of #459).
@@ -378,12 +419,11 @@ export default function AutomationsPage() {
 										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
 									>
 										<option value="">(binding default)</option>
-										<option value="none">none</option>
-										<option value="minimal">minimal</option>
-										<option value="low">low</option>
-										<option value="medium">medium</option>
-										<option value="high">high</option>
-										<option value="xhigh">xhigh</option>
+										{effortChoices.map((name) => (
+											<option key={name} value={name}>
+												{name}
+											</option>
+										))}
 									</select>
 								</label>
 							</div>
@@ -405,6 +445,14 @@ export default function AutomationsPage() {
 									emptyHint="binding default"
 								/>
 							</div>
+							{showEmptySkillHint && (
+								<p
+									data-testid="automation-skill-catalog-empty"
+									className="text-xs text-muted-foreground"
+								>
+									Run `podium skills refresh` to populate the skill list.
+								</p>
+							)}
 							<label className="block space-y-1">
 								<span className="text-xs font-medium text-muted-foreground">
 									Base branch (empty = bindings.yml default)
@@ -422,9 +470,7 @@ export default function AutomationsPage() {
 										type="checkbox"
 										data-testid="automation-form-pin-worktree"
 										checked={worktreeActive}
-										onChange={(e) =>
-											setWorktreeActive(e.target.checked)
-										}
+										onChange={(e) => setWorktreeActive(e.target.checked)}
 										className="h-3.5 w-3.5"
 									/>
 									Spawn each issue in a fresh worktree
