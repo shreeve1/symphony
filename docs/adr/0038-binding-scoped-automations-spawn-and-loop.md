@@ -74,6 +74,12 @@ ADR-0023 provenance: the operator reviews and performs the normal ADR-0014
 fast-forward landing. Partial work therefore remains inspectable and is never
 silently discarded.
 
+> **Superseded in part by ADR-0041 (2026-07-17).** A loop *failure* terminus was
+> added: a `blocked` iteration re-dispatches up to 3 times, then terminates via a
+> `### Symphony Loop Blocked` comment. The success/cap termini described here are
+> unchanged. Separately, ADR-0041 changes spawn Issues to auto-close to `done`
+> (see the contract-summary note below).
+
 ## Contract summary
 
 | Property | Spawn | Loop |
@@ -84,6 +90,11 @@ silently discarded.
 | Stop condition | Finite count exhausted or disabled | Loop Completion Marker found or iteration cap |
 | Binding support | All bindings | Persistent-worktree-capable coding bindings |
 | Terminus | Each Issue follows normal lifecycle | Always `in_review`; operator lands |
+
+> **Superseded in part by ADR-0041 (2026-07-17).** Spawn terminus is now
+> auto-close to `done`: worktree-on spawns auto-land+merge, worktree-off spawns
+> commit to base and close. Loop gains a failure terminus (3-retry then blocked).
+> The success/cap loop termini in this table are unchanged.
 
 ## Consequences
 
