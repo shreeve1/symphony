@@ -80,6 +80,13 @@ def _assert_automation_shape(body):
     assert "next_fire_at" in body
     assert "loop_iteration_cap" in body
     assert isinstance(body["loop_completion_marker"], str)
+    # Pin fields (issue #459) round-trip as nullable / bool.
+    assert body["preferred_skill"] is None or isinstance(body["preferred_skill"], str)
+    assert body["preferred_agent"] is None or isinstance(body["preferred_agent"], str)
+    assert body["preferred_model"] is None or isinstance(body["preferred_model"], str)
+    assert body["reasoning_effort"] is None or isinstance(body["reasoning_effort"], str)
+    assert body["base_branch"] is None or isinstance(body["base_branch"], str)
+    assert isinstance(body["worktree_active"], bool)
     assert body["created_at"] is not None
     assert body["updated_at"] is not None
 
@@ -479,6 +486,123 @@ class TestCascade:
             )
 
 
+class TestPinFields:
+    """Round-trip the per-Issue dispatch pin fields (issue #459).
+
+    Each pin field is nullable and round-trips through AutomationCreate /
+    AutomationPatch / GET. The tracker_podium fire paths are covered
+    separately in tests/test_tracker_podium.py.
+    """
+
+    def test_create_with_all_pins_spawn(self, client):
+        payload = _spawn_payload(
+            preferred_skill="homelab-operations",
+            preferred_agent="pi",
+            preferred_model="pi-duo/Duo",
+            reasoning_effort="xhigh",
+            base_branch="develop",
+            worktree_active=True,
+        )
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["preferred_skill"] == "homelab-operations"
+        assert body["preferred_agent"] == "pi"
+        assert body["preferred_model"] == "pi-duo/Duo"
+        assert body["reasoning_effort"] == "xhigh"
+        assert body["base_branch"] == "develop"
+        assert body["worktree_active"] is True
+
+    def test_create_with_all_pins_loop(self, client):
+        payload = _loop_payload(
+            preferred_skill="diagnose",
+            preferred_agent="pi",
+            preferred_model="deepseek-v4-flash",
+            reasoning_effort="low",
+            base_branch="main",
+            worktree_active=False,  # loop force-true at fire-time, but column stores the value
+        )
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["preferred_skill"] == "diagnose"
+        assert body["preferred_agent"] == "pi"
+        assert body["preferred_model"] == "deepseek-v4-flash"
+        assert body["reasoning_effort"] == "low"
+        assert body["base_branch"] == "main"
+        assert body["worktree_active"] is False  # column stores raw value
+
+    def test_create_pins_default_null(self, client):
+        payload = _spawn_payload()
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["preferred_skill"] is None
+        assert body["preferred_agent"] is None
+        assert body["preferred_model"] is None
+        assert body["reasoning_effort"] is None
+        assert body["base_branch"] is None
+        assert body["worktree_active"] is False
+
+    def test_reject_invalid_effort(self, client):
+        payload = _spawn_payload(reasoning_effort="ultra")
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 422
+
+    def test_patch_each_pin_independently(self, client):
+        created = client.post(
+            "/api/bindings/symphony/automations", json=_spawn_payload()
+        ).json()
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={
+                "preferred_skill": "tdd",
+                "preferred_agent": "claude",
+                "preferred_model": "claude-opus-4-8",
+                "reasoning_effort": "medium",
+                "base_branch": "feature",
+                "worktree_active": True,
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["preferred_skill"] == "tdd"
+        assert body["preferred_agent"] == "claude"
+        assert body["preferred_model"] == "claude-opus-4-8"
+        assert body["reasoning_effort"] == "medium"
+        assert body["base_branch"] == "feature"
+        assert body["worktree_active"] is True
+
+    def test_patch_clear_base_branch_with_null(self, client):
+        created = client.post(
+            "/api/bindings/symphony/automations",
+            json=_spawn_payload(base_branch="develop"),
+        ).json()
+        assert created["base_branch"] == "develop"
+        resp = client.patch(
+            f"/api/bindings/symphony/automations/{created['id']}",
+            json={"base_branch": None},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["base_branch"] is None
+
+    def test_list_includes_pin_fields(self, client):
+        client.post(
+            "/api/bindings/symphony/automations",
+            json=_spawn_payload(preferred_model="pi-duo/Duo"),
+        ).json()
+        resp = client.get("/api/bindings/symphony/automations")
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 1
+        assert "preferred_skill" in rows[0]
+        assert "preferred_agent" in rows[0]
+        assert "preferred_model" in rows[0]
+        assert "reasoning_effort" in rows[0]
+        assert "base_branch" in rows[0]
+        assert "worktree_active" in rows[0]
+
+
 class TestMigrationParity:
     def test_automation_table_exists_in_schema(self, client):
         with main.connect() as connection:
@@ -505,5 +629,12 @@ class TestMigrationParity:
             assert cols["next_fire_at"] == "TIMESTAMP"
             assert cols["loop_iteration_cap"] == "INTEGER"
             assert cols["loop_completion_marker"] == "TEXT"
+            # Pin fields (issue #459, migration 0023)
+            assert cols["preferred_skill"] == "TEXT"
+            assert cols["preferred_agent"] == "TEXT"
+            assert cols["preferred_model"] == "TEXT"
+            assert cols["reasoning_effort"] == "TEXT"
+            assert cols["base_branch"] == "TEXT"
+            assert cols["worktree_active"] == "BOOLEAN"
             assert cols["created_at"] == "TIMESTAMP"
             assert cols["updated_at"] == "TIMESTAMP"

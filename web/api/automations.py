@@ -34,8 +34,9 @@ def _get_binding_or_404(connection: sqlite3.Connection, name: str) -> None:
 def _row(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
     # bool serialization: SQLite stores booleans as 0/1
-    if "enabled" in result and result["enabled"] is not None:
-        result["enabled"] = bool(result["enabled"])
+    for field in ("enabled", "worktree_active"):
+        if field in result and result[field] is not None:
+            result[field] = bool(result[field])
     return result
 
 
@@ -83,6 +84,17 @@ class AutomationCreate(BaseModel):
     spawn_run_count: PositiveInt | None = None
     loop_iteration_cap: PositiveInt | None = None
     loop_completion_marker: CompletionMarker = "DONE.md"
+    # Per-Issue dispatch pins (issue #459). Each nullable; the fire path
+    # threads them into insert_issue_row so a cadence can pin model/skill/etc.
+    # without authoring a throwaway Issue first.
+    preferred_skill: str | None = None
+    preferred_agent: str | None = None
+    preferred_model: str | None = None
+    reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
+    base_branch: str | None = None
+    worktree_active: bool = False
 
 
 class AutomationPatch(BaseModel):
@@ -95,6 +107,14 @@ class AutomationPatch(BaseModel):
     spawn_run_count: PositiveInt | None = None
     loop_iteration_cap: PositiveInt | None = None
     loop_completion_marker: CompletionMarker | None = None
+    preferred_skill: str | None = None
+    preferred_agent: str | None = None
+    preferred_model: str | None = None
+    reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
+    base_branch: str | None = None
+    worktree_active: bool | None = None
 
 
 # ── endpoint helpers ───────────────────────────────────────────────────────
@@ -142,7 +162,11 @@ def _build_patch_set(
         raise HTTPException(status_code=404, detail="automation not found")
     current_mode = str(current["mode"])
 
-    # Build SET list for non-None fields
+    # Build SET list for non-None fields. spawn_run_count and base_branch
+    # carry "unlimited / fall back to binding default" semantics when None,
+    # so an explicit None in the PATCH payload is honoured instead of being
+    # treated as a missing field.
+    nullable_patch_fields = {"spawn_run_count", "base_branch"}
     for field in (
         "enabled",
         "template_title",
@@ -151,11 +175,16 @@ def _build_patch_set(
         "spawn_run_count",
         "loop_iteration_cap",
         "loop_completion_marker",
+        "preferred_skill",
+        "preferred_agent",
+        "preferred_model",
+        "reasoning_effort",
+        "base_branch",
+        "worktree_active",
     ):
         val = getattr(body, field, None)
-        if val is not None or (
-            field == "spawn_run_count" and field in body.model_fields_set
-        ):
+        explicitly_set = field in body.model_fields_set
+        if val is not None or (explicitly_set and field in nullable_patch_fields):
             sets.append(f"{field} = ?")
             params.append(val)
 
@@ -215,8 +244,14 @@ def create_automation(
           spawn_interval_seconds, spawn_run_count,
           occurrences_fired, next_fire_at,
           loop_iteration_cap, loop_completion_marker,
+          preferred_skill, preferred_agent, preferred_model,
+          reasoning_effort, base_branch, worktree_active,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?
+        )
         """,
         (
             name,
@@ -228,6 +263,12 @@ def create_automation(
             payload.spawn_run_count,
             payload.loop_iteration_cap,
             payload.loop_completion_marker,
+            payload.preferred_skill,
+            payload.preferred_agent,
+            payload.preferred_model,
+            payload.reasoning_effort,
+            payload.base_branch,
+            payload.worktree_active,
             now,
             now,
         ),

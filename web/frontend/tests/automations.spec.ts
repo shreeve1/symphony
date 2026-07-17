@@ -368,4 +368,100 @@ test.describe("Automations page", () => {
 
 		expectCleanConsole(problems);
 	});
+
+	test("advanced pins disclosure is hidden by default and reveals pin fields (#459)", async ({
+		page,
+		problems,
+	}) => {
+		await page.route("**/api/bindings/dotfiles/automations", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
+		});
+		await page.goto("/dotfiles/automations");
+		await page.getByTestId("automation-create-btn").click();
+
+		// Pin section hidden until clicked.
+		await expect(page.getByTestId("automation-form-pins")).not.toBeVisible();
+		await page.getByTestId("automation-form-pins-toggle").click();
+		await expect(page.getByTestId("automation-form-pins")).toBeVisible();
+
+		// Spawn mode shows the worktree checkbox; loop mode hides it.
+		await expect(page.getByTestId("automation-form-pin-worktree")).toBeVisible();
+		await page.getByTestId("automation-form-mode").selectOption("loop");
+		await expect(
+			page.getByTestId("automation-form-pin-worktree"),
+		).not.toBeVisible();
+
+		expectCleanConsole(problems);
+	});
+
+	test("list shows 'pinned' badge when an automation has any pin field set (#459)", async ({
+		page,
+		problems,
+	}) => {
+		await page.route("**/api/bindings/dotfiles/automations", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify([
+					{
+						id: 1,
+						binding_name: "dotfiles",
+						mode: "spawn",
+						enabled: true,
+						template_title: "Pinned automation",
+						template_body: "With model pin",
+						spawn_interval_seconds: 3600,
+						spawn_run_count: null,
+						occurrences_fired: 0,
+						next_fire_at: null,
+						loop_iteration_cap: null,
+						loop_completion_marker: "DONE.md",
+						preferred_skill: null,
+						preferred_agent: null,
+						preferred_model: "pi-duo/Duo",
+						reasoning_effort: null,
+						base_branch: null,
+						worktree_active: false,
+						created_at: "2026-07-17T00:00:00+00:00",
+						updated_at: "2026-07-17T00:00:00+00:00",
+					},
+					{
+						id: 2,
+						binding_name: "dotfiles",
+						mode: "spawn",
+						enabled: true,
+						template_title: "Unpinned automation",
+						template_body: "Plain",
+						spawn_interval_seconds: 3600,
+						spawn_run_count: null,
+						occurrences_fired: 0,
+						next_fire_at: null,
+						loop_iteration_cap: null,
+						loop_completion_marker: "DONE.md",
+						preferred_skill: null,
+						preferred_agent: null,
+						preferred_model: null,
+						reasoning_effort: null,
+						base_branch: null,
+						worktree_active: false,
+						created_at: "2026-07-17T00:00:00+00:00",
+						updated_at: "2026-07-17T00:00:00+00:00",
+					},
+				]),
+			});
+		});
+		await page.goto("/dotfiles/automations");
+		const pinnedRow = page.getByTestId("automation-row").first();
+		await expect(pinnedRow.getByTestId("automation-pins-badge")).toBeVisible();
+		const unpinnedRow = page.getByTestId("automation-row").nth(1);
+		await expect(
+			unpinnedRow.getByTestId("automation-pins-badge"),
+		).not.toBeVisible();
+
+		expectCleanConsole(problems);
+	});
 });

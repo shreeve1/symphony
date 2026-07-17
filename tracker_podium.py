@@ -669,13 +669,25 @@ class PodiumTrackerAdapter:
                 description = render_template(
                     str(row["template_body"]), self.binding_name, interval
                 )
+                # Issue #459: per-automation pin fields (skill/agent/model/effort/
+                # base_branch/worktree_active) thread into insert_issue_row so a
+                # cadence can pin model/skill without authoring a throwaway Issue.
+                # base_branch falls back to the binding default when unset (Q3).
+                # origin='automation' so automation-spawned Issues are
+                # distinguishable from operator and patrol Issues (Q2).
                 insert_issue_row(
                     connection,
                     binding_name=self.binding_name,
                     title=title,
                     description=description,
-                    base_branch=base_branch,
+                    base_branch=row["base_branch"] or base_branch,
                     external_id=f"automation:{automation_id}:{ordinal}",
+                    preferred_skill=row["preferred_skill"],
+                    preferred_agent=row["preferred_agent"],
+                    preferred_model=row["preferred_model"],
+                    reasoning_effort=row["reasoning_effort"] or "high",
+                    worktree_active=bool(row["worktree_active"] or False),
+                    origin="automation",
                     created_at=now_iso,
                 )
                 next_fire_at = compute_next_fire(
@@ -733,17 +745,28 @@ class PodiumTrackerAdapter:
                         "{binding}", self.binding_name
                     )
                     description = f"{task.rstrip()}\n\n{loop_instructions(marker)}"
+                    # Issue #459: thread the per-automation pin fields into the
+                    # first-iteration Issue. Loop semantics require a persistent
+                    # worktree, so worktree_active is hard-coded True regardless
+                    # of the automation-level column (operator-confirmed 2026-07-17:
+                    # "loops use worktrees"). base_branch falls back to the
+                    # binding default when unset. origin='automation' (Q2).
                     insert_issue_row(
                         connection,
                         binding_name=self.binding_name,
                         title=title,
                         description=description,
                         priority="med",
-                        base_branch=base_branch,
+                        base_branch=automation["base_branch"] or base_branch,
                         comments_md=loop_iteration_marker(1),
                         external_id=external_id,
+                        preferred_skill=automation["preferred_skill"],
+                        preferred_agent=automation["preferred_agent"],
+                        preferred_model=automation["preferred_model"],
+                        reasoning_effort=automation["reasoning_effort"] or "high",
                         worktree_active=True,
                         auto_land=False,
+                        origin="automation",
                         created_at=now_iso,
                     )
                     changed += 1

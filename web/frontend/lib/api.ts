@@ -248,6 +248,16 @@ export interface Automation {
 	next_fire_at: string | null;
 	loop_iteration_cap: number | null;
 	loop_completion_marker: string;
+	// Per-Issue dispatch pins (issue #459). Each nullable; the fire path
+	// (tracker_podium.fire_due_spawn_automations /
+	// reconcile_loop_automations) threads them into insert_issue_row.
+	// base_branch falls back to the binding default at fire-time when NULL.
+	preferred_skill: string | null;
+	preferred_agent: string | null;
+	preferred_model: string | null;
+	reasoning_effort: string | null;
+	base_branch: string | null;
+	worktree_active: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -260,6 +270,12 @@ export interface AutomationCreate {
 	spawn_run_count?: number | null;
 	loop_iteration_cap?: number;
 	loop_completion_marker?: string;
+	preferred_skill?: string | null;
+	preferred_agent?: string | null;
+	preferred_model?: string | null;
+	reasoning_effort?: string | null;
+	base_branch?: string | null;
+	worktree_active?: boolean;
 }
 
 export interface AutomationPatch {
@@ -270,6 +286,12 @@ export interface AutomationPatch {
 	spawn_run_count?: number | null;
 	loop_iteration_cap?: number | null;
 	loop_completion_marker?: string;
+	preferred_skill?: string | null;
+	preferred_agent?: string | null;
+	preferred_model?: string | null;
+	reasoning_effort?: string | null;
+	base_branch?: string | null;
+	worktree_active?: boolean;
 }
 
 export const fetchAutomations = (binding: string) =>

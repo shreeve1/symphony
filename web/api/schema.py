@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS issue(
   locks TEXT,
   auto_land BOOLEAN NOT NULL DEFAULT FALSE,
   hold BOOLEAN NOT NULL DEFAULT FALSE,
-  origin TEXT NOT NULL DEFAULT 'operator' CHECK (origin IN ('operator','patrol')),
+  origin TEXT NOT NULL DEFAULT 'operator' CHECK (origin IN ('operator','patrol','automation')),
   patrol_incident_family TEXT,
   patrol_incident_resource TEXT,
   patrol_first_seen_at TIMESTAMP,
@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS automation(
   next_fire_at TIMESTAMP,
   loop_iteration_cap INTEGER,
   loop_completion_marker TEXT NOT NULL DEFAULT 'DONE.md',
+  -- Per-Issue dispatch pins (issue #459). Each nullable; the fire path
+  -- (tracker_podium.fire_due_spawn_automations /
+  -- reconcile_loop_automations) threads them into insert_issue_row. base_branch
+  -- falls back to the binding default at fire-time when NULL.
+  preferred_skill TEXT,
+  preferred_agent TEXT,
+  preferred_model TEXT,
+  reasoning_effort TEXT DEFAULT 'high',
+  base_branch TEXT,
+  worktree_active BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL
 );

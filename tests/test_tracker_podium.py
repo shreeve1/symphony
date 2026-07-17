@@ -55,6 +55,12 @@ def _seed_spawn_automation(
     next_fire_at: str | None = None,
     interval: int = 3600,
     loop_cap: int = 3,
+    preferred_skill: str | None = None,
+    preferred_agent: str | None = None,
+    preferred_model: str | None = None,
+    reasoning_effort: str | None = None,
+    base_branch: str | None = None,
+    worktree_active: bool = False,
 ) -> int:
     with sqlite3.connect(path) as connection:
         connection.executescript(SCHEMA_SQL)
@@ -64,9 +70,14 @@ def _seed_spawn_automation(
             INSERT INTO automation(
               binding_name, mode, enabled, template_title, template_body,
               spawn_interval_seconds, spawn_run_count, occurrences_fired,
-              next_fire_at, loop_iteration_cap, created_at, updated_at
+              next_fire_at, loop_iteration_cap,
+              preferred_skill, preferred_agent, preferred_model,
+              reasoning_effort, base_branch, worktree_active,
+              created_at, updated_at
             ) VALUES ('test', ?, ?, 'Check {binding}', 'Every {interval}s',
-                      ?, ?, ?, ?, ?, '2026-07-17T00:00:00+00:00',
+                      ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?,
+                      '2026-07-17T00:00:00+00:00',
                       '2026-07-17T00:00:00+00:00')
             """,
             (
@@ -77,6 +88,12 @@ def _seed_spawn_automation(
                 occurrences,
                 next_fire_at,
                 loop_cap if mode == "loop" else None,
+                preferred_skill,
+                preferred_agent,
+                preferred_model,
+                reasoning_effort,
+                base_branch,
+                worktree_active,
             ),
         )
         assert cursor.lastrowid is not None
@@ -697,6 +714,95 @@ async def test_spawn_automation_finite_count_and_filters(tmp_path: Path):
     assert rows[disabled_id] == (0, 0)
     assert rows[loop_id] == (1, 0)
     assert external_ids == [f"automation:{final_id}:2"]
+
+
+@pytest.mark.asyncio
+async def test_spawn_automation_threads_pin_fields_and_origin_automation(
+    tmp_path: Path,
+) -> None:
+    """Issue #459: per-automation pin fields propagate to the spawned Issue row,
+    origin='automation' is written (Q2), and base_branch falls back to the
+    binding default when NULL on the automation (Q3).
+    """
+    db_path = tmp_path / "podium.db"
+    _seed_spawn_automation(
+        db_path,
+        preferred_skill="homelab-operations",
+        preferred_agent="pi",
+        preferred_model="pi-duo/Duo",
+        reasoning_effort="xhigh",
+        worktree_active=True,
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    noon = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    assert (
+        await adapter.fire_due_spawn_automations(now=noon, base_branch="develop") == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert row["preferred_skill"] == "homelab-operations"
+    assert row["preferred_agent"] == "pi"
+    assert row["preferred_model"] == "pi-duo/Duo"
+    assert row["reasoning_effort"] == "xhigh"
+    assert row["base_branch"] == "develop"  # from binding default, automation is NULL
+    assert bool(row["worktree_active"]) is True
+    assert row["origin"] == "automation"
+
+
+@pytest.mark.asyncio
+async def test_spawn_automation_base_branch_override_wins_over_binding_default(
+    tmp_path: Path,
+) -> None:
+    """Issue #459 (Q3): a non-NULL base_branch on the automation row wins over
+    the binding default supplied by the fire path."""
+    db_path = tmp_path / "podium.db"
+    _seed_spawn_automation(db_path, base_branch="feature/x")
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    await adapter.fire_due_spawn_automations(
+        now=datetime(2026, 7, 17, 12, tzinfo=UTC), base_branch="develop"
+    )
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute("SELECT base_branch FROM issue").fetchone()
+    assert row[0] == "feature/x"
+
+
+@pytest.mark.asyncio
+async def test_loop_automation_threads_pin_fields_and_force_worktree(
+    tmp_path: Path,
+) -> None:
+    """Issue #459: loop automations propagate pin fields too, and
+    worktree_active is forced True at fire-time regardless of the automation
+    column (operator-confirmed 2026-07-17: "loops use worktrees").
+    """
+    db_path = tmp_path / "podium.db"
+    _seed_spawn_automation(
+        db_path,
+        mode="loop",
+        loop_cap=5,
+        preferred_skill="diagnose",
+        preferred_model="deepseek-v4-flash",
+        reasoning_effort="low",
+        worktree_active=False,  # loop forces True at fire-time
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    await adapter.reconcile_loop_automations(
+        now=datetime(2026, 7, 17, 12, tzinfo=UTC),
+        base_branch="main",
+        completion_marker_exists=lambda issue_id, marker: False,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert row["preferred_skill"] == "diagnose"
+    assert row["preferred_model"] == "deepseek-v4-flash"
+    assert row["reasoning_effort"] == "low"
+    assert row["base_branch"] == "main"
+    assert bool(row["worktree_active"]) is True  # forced True, automation said False
+    assert row["origin"] == "automation"
 
 
 @pytest.mark.asyncio
