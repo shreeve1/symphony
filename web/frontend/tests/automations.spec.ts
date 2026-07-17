@@ -117,6 +117,19 @@ test.describe("Automations page", () => {
 		expectCleanConsole(problems);
 	});
 
+	test("shows a loop cap without using spawn occurrence counts", async ({
+		page,
+		problems,
+	}) => {
+		await page.route("**/api/bindings/dotfiles/automations", (route) =>
+			route.fulfill({ status: 200, json: [FIXTURES.loop] }),
+		);
+
+		await page.goto("/dotfiles/automations");
+		await expect(page.getByTestId("automation-remaining")).toHaveText("Cap 20");
+		expectCleanConsole(problems);
+	});
+
 	test("creates a new spawn automation", async ({ page, problems }) => {
 		const created: object[] = [];
 		await page.route("**/api/bindings/homelab/automations", (route) => {

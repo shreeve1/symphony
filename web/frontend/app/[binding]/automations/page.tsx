@@ -16,15 +16,14 @@ import {
 } from "@/lib/api";
 import { formatAge } from "@/lib/issues";
 
-function remainingLabel(a: Automation): string {
-	if (a.mode === "spawn") {
-		if (a.spawn_run_count == null) return "Unlimited";
-		const left = a.spawn_run_count - a.occurrences_fired;
-		return `${Math.max(0, left)}`;
+function countLabel(a: Automation): string {
+	if (a.mode === "loop") {
+		return a.loop_iteration_cap == null
+			? "Unlimited"
+			: `Cap ${a.loop_iteration_cap}`;
 	}
-	if (a.loop_iteration_cap == null) return "Unlimited";
-	const left = a.loop_iteration_cap - a.occurrences_fired;
-	return `${Math.max(0, left)}`;
+	if (a.spawn_run_count == null) return "Unlimited";
+	return `${Math.max(0, a.spawn_run_count - a.occurrences_fired)} left`;
 }
 
 function nextLabel(a: Automation): string {
@@ -366,7 +365,7 @@ export default function AutomationsPage() {
 									data-testid="automation-remaining"
 									className="text-xs text-muted-foreground whitespace-nowrap"
 								>
-									{remainingLabel(a)} left
+									{countLabel(a)}
 								</span>
 
 								<button

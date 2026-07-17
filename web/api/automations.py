@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import sqlite3
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PositiveInt
 
 from web.api.db import get_connection
 from web.api.seed import BINDINGS_PATH, _load_bindings
@@ -69,6 +69,8 @@ def _validate_completion_marker(value: str) -> str:
 
 # ── Pydantic models ────────────────────────────────────────────────────────
 
+CompletionMarker = Annotated[str, AfterValidator(_validate_completion_marker)]
+
 
 class AutomationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -77,36 +79,10 @@ class AutomationCreate(BaseModel):
     enabled: bool = True
     template_title: str = Field(min_length=1)
     template_body: str = Field(min_length=1)
-    spawn_interval_seconds: int | None = None
-    spawn_run_count: int | None = None
-    loop_iteration_cap: int | None = None
-    loop_completion_marker: str = "DONE.md"
-
-    @field_validator("spawn_interval_seconds")
-    @classmethod
-    def _spawn_interval_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("spawn_interval_seconds must be positive")
-        return v
-
-    @field_validator("spawn_run_count")
-    @classmethod
-    def _spawn_run_count_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("spawn_run_count must be positive when supplied")
-        return v
-
-    @field_validator("loop_iteration_cap")
-    @classmethod
-    def _loop_cap_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("loop_iteration_cap must be positive")
-        return v
-
-    @field_validator("loop_completion_marker")
-    @classmethod
-    def _loop_marker_safe(cls, v: str) -> str:
-        return _validate_completion_marker(v)
+    spawn_interval_seconds: PositiveInt | None = None
+    spawn_run_count: PositiveInt | None = None
+    loop_iteration_cap: PositiveInt | None = None
+    loop_completion_marker: CompletionMarker = "DONE.md"
 
 
 class AutomationPatch(BaseModel):
@@ -115,46 +91,10 @@ class AutomationPatch(BaseModel):
     enabled: bool | None = None
     template_title: str | None = Field(default=None, min_length=1)
     template_body: str | None = Field(default=None, min_length=1)
-    mode: Literal["spawn", "loop"] | None = None
-    spawn_interval_seconds: int | None = None
-    spawn_run_count: int | None = None
-    loop_iteration_cap: int | None = None
-    loop_completion_marker: str | None = None
-
-    @field_validator("spawn_interval_seconds")
-    @classmethod
-    def _spawn_interval_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("spawn_interval_seconds must be positive")
-        return v
-
-    @field_validator("spawn_run_count")
-    @classmethod
-    def _spawn_run_count_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("spawn_run_count must be positive when supplied")
-        return v
-
-    @field_validator("loop_iteration_cap")
-    @classmethod
-    def _loop_cap_positive(cls, v: int | None) -> int | None:
-        if v is not None and v < 1:
-            raise ValueError("loop_iteration_cap must be positive")
-        return v
-
-    @field_validator("loop_completion_marker")
-    @classmethod
-    def _loop_marker_safe(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        return _validate_completion_marker(v)
-
-    @field_validator("mode")
-    @classmethod
-    def _mode_immutable(cls, v: str | None) -> str | None:
-        if v is not None:
-            raise ValueError("mode is immutable after creation")
-        return v
+    spawn_interval_seconds: PositiveInt | None = None
+    spawn_run_count: PositiveInt | None = None
+    loop_iteration_cap: PositiveInt | None = None
+    loop_completion_marker: CompletionMarker | None = None
 
 
 # ── endpoint helpers ───────────────────────────────────────────────────────
@@ -175,42 +115,6 @@ def _validate_create_for_mode(binding_name: str, body: AutomationCreate) -> None
                 detail="loop_iteration_cap is required for loop mode",
             )
         if not _loop_eligible(binding_name):
-            raise HTTPException(
-                status_code=422,
-                detail="loop mode requires a coding binding with persistent worktree capability",
-            )
-
-
-def _validate_patch_for_mode(
-    binding_name: str | None,
-    current_mode: str,
-    changed: AutomationPatch,
-) -> None:
-    """Validate mode-specific patch constraints using existing automation mode."""
-    effective_mode = changed.mode if changed.mode is not None else current_mode
-    mode = effective_mode
-
-    if mode == "spawn":
-        if (
-            changed.spawn_interval_seconds is not None
-            and changed.spawn_interval_seconds < 1
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="spawn_interval_seconds must be positive",
-            )
-    elif mode == "loop":
-        if changed.loop_iteration_cap is not None and changed.loop_iteration_cap < 1:
-            raise HTTPException(
-                status_code=422,
-                detail="loop_iteration_cap must be positive",
-            )
-        if changed.loop_completion_marker is not None:
-            try:
-                _validate_completion_marker(changed.loop_completion_marker)
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if binding_name and not _loop_eligible(binding_name):
             raise HTTPException(
                 status_code=422,
                 detail="loop mode requires a coding binding with persistent worktree capability",
@@ -258,8 +162,11 @@ def _build_patch_set(
     if not sets:
         raise HTTPException(status_code=400, detail="no fields to update")
 
-    # Validate mode-specific constraints on the patched values
-    _validate_patch_for_mode(binding_name, current_mode, body)
+    if current_mode == "loop" and not _loop_eligible(binding_name):
+        raise HTTPException(
+            status_code=422,
+            detail="loop mode requires a coding binding with persistent worktree capability",
+        )
 
     return sets, params
 

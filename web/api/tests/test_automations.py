@@ -441,7 +441,7 @@ class TestPatch:
         resp = client.patch(
             f"/api/bindings/symphony/automations/{created['id']}", json={"mode": "loop"}
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 400
 
 
 class TestDelete:
