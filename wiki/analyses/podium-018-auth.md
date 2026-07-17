@@ -3,7 +3,7 @@ title: Podium #018 Shared-Password Auth
 kind: analysis
 status: promoted
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-07-17
 sources:
   - web/api/auth.py
   - web/api/main.py
@@ -15,8 +15,13 @@ sources:
   - web/frontend/components/AppShell.tsx
   - web/frontend/app/login/page.tsx
   - web/frontend/tests/auth.spec.ts
+  - scripts/install-podium-migrations-service.sh
+  - wiki/raw/podium-migrations.service
+  - wiki/raw/podium-api.service.d-migrations.conf
+  - wiki/candidates/analysis-session-podium-schema-drift-auto-migrate.md
+  - wiki/raw/sessions/2026-07-17-podium-schema-drift-auto-migrate.md
 confidence: high
-tags: [podium, auth, frontend, api, cli]
+tags: [podium, auth, frontend, api, cli, systemd, alembic, boot-ordering]
 ---
 
 # Podium #018 Shared-Password Auth
@@ -55,3 +60,7 @@ Automated coverage includes backend auth behavior, missing-secret startup failur
 - Podium WebSocket clients must carry the same session cookie as HTTP API requests [source: web/api/main.py].
 - Frontend tests that create extra browser contexts must authenticate those pages explicitly; the shared fixture authenticates only the default page [source: web/frontend/tests/live-sync.spec.ts].
 - `pnpm lint` still prompts because ESLint is not configured; use `pnpm exec tsc --noEmit` as the frontend typecheck until a lint config lands.
+
+## Boot Ordering (2026-07-17 update)
+
+`podium-api.service` is preceded at boot by `[email protected]` (Type=oneshot, RemainAfterExit=yes), wired in via the `/etc/systemd/system/podium-api.service.d/migrations.conf` drop-in (`Wants=` + `Before=`). The unit runs `/home/james/symphony/.venv/bin/alembic upgrade head` from `WorkingDirectory=/home/james/symphony` with `EnvironmentFile=/home/james/symphony-host.env`, so a checked-in but unapplied migration is advanced before the API tries to start. The strict `ensure_schema` policy that refuses to stamp a drifted schema ([web/api/main.py:540-543](web/api/main.py#L540)) is unchanged — the auto-heal sits one layer up, in the systemd boot graph, not in the Python startup check. The unit is installed and enabled idempotently by `scripts/install-podium-migrations-service.sh`; snapshots are mirrored under `wiki/raw/podium-migrations.service` and `wiki/raw/podium-api.service.d-migrations.conf`. Auth is unaffected: the bcrypt hash in `PODIUM_PASSWORD_HASH` is loaded by `web/api/auth.py:49` before the lifespan handler, but the API only validates logins after `ensure_schema` and the migrations unit have let the process keep running. The 2026-07-17 incident that motivated this (a checked-in `0023_automation_pin_fields` migration never applied) surfaced as `POST /api/auth/login` returning HTTP 500; the unit closes the recurring OS-reboot + "wrong password" red herring by making the failure mode structurally impossible after every reboot. See C-0376.

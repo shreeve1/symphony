@@ -3,15 +3,18 @@ title: Podium systemd units
 type: source
 status: promoted
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-07-17
 sources:
   - wiki/raw/podium-api.service
   - wiki/raw/podium-web.service
   - wiki/raw/telegram-alert@.service
   - wiki/raw/send-telegram-systemd-alert
+  - wiki/raw/podium-migrations.service
+  - wiki/raw/podium-api.service.d-migrations.conf
   - wiki/raw/sessions/2026-06-11-podium-023d-trading-plane-archive.md
+  - wiki/raw/sessions/2026-07-17-podium-schema-drift-auto-migrate.md
 confidence: high
-tags: [podium, systemd, operations, telegram]
+tags: [podium, systemd, operations, telegram, alembic, auto-migrate, boot-ordering]
 ---
 
 # Podium systemd units
@@ -28,6 +31,8 @@ Snapshot of the live Podium service units and their failure-alert template after
 
 **Live update (2026-06-30, C-0354):** `podium-web.service` gained a drop-in at `/etc/systemd/system/podium-web.service.d/stop.conf` setting `KillSignal=SIGINT` + `TimeoutStopSec=10s`. `next-server` (Next.js 15) ignores both SIGTERM and SIGINT and will not shut down gracefully, so every stop/restart previously waited the full 90s default `TimeoutStopSec` then SIGKILL — which aborted `web/frontend/deploy.sh` mid-swap ("Job ... canceled", `set -e`) and flapped the unit back onto the old `.next` build. The 10s bound lets `systemctl stop` return rc=0 (unit goes `failed`/`Result=timeout` but a manual stop suppresses `Restart=on-failure`), so the deploy swap proceeds. ~10s web downtime per deploy is the accepted cost. Drop-in snapshot: `wiki/raw/podium-web.service.d-stop.conf`; reinstall must re-create it. See C-0354.
 
+**Live update (2026-07-17, C-0376):** `[email protected]` (Type=oneshot, RemainAfterExit=yes) installed and enabled. The unit runs `/home/james/symphony/.venv/bin/alembic upgrade head` from `WorkingDirectory=/home/james/symphony` with `EnvironmentFile=/home/james/symphony-host.env`, ordered `Before=podium-api.service` so every boot applies pending Alembic migrations before `podium-api` tries to `ensure_schema`. A drop-in `/etc/systemd/system/podium-api.service.d/migrations.conf` adds `Wants=podium-migrations.service` + `After=podium-migrations.service` to `podium-api.service`, so a manual `systemctl start podium-api.service` also pulls the migration unit in (covers the case where `podium-api` was never enabled at boot but is started ad hoc). The unit deliberately does NOT wire `OnFailure=telegram-alert@%n.service`; a failed migration propagates as `podium-api` crashing on `ensure_schema`, which already fires the existing alert via its own `OnFailure`. Two alerts for one root cause would be noise. The unit is installed/enabled idempotently by `scripts/install-podium-migrations-service.sh`. The strict `ensure_schema` policy that refuses to stamp a drifted schema (origin: 2026-06-12 stamp-vs-run drift incident, see `web/api/main.py:540-543`) is preserved unchanged; the auto-heal sits one layer up in the boot graph. Cures the recurring failure mode where a checked-in migration that was never applied left `podium-api` crash-looping on `ensure_schema` (HTTP 500 on `/api/auth/login` from the never-up API). Unit snapshot: [wiki/raw/podium-migrations.service](../raw/podium-migrations.service). Drop-in snapshot: [wiki/raw/podium-api.service.d-migrations.conf](../raw/podium-api.service.d-migrations.conf). See C-0376.
+
 ## Failure alert wiring
 
 `telegram-alert@.service` is a oneshot unit that loads `/home/james/symphony-host.env` and executes `/usr/local/sbin/send-telegram-systemd-alert %i` [source: wiki/raw/telegram-alert@.service].
@@ -40,4 +45,4 @@ Unattended Ralph review should not fire live external notifications. For Podium 
 
 ## Claims
 
-C-0103 in [CLAIMS.md](../CLAIMS.md).
+C-0103, C-0376 in [CLAIMS.md](../CLAIMS.md).

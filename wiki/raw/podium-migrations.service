@@ -1,0 +1,26 @@
+[Unit]
+Description=Podium Alembic migrations
+Documentation=file:///home/james/symphony/web/api/migrations
+# Run before the API so ensure_schema never sees a missing column on a fresh
+# DB. Skipped OnFailure= here: podium-api's existing alert path covers the
+# common case (failed migration -> API crash on ensure_schema -> telegram
+# alert). Two alerts for one root cause would just be noise.
+Before=podium-api.service
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=james
+Group=james
+WorkingDirectory=/home/james/symphony
+EnvironmentFile=/home/james/symphony-host.env
+# Call alembic inside the project venv directly. systemctl strips PATH, so
+# `uv` (at /home/james/.local/bin) is unreachable; the venv-resident
+# alembic script invokes /home/james/symphony/.venv/bin/python3 itself.
+ExecStart=/home/james/symphony/.venv/bin/alembic upgrade head
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
