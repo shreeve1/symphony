@@ -133,6 +133,7 @@ test.describe("Automations page", () => {
 	test("creates a new spawn automation", async ({ page, problems }) => {
 		const created: object[] = [];
 		let postedInterval: number | undefined;
+		let postedDelay: number | undefined;
 		await page.route("**/api/bindings/homelab/automations", (route) => {
 			if (route.request().method() === "GET") {
 				route.fulfill({
@@ -143,6 +144,7 @@ test.describe("Automations page", () => {
 			} else if (route.request().method() === "POST") {
 				const body = JSON.parse(route.request().postData() ?? "{}");
 				postedInterval = body.spawn_interval_seconds;
+				postedDelay = body.start_delay_seconds;
 				const row = {
 					id: 10,
 					...body,
@@ -177,12 +179,67 @@ test.describe("Automations page", () => {
 		// Interval is entered in minutes; the payload converts to seconds.
 		await page.getByTestId("automation-form-interval").fill("120");
 		// Leave count empty → unlimited.
+		// Issue #462: uncheck "Start immediately" to enable the initial delay,
+		// entered in minutes and converted to seconds in the payload.
+		await page.getByTestId("automation-form-start-now").uncheck();
+		await page.getByTestId("automation-form-delay").fill("60");
 
 		// Submit.
 		await page.getByTestId("automation-form-submit").click();
 		await expect(page.getByTestId("automation-form")).toBeHidden();
 		await expect(page.getByTestId("automation-row")).toHaveCount(1);
 		expect(postedInterval).toBe(7200); // 120 min × 60
+		expect(postedDelay).toBe(3600); // 60 min × 60
+
+		expectCleanConsole(problems);
+	});
+
+	test("omits start_delay_seconds when starting immediately", async ({
+		page,
+		problems,
+	}) => {
+		const created: object[] = [];
+		let postedBody: Record<string, unknown> = {};
+		await page.route("**/api/bindings/homelab/automations", (route) => {
+			if (route.request().method() === "GET") {
+				route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify(created),
+				});
+			} else if (route.request().method() === "POST") {
+				postedBody = JSON.parse(route.request().postData() ?? "{}");
+				const row = {
+					id: 11,
+					...postedBody,
+					occurrences_fired: 0,
+					next_fire_at: null,
+					created_at: new Date().toISOString(),
+					updated_at: new Date().toISOString(),
+				};
+				created.push(row);
+				route.fulfill({
+					status: 201,
+					contentType: "application/json",
+					body: JSON.stringify(row),
+				});
+			} else {
+				route.continue();
+			}
+		});
+
+		await page.goto("/homelab/automations");
+		await expect(page.getByTestId("automations-page")).toBeVisible();
+		await page.getByTestId("automation-create-btn").click();
+		await expect(page.getByTestId("automation-form")).toBeVisible();
+		await page.getByTestId("automation-form-title").fill("Immediate patrol");
+		await page.getByTestId("automation-form-body").fill("Run now.");
+		await page.getByTestId("automation-form-interval").fill("15");
+		// "Start immediately" is checked by default → delay field disabled.
+		await expect(page.getByTestId("automation-form-delay")).toBeDisabled();
+		await page.getByTestId("automation-form-submit").click();
+		await expect(page.getByTestId("automation-form")).toBeHidden();
+		expect(postedBody.start_delay_seconds).toBeUndefined();
 
 		expectCleanConsole(problems);
 	});

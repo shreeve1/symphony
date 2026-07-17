@@ -272,6 +272,9 @@ export interface AutomationCreate {
 	template_body: string;
 	spawn_interval_seconds?: number;
 	spawn_run_count?: number | null;
+	// Issue #462: one-shot delay before the first spawn fire (create only).
+	// Omitted = start immediately (next_fire_at NULL, fires next tick).
+	start_delay_seconds?: number;
 	loop_iteration_cap?: number;
 	loop_completion_marker?: string;
 	preferred_skill?: string | null;

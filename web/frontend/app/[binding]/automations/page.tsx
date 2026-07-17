@@ -59,6 +59,11 @@ export default function AutomationsPage() {
 	// Operator-facing interval is in minutes; the DB column stays seconds.
 	const [intervalMin, setIntervalMin] = useState("");
 	const [runCount, setRunCount] = useState("");
+	// Issue #462: spawn-only, create-only first-fire controls. "Start
+	// immediately" (default) leaves next_fire_at NULL so the first issue fires
+	// on the next tick; unchecking it delays the first fire by delayMin minutes.
+	const [startImmediately, setStartImmediately] = useState(true);
+	const [delayMin, setDelayMin] = useState("");
 	const [iterCap, setIterCap] = useState("");
 	const [marker, setMarker] = useState("DONE.md");
 	// Per-Issue dispatch pins (issue #459). Each empty-string defaults to
@@ -182,6 +187,8 @@ export default function AutomationsPage() {
 		setBody("");
 		setIntervalMin("");
 		setRunCount("");
+		setStartImmediately(true);
+		setDelayMin("");
 		setIterCap("");
 		setMarker("DONE.md");
 		setPreferredSkill("");
@@ -214,9 +221,15 @@ export default function AutomationsPage() {
 		setShowForm(true);
 	};
 
+	// Issue #462: a delayed start needs a positive delay; guard so unchecking
+	// "Start immediately" without a delay doesn't silently fire on the next tick.
+	const delayRequired =
+		mode === "spawn" && !editing && !startImmediately && !(parseInt(delayMin, 10) > 0);
+
 	const submit = (e: React.FormEvent) => {
 		e.preventDefault();
 		if (!title.trim()) return;
+		if (delayRequired) return;
 		const payload: AutomationCreate = {
 			mode: isInfra ? "spawn" : mode,
 			template_title: title.trim(),
@@ -226,6 +239,14 @@ export default function AutomationsPage() {
 			const mins = parseInt(intervalMin, 10);
 			if (!isNaN(mins) && mins > 0) payload.spawn_interval_seconds = mins * 60;
 			payload.spawn_run_count = runCount.trim() ? parseInt(runCount, 10) : null;
+			// Delay is create-only (AutomationPatch has no start_delay_seconds).
+			// "Start immediately" wins: when checked, omit the delay so the API
+			// leaves next_fire_at NULL and the first issue fires on the next tick.
+			if (!editing && !startImmediately) {
+				const delay = parseInt(delayMin, 10);
+				if (!isNaN(delay) && delay > 0)
+					payload.start_delay_seconds = delay * 60;
+			}
 		} else {
 			const cap = parseInt(iterCap, 10);
 			if (!isNaN(cap) && cap > 0) payload.loop_iteration_cap = cap;
@@ -359,13 +380,41 @@ export default function AutomationsPage() {
 										data-testid="automation-form-count"
 										type="number"
 										min="1"
-										value={runCount}
-										onChange={(e) => setRunCount(e.target.value)}
-										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+								value={runCount}
+								onChange={(e) => setRunCount(e.target.value)}
+								className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+							/>
+							</label>
+							{!editing && (
+								<label className="block flex-1 space-y-1">
+									<span className="text-xs font-medium text-muted-foreground">
+										Initial delay (minutes)
+									</span>
+									<input
+										data-testid="automation-form-delay"
+										type="number"
+										min="1"
+										disabled={startImmediately}
+										value={delayMin}
+										onChange={(e) => setDelayMin(e.target.value)}
+										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40 disabled:opacity-40"
 									/>
 								</label>
-							</div>
-						)}
+							)}
+						</div>
+					)}
+					{mode === "spawn" && !editing && (
+						<label className="flex items-center gap-2 text-xs text-muted-foreground">
+							<input
+								type="checkbox"
+								data-testid="automation-form-start-now"
+								checked={startImmediately}
+								onChange={(e) => setStartImmediately(e.target.checked)}
+								className="h-3.5 w-3.5"
+							/>
+							Start immediately (fire the first issue on the next tick)
+						</label>
+					)}
 
 						{mode === "loop" && !isInfra && (
 							<div className="flex gap-3">
@@ -499,7 +548,9 @@ export default function AutomationsPage() {
 							<button
 								type="submit"
 								data-testid="automation-form-submit"
-								disabled={createMut.isPending || updateMut.isPending}
+								disabled={
+									createMut.isPending || updateMut.isPending || delayRequired
+								}
 								className="rounded-md border bg-foreground px-3 py-1.5 text-sm font-medium text-background transition disabled:opacity-40"
 							>
 								{editing ? "Update" : "Create"}

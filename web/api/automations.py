@@ -6,7 +6,7 @@ No fire/dispatch behaviour, no scheduler integration — pure CRUD.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import sqlite3
 from typing import Annotated, Any, Literal
 
@@ -82,6 +82,11 @@ class AutomationCreate(BaseModel):
     template_body: str = Field(min_length=1)
     spawn_interval_seconds: PositiveInt | None = None
     spawn_run_count: PositiveInt | None = None
+    # Issue #462: optional one-shot delay before the first spawn fire. Only
+    # meaningful at create time (spawn only) — the API computes next_fire_at =
+    # now + delay for the INSERT rather than storing a column. Omitted / "start
+    # immediately" leaves next_fire_at NULL, which fires on the next tick.
+    start_delay_seconds: PositiveInt | None = None
     loop_iteration_cap: PositiveInt | None = None
     loop_completion_marker: CompletionMarker = "DONE.md"
     # Per-Issue dispatch pins (issue #459). Each nullable; the fire path
@@ -129,6 +134,13 @@ def _validate_create_for_mode(binding_name: str, body: AutomationCreate) -> None
                 detail="spawn_interval_seconds is required for spawn mode",
             )
     elif body.mode == "loop":
+        # Issue #462: start_delay_seconds governs the first spawn fire; it has
+        # no meaning for loops (which fire per completion), so reject it here.
+        if body.start_delay_seconds is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="start_delay_seconds is only valid for spawn mode",
+            )
         if body.loop_iteration_cap is None:
             raise HTTPException(
                 status_code=422,
@@ -258,7 +270,17 @@ def create_automation(
 
     _validate_create_for_mode(name, payload)
 
-    now = datetime.now(UTC).isoformat()
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
+    # Issue #462: an optional start delay pushes the first fire out by N seconds.
+    # Without it, next_fire_at stays NULL and the fire path fires on the next
+    # tick ("start immediately"). The delay is a create-time convenience — the
+    # fire path (next_fire_at <= now gate) and compute_next_fire need no change.
+    next_fire_at = (
+        (now_dt + timedelta(seconds=payload.start_delay_seconds)).isoformat()
+        if payload.start_delay_seconds is not None
+        else None
+    )
     cursor = connection.execute(
         """
         INSERT INTO automation(
@@ -271,7 +293,7 @@ def create_automation(
           reasoning_effort, base_branch, worktree_active,
           created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?,
           ?, ?, ?, ?, ?, ?,
           ?, ?
         )
@@ -284,6 +306,7 @@ def create_automation(
             payload.template_body,
             payload.spawn_interval_seconds,
             payload.spawn_run_count,
+            next_fire_at,
             payload.loop_iteration_cap,
             payload.loop_completion_marker,
             payload.preferred_skill,

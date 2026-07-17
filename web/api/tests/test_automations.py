@@ -6,6 +6,7 @@ Public seam pre-agreed by issue: binding-scoped HTTP CRUD API tests.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any, cast
 
@@ -116,6 +117,38 @@ class TestCreate:
         body = resp.json()
         assert body["spawn_run_count"] == 10
         assert body["mode"] == "spawn"
+
+    def test_create_spawn_start_immediately_default(self, client):
+        # Issue #462: omitting start_delay_seconds leaves next_fire_at NULL so
+        # the first issue fires on the next tick (today's default behaviour).
+        payload = _spawn_payload()
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 201
+        assert resp.json()["next_fire_at"] is None
+
+    def test_create_spawn_with_initial_delay(self, client):
+        # Issue #462: start_delay_seconds sets next_fire_at ≈ now + delay.
+        before = datetime.now(UTC)
+        payload = _spawn_payload(start_delay_seconds=3600)
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 201
+        next_fire_at = resp.json()["next_fire_at"]
+        assert next_fire_at is not None
+        fire_dt = datetime.fromisoformat(next_fire_at)
+        expected = before + timedelta(seconds=3600)
+        assert abs((fire_dt - expected).total_seconds()) < 60
+
+    def test_reject_start_delay_on_loop(self, client):
+        # Issue #462: start_delay_seconds is meaningless for loop mode.
+        payload = _loop_payload(start_delay_seconds=3600)
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 422
+        assert "start_delay_seconds" in str(resp.json()).lower()
+
+    def test_reject_zero_start_delay(self, client):
+        payload = _spawn_payload(start_delay_seconds=0)
+        resp = client.post("/api/bindings/symphony/automations", json=payload)
+        assert resp.status_code == 422
 
     def test_create_minimal_loop_coding_binding(self, client):
         payload = _loop_payload()
