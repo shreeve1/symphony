@@ -56,6 +56,7 @@ bindings:
     remote:
       host: 100.95.224.218 # n8n Tailscale IP; bare 'n8n' resolves to netbird addr where sshd refuses
       user: itadmin
+      host_alias: n8n # ADR-0039 display-only sidebar grouping label
   - name: ai-web-chat
     plane_project_id: ai-web-chat
     tracker: podium
@@ -92,3 +93,19 @@ bindings:
     landing:
       mode: local
     pi_mode: rpc
+  - name: n8n-dotfiles
+    plane_project_id: n8n-dotfiles
+    tracker: podium
+    type: coding
+    repo_path: /home/itadmin/dotfiles
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
+    remote:
+      host: 100.95.224.218 # n8n Tailscale IP; bare 'n8n' resolves to netbird addr where sshd refuses
+      user: itadmin
+      host_alias: n8n # ADR-0039 display-only sidebar grouping label
