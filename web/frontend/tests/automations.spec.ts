@@ -132,6 +132,7 @@ test.describe("Automations page", () => {
 
 	test("creates a new spawn automation", async ({ page, problems }) => {
 		const created: object[] = [];
+		let postedInterval: number | undefined;
 		await page.route("**/api/bindings/homelab/automations", (route) => {
 			if (route.request().method() === "GET") {
 				route.fulfill({
@@ -141,6 +142,7 @@ test.describe("Automations page", () => {
 				});
 			} else if (route.request().method() === "POST") {
 				const body = JSON.parse(route.request().postData() ?? "{}");
+				postedInterval = body.spawn_interval_seconds;
 				const row = {
 					id: 10,
 					...body,
@@ -172,13 +174,15 @@ test.describe("Automations page", () => {
 		await page
 			.getByTestId("automation-form-body")
 			.fill("Run checks every night.");
-		await page.getByTestId("automation-form-interval").fill("7200");
+		// Interval is entered in minutes; the payload converts to seconds.
+		await page.getByTestId("automation-form-interval").fill("120");
 		// Leave count empty → unlimited.
 
 		// Submit.
 		await page.getByTestId("automation-form-submit").click();
 		await expect(page.getByTestId("automation-form")).toBeHidden();
 		await expect(page.getByTestId("automation-row")).toHaveCount(1);
+		expect(postedInterval).toBe(7200); // 120 min × 60
 
 		expectCleanConsole(problems);
 	});

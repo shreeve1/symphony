@@ -56,7 +56,8 @@ export default function AutomationsPage() {
 	const [mode, setMode] = useState<"spawn" | "loop">("spawn");
 	const [title, setTitle] = useState("");
 	const [body, setBody] = useState("");
-	const [intervalSec, setIntervalSec] = useState("");
+	// Operator-facing interval is in minutes; the DB column stays seconds.
+	const [intervalMin, setIntervalMin] = useState("");
 	const [runCount, setRunCount] = useState("");
 	const [iterCap, setIterCap] = useState("");
 	const [marker, setMarker] = useState("DONE.md");
@@ -179,7 +180,7 @@ export default function AutomationsPage() {
 		setMode("spawn");
 		setTitle("");
 		setBody("");
-		setIntervalSec("");
+		setIntervalMin("");
 		setRunCount("");
 		setIterCap("");
 		setMarker("DONE.md");
@@ -196,7 +197,11 @@ export default function AutomationsPage() {
 		setMode(a.mode);
 		setTitle(a.template_title);
 		setBody(a.template_body);
-		setIntervalSec(a.spawn_interval_seconds?.toString() ?? "");
+		setIntervalMin(
+			a.spawn_interval_seconds != null
+				? (a.spawn_interval_seconds / 60).toString()
+				: "",
+		);
 		setRunCount(a.spawn_run_count?.toString() ?? "");
 		setIterCap(a.loop_iteration_cap?.toString() ?? "");
 		setMarker(a.loop_completion_marker);
@@ -218,8 +223,9 @@ export default function AutomationsPage() {
 			template_body: body.trim(),
 		};
 		if (mode === "spawn") {
-			const secs = parseInt(intervalSec, 10);
-			if (!isNaN(secs) && secs > 0) payload.spawn_interval_seconds = secs;
+			const mins = parseInt(intervalMin, 10);
+			if (!isNaN(mins) && mins > 0)
+				payload.spawn_interval_seconds = mins * 60;
 			payload.spawn_run_count = runCount.trim() ? parseInt(runCount, 10) : null;
 		} else {
 			const cap = parseInt(iterCap, 10);
@@ -334,15 +340,15 @@ export default function AutomationsPage() {
 							<div className="flex gap-3">
 								<label className="block flex-1 space-y-1">
 									<span className="text-xs font-medium text-muted-foreground">
-										Interval (seconds)
+										Interval (minutes)
 									</span>
 									<input
 										data-testid="automation-form-interval"
 										type="number"
 										min="1"
 										required
-										value={intervalSec}
-										onChange={(e) => setIntervalSec(e.target.value)}
+										value={intervalMin}
+										onChange={(e) => setIntervalMin(e.target.value)}
 										className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
 									/>
 								</label>
