@@ -52,6 +52,10 @@ class PodiumBindingScaffoldRequest:
     remote_host: str | None = None
     remote_user: str | None = None
     remote_identity: str | None = None
+    # Display-only sidebar grouping label (ADR-0039). When omitted, the scaffold
+    # auto-detects an existing binding on the same host+user and backfills a
+    # shared alias onto both bindings so they collapse under one sidebar header.
+    remote_host_alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,8 @@ def scaffold_podium_binding(
         raise ValueError("pi_mode must be 'one-shot' or 'rpc'")
 
     is_remote = request.remote_host is not None or request.remote_user is not None
+    host_alias: str | None = None
+    backfill_targets: list[str] = []
     if is_remote:
         # Mirror config.py remote v1 constraints so scaffolding fails fast
         # rather than producing a bindings.yml entry config.py would reject.
@@ -103,6 +109,11 @@ def scaffold_podium_binding(
             raise ValueError("remote bindings require default_agent 'pi' (v1)")
         if request.pi_mode != "rpc":
             raise ValueError("remote bindings require pi_mode 'rpc'")
+        # Resolve the display-only sidebar grouping alias (ADR-0039) against the
+        # bindings already on this host+user, and note which of them need the
+        # alias backfilled so siblings collapse under one sidebar header.
+        existing = _read_bindings_list(bindings_path)
+        host_alias, backfill_targets = _resolve_host_alias(request, existing)
 
     with connect(db_path) as connection:
         _ensure_schema(connection)
@@ -130,8 +141,13 @@ def scaffold_podium_binding(
         }
         if request.remote_identity is not None:
             remote["identity"] = request.remote_identity
+        if host_alias is not None:
+            remote["host_alias"] = host_alias
         binding["remote"] = remote
     _append_binding(bindings_path, binding)
+    if host_alias is not None:
+        for target in backfill_targets:
+            _backfill_remote_host_alias(bindings_path, target, host_alias)
     return PodiumBindingScaffoldResult(
         binding_name=request.name,
         db_path=db_path,
@@ -324,6 +340,134 @@ def _insert_binding_row(
         ),
     )
     connection.commit()
+
+
+def _read_bindings_list(path: Path) -> list[dict[str, Any]]:
+    """Return the bindings list from bindings.yml, or [] when absent/empty."""
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if raw is None:
+        return []
+    if not isinstance(raw, dict) or not isinstance(raw.get("bindings"), list):
+        raise ValueError(f"{path}: expected mapping with bindings list")
+    return [b for b in raw["bindings"] if isinstance(b, dict)]
+
+
+def _resolve_host_alias(
+    request: PodiumBindingScaffoldRequest, existing: list[dict[str, Any]]
+) -> tuple[str | None, list[str]]:
+    """Resolve the display-only sidebar grouping alias for a remote binding.
+
+    Returns ``(host_alias, backfill_targets)`` (ADR-0039):
+
+    - Explicit ``remote_host_alias`` on the request wins; every sibling binding
+      on the same host+user that lacks it (or differs) is a backfill target.
+    - Otherwise, if any sibling on the same host+user already carries a
+      ``host_alias``, reuse it; siblings missing it are backfill targets.
+    - Otherwise, if siblings exist but none is aliased, derive an alias from a
+      sibling's ``display_name``/``name`` (lowercased) and backfill it onto all
+      of them so they collapse under one header.
+    - Otherwise (no sibling on this host) return ``(None, [])`` — a solo remote
+      binding needs no alias; the existing frontend fallback handles it.
+    """
+
+    def _siblings() -> list[dict[str, Any]]:
+        matches = []
+        for b in existing:
+            remote = b.get("remote")
+            if not isinstance(remote, dict):
+                continue
+            if (
+                remote.get("host") == request.remote_host
+                and remote.get("user") == request.remote_user
+            ):
+                matches.append(b)
+        return matches
+
+    siblings = _siblings()
+
+    if request.remote_host_alias is not None:
+        alias = request.remote_host_alias.lower()
+    else:
+        if not siblings:
+            return None, []
+        alias = None
+        for b in siblings:
+            remote = b["remote"]
+            if isinstance(remote, dict) and remote.get("host_alias"):
+                alias = str(remote["host_alias"]).lower()
+                break
+        if alias is None:
+            source = siblings[0]
+            alias = str(source.get("display_name") or source.get("name")).lower()
+
+    backfill_targets = [
+        str(b["name"])
+        for b in siblings
+        if not (
+            isinstance(b.get("remote"), dict)
+            and str(b["remote"].get("host_alias") or "").lower() == alias
+        )
+    ]
+    return alias, backfill_targets
+
+
+def _backfill_remote_host_alias(path: Path, name: str, host_alias: str) -> None:
+    """Insert ``remote.host_alias`` into an existing binding's ``remote:`` block.
+
+    Byte-preserving, like ``_append_binding``: a load/dump rewrite would flatten
+    indentation and drop comments (the live n8n block carries the NetBird sshd
+    caveat), turning a one-line add into a whole-file diff that trips restart
+    pre-sanity. Instead this scans for the named binding's ``remote:`` block and
+    splices one ``host_alias:`` line under it, matching the block's key indent.
+    Callers backfill only when merging sibling bindings under one sidebar header
+    (ADR-0039).
+    """
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    name_re = re.compile(r"^(\s*)-\s+name:\s*(.+?)\s*$")
+    item_indent: str | None = None
+    in_target = False
+    remote_indent: str | None = None
+    key_indent: str | None = None
+    insert_at: int | None = None
+    for i, line in enumerate(lines):
+        m = name_re.match(line)
+        if m:
+            if in_target and remote_indent is not None:
+                insert_at = i
+                break
+            item_indent = m.group(1)
+            in_target = m.group(2).strip().strip("'\"") == name
+            remote_indent = None
+            continue
+        if not in_target:
+            continue
+        if remote_indent is None:
+            rm = re.match(r"^(\s*)remote:\s*$", line)
+            if rm and (item_indent is None or len(rm.group(1)) > len(item_indent)):
+                remote_indent = rm.group(1)
+            continue
+        if line.strip() == "":
+            continue
+        cur_indent = line[: len(line) - len(line.lstrip())]
+        if len(cur_indent) <= len(remote_indent):
+            insert_at = i
+            break
+        if re.match(r"^\s*host_alias:", line):
+            return  # already present
+        key_indent = cur_indent
+        insert_at = i + 1
+    if remote_indent is None:
+        raise ValueError(f"binding {name} is not remote; cannot set host_alias")
+    if key_indent is None:
+        key_indent = remote_indent + "  "
+    if insert_at is None:
+        insert_at = len(lines)
+    if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
+        lines[insert_at - 1] = lines[insert_at - 1] + "\n"
+    lines.insert(insert_at, f"{key_indent}host_alias: {host_alias}\n")
+    path.write_text("".join(lines), encoding="utf-8")
 
 
 def _append_binding(path: Path, binding: dict[str, Any]) -> None:

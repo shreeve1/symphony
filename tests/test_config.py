@@ -530,6 +530,45 @@ bindings:
     assert binding.remote.host == "100.95.224.218"
     assert binding.remote.user == "itadmin"
     assert binding.remote.identity == "~/.ssh/id_remote"
+    assert binding.remote.host_alias is None
+
+
+def test_bindings_yml_parses_remote_host_alias(tmp_path: Path):
+    # host_alias is a display-only grouping label (ADR-0039); it parses onto
+    # RemotePolicy without touching host/user (the SSH target).
+    bindings_path = tmp_path / "bindings.yml"
+    bindings_path.write_text(
+        """
+bindings:
+  - name: n8n-dotfiles
+    plane_project_id: project-b
+    repo_path: /home/itadmin/dotfiles
+    base_branch: main
+    default_agent: pi
+    type: coding
+    pi_mode: rpc
+    tracker: podium
+    remote:
+      host: 100.95.224.218
+      user: itadmin
+      host_alias: n8n
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    binding = SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.example.test",
+            "PLANE_API_KEY": "env-secret",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PI_BIN": "/usr/local/bin/pi",
+            "SYMPHONY_BINDINGS_PATH": str(bindings_path),
+        }
+    ).bindings[0]
+
+    assert binding.remote is not None
+    assert binding.remote.host == "100.95.224.218"
+    assert binding.remote.host_alias == "n8n"
 
 
 def test_bindings_yml_without_remote_block_is_local(tmp_path: Path):

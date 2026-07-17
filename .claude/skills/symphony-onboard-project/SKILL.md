@@ -10,6 +10,7 @@ Coordinate one new Podium-backed binding from local repo to smoke-tested dispatc
 ## Workflow
 
 1. Run `symphony-binding-scaffold` to create the Podium binding row and append `tracker: podium` to `bindings.yml`.
+   - **Adding another folder on an existing remote host** (multiple projects under one host): this is supported and needs no data-model change. Give the new binding a **distinct `name`** (binding `name` is the only uniqueness constraint — reusing it is the sole hard blocker, so do not treat a matching host as a collision) and reuse the same `remote_host`/`remote_user`. The scaffold auto-detects the shared host and backfills a display-only `remote_host_alias` onto every binding on it so they group under **one** sidebar header (ADR-0039). Example: `n8n` → `/home/itadmin/itastack` and `n8n-dotfiles` → `/home/itadmin/dotfiles` both group under `N8N`.
 2. **Branch on `binding_type` (ADR-0011):**
    - **`infra`**: run `symphony-workflow-author` to create or replace the repository `WORKFLOW.md` (mandatory autonomy policy for infra bindings).
    - **`coding`**: skip `symphony-workflow-author` — coding bindings ignore `WORKFLOW.md`. Instead, *flag* (warn, do not block) if the repo has no `CLAUDE.md`/`AGENTS.md`: safety and repo conventions are the repo's responsibility, not Symphony's.

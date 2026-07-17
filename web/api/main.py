@@ -948,13 +948,20 @@ def list_bindings(
         binding["repo_name"] = repo_path.name if repo_path is not None else None
         if binding["is_remote"]:
             remote = _remote_for_binding(name)
-            host = _host_label(remote.host) if remote and remote.host else name
-            # Show display_name when host is a raw IP (operator-friendly)
-            try:
-                ipaddress.ip_address(host)
-                binding["host"] = str(binding["display_name"])
-            except ValueError:
-                binding["host"] = host
+            # host_alias is a display-only grouping label (ADR-0039): when set it
+            # feeds the sidebar group key directly, letting sibling bindings on a
+            # raw-IP host collapse under one header instead of falling back to
+            # each binding's own display_name.
+            if remote and remote.host_alias:
+                binding["host"] = _host_label(remote.host_alias)
+            else:
+                host = _host_label(remote.host) if remote and remote.host else name
+                # Show display_name when host is a raw IP (operator-friendly)
+                try:
+                    ipaddress.ip_address(host)
+                    binding["host"] = str(binding["display_name"])
+                except ValueError:
+                    binding["host"] = host
         else:
             binding["host"] = _LOCAL_HOSTNAME
     return result
@@ -2485,6 +2492,7 @@ def _remote_for_binding(name: str) -> RemotePolicy | None:
         host=str(remote.get("host") or ""),
         user=str(remote.get("user") or ""),
         identity=remote.get("identity"),
+        host_alias=remote.get("host_alias"),
     )
 
 

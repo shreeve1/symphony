@@ -192,6 +192,53 @@ def test_remote_bindings_on_same_host_share_group(monkeypatch, tmp_path: Path) -
     assert hosts["itastack2"] == "n8n"
 
 
+def test_remote_ip_host_bindings_group_by_host_alias(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # ADR-0039: when the SSH host is a raw IP, the display_name fallback splits
+    # sibling bindings into separate sidebar groups. A shared remote.host_alias
+    # collapses them back under one header without changing the SSH target.
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+
+    first = {
+        "name": "n8n",
+        "repo_path": "/home/itadmin/itastack",
+        "base_branch": "main",
+        "type": "coding",
+        "pi_mode": "rpc",
+        "default_agent": "pi",
+        "tracker": "podium",
+        "remote": {"user": "itadmin", "host": "100.95.224.218", "host_alias": "n8n"},
+    }
+    second = {
+        **first,
+        "name": "n8n-dotfiles",
+        "repo_path": "/home/itadmin/dotfiles",
+    }
+
+    with TestClient(app) as client:
+        login(client)
+        monkeypatch.setattr(main, "_bindings_override", [first, second])
+        with main.connect(db_path) as connection:
+            for name in ("n8n", "n8n-dotfiles"):
+                connection.execute(
+                    "INSERT OR IGNORE INTO binding(name, display_name, sort_order) "
+                    "VALUES (?, ?, 99)",
+                    (name, name),
+                )
+            connection.commit()
+        hosts = {
+            b["name"]: b["host"]
+            for b in client.get("/api/bindings").json()
+            if b["name"] in ("n8n", "n8n-dotfiles")
+        }
+
+    # Both raw-IP bindings share host_alias=n8n -> one "n8n" group.
+    assert hosts["n8n"] == "n8n"
+    assert hosts["n8n-dotfiles"] == "n8n"
+
+
 def test_concurrent_reads_do_not_cross_threads(monkeypatch, tmp_path: Path) -> None:
     # Regression: FastAPI runs the sync get_connection dependency and the sync
     # endpoint in different anyio threadpool threads. Without

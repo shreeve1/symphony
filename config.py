@@ -83,6 +83,7 @@ class RemotePolicy:
     host: str
     user: str
     identity: str | None = None
+    host_alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -645,7 +646,17 @@ def _remote_from_mapping(raw: Any, *, prefix: str) -> RemotePolicy | None:
     identity = raw.get("identity")
     if identity is not None and not isinstance(identity, str):
         raise ConfigError(f"{prefix}.identity: expected string")
-    return RemotePolicy(host=host, user=user, identity=identity or None)
+    # host_alias is a display-only sidebar grouping label (ADR-0039); it never
+    # feeds SSH dispatch, skill-sync host grouping, or worktree paths.
+    host_alias = raw.get("host_alias")
+    if host_alias is not None and not isinstance(host_alias, str):
+        raise ConfigError(f"{prefix}.host_alias: expected string")
+    return RemotePolicy(
+        host=host,
+        user=user,
+        identity=identity or None,
+        host_alias=host_alias or None,
+    )
 
 
 def _contract_from_mapping(

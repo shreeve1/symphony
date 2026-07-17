@@ -24,6 +24,7 @@ Create a new Symphony binding for the Podium era.
    - `pi_mode` — `rpc` or `one-shot` (default `rpc`, the accepted ADR-0010 standard). Written only for `pi` bindings; `one-shot` selects the legacy `pi --print` rollback path. Ignored for `claude` bindings.
    - `display_name` — optional; defaults to `name`.
    - `remote_host` / `remote_user` — optional; set both to make this a remote binding (ADR-0012). Use the host name (for example `n8n`), not an IP that requires reverse DNS for display. Writes a `remote:` block to `bindings.yml`, dispatches over SSH, and surfaces the frontend host grouping automatically. `remote_identity` is an optional SSH key path. Remote bindings require `binding_type=coding`, `default_agent=pi`, `pi_mode=rpc` (local coding parity, mirrored from `config.py`); the scaffold raises `ValueError` otherwise.
+   - `remote_host_alias` — optional, **display-only** sidebar grouping label (ADR-0039). **Adding a second folder on an existing host** (e.g. `/home/itadmin/dotfiles` alongside `/home/itadmin/itastack` on the n8n host) works today: pick a distinct binding `name` (the only uniqueness constraint) and reuse the same `remote_host`/`remote_user`. SSH dispatch, worktrees, and skill-sync are all per-binding, so there is no collision. **Grouping is the one thing to get right:** when the SSH host is a raw IP (like the n8n Tailscale IP `100.95.224.218`, since bare `n8n` hits NetBird where sshd refuses), the sidebar otherwise falls back to each binding's `display_name` and splits siblings into separate headers. The scaffold **auto-detects** an existing binding on the same `remote_host`+`remote_user` and **backfills** a shared lowercase alias onto both the existing and the new binding so they collapse under one header. Pass `remote_host_alias` to override the derived value; omit it for a solo remote binding (no alias is written — the frontend fallback handles a lone host). The alias never affects SSH dispatch, skill-sync host grouping, worktree paths, or the Podium DB.
 2. Run `scaffold_podium_binding(...)`. It takes a `PodiumBindingScaffoldRequest` plus required keyword-only `db_path` and `bindings_path`:
 
    ```bash
@@ -41,9 +42,11 @@ Create a new Symphony binding for the Podium era.
            binding_type="coding",   # 'infra' | 'coding'
            pi_mode="rpc",           # 'rpc' (default) | 'one-shot'; pi bindings only
            # Remote binding (ADR-0012): set host+user, require RPC pi coding.
-           # remote_host="n8n",
+           # remote_host="100.95.224.218",
            # remote_user="itadmin",
            # remote_identity=None,  # optional SSH key path
+           # remote_host_alias=None,  # ADR-0039 display-only group label;
+           #                          # auto-derived+backfilled for a shared host
        ),
        db_path=resolve_db_path(),
        bindings_path=Path("/home/james/symphony/bindings.yml"),
