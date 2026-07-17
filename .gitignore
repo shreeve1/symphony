@@ -39,3 +39,7 @@ worktrees/
 # /youtube skill pulls — transcripts + yt-dlp metadata are regenerable from the URL.
 # Only the curated `transcript-extract.md` and `web-research.md` per slug are kept.
 youtube/*/raw/
+
+# Wiki maintenance counter — runtime state incremented on every wiki write.
+# Lives on disk for the gate to read; not part of the wiki content surface.
+wiki/.gate-state.json
