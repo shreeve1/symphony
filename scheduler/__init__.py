@@ -212,6 +212,12 @@ def _fixed_now(value: datetime) -> Callable[[], datetime]:
     return now
 
 
+def _norm_ws(text: str) -> str:
+    """Collapse all whitespace runs to single spaces and strip ends."""
+
+    return re.sub(r"\s+", " ", text).strip()
+
+
 # Cap the blocked-reason text sent to the Telegram notifier, leaving headroom
 # under Telegram's 4096-char limit for the name/identifier/URL wrapping.
 NOTIFY_REASON_MAX_CHARS = 2000
@@ -1439,7 +1445,21 @@ async def _classify_terminal(
         )
 
     if question:
-        question_body = f"**Symphony question:**\n\n{question}"
+        # ADR-0037: surface the full natural turn (fact-check + recommendation +
+        # any prose the agent wrote around the question), not just the isolated
+        # question block — the question-park branch was the one terminal path
+        # ADR-0037 missed, so parked questions dropped their surrounding prose to
+        # the "Agent stdout" context and never reached the comment (issue 474).
+        # ``summary`` (the captured turn) already contains the question text with
+        # its fences stripped; append a highlighted footer so the ask stays
+        # scannable. Compare with whitespace collapsed on both sides so a
+        # question-only turn isn't double-posted just because
+        # _capture_natural_turn collapsed blank-line runs that _extract_question
+        # preserved.
+        if summary and _norm_ws(summary) != _norm_ws(question):
+            question_body = f"{summary}\n\n**Symphony question:**\n\n{question}"
+        else:
+            question_body = f"**Symphony question:**\n\n{question}"
         await _finish_run_record(
             adapter,
             run_id,
