@@ -188,6 +188,17 @@ class PodiumTrackerAdapter:
             is_todo = self.issue_is_state(issue, TrackerRole.STATE_TODO)
             is_review = self.issue_is_state(issue, TrackerRole.STATE_IN_REVIEW)
             comments_md = str(issue.get("comments_md") or "")
+            loop_enabled = issue.get("loop_automation_enabled")
+            loop_terminal = (
+                LOOP_COMPLETE_PREFIX in comments_md or LOOP_CAP_PREFIX in comments_md
+            )
+            if (
+                is_todo
+                and loop_enabled is not None
+                and not loop_enabled
+                and not loop_terminal
+            ):
+                continue
             reland_unconsumed = len(RELAND_PENDING_RE.findall(comments_md)) > len(
                 RELAND_DONE_RE.findall(comments_md)
             )
@@ -242,10 +253,7 @@ class PodiumTrackerAdapter:
                     locks=tuple(issue.get("locks") or ()),
                     review_dispatch=review_dispatch,
                     origin=str(issue.get("origin") or "operator"),
-                    fresh_context=(
-                        str(issue.get("external_id") or "").startswith("automation:")
-                        and str(issue.get("external_id") or "").endswith(":loop")
-                    ),
+                    fresh_context=bool(loop_enabled),
                 )
             )
         if candidate_issue_ids:
@@ -293,17 +301,25 @@ class PodiumTrackerAdapter:
             if self.binding_name is not None:
                 rows = connection.execute(
                     """
-                    SELECT * FROM issue
-                    WHERE binding_name = ?
-                    ORDER BY created_at ASC, id ASC
+                    SELECT issue.*, automation.enabled AS loop_automation_enabled
+                    FROM issue
+                    LEFT JOIN automation
+                      ON automation.mode = 'loop'
+                     AND issue.external_id = 'automation:' || automation.id || ':loop'
+                    WHERE issue.binding_name = ?
+                    ORDER BY issue.created_at ASC, issue.id ASC
                     """,
                     (self.binding_name,),
                 ).fetchall()
             else:
                 rows = connection.execute(
                     """
-                    SELECT * FROM issue
-                    ORDER BY created_at ASC, id ASC
+                    SELECT issue.*, automation.enabled AS loop_automation_enabled
+                    FROM issue
+                    LEFT JOIN automation
+                      ON automation.mode = 'loop'
+                     AND issue.external_id = 'automation:' || automation.id || ':loop'
+                    ORDER BY issue.created_at ASC, issue.id ASC
                     """
                 ).fetchall()
         return [self._row_to_issue(row) for row in rows]

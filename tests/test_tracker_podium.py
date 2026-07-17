@@ -680,6 +680,16 @@ async def test_loop_automation_redispatches_one_issue_then_parks_at_cap(tmp_path
 
     with sqlite3.connect(db_path) as connection:
         connection.execute(
+            "UPDATE automation SET enabled = 0 WHERE id = ?", (automation_id,)
+        )
+    assert await adapter.list_candidates() == []
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE automation SET enabled = 1 WHERE id = ?", (automation_id,)
+        )
+    assert (await adapter.list_candidates())[0].fresh_context is True
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
             "UPDATE issue SET state = 'in_review' WHERE id = ?", (issue["id"],)
         )
     assert (
@@ -764,6 +774,13 @@ async def test_loop_automation_done_marker_parks_in_review(tmp_path: Path):
     assert issue["state"] == "in_review"
     assert LOOP_COMPLETE_PREFIX in issue["comments_md"]
     assert enabled == 0
+
+    # A later operator/ADR-0014 redispatch is not another loop iteration and
+    # must recover normal session continuity.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("UPDATE issue SET state = 'todo' WHERE id = ?", (issue_id,))
+    candidate = (await adapter.list_candidates())[0]
+    assert candidate.fresh_context is False
 
 
 @pytest.mark.asyncio

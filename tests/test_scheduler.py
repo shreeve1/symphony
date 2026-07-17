@@ -6899,6 +6899,78 @@ async def test_reconcile_loop_automations_checks_marker_for_local_coding(
     assert adapter.marker_found is True
 
 
+@pytest.mark.parametrize(
+    ("done_marker", "expected_heading"),
+    [
+        (True, "### Symphony Loop Complete"),
+        (False, "### Symphony Loop Cap Reached"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_reconcile_loop_automations_parks_done_and_cap_in_review(
+    tmp_path: Path, done_marker: bool, expected_heading: str
+) -> None:
+    from automation import loop_iteration_marker
+    from tracker_podium import PodiumTrackerAdapter
+    from web.api.issue_create import insert_issue_row
+    from web.api.schema import SCHEMA_SQL
+
+    config = _config(tmp_path)
+    binding = _local_coding_binding(config)
+    db_path = tmp_path / "podium.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES (?)", (binding.name,))
+        automation_id = connection.execute(
+            """
+            INSERT INTO automation(
+              binding_name, mode, enabled, template_title, template_body,
+              loop_iteration_cap, loop_completion_marker, created_at, updated_at
+            ) VALUES (?, 'loop', 1, 'Loop', 'Task', 1, 'DONE.md', ?, ?)
+            """,
+            (binding.name, "2026-07-17T00:00:00+00:00", "2026-07-17T00:00:00+00:00"),
+        ).lastrowid
+        assert automation_id is not None
+        issue_id = insert_issue_row(
+            connection,
+            binding_name=binding.name,
+            title="Loop",
+            description="Task",
+            base_branch=binding.base_branch,
+            comments_md=loop_iteration_marker(1),
+            external_id=f"automation:{automation_id}:loop",
+            worktree_active=True,
+            created_at="2026-07-17T00:00:00+00:00",
+        )
+        connection.execute(
+            "UPDATE issue SET state = 'in_review' WHERE id = ?", (issue_id,)
+        )
+
+    marker = binding.repo_path / "worktrees" / binding.name / str(issue_id) / "DONE.md"
+    if done_marker:
+        marker.parent.mkdir(parents=True)
+        marker.touch()
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name=binding.name)
+
+    assert (
+        await scheduler._reconcile_loop_automations(
+            config, cast(TrackerAdapter, adapter), binding=binding
+        )
+        == 1
+    )
+    issue = await adapter.get_issue(str(issue_id))
+    with sqlite3.connect(db_path) as connection:
+        enabled = connection.execute(
+            "SELECT enabled FROM automation WHERE id = ?", (automation_id,)
+        ).fetchone()[0]
+    assert issue["state"] == "in_review"
+    assert issue["auto_land"] is False
+    assert expected_heading in issue["comments_md"]
+    assert enabled == 0
+    if done_marker:
+        assert marker.is_file()
+
+
 @pytest.mark.asyncio
 async def test_reconcile_loop_automations_rejects_unsupported_bindings(
     tmp_path: Path,
