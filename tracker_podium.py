@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from automation import compute_next_fire, render_template
 from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
 from skill_mode_map import mode_for_skill
 from tracker_contract import (
@@ -597,6 +598,84 @@ class PodiumTrackerAdapter:
                     )
             connection.commit()
         return len(rows)
+
+    async def fire_due_spawn_automations(
+        self,
+        *,
+        now: datetime,
+        base_branch: str,
+    ) -> int:
+        """Mint due spawn issues and advance their automations atomically."""
+        if self.binding_name is None:
+            return 0
+        now_iso = now.isoformat()
+        fired_count = 0
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM automation
+                WHERE binding_name = ? AND mode = 'spawn' AND enabled = 1
+                  AND (next_fire_at IS NULL OR next_fire_at <= ?)
+                ORDER BY id
+                """,
+                (self.binding_name, now_iso),
+            ).fetchall()
+            for row in rows:
+                automation_id = int(row["id"])
+                occurrences = int(row["occurrences_fired"] or 0)
+                run_count = row["spawn_run_count"]
+                if run_count is not None and occurrences >= int(run_count):
+                    connection.execute(
+                        "UPDATE automation SET enabled = 0, updated_at = ? WHERE id = ?",
+                        (now_iso, automation_id),
+                    )
+                    continue
+
+                interval = int(row["spawn_interval_seconds"] or 0)
+                ordinal = occurrences + 1
+                title = render_template(
+                    str(row["template_title"]), self.binding_name, interval
+                )
+                description = render_template(
+                    str(row["template_body"]), self.binding_name, interval
+                )
+                connection.execute(
+                    """
+                    INSERT INTO issue(
+                      binding_name, title, description, state, priority,
+                      base_branch, comments_md, context_md, external_id, origin,
+                      blocked_by, locks, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'todo', 'med', ?, '', '', ?, 'operator',
+                              '[]', '[]', ?, ?)
+                    """,
+                    (
+                        self.binding_name,
+                        title,
+                        description,
+                        base_branch,
+                        f"automation:{automation_id}:{ordinal}",
+                        now_iso,
+                        now_iso,
+                    ),
+                )
+                next_fire_at = compute_next_fire(
+                    interval,
+                    current_next_fire_at=row["next_fire_at"],
+                    now=now,
+                )
+                enabled = run_count is None or ordinal < int(run_count)
+                connection.execute(
+                    """
+                    UPDATE automation
+                    SET occurrences_fired = ?, next_fire_at = ?, enabled = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (ordinal, next_fire_at, enabled, now_iso, automation_id),
+                )
+                fired_count += 1
+            connection.commit()
+        return fired_count
 
     async def prune_run_logs(
         self,

@@ -95,6 +95,32 @@ async def reconcile_orphaned_runs(
     return reaped
 
 
+async def fire_spawn_automations(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    binding: ProjectBinding | None = None,
+) -> int:
+    """Fire due Podium spawn automations; other trackers are a no-op."""
+    fire = getattr(adapter, "fire_due_spawn_automations", None)
+    if not callable(fire):
+        return 0
+    resolved_binding = binding or binding_from_config(config)
+    if resolved_binding is None:
+        return 0
+    fired = int(
+        await maybe_await(fire(now=now(), base_branch=resolved_binding.base_branch))
+    )
+    if fired:
+        LOGGER.info(
+            "spawn_automations_fired binding=%s count=%d",
+            resolved_binding.name,
+            fired,
+        )
+    return fired
+
+
 async def patrol_run_retention(
     config: SymphonyConfig,
     adapter: TrackerAdapter,

@@ -112,6 +112,7 @@ async def run_loop(
         LOG_RETENTION_INTERVAL,
         TickResult,
         _dispatch_one,
+        _fire_spawn_automations,
         _fixed_now,
         _run_log_retention,
         _run_patrol_run_retention,
@@ -159,6 +160,21 @@ async def run_loop(
                 config,
                 adapter,
                 **retention_kwargs,
+            )
+
+        try:
+            await _fire_spawn_automations(
+                config,
+                adapter,
+                now=_fixed_now(now_dt),
+                binding=loop_binding,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "automation_fire_failed binding=%s error=%s",
+                loop_binding.name if loop_binding else "",
+                exc,
+                exc_info=True,
             )
 
         # Reap completed tasks and propagate their log lines.

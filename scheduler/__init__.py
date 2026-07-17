@@ -2400,6 +2400,7 @@ from .schedule import (  # noqa: E402
 
 # Re-exported reconcile functions (moved to .reconcile module for seam isolation).
 from .reconcile import (  # noqa: E402,F401  (re-exports: scheduler._NAME is the public test/patch surface)
+    fire_spawn_automations as _fire_spawn_automations,
     reconcile_pending_review as _reconcile_pending_review,
     reconcile_stale_running as _reconcile_stale_running,
     reconcile_startup as _reconcile_startup,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 
@@ -41,6 +42,43 @@ def _seed_db(
         return cursor.lastrowid
     finally:
         connection.close()
+
+
+def _seed_spawn_automation(
+    path: Path,
+    *,
+    enabled: bool = True,
+    mode: str = "spawn",
+    run_count: int | None = None,
+    occurrences: int = 0,
+    next_fire_at: str | None = None,
+    interval: int = 3600,
+) -> int:
+    with sqlite3.connect(path) as connection:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT OR IGNORE INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO automation(
+              binding_name, mode, enabled, template_title, template_body,
+              spawn_interval_seconds, spawn_run_count, occurrences_fired,
+              next_fire_at, loop_iteration_cap, created_at, updated_at
+            ) VALUES ('test', ?, ?, 'Check {binding}', 'Every {interval}s',
+                      ?, ?, ?, ?, ?, '2026-07-17T00:00:00+00:00',
+                      '2026-07-17T00:00:00+00:00')
+            """,
+            (
+                mode,
+                enabled,
+                interval,
+                run_count,
+                occurrences,
+                next_fire_at,
+                3 if mode == "loop" else None,
+            ),
+        )
+        assert cursor.lastrowid is not None
+        return cursor.lastrowid
 
 
 @pytest.mark.asyncio
@@ -530,3 +568,104 @@ async def test_patrol_terminal_triggers_pruning(tmp_path: Path) -> None:
     # latest_run_id should point to the newest surviving run
     issue = await adapter.get_issue(str(issue_id))
     assert int(issue["latest_run_id"]) == run_ids[-1]
+
+
+@pytest.mark.asyncio
+async def test_spawn_automation_mints_independent_issues_and_advances(tmp_path: Path):
+    db_path = tmp_path / "podium.db"
+    automation_id = _seed_spawn_automation(db_path)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+    noon = datetime(2026, 7, 17, 12, tzinfo=UTC)
+
+    assert (
+        await adapter.fire_due_spawn_automations(now=noon, base_branch="develop") == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        first = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert first["title"] == "Check test"
+    assert first["description"] == "Every 3600s"
+    assert first["base_branch"] == "develop"
+    assert first["external_id"] == f"automation:{automation_id}:1"
+    assert [candidate.id for candidate in await adapter.list_candidates()] == [
+        str(first["id"])
+    ]
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'blocked' WHERE id = ?", (first["id"],)
+        )
+    assert (
+        await adapter.fire_due_spawn_automations(
+            now=datetime(2026, 7, 17, 13, tzinfo=UTC), base_branch="develop"
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        automation = dict(connection.execute("SELECT * FROM automation").fetchone())
+        issues = connection.execute("SELECT * FROM issue ORDER BY id").fetchall()
+    assert automation["occurrences_fired"] == 2
+    assert automation["enabled"] == 1
+    assert [row["external_id"] for row in issues] == [
+        f"automation:{automation_id}:1",
+        f"automation:{automation_id}:2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spawn_automation_finite_count_and_filters(tmp_path: Path):
+    db_path = tmp_path / "podium.db"
+    final_id = _seed_spawn_automation(db_path, run_count=2, occurrences=1)
+    exhausted_id = _seed_spawn_automation(db_path, run_count=2, occurrences=2)
+    future_id = _seed_spawn_automation(
+        db_path, next_fire_at="2026-07-17T14:00:00+00:00"
+    )
+    disabled_id = _seed_spawn_automation(db_path, enabled=False)
+    loop_id = _seed_spawn_automation(db_path, mode="loop")
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    assert (
+        await adapter.fire_due_spawn_automations(
+            now=datetime(2026, 7, 17, 12, tzinfo=UTC), base_branch="main"
+        )
+        == 1
+    )
+    with sqlite3.connect(db_path) as connection:
+        rows = {
+            row[0]: (row[1], row[2])
+            for row in connection.execute(
+                "SELECT id, enabled, occurrences_fired FROM automation"
+            )
+        }
+        external_ids = [
+            row[0] for row in connection.execute("SELECT external_id FROM issue")
+        ]
+    assert rows[final_id] == (0, 2)
+    assert rows[exhausted_id] == (0, 2)
+    assert rows[future_id] == (1, 0)
+    assert rows[disabled_id] == (0, 0)
+    assert rows[loop_id] == (1, 0)
+    assert external_ids == [f"automation:{final_id}:2"]
+
+
+@pytest.mark.asyncio
+async def test_spawn_automation_batch_rolls_back_on_invalid_interval(tmp_path: Path):
+    db_path = tmp_path / "podium.db"
+    valid_id = _seed_spawn_automation(db_path)
+    invalid_id = _seed_spawn_automation(db_path, interval=0)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    with pytest.raises(ValueError, match="must be positive"):
+        await adapter.fire_due_spawn_automations(
+            now=datetime(2026, 7, 17, 12, tzinfo=UTC), base_branch="main"
+        )
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM issue").fetchone()[0] == 0
+        rows = dict(
+            connection.execute(
+                "SELECT id, occurrences_fired FROM automation WHERE id IN (?, ?)",
+                (valid_id, invalid_id),
+            )
+        )
+    assert rows == {valid_id: 0, invalid_id: 0}

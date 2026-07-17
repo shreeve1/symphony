@@ -6064,6 +6064,11 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
         pass
 
     calls: list[bool] = []
+    automation_calls: list[str] = []
+
+    async def fake_fire_spawn_automations(config, adapter, *, now, binding=None):
+        automation_calls.append(str(getattr(binding, "name", "")))
+        return 0
 
     async def fake_dispatch_one(
         config,
@@ -6081,6 +6086,9 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
         raise StopLoop
 
     monkeypatch.setenv("SYMPHONY_WAKE_SENTINEL_PATH", str(tmp_path / "reply-wake"))
+    monkeypatch.setattr(
+        scheduler, "_fire_spawn_automations", fake_fire_spawn_automations
+    )
     monkeypatch.setattr(scheduler, "_dispatch_one", fake_dispatch_one)
     monkeypatch.setattr(scheduler.asyncio, "sleep", fake_sleep)
 
@@ -6093,6 +6101,7 @@ async def test_run_loop_starts_one_probe_per_poll_cycle(
         )
 
     assert calls == [True]
+    assert automation_calls == ["default"]
 
 
 @pytest.mark.asyncio
