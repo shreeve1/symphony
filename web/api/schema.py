@@ -132,7 +132,13 @@ CREATE INDEX IF NOT EXISTS ix_issue_attachment_issue_id
 CREATE UNIQUE INDEX IF NOT EXISTS ux_issue_attachment_issue_stored
   ON issue_attachment(issue_id, stored_name);
 CREATE TABLE IF NOT EXISTS automation(
-  id INTEGER PRIMARY KEY,
+  -- AUTOINCREMENT (not a bare INTEGER PRIMARY KEY): a plain rowid is reused by
+  -- SQLite after the row is deleted, and issue.external_id encodes the
+  -- automation id ('automation:<id>:<ordinal>'). A reused id whose ordinal
+  -- collides with an issue spawned by the deleted automation makes every fire
+  -- raise UNIQUE and roll back forever (issue #472). AUTOINCREMENT never reuses
+  -- an id, so a recreated automation can never collide with a prior one's issues.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   binding_name TEXT NOT NULL REFERENCES binding(name) ON DELETE CASCADE,
   mode TEXT NOT NULL CHECK (mode IN ('spawn','loop')),
   enabled BOOLEAN NOT NULL DEFAULT TRUE,

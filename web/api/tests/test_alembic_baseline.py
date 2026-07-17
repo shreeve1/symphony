@@ -339,3 +339,105 @@ def test_0023_preserves_origin_patrol_operator_through_issue_rebuild(
             "SELECT origin FROM issue WHERE title = 'automation row'"
         ).fetchone()
     assert row is not None and row[0] == "automation"
+
+
+def test_0024_autoincrement_id_never_reused_and_heals_collision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """0024 (issue #472) makes automation.id AUTOINCREMENT so a deleted id is
+    never reused, and heals a live reused-id collision: an automation whose next
+    mint target already exists as an issue.external_id is renumbered to a fresh
+    id so its next fire cannot raise UNIQUE.
+    """
+    db_path = tmp_path / "autoinc.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "web/api/migrations"))
+
+    command.upgrade(config, "0023_automation_pin_fields")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO binding(name) VALUES ('pi-rmm')")
+        # Orphan issue from a since-deleted automation that held id 2.
+        conn.execute(
+            "INSERT INTO issue(binding_name, state, origin, title, external_id)"
+            " VALUES ('pi-rmm', 'done', 'automation', 'orphan', 'automation:2:1')"
+        )
+        # Live automation that reused id 2 -> its first mint (automation:2:1)
+        # collides with the orphan above.
+        conn.execute(
+            "INSERT INTO automation(id, binding_name, mode, enabled,"
+            " template_title, template_body, spawn_interval_seconds,"
+            " spawn_run_count, occurrences_fired, created_at, updated_at)"
+            " VALUES (2, 'pi-rmm', 'spawn', 1, 't', 'b', 1800, 5, 0,"
+            " '2026-07-17T00:00:00+00:00', '2026-07-17T00:00:00+00:00')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        # The colliding automation was renumbered above the external_id
+        # high-water mark (2), so its next mint no longer collides.
+        automation = conn.execute(
+            "SELECT id, occurrences_fired FROM automation"
+        ).fetchone()
+        assert automation[0] > 2, f"expected renumber above 2, got {automation}"
+        assert automation[1] == 0  # occurrences preserved through the heal
+        healed_id = automation[0]
+        target = f"automation:{healed_id}:1"
+        collision = conn.execute(
+            "SELECT COUNT(*) FROM issue WHERE external_id = ?", (target,)
+        ).fetchone()[0]
+        assert collision == 0, f"next mint {target} still collides"
+
+        # AUTOINCREMENT: a fresh insert never reuses a deleted id.
+        conn.execute("DELETE FROM automation WHERE id = ?", (healed_id,))
+        cur = conn.execute(
+            "INSERT INTO automation(binding_name, mode, enabled,"
+            " template_title, template_body, spawn_interval_seconds,"
+            " spawn_run_count, occurrences_fired, created_at, updated_at)"
+            " VALUES ('pi-rmm', 'spawn', 1, 't', 'b', 1800, 5, 0,"
+            " '2026-07-17T00:00:00+00:00', '2026-07-17T00:00:00+00:00')"
+        )
+        conn.commit()
+        assert cur.lastrowid > healed_id, "AUTOINCREMENT reused a deleted id"
+
+
+def test_0024_leaves_active_loop_automation_attached(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """0024's heal must not renumber a live loop automation: its
+    'automation:<id>:loop' issue is legitimately its own, not an orphan
+    collision. Renumbering would break the reconcile join and duplicate the
+    loop issue.
+    """
+    db_path = tmp_path / "loop.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "web/api/migrations"))
+
+    command.upgrade(config, "0023_automation_pin_fields")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO binding(name) VALUES ('pi-rmm')")
+        conn.execute(
+            "INSERT INTO automation(id, binding_name, mode, enabled,"
+            " template_title, template_body, loop_iteration_cap,"
+            " occurrences_fired, created_at, updated_at)"
+            " VALUES (7, 'pi-rmm', 'loop', 1, 't', 'b', 3, 0,"
+            " '2026-07-17T00:00:00+00:00', '2026-07-17T00:00:00+00:00')"
+        )
+        conn.execute(
+            "INSERT INTO issue(binding_name, state, origin, title, external_id)"
+            " VALUES ('pi-rmm', 'running', 'automation', 'loop', 'automation:7:loop')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT id FROM automation").fetchone()
+        assert row[0] == 7, f"live loop automation was renumbered: {row}"
+        loop_issues = conn.execute(
+            "SELECT COUNT(*) FROM issue WHERE external_id = 'automation:7:loop'"
+        ).fetchone()[0]
+        assert loop_issues == 1, "loop issue duplicated or detached"
