@@ -474,8 +474,8 @@ class PodiumTrackerAdapter:
                   exit_code, cost_usd, input_tokens, output_tokens,
                   cache_read_tokens, worktree_path,
                   branch_name, base_branch, log_path, skill_invoked, started_at,
-                  ended_at, agent_session_sha, resumed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ended_at, agent_session_sha, resumed, agent_session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -485,6 +485,19 @@ class PodiumTrackerAdapter:
             ).fetchone()
             assert row is not None
             self._update_issue_run_projection(connection, row)
+            # Patrol: increment dispatch count, copy current severity into
+            # last-dispatched severity, clear pending escalation, all in the
+            # same transaction so decrement-on-failure is impossible.
+            # Zero rows matched is the expected non-patrol case.
+            connection.execute(
+                """UPDATE issue SET
+                   patrol_dispatch_count = patrol_dispatch_count + 1,
+                   patrol_last_dispatched_severity = patrol_current_severity,
+                   patrol_pending_severity = NULL,
+                   updated_at = ?
+                WHERE id = ? AND origin = 'patrol'""",
+                (_now(), row["issue_id"]),
+            )
             connection.commit()
         row = await self.get_run(str(run_id))
         assert row is not None
@@ -502,6 +515,12 @@ class PodiumTrackerAdapter:
             ).fetchone()
             if existing is None:
                 raise KeyError(f"Podium run not found: {run_id}")
+            is_terminal = str(existing["state"] or "") in ("running",) and run_row.get(
+                "state"
+            ) in (
+                "succeeded",
+                "failed",
+            )
             connection.execute(
                 f"UPDATE run SET {assignments} WHERE id = ?",
                 (*values, run_id),
@@ -511,6 +530,8 @@ class PodiumTrackerAdapter:
             ).fetchone()
             assert row is not None
             self._update_issue_run_projection(connection, row)
+            if is_terminal:
+                self._prune_patrol_runs_for_issue(connection, int(row["issue_id"]))
             connection.commit()
         return dict(row)
 
@@ -692,6 +713,130 @@ class PodiumTrackerAdapter:
             connection.commit()
         return await self.get_issue(issue_id)
 
+    # -------------------------------------------------------------------
+    # Patrol Run retention
+    # -------------------------------------------------------------------
+
+    async def prune_patrol_runs(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, int]:
+        """Prune patrol Run rows and logs across all issues.
+
+        Retains all queued/running rows plus the newest three completed rows
+        per patrol issue.  Repairs ``latest_run_id``, ``latest_run_state``,
+        and ``latest_verdict`` from the newest surviving Run when the deleted
+        set would invalidate the projection.  Non-patrol rows are untouched.
+
+        Returns structured counts ``pruned_rows`` and ``pruned_logs``.
+        """
+        _ = now or datetime.now(UTC)
+        with self.connect() as connection:
+            patrol_issues = connection.execute(
+                """SELECT id, latest_run_id, latest_run_state, latest_verdict
+                   FROM issue WHERE origin = 'patrol'"""
+            ).fetchall()
+            counts: dict[str, int] = {"pruned_rows": 0, "pruned_logs": 0}
+            for issue in patrol_issues:
+                self._prune_patrol_runs_for_issue(
+                    connection, int(issue["id"]), counts=counts
+                )
+            connection.commit()
+        return counts
+
+    def _prune_patrol_runs_for_issue(
+        self,
+        connection: sqlite3.Connection,
+        issue_id: int,
+        counts: dict[str, int] | None = None,
+    ) -> None:
+        """Prune patrol runs for a single issue, called inside an open
+        transaction.  Retains queued/running + newest 3 completed.  Keeps
+        ``latest_run_id`` valid."""
+        # Find the set of completed run ids that exceed the newest-3 cap
+        completed = connection.execute(
+            """SELECT id, log_path, state
+               FROM run WHERE issue_id = ? AND state IN ('succeeded', 'failed')
+               ORDER BY id DESC""",
+            (issue_id,),
+        ).fetchall()
+
+        if len(completed) <= 3:
+            return
+
+        # Keep the newest 3; delete the rest
+        prune_ids = [row["id"] for row in completed[3:]]
+        if not prune_ids:
+            return
+
+        # Unlink log files
+        for row in completed[3:]:
+            log_path = row["log_path"]
+            if log_path:
+                p = Path(str(log_path)).expanduser()
+                if p.is_file():
+                    p.unlink()
+                    if counts is not None:
+                        counts["pruned_logs"] = counts.get("pruned_logs", 0) + 1
+
+        # Check whether the deleted set includes the current latest_run_id.
+        # If so, repair the projection BEFORE deleting (FK constraint).
+        last_run_id = connection.execute(
+            "SELECT latest_run_id FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        needs_repair = bool(
+            last_run_id and int(last_run_id["latest_run_id"] or 0) in set(prune_ids)
+        )
+        if needs_repair:
+            # Clear the FK reference first, update to survivor after delete
+            connection.execute(
+                """UPDATE issue SET
+                   latest_run_id = NULL, latest_run_state = NULL,
+                   latest_verdict = NULL, updated_at = ?
+                WHERE id = ?""",
+                (_now(), issue_id),
+            )
+
+        placeholders = ",".join("?" for _ in prune_ids)
+        connection.execute(
+            f"UPDATE run SET log_path = NULL WHERE id IN ({placeholders})",
+            prune_ids,
+        )
+        connection.execute(
+            f"DELETE FROM run WHERE id IN ({placeholders})",
+            prune_ids,
+        )
+        if counts is not None:
+            counts["pruned_rows"] = counts.get("pruned_rows", 0) + len(prune_ids)
+
+        # Repair projection to the newest surviving run
+        if needs_repair:
+            survivor = connection.execute(
+                """SELECT id, state, verdict
+                   FROM run WHERE issue_id = ?
+                   ORDER BY id DESC LIMIT 1""",
+                (issue_id,),
+            ).fetchone()
+            if survivor:
+                s_verdict = str(survivor["verdict"] or "")
+                verdict = (
+                    s_verdict if s_verdict in {"done", "review", "blocked"} else None
+                )
+                connection.execute(
+                    """UPDATE issue SET
+                       latest_run_id = ?, latest_run_state = ?, latest_verdict = ?,
+                       updated_at = ?
+                    WHERE id = ?""",
+                    (
+                        survivor["id"],
+                        survivor["state"],
+                        verdict,
+                        _now(),
+                        issue_id,
+                    ),
+                )
+
     async def _append_issue_field(
         self, issue_id: str, field_name: str, block: str
     ) -> dict[str, Any]:
@@ -757,8 +902,12 @@ _RUN_INSERT_COLUMNS = (
     "ended_at",
     "agent_session_sha",
     "resumed",
+    "agent_session_id",
 )
-_RUN_UPDATE_COLUMNS = tuple(key for key in _RUN_INSERT_COLUMNS if key != "issue_id")
+_RUN_IMMUTABLE_COLUMNS = {"issue_id", "agent_session_id"}
+_RUN_UPDATE_COLUMNS = tuple(
+    key for key in _RUN_INSERT_COLUMNS if key not in _RUN_IMMUTABLE_COLUMNS
+)
 
 
 def _infra_role_updates(

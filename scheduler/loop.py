@@ -114,6 +114,7 @@ async def run_loop(
         _dispatch_one,
         _fixed_now,
         _run_log_retention,
+        _run_patrol_run_retention,
         _sleep_or_wake,
         _sweep_persistent_claude_sessions,
         _wait_for_tasks_or_wake,
@@ -152,6 +153,11 @@ async def run_loop(
                 config,
                 adapter,
                 now=_fixed_now(now_dt),
+                **retention_kwargs,
+            )
+            await _run_patrol_run_retention(
+                config,
+                adapter,
                 **retention_kwargs,
             )
 

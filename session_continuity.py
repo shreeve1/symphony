@@ -31,9 +31,22 @@ class ResumeDecision:
     session_file: Path
 
 
-def derive_session_id(issue_id: object) -> str:
-    """Derive the stable agent session id for an issue."""
+def derive_session_id(issue_id: object, generation: int = 0) -> str:
+    """Derive the stable agent session id for an issue.
 
+    ``generation`` scopes patrol sessions so each three-Run generation
+    receives a distinct id.  Generation 0 preserves the existing UUID for
+    all non-patrol issues and the first three patrol Runs; higher generations
+    produce stable, distinct ids that cannot be resumed by a prior generation.
+    """
+
+    if generation > 0:
+        return str(
+            uuid.uuid5(
+                _SESSION_NAMESPACE,
+                f"{_SESSION_PREFIX}{issue_id}/gen{generation}",
+            )
+        )
     return str(uuid.uuid5(_SESSION_NAMESPACE, f"{_SESSION_PREFIX}{issue_id}"))
 
 

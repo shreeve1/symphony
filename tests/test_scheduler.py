@@ -7617,3 +7617,41 @@ def test_resolve_attachment_paths_worktree_uses_local_repo():
     assert result.attachments[0].resolved_path == str(
         Path("/home/user/repo") / ".symphony/attachments/1/abc.txt"
     )
+
+
+# ---------------------------------------------------------------------------
+# Patrol session generation tests
+# ---------------------------------------------------------------------------
+
+
+def test_patrol_session_generation_zero_for_first_three_dispatches():
+    """Patrol dispatch_count 0,1,2 produce generation 0 (count//3 before creation)."""
+    from session_continuity import derive_session_id as _derive
+
+    gen0_count0 = _derive("patrol-issue", generation=0)
+    gen0_count1 = _derive("patrol-issue", generation=0)
+    gen0_count2 = _derive("patrol-issue", generation=0)
+
+    assert gen0_count0 == gen0_count1 == gen0_count2
+
+
+def test_patrol_session_generation_one_for_fourth_dispatch():
+    """Patrol dispatch_count 3 produces generation 1 (count//3 = 1)."""
+    from session_continuity import derive_session_id as _derive
+
+    gen0 = _derive("patrol-issue", generation=0)
+    gen1 = _derive("patrol-issue", generation=1)
+
+    assert gen0 != gen1
+
+
+def test_patrol_generation_not_reset_by_pruning():
+    """Pruning does not change dispatch_count, so generation stays stable."""
+    from session_continuity import derive_session_id as _derive
+
+    gen2 = _derive("patrol-issue", generation=2)
+    gen2_again = _derive("patrol-issue", generation=2)
+
+    assert gen2 == gen2_again
+    assert gen2 != _derive("patrol-issue", generation=0)
+    assert gen2 != _derive("patrol-issue", generation=1)

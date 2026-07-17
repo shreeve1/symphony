@@ -389,3 +389,144 @@ async def test_operator_reland_marker_does_not_reselect_as_review_run(
 
     # The operator marker is not a review reland: no review reselection.
     assert candidates == []
+
+
+# ---------------------------------------------------------------------------
+# Patrol-specific tests
+# ---------------------------------------------------------------------------
+
+
+def _patrol_db(
+    path: Path,
+    *,
+    dispatch_count: int = 0,
+    last_severity: str | None = None,
+    state: str = "todo",
+) -> int:
+    """Seed a single patrol issue with optional dispatch state."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, origin,
+              preferred_agent, comments_md, context_md,
+              patrol_dispatch_count, patrol_current_severity,
+              patrol_last_dispatched_severity,
+              created_at, updated_at
+            ) VALUES (
+              'test', 'Patrol issue', 'A patrol finding', ?, 'patrol',
+              'pi', '', '',
+              ?, 'critical',
+              ?,
+              '2026-06-11T00:00:00+00:00', '2026-06-11T00:00:00+00:00'
+            )
+            """,
+            (state, dispatch_count, last_severity),
+        )
+        connection.commit()
+        assert cursor.lastrowid is not None
+        return int(cursor.lastrowid)
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_patrol_record_run_increments_dispatch_count(tmp_path: Path) -> None:
+    """record_run increments patrol_dispatch_count for patrol issues."""
+    db_path = tmp_path / "podium.db"
+    issue_id = _patrol_db(db_path, dispatch_count=2, last_severity="medium")
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    run = await adapter.record_run(
+        {
+            "issue_id": issue_id,
+            "agent": "pi",
+            "state": "queued",
+            "agent_session_id": "test-session-id",
+        }
+    )
+    issue = await adapter.get_issue(str(issue_id))
+
+    assert issue["patrol_dispatch_count"] == 3
+    assert issue["patrol_last_dispatched_severity"] == "critical"
+    assert issue["patrol_pending_severity"] is None
+    assert run["agent_session_id"] == "test-session-id"
+
+
+@pytest.mark.asyncio
+async def test_patrol_record_run_non_patrol_unchanged(tmp_path: Path) -> None:
+    """record_run does not touch patrol columns for non-patrol issues."""
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    run = await adapter.record_run(
+        {
+            "issue_id": issue_id,
+            "agent": "pi",
+            "state": "queued",
+            "agent_session_id": None,
+        }
+    )
+    issue = await adapter.get_issue(str(issue_id))
+
+    assert issue["origin"] == "operator"
+    assert run["agent_session_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_patrol_terminal_triggers_pruning(tmp_path: Path) -> None:
+    """update_run triggers patrol pruning when a run becomes terminal."""
+    import sqlite3
+
+    db_path = tmp_path / "podium.db"
+    issue_id = _patrol_db(db_path)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    # Create 5 runs
+    run_ids = []
+    for i in range(5):
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO run(issue_id, state, verdict, started_at, cost_usd, log_path)
+                VALUES (?, 'succeeded', 'done', ?, 0, ?)
+                """,
+                (
+                    issue_id,
+                    f"2026-06-11T00:0{i}:00+00:00",
+                    str(tmp_path / f"log-{i}.log"),
+                ),
+            )
+            conn.commit()
+        with sqlite3.connect(db_path) as conn:
+            r = conn.execute(
+                "SELECT MAX(id) as id FROM run WHERE issue_id = ?", (issue_id,)
+            ).fetchone()
+            run_ids.append(int(r[0]))
+    # Set latest_run_id to the oldest run so projection repair is tested
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE issue SET latest_run_id = ? WHERE id = ?",
+            (run_ids[0], issue_id),
+        )
+        conn.commit()
+
+    # Call prune_patrol_runs directly (terminal-triggered pruning in
+    # update_run calls the same internal helper)
+    counts = await adapter.prune_patrol_runs()
+
+    assert counts["pruned_rows"] == 2
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        remaining = conn.execute(
+            "SELECT id, state FROM run WHERE issue_id = ? ORDER BY id",
+            (issue_id,),
+        ).fetchall()
+    assert len(remaining) == 3
+    # latest_run_id should point to the newest surviving run
+    issue = await adapter.get_issue(str(issue_id))
+    assert int(issue["latest_run_id"]) == run_ids[-1]

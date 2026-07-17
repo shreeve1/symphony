@@ -129,6 +129,7 @@ async def start_run_record(
         "base_branch": base_branch,
         "skill_invoked": getattr(candidate, "preferred_skill", None),
         "agent_session_sha": getattr(candidate, "agent_session_sha", "") or None,
+        "agent_session_id": getattr(candidate, "agent_session_id", "") or None,
         "resumed": bool(getattr(candidate, "resumed", False)),
         **_worktree_run_fields(
             config, candidate, base_branch, binding=resolved_binding

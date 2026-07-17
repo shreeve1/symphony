@@ -257,3 +257,124 @@ def test_tailer_only_returns_new_lines_on_subsequent_polls(
     assert len(poll_results) == 2
     assert len(poll_results[1]["lines"]) == 1
     assert "new line" in poll_results[1]["lines"][0]
+
+
+def test_tailer_uses_persisted_agent_session_id(monkeypatch, tmp_path: Path) -> None:
+    """_SessionTailer uses persisted run.agent_session_id for the tail path
+    when present, falling back to derive_session_id when null."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    _restart_tailer()
+
+    monkeypatch.setattr(
+        main,
+        "_repo_path_for_binding",
+        lambda name: tmp_path / "binding-repo",
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        issues = client.get("/api/bindings/symphony/issues").json()
+        issue_id = issues[0]["id"]
+
+        from session_continuity import derive_session_id, session_file_path
+
+        # Run stores a custom patrol generation session id
+        patrol_session_id = derive_session_id(issue_id, generation=1)
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'running', "
+                "latest_run_state = 'running' WHERE id = ?",
+                (issue_id,),
+            )
+            connection.execute(
+                "UPDATE run SET state = 'running', agent = 'pi', "
+                "agent_session_id = ? WHERE issue_id = ?",
+                (patrol_session_id, issue_id),
+            )
+            connection.commit()
+
+    # Create the tail file at the patrol session path, NOT at the default one
+    s_path = session_file_path("pi", tmp_path / "binding-repo", patrol_session_id)
+    s_path.parent.mkdir(parents=True, exist_ok=True)
+    s_path.write_text(
+        json.dumps({"type": "turn", "content": "patrol generation 1 session"}) + "\n"
+    )
+
+    poll_results: list[dict[str, Any]] = []
+
+    async def record(message: dict[str, Any]) -> None:
+        poll_results.append(message)
+
+    monkeypatch.setattr(main.websocket_hub, "publish", record)
+
+    import asyncio
+
+    asyncio.run(main._session_tailer._poll_running())
+
+    assert len(poll_results) == 1
+    msg = poll_results[0]
+    assert msg["type"] == "run.tail"
+    assert msg["issue_id"] == issue_id
+    assert any("patrol generation 1 session" in line for line in msg["lines"])
+
+
+def test_tailer_falls_back_when_agent_session_id_null(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """When run.agent_session_id is NULL, tailer falls back to
+    derive_session_id(issue_id)."""
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    _restart_tailer()
+
+    monkeypatch.setattr(
+        main,
+        "_repo_path_for_binding",
+        lambda name: tmp_path / "binding-repo",
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        issues = client.get("/api/bindings/symphony/issues").json()
+        issue_id = issues[0]["id"]
+
+        # Explicitly set agent_session_id to NULL
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE issue SET state = 'running', "
+                "latest_run_state = 'running' WHERE id = ?",
+                (issue_id,),
+            )
+            connection.execute(
+                "UPDATE run SET state = 'running', agent = 'pi', "
+                "agent_session_id = NULL WHERE issue_id = ?",
+                (issue_id,),
+            )
+            connection.commit()
+
+    from session_continuity import derive_session_id, session_file_path
+
+    # Legacy fallback session id
+    fallback_id = derive_session_id(issue_id, generation=0)
+    s_path = session_file_path("pi", tmp_path / "binding-repo", fallback_id)
+    s_path.parent.mkdir(parents=True, exist_ok=True)
+    s_path.write_text(
+        json.dumps({"type": "turn", "content": "legacy fallback session"}) + "\n"
+    )
+
+    poll_results: list[dict[str, Any]] = []
+
+    async def record(message: dict[str, Any]) -> None:
+        poll_results.append(message)
+
+    monkeypatch.setattr(main.websocket_hub, "publish", record)
+
+    import asyncio
+
+    asyncio.run(main._session_tailer._poll_running())
+
+    assert len(poll_results) == 1
+    msg = poll_results[0]
+    assert msg["type"] == "run.tail"
+    assert any("legacy fallback session" in line for line in msg["lines"])

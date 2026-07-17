@@ -95,6 +95,32 @@ async def reconcile_orphaned_runs(
     return reaped
 
 
+async def patrol_run_retention(
+    config: SymphonyConfig,
+    adapter: TrackerAdapter,
+    *,
+    binding: ProjectBinding | None = None,
+) -> int:
+    """Prune patrol Run rows/logs to cap per issue."""
+
+    prune = getattr(adapter, "prune_patrol_runs", None)
+    if not callable(prune):
+        return 0
+    resolved_binding = binding or binding_from_config(config)
+    binding_name = resolved_binding.name if resolved_binding is not None else ""
+    LOGGER.info("patrol_run_retention_begin binding=%s", binding_name)
+    counts = await maybe_await(prune())
+    pruned_rows = int(counts.get("pruned_rows", 0))
+    pruned_logs = int(counts.get("pruned_logs", 0))
+    LOGGER.info(
+        "patrol_run_retention_done binding=%s pruned_rows=%d pruned_logs=%d",
+        binding_name,
+        pruned_rows,
+        pruned_logs,
+    )
+    return pruned_rows + pruned_logs
+
+
 async def run_log_retention(
     config: SymphonyConfig,
     adapter: TrackerAdapter,
@@ -192,7 +218,8 @@ async def reconcile_startup(
     notifier: TelegramNotifier | None = None,
     binding: ProjectBinding | None = None,
 ) -> int:
-    """Reconcile startup state: recover Plane issues stuck in Running.
+    """Reconcile startup state: recover Plane issues stuck in Running,
+    prune patrol Run rows/logs.
 
     Returns the number of items cleaned up. Runs before the main tick loop so
     the scheduler starts clean after a restart.
@@ -201,6 +228,7 @@ async def reconcile_startup(
 
     cleaned += await reconcile_orphaned_runs(config, adapter, now=now, binding=binding)
     await run_log_retention(config, adapter, now=now, binding=binding)
+    await patrol_run_retention(config, adapter, binding=binding)
 
     stale_running_issues: list[dict[str, Any]] = []
     for issue in await adapter.list_issues_by_state(

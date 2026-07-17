@@ -15,6 +15,15 @@ from tracker_podium import PodiumTrackerAdapter
 from web.api.schema import SCHEMA_SQL
 
 
+# Speed up tests by using the actual sqlite3 in-memory bus instead of
+# monkeypatching resolve_db_path; tests that need real disk use tmp_path.
+_PODIUM_DB_PATH: Path | None = None
+
+
+def _real_db_path() -> Path:
+    return _PODIUM_DB_PATH or Path("podium.db").resolve()
+
+
 def _config(tmp_path: Path) -> SymphonyConfig:
     config = SymphonyConfig(
         plane_api_url="https://plane.example.test",
@@ -197,3 +206,281 @@ async def test_run_loop_schedules_log_retention_every_24h(
         )
 
     assert calls == ["retention"]
+
+
+# ---------------------------------------------------------------------------
+# Patrol Run retention tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_patrol_runs(
+    path: Path, log_root: Path, now: datetime, *, patrol_count: int
+) -> int:
+    """Seed a single patrol issue with ``patrol_count`` completed Runs.
+
+    Returns the issue id.
+    """
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('trading')")
+        issue_id = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, origin, created_at, updated_at
+            ) VALUES ('trading', 'Patrol issue', '', 'todo', 'patrol',
+              '2026-06-01T00:00:00+00:00', '2026-06-01T00:00:00+00:00')
+            """,
+        ).lastrowid
+        assert issue_id is not None
+        issue_id = int(issue_id)
+        for i in range(patrol_count):
+            log_path = log_root / "patrol" / str(issue_id) / f"run-{i}.log"
+            _touch(log_path, now)
+            started_at = (now - timedelta(hours=patrol_count - i)).isoformat()
+            connection.execute(
+                """
+                INSERT INTO run(issue_id, state, verdict, log_path, started_at)
+                VALUES (?, 'succeeded', 'done', ?, ?)
+                """,
+                (issue_id, str(log_path), started_at),
+            )
+        connection.execute(
+            "UPDATE issue SET latest_run_id = (SELECT MAX(id) FROM run WHERE issue_id = ?) WHERE id = ?",
+            (issue_id, issue_id),
+        )
+        connection.commit()
+        return issue_id
+    finally:
+        connection.close()
+
+
+def _seed_patrol_runs_with_queued(path: Path, log_root: Path, now: datetime) -> int:
+    """Seed a patrol issue with 5 completed + 1 queued Run."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('trading')")
+        issue_id = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, origin, created_at, updated_at
+            ) VALUES ('trading', 'Patrol with queued', '', 'running', 'patrol',
+              '2026-06-01T00:00:00+00:00', '2026-06-01T00:00:00+00:00')
+            """,
+        ).lastrowid
+        assert issue_id is not None
+        issue_id = int(issue_id)
+        for i in range(5):
+            log_path = log_root / "patrol" / str(issue_id) / f"run-{i}.log"
+            _touch(log_path, now)
+            started_at = (now - timedelta(hours=5 - i)).isoformat()
+            connection.execute(
+                """
+                INSERT INTO run(issue_id, state, verdict, log_path, started_at)
+                VALUES (?, 'succeeded', 'done', ?, ?)
+                """,
+                (issue_id, str(log_path), started_at),
+            )
+        # Add a queued run (should be protected)
+        queued_log = log_root / "patrol" / str(issue_id) / "run-queued.log"
+        _touch(queued_log, now)
+        connection.execute(
+            """
+            INSERT INTO run(issue_id, state, verdict, log_path, started_at, cost_usd)
+            VALUES (?, 'queued', NULL, ?, ?, 0)
+            """,
+            (issue_id, str(queued_log), now.isoformat()),
+        )
+        connection.execute(
+            "UPDATE issue SET latest_run_id = (SELECT MAX(id) FROM run WHERE issue_id = ?) WHERE id = ?",
+            (issue_id, issue_id),
+        )
+        connection.commit()
+        return issue_id
+    finally:
+        connection.close()
+
+
+def _seed_non_patrol_issue(path: Path, log_root: Path, now: datetime) -> int:
+    """Seed a non-patrol issue with 6 completed Runs (should not be pruned)."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('trading')")
+        issue_id = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, origin, created_at, updated_at
+            ) VALUES ('trading', 'Operator issue', '', 'todo', 'operator',
+              '2026-06-01T00:00:00+00:00', '2026-06-01T00:00:00+00:00')
+            """,
+        ).lastrowid
+        assert issue_id is not None
+        issue_id = int(issue_id)
+        for i in range(6):
+            log_path = log_root / "operator" / str(issue_id) / f"run-{i}.log"
+            _touch(log_path, now)
+            started_at = (now - timedelta(hours=6 - i)).isoformat()
+            connection.execute(
+                """
+                INSERT INTO run(issue_id, state, verdict, log_path, started_at)
+                VALUES (?, 'succeeded', 'done', ?, ?)
+                """,
+                (issue_id, str(log_path), started_at),
+            )
+        connection.commit()
+        return issue_id
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_leaves_newest_three_completed(tmp_path: Path) -> None:
+    """More than 3 completed patrol Runs leaves exactly the newest 3 rows and
+    logs after pruning."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    issue_id = _seed_patrol_runs(db_path, log_root, now, patrol_count=6)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts = await adapter.prune_patrol_runs()
+
+    assert counts["pruned_rows"] == 3
+    assert counts["pruned_logs"] == 3
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        kept = connection.execute(
+            "SELECT * FROM run WHERE issue_id = ? ORDER BY id ASC", (issue_id,)
+        ).fetchall()
+        assert len(kept) == 3
+        # The 3 newest (highest id) should survive
+        for row in kept:
+            assert Path(str(row["log_path"])).is_file()
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_protects_queued_running(tmp_path: Path) -> None:
+    """Queued/running Runs are never deleted; cleanup after completion converges
+    to 3."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    issue_id = _seed_patrol_runs_with_queued(db_path, log_root, now)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts = await adapter.prune_patrol_runs()
+
+    # 5 completed - 3 kept = 2 pruned. Queued run remains.
+    assert counts["pruned_rows"] == 2
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        kept = connection.execute(
+            "SELECT id, state FROM run WHERE issue_id = ? ORDER BY id ASC",
+            (issue_id,),
+        ).fetchall()
+        # 3 youngest completed + 1 queued = 4 total
+        assert len(kept) == 4
+        assert [r["state"] for r in kept] == [
+            "succeeded",
+            "succeeded",
+            "succeeded",
+            "queued",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_fewer_than_three_is_noop(tmp_path: Path) -> None:
+    """Issues with <= 3 completed Runs are untouched."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    issue_id = _seed_patrol_runs(db_path, log_root, now, patrol_count=2)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts = await adapter.prune_patrol_runs()
+
+    assert counts["pruned_rows"] == 0
+    assert counts["pruned_logs"] == 0
+    with sqlite3.connect(db_path) as connection:
+        kept = connection.execute(
+            "SELECT COUNT(*) FROM run WHERE issue_id = ?", (issue_id,)
+        ).fetchone()[0]
+        assert kept == 2
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_repairs_latest_run_projection(tmp_path: Path) -> None:
+    """When the deleted set includes the current latest_run_id, the projection
+    is repaired from the newest surviving Run."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    issue_id = _seed_patrol_runs(db_path, log_root, now, patrol_count=5)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts = await adapter.prune_patrol_runs()
+
+    assert counts["pruned_rows"] == 2
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        issue = connection.execute(
+            "SELECT latest_run_id, latest_run_state FROM issue WHERE id = ?",
+            (issue_id,),
+        ).fetchone()
+        assert issue is not None
+        # The surviving newest run
+        survivor = connection.execute(
+            "SELECT MAX(id) as id FROM run WHERE issue_id = ?", (issue_id,)
+        ).fetchone()
+        assert issue["latest_run_id"] == survivor["id"]
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_idempotent(tmp_path: Path) -> None:
+    """Running patrol prune twice produces same result (second call is noop)."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    _seed_patrol_runs(db_path, log_root, now, patrol_count=6)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts1 = await adapter.prune_patrol_runs()
+    counts2 = await adapter.prune_patrol_runs()
+
+    assert counts1["pruned_rows"] == 3
+    assert counts2["pruned_rows"] == 0
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_leaves_non_patrol_untouched(tmp_path: Path) -> None:
+    """Non-patrol Run rows are not pruned by patrol pruning."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    _seed_non_patrol_issue(db_path, log_root, now)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts = await adapter.prune_patrol_runs()
+
+    assert counts["pruned_rows"] == 0
+
+
+@pytest.mark.asyncio
+async def test_patrol_prune_missing_log_files(tmp_path: Path) -> None:
+    """Missing log files don't crash pruning; they still count toward the cap."""
+    now = datetime(2026, 6, 11, tzinfo=UTC)
+    db_path = tmp_path / "podium.db"
+    log_root = tmp_path / "runs"
+    issue_id = _seed_patrol_runs(db_path, log_root, now, patrol_count=5)
+    # Delete one log file to simulate missing
+    run_logs = sorted((log_root / "patrol" / str(issue_id)).iterdir())
+    if run_logs:
+        run_logs[0].unlink()
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="trading")
+
+    counts = await adapter.prune_patrol_runs()
+
+    assert counts["pruned_rows"] == 2
+    assert counts["pruned_logs"] < 2  # only existing log files were unlinked

@@ -208,6 +208,51 @@ def test_evaluate_resume_eligibility_rejects_sha_drift(
     assert decision.reason == continuity.REASON_SHA_DRIFT
 
 
+def test_patrol_generation_zero_matches_original() -> None:
+    """Generation 0 produces the same id as non-generation derive_session_id."""
+    original = continuity.derive_session_id("test-001")
+    gen_zero = continuity.derive_session_id("test-001", generation=0)
+
+    assert original == gen_zero
+
+
+def test_patrol_generations_are_distinct() -> None:
+    """Different generations produce different session ids for the same issue."""
+    gen0 = continuity.derive_session_id("test-001", generation=0)
+    gen1 = continuity.derive_session_id("test-001", generation=1)
+    gen2 = continuity.derive_session_id("test-001", generation=2)
+
+    assert gen0 != gen1
+    assert gen1 != gen2
+    assert gen0 != gen2
+
+
+def test_patrol_generation_is_stable() -> None:
+    """Same generation for same issue is deterministic."""
+    a = continuity.derive_session_id("test-001", generation=2)
+    b = continuity.derive_session_id("test-001", generation=2)
+
+    assert a == b
+
+
+def test_patrol_generation_distinct_across_issues() -> None:
+    """Different issues with same generation get different ids."""
+    a = continuity.derive_session_id("issue-a", generation=1)
+    b = continuity.derive_session_id("issue-b", generation=1)
+
+    assert a != b
+
+
+def test_patrol_generation_is_valid_uuid() -> None:
+    import uuid
+
+    g0 = continuity.derive_session_id("test-001", generation=0)
+    g1 = continuity.derive_session_id("test-001", generation=1)
+
+    assert uuid.UUID(g0).version == 5
+    assert uuid.UUID(g1).version == 5
+
+
 def test_session_continuity_module_stays_pure() -> None:
     tree = ast.parse(Path("session_continuity.py").read_text())
     imported_roots: set[str] = set()

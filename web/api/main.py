@@ -271,7 +271,8 @@ class _SessionTailer:
         try:
             rows = connection.execute(
                 """
-                SELECT i.id, i.binding_name, r.agent, r.id AS run_id
+                SELECT i.id, i.binding_name, r.agent, r.id AS run_id,
+                       r.agent_session_id
                 FROM issue i
                 INNER JOIN run r ON r.id = i.latest_run_id
                 WHERE i.latest_run_state = 'running'
@@ -302,7 +303,9 @@ class _SessionTailer:
                 if not repo_path:
                     continue
 
-                session_id = derive_session_id(issue_id)
+                session_id = row["agent_session_id"]
+                if not session_id:
+                    session_id = derive_session_id(issue_id)
                 try:
                     s_path = session_file_path(agent, repo_path, session_id)
                 except (ValueError, OSError):

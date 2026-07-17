@@ -271,7 +271,13 @@ async def _prepare_resume_candidate(
     """Annotate a candidate with Session Resume fields for resumable dispatch."""
 
     agent = binding.resolve_agent(candidate.labels) if binding is not None else "pi"
-    session_id = derive_session_id(candidate.id)
+    # Patrol session generation: count // 3 before creation so Runs 1-3 share
+    # generation 0, Run 4 starts generation 1, etc.  Non-patrol always gen 0.
+    patrol_generation: int = 0
+    if candidate.origin == "patrol":
+        dc = int(fresh_issue.get("patrol_dispatch_count") or 0)
+        patrol_generation = dc // 3
+    session_id = derive_session_id(candidate.id, generation=patrol_generation)
     current_cwd = _dispatch_cwd(config, candidate, binding=binding)
     current_sha = (
         repo_host_for(binding, cwd=current_cwd).code_sha()
@@ -2397,5 +2403,6 @@ from .reconcile import (  # noqa: E402,F401  (re-exports: scheduler._NAME is the
     reconcile_pending_review as _reconcile_pending_review,
     reconcile_stale_running as _reconcile_stale_running,
     reconcile_startup as _reconcile_startup,
+    patrol_run_retention as _run_patrol_run_retention,
     run_log_retention as _run_log_retention,
 )
