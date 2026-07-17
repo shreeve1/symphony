@@ -573,6 +573,54 @@ async def test_patrol_terminal_triggers_pruning(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_patrol_pruning_skips_non_patrol_via_update_run(tmp_path: Path) -> None:
+    """Wave 5 regression: update_run's terminal trigger must NOT prune non-patrol rows.
+
+    Before the fix, _prune_patrol_runs_for_issue was called from update_run
+    without an origin gate, so a 5+ run operator/coding issue would silently
+    lose completed rows to the patrol-3-row cap. T.4.4 invariant.
+    """
+    import sqlite3
+
+    db_path = tmp_path / "podium.db"
+    issue_id = _seed_db(db_path)  # operator issue
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    # Seed 5 completed runs on the operator issue.
+    run_ids: list[int] = []
+    for i in range(5):
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """INSERT INTO run(issue_id, state, verdict, started_at, cost_usd)
+                   VALUES (?, 'running', NULL, ?, 0)""",
+                (issue_id, f"2026-06-11T00:0{i}:00+00:00"),
+            )
+            conn.commit()
+        with sqlite3.connect(db_path) as conn:
+            r = conn.execute(
+                "SELECT MAX(id) AS id FROM run WHERE issue_id = ?", (issue_id,)
+            ).fetchone()
+            run_ids.append(int(r[0]))
+
+    # Transition the newest running run to terminal via update_run — this
+    # is the path that previously invoked patrol pruning without an origin
+    # gate.
+    await adapter.update_run(
+        str(run_ids[-1]), {"state": "succeeded", "verdict": "done"}
+    )
+
+    # All 5 rows must remain. T.4.4 invariant: non-patrol runs follow the
+    # existing 90-day/100-log policy, never the patrol 3-row cap.
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM run WHERE issue_id = ?", (issue_id,)
+        ).fetchone()[0]
+    assert count == 5, (
+        f"non-patrol pruning regression: {count} runs remain (expected 5)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_spawn_automation_mints_independent_issues_and_advances(tmp_path: Path):
     db_path = tmp_path / "podium.db"
     automation_id = _seed_spawn_automation(db_path)

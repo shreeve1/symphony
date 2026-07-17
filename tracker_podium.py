@@ -958,6 +958,16 @@ class PodiumTrackerAdapter:
         """Prune patrol runs for a single issue, called inside an open
         transaction.  Retains queued/running + newest 3 completed.  Keeps
         ``latest_run_id`` valid."""
+        # Origin gate: defense-in-depth so the terminal-triggered path
+        # inside update_run never prunes non-patrol rows. The outer
+        # prune_patrol_runs SELECT also filters by origin, but a direct
+        # call from update_run bypasses that filter; this guard makes the
+        # invariant hold for every caller. (Wave 5 pi audit, 2026-07-17.)
+        origin = connection.execute(
+            "SELECT origin FROM issue WHERE id = ?", (issue_id,)
+        ).fetchone()
+        if origin is None or str(origin["origin"] or "") != "patrol":
+            return
         # Find the set of completed run ids that exceed the newest-3 cap
         completed = connection.execute(
             """SELECT id, log_path, state
