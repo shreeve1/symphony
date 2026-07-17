@@ -395,6 +395,38 @@ test.describe("Automations page", () => {
 		expectCleanConsole(problems);
 	});
 
+	test("delayed start requires a positive delay (#462)", async ({
+		page,
+		problems,
+	}) => {
+		await page.route("**/api/bindings/dotfiles/automations", (route) => {
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
+		});
+		await page.goto("/dotfiles/automations");
+		await page.getByTestId("automation-create-btn").click();
+		await page.getByTestId("automation-form-title").fill("Delayed patrol");
+		await page.getByTestId("automation-form-body").fill("Run later.");
+		await page.getByTestId("automation-form-interval").fill("15");
+
+		// Submit enabled while "Start immediately" is checked (default).
+		await expect(page.getByTestId("automation-form-submit")).toBeEnabled();
+
+		// Uncheck → delay field enabled but empty → submit blocked.
+		await page.getByTestId("automation-form-start-now").uncheck();
+		await expect(page.getByTestId("automation-form-delay")).toBeEnabled();
+		await expect(page.getByTestId("automation-form-submit")).toBeDisabled();
+
+		// Enter a positive delay → submit re-enabled.
+		await page.getByTestId("automation-form-delay").fill("60");
+		await expect(page.getByTestId("automation-form-submit")).toBeEnabled();
+
+		expectCleanConsole(problems);
+	});
+
 	test("loop form shows iteration cap and marker; spawn form shows interval and count", async ({
 		page,
 		problems,
