@@ -115,7 +115,11 @@ Rollback availability per binding:
 
 ## Migrations
 
-Initial schema lives under `web/api/migrations/` and is driven by the root `alembic.ini`.
+Initial schema lives under `web/api/migrations/` and is driven by the root `alembic.ini`. As of 2026-07-17, every OS reboot and every `systemctl start podium-api.service` invocation also runs `alembic upgrade head` automatically via `[email protected]` (a oneshot unit ordered `Before=podium-api.service`); the unit and its drop-in are installed idempotently by `scripts/install-podium-migrations-service.sh`. The strict `ensure_schema` "fail loud, never silently stamp" guard at the Python startup (`web/api/main.py:534`) is preserved unchanged; the auto-heal sits one layer up in the boot graph.
+
+A failed migration leaves the unit in `failed` state and propagates as `podium-api.service` crash-looping on `ensure_schema` — the existing `OnFailure=telegram-alert@%n.service` alert fires. Recovery is operator-initiated (`systemctl reset-failed podium-migrations.service && systemctl start podium-migrations.service`, then `systemctl restart podium-api.service`).
+
+Manual `alembic upgrade head` is still required against a fresh fallback DB outside the boot path (e.g., after a destructive restore):
 
 ```bash
 cd /home/james/symphony

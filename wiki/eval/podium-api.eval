@@ -6,3 +6,4 @@ How does ADR-0024 split validation reviews from coding reviews? ||| VALIDATION_R
 ADR-0026 startup pi probe fail-soft ||| pi_probe_failed_permanently
 Is pi-rmm already a live Symphony binding and how was it smoke-tested? ||| smoke Issue 225 / Run 851
 How does Podium avoid the recurring schema-drift 500 on /api/auth/login after a boot? ||| podium-migrations.service
+How does an operator recover from a failed podium-migrations.service run before next boot? ||| reset-failed podium-migrations.service

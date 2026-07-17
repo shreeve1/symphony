@@ -3,11 +3,15 @@ title: Symphony operations
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-07-16
+updated: 2026-07-17
 sources:
   - wiki/raw/runbook-symphony.md
   - wiki/raw/symphony-context.md
   - wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md
+  - wiki/raw/podium-migrations.service
+  - wiki/raw/podium-api.service.d-migrations.conf
+  - wiki/raw/sessions/2026-07-17-podium-schema-drift-auto-migrate.md
+  - scripts/install-podium-migrations-service.sh
 confidence: high
 tags: [operations, runbook, blocked-reconciler, telegram, scheduling, troubleshooting, privileges]
 ---
@@ -113,8 +117,13 @@ Message format: `📋 <b>IDENT</b>: Name → <b>Review</b>` or `🚫 <b>IDENT</b
 | `worktree_dirty` log | inspect bound repo before dispatch |
 | missing comments | Plane write paths need trailing slashes |
 | missing env | inspect variable names only; do not print values |
+| `podium-api` crash-looping, `/api/auth/login` → 500 | pending Alembic migration not applied; verify `[email protected]` ran (`systemctl status podium-migrations.service` should be `active` / `Result=success`) and that `alembic_version` matches the head of `web/api/migrations/`. C-0376. |
 
 [source: wiki/raw/runbook-symphony.md#237-244]
+
+## Boot ordering (Podium auto-migrate)
+
+Every OS reboot and every `systemctl start podium-api.service` invocation runs `alembic upgrade head` automatically via `[email protected]` (Type=oneshot, RemainAfterExit=yes), ordered `Before=podium-api.service` through the drop-in `/etc/systemd/system/podium-api.service.d/migrations.conf` (`Wants=` + `After=`). The unit and drop-in are installed and enabled idempotently by `scripts/install-podium-migrations-service.sh`. The strict `ensure_schema` "fail loud, never silently stamp" guard at the Python startup is preserved unchanged — the auto-heal sits one layer up in the boot graph, not in the schema check. A failed migration leaves the unit in `failed` state; the api then crash-loops on `ensure_schema` and the existing `OnFailure=telegram-alert@%n.service` alert fires. Recovery is operator-initiated: `systemctl reset-failed podium-migrations.service && systemctl start podium-migrations.service`, then `systemctl restart podium-api.service`. [source: wiki/raw/podium-migrations.service] [source: wiki/raw/sessions/2026-07-17-podium-schema-drift-auto-migrate.md]
 
 ## Related wiki pages
 
