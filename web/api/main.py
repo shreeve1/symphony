@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -50,6 +50,15 @@ except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
 RemotePolicy = _config.RemotePolicy
 
 try:
+    from patrol_incident import (
+        Finding,
+        IssueStatus,
+        RecurrenceAction,
+        RecurrenceInput,
+        Severity,
+        decide,
+        derive_key,
+    )
     from proc_runtime import tail_spool_path
     from redispatch_core import (
         COMMIT_REDISPATCH_REPLY_PREFIX,
@@ -63,6 +72,15 @@ except ModuleNotFoundError:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from patrol_incident import (  # type: ignore[no-redef]
+        Finding,
+        IssueStatus,
+        RecurrenceAction,
+        RecurrenceInput,
+        Severity,
+        decide,
+        derive_key,
+    )
     from proc_runtime import tail_spool_path  # type: ignore[no-redef]
     from redispatch_core import (  # type: ignore[no-redef]
         COMMIT_REDISPATCH_REPLY_PREFIX,
@@ -75,16 +93,6 @@ except ModuleNotFoundError:
         derive_session_id,
         session_file_path,
     )
-
-from patrol_incident import (
-    Finding,
-    IssueStatus,
-    RecurrenceAction,
-    RecurrenceInput,
-    Severity,
-    decide,
-    derive_key,
-)
 
 
 _count_commit_redispatches = count_commit_redispatches
@@ -102,6 +110,7 @@ if __package__:
     _wake_signal = import_module(f"{__package__}.wake_signal")
     _files = import_module(f"{__package__}.files")
     _attachments = import_module(f"{__package__}.attachments")
+    _automations = import_module(f"{__package__}.automations")
 else:  # pragma: no cover - supports uvicorn main:app from web/api
     _auth = import_module("auth")
     _db = import_module("db")
@@ -111,6 +120,7 @@ else:  # pragma: no cover - supports uvicorn main:app from web/api
     _wake_signal = import_module("wake_signal")
     _files = import_module("files")
     _attachments = import_module("attachments")
+    _automations = import_module("automations")
 
 COOKIE_NAME = _auth.COOKIE_NAME
 SESSION_MAX_AGE_SECONDS = _auth.SESSION_MAX_AGE_SECONDS
@@ -395,6 +405,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Podium API", lifespan=lifespan)
+app.include_router(_automations.router)
 
 
 class LoginRequest(BaseModel):
@@ -655,6 +666,9 @@ class IncidentObservation(BaseModel):
 
     The caller MUST send a canonical coalesced finding (one identity per call).
     extra="forbid" rejects unknown keys as HTTP 400.
+
+    ``source`` and ``domain`` are bounded (max 128-char) strings identifying
+    the cross-repo Wave4 source system; persisted in the description marker.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -667,6 +681,26 @@ class IncidentObservation(BaseModel):
     legacy_external_ids: list[str] | None = None
     sibling_evidence: list[str] | None = None
     recovery_confirmed: bool = False
+    source: str | None = Field(default=None, max_length=128)
+    domain: str | None = Field(default=None, max_length=128)
+
+
+def _patrol_description(
+    observation: IncidentObservation,
+) -> str:
+    """Build description marker from evidence + optional source/domain + sibling evidence."""
+    desc = observation.evidence
+    parts = []
+    if observation.source:
+        parts.append(f"Source: {observation.source}")
+    if observation.domain:
+        parts.append(f"Domain: {observation.domain}")
+    if parts:
+        desc += "\n\n" + "\n".join(parts)
+    if observation.sibling_evidence:
+        for sib in observation.sibling_evidence:
+            desc += f"\n\n---\n{sib}"
+    return desc
 
 
 class ReplyCreate(BaseModel):
@@ -3009,10 +3043,7 @@ async def observe_incident(
                     f" {observation.severity}"
                 )
                 priority = PATROL_DEFAULT_PRIORITY[observation.severity]
-                description = observation.evidence
-                if observation.sibling_evidence:
-                    for sib in observation.sibling_evidence:
-                        description += f"\n\n---\n{sib}"
+                description = _patrol_description(observation)
 
                 cursor = connection.execute(
                     """INSERT INTO issue(
@@ -3093,10 +3124,7 @@ async def observe_incident(
                     f" {observation.severity}"
                 )
                 priority = PATROL_DEFAULT_PRIORITY[observation.severity]
-                description = observation.evidence
-                if observation.sibling_evidence:
-                    for sib in observation.sibling_evidence:
-                        description += f"\n\n---\n{sib}"
+                description = _patrol_description(observation)
 
                 connection.execute(
                     """UPDATE issue SET
@@ -3202,10 +3230,7 @@ async def observe_incident(
                     f" {observation.severity}"
                 )
                 priority = PATROL_DEFAULT_PRIORITY[observation.severity]
-                description = observation.evidence
-                if observation.sibling_evidence:
-                    for sib in observation.sibling_evidence:
-                        description += f"\n\n---\n{sib}"
+                description = _patrol_description(observation)
 
                 cursor = connection.execute(
                     """INSERT INTO issue(

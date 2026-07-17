@@ -326,37 +326,37 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   archives and still purge old operator/coding archives.
 
 ### 5. Route coalesced homelab findings [sequential]
-- [ ] [5.1] Update
+- [x] [5.1] Update
   `/home/james/homelab/automation/homelab-stack/deploy/monitoring/prometheus/rules/host-alerts.yml`
   so `HostDiskUsageHigh` and `HostDiskUsageCritical` share an explicit disk-usage
   family and derive the resource from instance plus mountpoint. Do not change
   thresholds, durations, or the alert-forwarder schedule.
-- [ ] [5.2] Update
+- [x] [5.2] Update
   `/home/james/homelab/automation/homelab-stack/src/homelab_worker/alert_forwarder.py`
   to parse the new labels, coalesce each poll before recording, and compare the
   close-by-absence set using Incident identity. Preserve Watchdog's close-nothing
   gate and exact per-series fallback for unannotated alerts.
-- [ ] [5.3] Update
+- [x] [5.3] Update
   `/home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_workflow.py`
   to call the pure coalescer immediately after `run_patrol_checks`, compute
   `PatrolRunSummary` from the original batch, then iterate canonical findings
   (not original results) for ticket activities. Compute Incident action counters
   from canonical outputs so the workflow's N-results-to-one-observation change is
   explicit and deterministic.
-- [ ] [5.4] Update
+- [x] [5.4] Update
   `/home/james/homelab/automation/homelab-stack/src/homelab_router/podium_adapter.py`
   to post `IncidentObservation` to the new endpoint and map its stable action
   response. Filter both `done` and `archived` from open forwarder reconciliation.
   An action of `silent_update` must perform no `/comment`, `/reply`, or generic
   state PATCH.
-- [ ] [5.5] Extend
+- [x] [5.5] Extend
   `/home/james/homelab/automation/homelab-stack/src/homelab_router/ticket_writer.py`
   with `observe_incident`, implement it in `podium_adapter.py`, and update
   `/home/james/homelab/automation/homelab-stack/src/homelab_worker/patrol_plane.py`
   to route fail/warning/pass results through that tracker-neutral operation,
   including configured recovery confirmation. Do not import or type-check the
   concrete Podium adapter in worker logic.
-- [ ] [5.6] Update
+- [x] [5.6] Update
   `/home/james/homelab/automation/homelab-stack/src/homelab_router/plane_adapter.py`
   with a compatibility `observe_incident` implementation that delegates to its
   existing exact-id create/update/pass behavior; do not implement semantic family
@@ -414,22 +414,22 @@ IMPORTANT: Execute every step in order when running manually. `/dev-build` will 
   verify every new column/index/check, backfill an oversized patrol issue's full
   pre-prune dispatch count, leave operator rows at defaults, and match
   `SCHEMA_SQL` exactly.
-- [ ] [8.2] Create
+- [x] [8.2] Create
   `/home/james/homelab/automation/homelab-stack/tests/test_incident_coalescer.py`
   with warning+critical same-resource, equal-severity tie, distinct host,
   distinct mountpoint, distinct family, shuffled input, missing one/both identity
   labels, and bounded sibling-evidence cases.
-- [ ] [8.3] Extend
+- [x] [8.3] Extend
   `/home/james/homelab/automation/homelab-stack/tests/test_patrol_models.py` and
   `/home/james/homelab/automation/homelab-stack/tests/test_patrol_workflow.py`
   for serialization defaults, canonical action counts, and original health totals.
-- [ ] [8.4] Extend
+- [x] [8.4] Extend
   `/home/james/homelab/automation/homelab-stack/tests/test_alert_forwarder.py`
   with mocked dual disk thresholds producing one canonical issue, distinct
   resources producing separate issues, safe unannotated fallback, silent repeated
   polls, one escalation, one recovery, and unchanged Watchdog/close-by-absence
   behavior.
-- [ ] [8.5] Extend
+- [x] [8.5] Extend
   `/home/james/homelab/automation/homelab-stack/tests/test_patrol_plane.py` and
   `/home/james/homelab/automation/homelab-stack/tests/test_podium_adapter.py` for
   endpoint mapping, no-comment/no-Todo silent updates, queued escalation, recovery

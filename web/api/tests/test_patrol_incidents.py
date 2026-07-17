@@ -729,3 +729,120 @@ def test_archive_restore_observe_creates_new_issue(db_and_client):
 
     # Two patrol issues exist: the archived one and the new one
     assert _count_patrol_issues(db_path) == 2
+
+
+# ── source/domain (cross-repo Wave4 contract) ───────────────────
+
+
+def test_source_domain_accepted_on_create(db_and_client):
+    """source and domain are accepted (no 400) and persisted in description."""
+    db_path, client = db_and_client
+    payload = {**PAYLOAD, "source": "grafana", "domain": "prod-us-east"}
+    resp = client.post("/api/bindings/trading/incidents/observe", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["created"] == 1
+
+    issue = _get_issue(db_path, body["issue_id"])
+    desc = str(issue.get("description", ""))
+    assert "Source: grafana" in desc
+    assert "Domain: prod-us-east" in desc
+    assert "disk 98% full" in desc  # evidence preserved
+
+
+def test_source_domain_silent_update_roundtrip(db_and_client):
+    """source/domain retained in description on SILENT_UPDATE evidence replacement."""
+    db_path, client = db_and_client
+    # Create with source/domain
+    payload = {**PAYLOAD, "source": "prometheus", "domain": "staging"}
+    resp = client.post("/api/bindings/trading/incidents/observe", json=payload)
+    assert resp.status_code == 200
+    issue_id = resp.json()["issue_id"]
+
+    # Simulate dispatched state so next observation is SILENT_UPDATE
+    conn = main.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE issue SET patrol_dispatch_count = 1,"
+            " patrol_last_dispatched_severity = 'medium'"
+            " WHERE id = ?",
+            (issue_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Same severity observation with new evidence
+    resp2 = client.post(
+        "/api/bindings/trading/incidents/observe",
+        json={
+            **PAYLOAD,
+            "source": "prometheus",
+            "domain": "staging",
+            "evidence": "disk 95% full, trending up",
+        },
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["action"] == "SILENT_UPDATE"
+
+    issue = _get_issue(db_path, issue_id)
+    desc = str(issue.get("description", ""))
+    assert "Source: prometheus" in desc
+    assert "Domain: staging" in desc
+    assert "95% full" in desc  # new evidence
+
+
+def test_source_domain_preserve_sibling_evidence(db_and_client):
+    """source/domain do not clobber sibling_evidence."""
+    db_path, client = db_and_client
+    payload = {
+        **PAYLOAD,
+        "source": "datadog",
+        "domain": "eu-west",
+        "sibling_evidence": ["related metric A", "related metric B"],
+    }
+    resp = client.post("/api/bindings/trading/incidents/observe", json=payload)
+    assert resp.status_code == 200
+
+    issue = _get_issue(db_path, resp.json()["issue_id"])
+    desc = str(issue.get("description", ""))
+    assert "Source: datadog" in desc
+    assert "Domain: eu-west" in desc
+    assert "related metric A" in desc
+    assert "related metric B" in desc
+    assert "disk 98% full" in desc
+
+
+def test_source_only_accepted(db_and_client):
+    """source alone (no domain) is accepted."""
+    db_path, client = db_and_client
+    payload = {**PAYLOAD, "source": "cloudwatch"}
+    resp = client.post("/api/bindings/trading/incidents/observe", json=payload)
+    assert resp.status_code == 200
+    desc = str(_get_issue(db_path, resp.json()["issue_id"]).get("description", ""))
+    assert "Source: cloudwatch" in desc
+    assert "Domain:" not in desc
+
+
+def test_domain_only_accepted(db_and_client):
+    """domain alone (no source) is accepted."""
+    db_path, client = db_and_client
+    payload = {**PAYLOAD, "domain": "prod-ap-southeast"}
+    resp = client.post("/api/bindings/trading/incidents/observe", json=payload)
+    assert resp.status_code == 200
+    desc = str(_get_issue(db_path, resp.json()["issue_id"]).get("description", ""))
+    assert "Domain: prod-ap-southeast" in desc
+    assert "Source:" not in desc
+
+
+def test_source_domain_no_400_on_unknown_key(db_and_client):
+    """Valid source/domain keys pass forbid-gate (no 400)."""
+    db_path, client = db_and_client
+    payload = {
+        **PAYLOAD,
+        "source": "valid-source",
+        "domain": "valid-domain",
+        "extra_unknown_key": "should-400",
+    }
+    resp = client.post("/api/bindings/trading/incidents/observe", json=payload)
+    assert resp.status_code == 400  # extra_forbidden
