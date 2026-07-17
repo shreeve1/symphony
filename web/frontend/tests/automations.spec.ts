@@ -247,12 +247,14 @@ test.describe("Automations page", () => {
 	test("edits an automation", async ({ page, problems }) => {
 		let automation = { ...FIXTURES.spawn };
 		let patchCalled = false;
+		let postedPatch: Record<string, unknown> = {};
 		await page.route("**/api/bindings/homelab/automations**", (route) => {
 			if (route.request().method() === "PATCH") {
 				patchCalled = true;
+				postedPatch = JSON.parse(route.request().postData() ?? "{}");
 				automation = {
 					...automation,
-					...JSON.parse(route.request().postData() ?? "{}"),
+					...postedPatch,
 				};
 				return route.fulfill({ status: 200, json: automation });
 			}
@@ -271,6 +273,11 @@ test.describe("Automations page", () => {
 		await expect(page.getByTestId("automation-row")).toContainText(
 			"Updated patrol",
 		);
+		// Issue #462: editing a scheduled automation without touching the
+		// scheduling controls must not resend next_fire_at fields (else a
+		// scheduler tick between open and save would be overwritten).
+		expect(postedPatch.start_immediately).toBeUndefined();
+		expect(postedPatch.start_delay_seconds).toBeUndefined();
 		expectCleanConsole(problems);
 	});
 
