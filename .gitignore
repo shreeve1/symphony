@@ -1,22 +1,41 @@
+# Python tooling noise
 __pycache__/
 .pytest_cache/
-.venv/
+.ruff_cache/
 *.pyc
+.venv/
+
+# Secrets / local env
 .env
+*.env
+
+# Symphony runtime state
 podium.db
 podium.db-shm
 podium.db-wal
 podium.db.predelete-bak-*
 runs/
 .symphony-runs/
-*.env
+
+# Operator working dirs (gitignored but local-only)
 plans/
 Plans/
 test-results/
+
+# Tool previews / local agent scaffolding
 .bindings.yml.preview
 .WORKFLOW.md.preview
 .pi-lens/
 .rpiv/
 artifacts/
+
+# Archival / backups
 *.archive
 worktrees/
+
+# Harness runtime sentinel (empty local marker that lifts self-disarm guard)
+.claude/.harness-unlock
+
+# /youtube skill pulls — transcripts + yt-dlp metadata are regenerable from the URL.
+# Only the curated `transcript-extract.md` and `web-research.md` per slug are kept.
+youtube/*/raw/
