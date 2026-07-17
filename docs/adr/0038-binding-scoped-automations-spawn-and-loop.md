@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 relates-to: ADR-0009 (session resume), ADR-0014 (operator-gated worktree landing), ADR-0018 (one-shot scheduling), ADR-0023 (provenance-gated auto-land), ADR-0028 (slice/wiki boundary)
 decided-with: James, 2026-07-16 (Podium issue #442 grill; captured in GitHub issue #2)
 ---
