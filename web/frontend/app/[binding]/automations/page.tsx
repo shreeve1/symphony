@@ -129,9 +129,7 @@ export default function AutomationsPage() {
 		if (mode === "spawn") {
 			const secs = parseInt(intervalSec, 10);
 			if (!isNaN(secs) && secs > 0) payload.spawn_interval_seconds = secs;
-			payload.spawn_run_count = runCount.trim()
-				? parseInt(runCount, 10)
-				: null;
+			payload.spawn_run_count = runCount.trim() ? parseInt(runCount, 10) : null;
 		} else {
 			const cap = parseInt(iterCap, 10);
 			if (!isNaN(cap) && cap > 0) payload.loop_iteration_cap = cap;
@@ -308,9 +306,7 @@ export default function AutomationsPage() {
 
 			{/* List */}
 			<div className="min-h-0 flex-1">
-				{isLoading && (
-					<p className="text-sm text-muted-foreground">Loading…</p>
-				)}
+				{isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 				{automations && automations.length === 0 && (
 					<p className="text-sm text-muted-foreground">
 						No automations yet. Create one to get started.
@@ -350,7 +346,10 @@ export default function AutomationsPage() {
 									</p>
 								</div>
 
-								<span data-testid="automation-mode" className="text-xs font-medium uppercase text-muted-foreground">
+								<span
+									data-testid="automation-mode"
+									className="text-xs font-medium uppercase text-muted-foreground"
+								>
 									{a.mode}
 								</span>
 

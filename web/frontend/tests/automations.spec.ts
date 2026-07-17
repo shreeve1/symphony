@@ -68,9 +68,9 @@ test.describe("Automations page", () => {
 		// Files link is the existing one; Automations should be right alongside.
 		await expect(page.getByTestId("binding-files-link")).toBeVisible();
 		await expect(page.getByTestId("binding-automations-link")).toBeVisible();
-		await expect(
-			page.getByTestId("binding-automations-link"),
-		).toHaveText("Automations");
+		await expect(page.getByTestId("binding-automations-link")).toHaveText(
+			"Automations",
+		);
 	});
 
 	test("navigates to automations page and lists automations", async ({
@@ -110,9 +110,9 @@ test.describe("Automations page", () => {
 		await expect(
 			disabledRow.getByTestId("automation-enabled"),
 		).not.toBeChecked();
-		await expect(
-			disabledRow.getByTestId("automation-remaining"),
-		).toContainText("Unlimited");
+		await expect(disabledRow.getByTestId("automation-remaining")).toContainText(
+			"Unlimited",
+		);
 
 		expectCleanConsole(problems);
 	});
@@ -192,7 +192,7 @@ test.describe("Automations page", () => {
 				automation = {
 					...automation,
 					...JSON.parse(route.request().postData() ?? "{}"),
-			};
+				};
 				return route.fulfill({ status: 200, json: automation });
 			}
 			if (route.request().method() === "GET") {
@@ -207,7 +207,9 @@ test.describe("Automations page", () => {
 		await page.getByTestId("automation-form-submit").click();
 
 		await expect.poll(() => patchCalled).toBe(true);
-		await expect(page.getByTestId("automation-row")).toContainText("Updated patrol");
+		await expect(page.getByTestId("automation-row")).toContainText(
+			"Updated patrol",
+		);
 		expectCleanConsole(problems);
 	});
 
@@ -288,7 +290,11 @@ test.describe("Automations page", () => {
 	test("loop option is hidden on infra binding", async ({ page, problems }) => {
 		// Mock automations list to avoid 404 console error.
 		await page.route("**/api/bindings/homelab/automations", (route) => {
-			route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
 		});
 		await page.goto("/homelab/automations");
 		await page.getByTestId("automation-create-btn").click();
@@ -296,28 +302,31 @@ test.describe("Automations page", () => {
 
 		// Mode selector should only have 'spawn' for homelab (infra).
 		await expect(page.getByTestId("automation-form-mode")).toBeVisible();
-		const options = page
-			.getByTestId("automation-form-mode")
-			.locator("option");
+		const options = page.getByTestId("automation-form-mode").locator("option");
 		await expect(options).toHaveCount(1);
 		await expect(options.first()).toHaveValue("spawn");
 
 		expectCleanConsole(problems);
 	});
 
-	test("loop option is visible on coding binding", async ({ page, problems }) => {
+	test("loop option is visible on coding binding", async ({
+		page,
+		problems,
+	}) => {
 		// Mock automations list to avoid 404 console error.
 		await page.route("**/api/bindings/dotfiles/automations", (route) => {
-			route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
 		});
 		await page.goto("/dotfiles/automations");
 		await page.getByTestId("automation-create-btn").click();
 		await expect(page.getByTestId("automation-form")).toBeVisible();
 
 		// Mode selector for coding binding shows both spawn and loop.
-		const options = page
-			.getByTestId("automation-form-mode")
-			.locator("option");
+		const options = page.getByTestId("automation-form-mode").locator("option");
 		await expect(options).toHaveCount(2);
 		await expect(options.nth(0)).toHaveValue("spawn");
 		await expect(options.nth(1)).toHaveAttribute("value", "loop");
@@ -331,7 +340,11 @@ test.describe("Automations page", () => {
 	}) => {
 		// Mock automations list to avoid 404 console error.
 		await page.route("**/api/bindings/dotfiles/automations", (route) => {
-			route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+			route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: "[]",
+			});
 		});
 		await page.goto("/dotfiles/automations");
 		await page.getByTestId("automation-create-btn").click();
@@ -342,13 +355,13 @@ test.describe("Automations page", () => {
 		await expect(
 			page.getByTestId("automation-form-iter-cap"),
 		).not.toBeVisible();
-		await expect(
-			page.getByTestId("automation-form-marker"),
-		).not.toBeVisible();
+		await expect(page.getByTestId("automation-form-marker")).not.toBeVisible();
 
 		// Switch to loop.
 		await page.getByTestId("automation-form-mode").selectOption("loop");
-		await expect(page.getByTestId("automation-form-interval")).not.toBeVisible();
+		await expect(
+			page.getByTestId("automation-form-interval"),
+		).not.toBeVisible();
 		await expect(page.getByTestId("automation-form-count")).not.toBeVisible();
 		await expect(page.getByTestId("automation-form-iter-cap")).toBeVisible();
 		await expect(page.getByTestId("automation-form-marker")).toBeVisible();
