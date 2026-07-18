@@ -15,6 +15,7 @@ of writing an auto_land issue that silently stalls a dependent batch at dispatch
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import subprocess
 from dataclasses import dataclass
@@ -319,3 +320,223 @@ def list_issues(binding_name: str | None = None) -> list[str]:
             f"#{row[0]} {row[1]} {row[3]} auto_land={bool(row[6])} blocked_by={blocked_by} locks={locks} {row[2]}"
         )
     return lines or ["no issues"]
+
+
+# --- sync_from_github (ADR-0042 section 1) ---
+# GitHub is the human-visible issue surface; Podium is the private execution
+# mirror the scheduler dispatches from. This helper mirrors open, ready-for-agent
+# GitHub child issues (those carrying a `## Parent` heading) into Podium as new
+# `todo` rows, deduped on the UNIQUE `external_id` index. Insert-only: a row that
+# already exists is left untouched (no title/body/state overwrite), so re-running
+# sync is always safe mid-flight. `auto_land` is decided at insert time on whether
+# `_extract_runnable_verification` extracts a runnable `## Verification` command
+# from the body, mirroring ADR-0023's explicit-`auto_land` invariant.
+
+_ISSUE_REF = re.compile(r"(?:[\w.-]+/[\w.-]+)?#(\d+)")
+
+
+def _extract_runnable_verification(body: str) -> str:
+    """Wrapper around scheduler._extract_runnable_verification (lazy import)."""
+    _scheduler = cast(Any, import_module("scheduler"))
+    return _scheduler._extract_runnable_verification(body)
+
+
+def _has_parent_section(body: str) -> bool:
+    """Return True if the body has a non-empty `## Parent` section.
+
+    A child issue linked to a parent spec carries a `## Parent` heading with at
+    least one ``#<digits>`` reference in the section body. A bare
+    `## Parent\\n\\nNone` section (the no-parent marker some templates emit) is
+    treated as no parent.
+    """
+    heading = re.search(r"^##[ \t]+Parent[ \t]*$", body, re.MULTILINE)
+    if heading is None:
+        return False
+    next_heading = re.search(r"^##[ \t]+", body[heading.end() :], re.MULTILINE)
+    end = heading.end() + next_heading.start() if next_heading else len(body)
+    section = body[heading.end() : end]
+    return bool(_ISSUE_REF.search(section))
+
+
+def _extract_blocked_by_numbers(body: str) -> list[int]:
+    """Parse the `## Blocked by` section for `#N` references.
+
+    Returns the referenced issue numbers in document order, deduplicated. Lines
+    like `None — can start immediately.` (the to-tickets no-blocker marker) and
+    prose that mentions `#N` without a `## Blocked by` heading are ignored.
+    """
+    heading = re.search(r"^##[ \t]+Blocked[ \t]+by[ \t]*$", body, re.MULTILINE)
+    if heading is None:
+        return []
+    next_heading = re.search(r"^##[ \t]+", body[heading.end() :], re.MULTILINE)
+    end = heading.end() + next_heading.start() if next_heading else len(body)
+    section = body[heading.end() : end]
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for match in _ISSUE_REF.finditer(section):
+        number = int(match.group(1))
+        if number in seen:
+            continue
+        seen.add(number)
+        ordered.append(number)
+    return ordered
+
+
+def _run_gh_issue_list(owner: str, repo: str) -> list[dict[str, Any]]:
+    """Invoke `gh issue list` and parse its JSON output.
+
+    Returned shape per element: ``{number, title, body, labels}``. A `gh` failure
+    surfaces as ``PodiumIssuesError`` so the CLI can exit non-zero with a clear
+    operator message rather than a raw ``CalledProcessError``.
+    """
+    try:
+        completed = subprocess.run(
+            [
+                "gh",
+                "issue",
+                "list",
+                "--label",
+                "ready-for-agent",
+                "--state",
+                "open",
+                "--json",
+                "number,title,body,labels",
+                "--repo",
+                f"{owner}/{repo}",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise PodiumIssuesError(
+            "gh CLI not found in PATH; install it to sync from GitHub"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise PodiumIssuesError(
+            f"gh issue list failed (exit {exc.returncode}): {stderr}"
+        ) from exc
+    try:
+        parsed = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise PodiumIssuesError(
+            f"gh issue list returned non-JSON output: {exc}"
+        ) from exc
+    if not isinstance(parsed, list):
+        raise PodiumIssuesError("gh issue list returned unexpected payload shape")
+    return parsed
+
+
+def sync_from_github(
+    cwd: Path,
+    *,
+    bindings_path: Path = BINDINGS_PATH,
+    dry_run: bool = False,
+) -> list[str]:
+    """Insert-only reconcile of GitHub child issues into the Podium binding.
+
+    The action is re-runnable: every re-press picks up newly-added child issues
+    and heals drift, never duplicating or mutating an existing row. See
+    ``docs/adr/0042-github-podium-dispatch-bridge.md`` section 1 for the
+    selection rule and provenance gate.
+    """
+    binding = resolve_binding_for_cwd(cwd, bindings_path)
+    repo_path = binding.get("repo_path")
+    if not repo_path:
+        raise PodiumIssuesError(
+            f"binding {binding['name']!r} has no repo_path; cannot infer GitHub repo"
+        )
+    _worktree_module = import_module("web.api.worktree")
+    resolved = _worktree_module.resolve_github_repo(Path(repo_path))
+    if resolved is None:
+        raise PodiumIssuesError(
+            f"binding {binding['name']!r} repo_path {repo_path} does not resolve "
+            "to a GitHub remote; Sync from GitHub is opt-in via resolvability "
+            "(ADR-0042 section 1)"
+        )
+    owner, repo = resolved
+    external_prefix = f"github:{owner}/{repo}#"
+    raw_issues = _run_gh_issue_list(owner, repo)
+    child_issues = [
+        item
+        for item in raw_issues
+        if isinstance(item, dict) and _has_parent_section(str(item.get("body") or ""))
+    ]
+    lines = [
+        f"binding={binding['name']} repo={owner}/{repo} "
+        f"gh_issues={len(raw_issues)} child_issues={len(child_issues)}"
+    ]
+
+    worktree_default = binding.get("worktree_default")
+    if worktree_default is None:
+        worktree_default = binding.get("type", "infra") == "coding"
+
+    if dry_run:
+        for item in child_issues:
+            number = int(item["number"])
+            title = str(item.get("title") or "")
+            auto_land = bool(
+                _extract_runnable_verification(str(item.get("body") or ""))
+            )
+            lines.append(
+                f"github:{owner}/{repo}#{number} '{title}' "
+                f"auto_land={auto_land} -> podium (dry-run)"
+            )
+        return lines
+
+    now = datetime.now(UTC).isoformat()
+    connection = connect()
+    inserted = 0
+    skipped = 0
+    try:
+        for item in child_issues:
+            number = int(item["number"])
+            external_id = f"{external_prefix}{number}"
+            title = str(item.get("title") or "").strip()
+            body = str(item.get("body") or "")
+            existing = connection.execute(
+                "SELECT id FROM issue WHERE external_id = ?", (external_id,)
+            ).fetchone()
+            if existing is not None:
+                skipped += 1
+                lines.append(
+                    f"github:{owner}/{repo}#{number} '{title}' "
+                    f"-> existing podium #{existing['id']} (skip)"
+                )
+                continue
+            blocked_by_ids: list[int] = []
+            for ref_number in _extract_blocked_by_numbers(body):
+                blocker = connection.execute(
+                    "SELECT id FROM issue WHERE external_id = ?",
+                    (f"{external_prefix}{ref_number}",),
+                ).fetchone()
+                if blocker is None:
+                    continue
+                blocked_by_ids.append(int(blocker["id"]))
+            auto_land = bool(_extract_runnable_verification(body))
+            _issue_create = cast(Any, import_module("web.api.issue_create"))
+            issue_id = _issue_create.insert_issue_row(
+                connection,
+                binding_name=str(binding["name"]),
+                title=title,
+                description=body,
+                created_at=now,
+                base_branch=str(binding.get("base_branch") or "main"),
+                preferred_agent=str(binding.get("default_agent") or "pi"),
+                worktree_active=bool(worktree_default),
+                auto_land=auto_land,
+                external_id=external_id,
+                origin="operator",
+                blocked_by=blocked_by_ids,
+            )
+            connection.commit()
+            inserted += 1
+            lines.append(
+                f"github:{owner}/{repo}#{number} '{title}' "
+                f"auto_land={auto_land} -> podium #{issue_id}"
+            )
+    finally:
+        connection.close()
+    lines.append(f"inserted={inserted} skipped={skipped}")
+    return lines

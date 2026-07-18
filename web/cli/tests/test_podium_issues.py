@@ -600,3 +600,394 @@ def test_malformed_catalog_wrapped_as_podium_error(
     with pytest.raises(PodiumIssuesError, match="models.yml"):
         create_plan_issues(repo, plan, bindings_path=bindings)
     assert _issue_rows(db_path) == []  # no row inserted on a catalog read failure
+
+
+# --- sync_from_github (ADR-0042 section 1) ---
+# Tests cover the insert-only reconcile contract:
+#   * re-running sync never duplicates or mutates an existing row
+#   * Verification section -> auto_land=true; no Verification -> auto_land=false
+#   * GitHub `## Blocked by` edges map to Podium blocked_by ids
+#   * parent-only / non-child issues are filtered out
+#   * binding.repo_path without a GitHub remote fails soft (PodiumIssuesError)
+# `gh` itself is monkeypatched via `_run_gh_issue_list`; the scheduler's
+# `_extract_runnable_verification` is the real implementation under test.
+
+
+def _init_git_repo(repo: Path, remote_url: str) -> None:
+    """Make ``repo`` a git repo whose origin URL is ``remote_url``.
+
+    Mirrors the helper in test_worktree.py; kept local so the podium-issues
+    test module has no cross-fixture coupling.
+    """
+    import subprocess
+
+    subprocess.run(["git", "-C", str(repo), "init", "-b", "main"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "test@test"], check=True
+    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    (repo / "README.md").write_text("# test", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "initial"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", remote_url],
+        check=True,
+    )
+
+
+def _full_issue_rows(db_path: Path) -> list[tuple[Any, ...]]:
+    with sqlite3.connect(db_path) as connection:
+        return connection.execute(
+            """
+            SELECT id, title, description, state, external_id, auto_land,
+                   worktree_active, origin, blocked_by, locks
+            FROM issue ORDER BY id
+            """
+        ).fetchall()
+
+
+def _patch_gh(monkeypatch: pytest.MonkeyPatch, items: list[dict]) -> None:
+    monkeypatch.setattr(podium_issues, "_run_gh_issue_list", lambda owner, repo: items)
+
+
+_CHILD_WITH_VERIFICATION = (
+    "## Parent\n\n#1 — Spec parent\n\n"
+    "## What to build\n\nDo the thing.\n\n"
+    "## Verification\n\n`uv run pytest tests/test_x.py -q`\n"
+)
+_CHILD_WITHOUT_VERIFICATION = (
+    "## Parent\n\n#1 — Spec parent\n\n## What to build\n\nDo the thing.\n"
+)
+_PARENT_ONLY = (
+    "## Problem Statement\n\nThis is the spec, not a child.\n\n"
+    "## Acceptance criteria\n\n- [ ] Parent closes last.\n"
+)
+
+
+def test_sync_inserts_child_with_verification_sets_auto_land_true(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 10,
+                "title": "Child with verify",
+                "body": _CHILD_WITH_VERIFICATION,
+            }
+        ],
+    )
+
+    lines = podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+    rows = _full_issue_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0][1] == "Child with verify"
+    assert rows[0][2] == _CHILD_WITH_VERIFICATION
+    assert rows[0][3] == "todo"
+    assert rows[0][4] == "github:owner/repo#10"
+    assert bool(rows[0][5]) is True  # auto_land: Verification present
+    assert bool(rows[0][6]) is True  # worktree_active (coding binding default)
+    assert rows[0][7] == "operator"
+    assert json.loads(rows[0][8]) == []
+    assert json.loads(rows[0][9]) == []
+    assert any("-> podium #1" in line for line in lines)
+    assert any("inserted=1 skipped=0" in line for line in lines)
+
+
+def test_sync_inserts_child_without_verification_sets_auto_land_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 11,
+                "title": "Child no-verify",
+                "body": _CHILD_WITHOUT_VERIFICATION,
+            }
+        ],
+    )
+
+    podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+    rows = _full_issue_rows(db_path)
+    assert len(rows) == 1
+    assert bool(rows[0][5]) is False  # auto_land: no Verification section
+    assert rows[0][4] == "github:owner/repo#11"
+
+
+def test_sync_skips_issues_without_parent_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_gh(
+        monkeypatch,
+        [
+            {"number": 1, "title": "Spec parent", "body": _PARENT_ONLY},
+            {
+                "number": 2,
+                "title": "Child",
+                "body": _CHILD_WITH_VERIFICATION,
+            },
+        ],
+    )
+
+    lines = podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+    rows = _full_issue_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0][4] == "github:owner/repo#2"
+    assert any("child_issues=1" in line for line in lines)
+
+
+def test_sync_rerun_is_idempotent_and_does_not_mutate_existing_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 20,
+                "title": "First title",
+                "body": _CHILD_WITH_VERIFICATION,
+            }
+        ],
+    )
+
+    podium_issues.sync_from_github(repo, bindings_path=bindings)
+    first_rows = _full_issue_rows(db_path)
+    assert len(first_rows) == 1
+
+    # Operator mutates the GitHub-side title/body between syncs. The re-run
+    # must NOT overwrite the Podium row (insert-only contract).
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 20,
+                "title": "Mutated GitHub title",
+                "body": _CHILD_WITH_VERIFICATION + "\n## Extra\n\nmutated.\n",
+            }
+        ],
+    )
+    lines = podium_issues.sync_from_github(repo, bindings_path=bindings)
+    second_rows = _full_issue_rows(db_path)
+
+    assert len(second_rows) == 1
+    assert second_rows[0][0] == first_rows[0][0]  # same id
+    assert second_rows[0][1] == first_rows[0][1]  # title untouched
+    assert second_rows[0][2] == first_rows[0][2]  # body untouched
+    assert any("-> existing podium #1 (skip)" in line for line in lines)
+    assert any("inserted=0 skipped=1" in line for line in lines)
+
+
+def test_sync_maps_blocked_by_to_podium_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    # Issue #5 is a blocker already mirrored earlier; #6 depends on it.
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 5,
+                "title": "Blocker",
+                "body": _CHILD_WITH_VERIFICATION,
+            }
+        ],
+    )
+    podium_issues.sync_from_github(repo, bindings_path=bindings)
+    with sqlite3.connect(db_path) as connection:
+        blocker_id = connection.execute(
+            "SELECT id FROM issue WHERE external_id = ?",
+            ("github:owner/repo#5",),
+        ).fetchone()[0]
+
+    dependent_body = (
+        "## Parent\n\n#1 — Spec parent\n\n"
+        "## Blocked by\n\n- #5 — Blocker\n\n"
+        "## What to build\n\nDepends on the blocker.\n\n"
+        "## Verification\n\n`uv run pytest -q`\n"
+    )
+    _patch_gh(
+        monkeypatch,
+        [{"number": 6, "title": "Dependent", "body": dependent_body}],
+    )
+    podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+    rows = _full_issue_rows(db_path)
+    by_external = {row[4]: row for row in rows}
+    assert by_external["github:owner/repo#6"][0] > blocker_id
+    assert json.loads(by_external["github:owner/repo#6"][8]) == [blocker_id]
+
+
+def test_sync_drops_blocked_by_edges_not_in_podium(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    body = (
+        "## Parent\n\n#1 — Spec parent\n\n"
+        "## Blocked by\n\n- #999 — Not in Podium yet\n\n"
+        "## What to build\n\nWill resolve later.\n\n"
+        "## Verification\n\n`uv run pytest -q`\n"
+    )
+    _patch_gh(
+        monkeypatch,
+        [{"number": 7, "title": "Later-unblocked", "body": body}],
+    )
+
+    podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+    rows = _full_issue_rows(db_path)
+    assert len(rows) == 1
+    assert json.loads(rows[0][8]) == []
+
+
+def test_sync_no_github_remote_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo, "https://gitlab.example.com/owner/repo.git")  # non-GitHub
+    bindings = _make_bindings(tmp_path, repo)
+    _init_db(tmp_path, monkeypatch)
+
+    with pytest.raises(PodiumIssuesError, match="does not resolve to a GitHub"):
+        podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+
+def test_sync_dry_run_inserts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 30,
+                "title": "Dry-run",
+                "body": _CHILD_WITH_VERIFICATION,
+            }
+        ],
+    )
+
+    lines = podium_issues.sync_from_github(repo, bindings_path=bindings, dry_run=True)
+
+    assert _full_issue_rows(db_path) == []
+    assert any("dry-run" in line for line in lines)
+    assert any("auto_land=True" in line for line in lines)
+
+
+def test_cli_sync_from_github_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    _init_db(tmp_path, monkeypatch)
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 40,
+                "title": "Cli dry-run",
+                "body": _CHILD_WITH_VERIFICATION,
+            }
+        ],
+    )
+
+    rc = podium.main(
+        [
+            "issues",
+            "sync-from-github",
+            "--cwd",
+            str(repo),
+            "--bindings",
+            str(bindings),
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+
+
+def test_cli_sync_from_github_no_binding_returns_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    _init_db(tmp_path, monkeypatch)
+
+    rc = podium.main(
+        [
+            "issues",
+            "sync-from-github",
+            "--cwd",
+            str(other),
+            "--bindings",
+            str(bindings),
+        ]
+    )
+    assert rc == 1
+    assert "no podium binding matches" in capsys.readouterr().err
+
+
+# --- pure helpers ---
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("## Parent\n\n#1 — Spec\n", True),
+        ("## Parent\n\nshreeve1/repo#1 — Spec\n", True),
+        ("## Parent\n\nNone\n", False),  # to-tickets no-parent marker
+        ("## Other\n\n#1\n", False),  # no Parent heading
+        ("", False),
+    ],
+)
+def test_has_parent_section(body: str, expected: bool) -> None:
+    assert podium_issues._has_parent_section(body) is expected
+
+
+def test_extract_blocked_by_numbers_handles_section_and_dedup() -> None:
+    body = (
+        "## What to build\n\nignored #5 here.\n\n"
+        "## Blocked by\n\n"
+        "- #1 — Blocker one\n"
+        "- shreeve1/repo#2 — Cross-repo\n"
+        "- #1 — Duplicate\n"
+        "\n## Acceptance\n\n- [ ] x\n"
+    )
+    assert podium_issues._extract_blocked_by_numbers(body) == [1, 2]
+
+
+def test_extract_blocked_by_numbers_returns_empty_without_section() -> None:
+    body = "## What to build\n\nRefs #5 but no Blocked-by section.\n"
+    assert podium_issues._extract_blocked_by_numbers(body) == []

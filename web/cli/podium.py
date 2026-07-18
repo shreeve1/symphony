@@ -15,6 +15,7 @@ hash_password = _auth.hash_password
 sync_skills = _skills.sync_skills
 create_plan_issues = _issues.create_plan_issues
 list_podium_issues = _issues.list_issues
+sync_from_github = _issues.sync_from_github
 ISSUES_BINDINGS_PATH = _issues.BINDINGS_PATH
 BINDINGS_PATH = _seed.BINDINGS_PATH
 _load_bindings = _seed._load_bindings
@@ -62,6 +63,22 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.add_argument("--binding", default=None)
     list_cmd.set_defaults(func=_issues_list)
 
+    sync = issue_commands.add_parser("sync-from-github")
+    sync.add_argument(
+        "--cwd",
+        type=Path,
+        default=Path.cwd(),
+        help="Binding repo used to resolve the Podium binding.",
+    )
+    sync.add_argument(
+        "--bindings",
+        type=Path,
+        default=ISSUES_BINDINGS_PATH,
+        help="Path to bindings.yml.",
+    )
+    sync.add_argument("--dry-run", action="store_true")
+    sync.set_defaults(func=_issues_sync_from_github)
+
     set_password = subcommands.add_parser("set-password")
     set_password.set_defaults(func=_set_password)
     return parser
@@ -89,6 +106,18 @@ def _issues_create_from_plan(args: argparse.Namespace) -> int:
 def _issues_list(args: argparse.Namespace) -> int:
     for line in list_podium_issues(args.binding):
         print(line)
+    return 0
+
+
+def _issues_sync_from_github(args: argparse.Namespace) -> int:
+    try:
+        for line in sync_from_github(
+            args.cwd, bindings_path=args.bindings, dry_run=args.dry_run
+        ):
+            print(line)
+    except PodiumIssuesError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return 0
 
 
