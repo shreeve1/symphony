@@ -14,6 +14,9 @@ export interface Binding {
 	is_remote: boolean;
 	repo_name: string | null;
 	host: string;
+	// ADR-0042 section 1: runtime resolvability of the binding remote to a
+	// GitHub repo. Non-null enables the Sync from GitHub button; null hides it.
+	github_repo: string | null;
 }
 
 export interface Issue {
@@ -402,6 +405,28 @@ export async function dismissIssue(id: number): Promise<IssueDetail> {
 		);
 	}
 	return res.json() as Promise<IssueDetail>;
+}
+
+// ADR-0042 section 1: the binding-page Sync from GitHub button shells to the
+// insert-only reconcile (web.cli.podium_issues.sync_from_github) and reports
+// the inserted/skipped counts. The endpoint is idempotent: a re-press picks
+// up newly-added child issues and never duplicates or mutates an existing row.
+export interface SyncFromGithubResult {
+	inserted: number;
+	skipped: number;
+	lines: string[];
+}
+
+export async function syncFromGithub(
+	binding: string,
+): Promise<SyncFromGithubResult> {
+	const url = `/api/bindings/${encodeURIComponent(binding)}/sync-from-github`;
+	const res = await fetch(url, { method: "POST" });
+	if (!res.ok) {
+		const detail = await res.text();
+		throw new Error(`POST ${url} -> ${res.status} ${res.statusText}: ${detail}`);
+	}
+	return res.json() as Promise<SyncFromGithubResult>;
 }
 
 export const fetchBindingIssues = (name: string) =>

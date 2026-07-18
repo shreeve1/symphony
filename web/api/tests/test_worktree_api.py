@@ -7,6 +7,7 @@ through the FastAPI TestClient.
 from __future__ import annotations
 
 import subprocess
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -954,3 +955,268 @@ def test_remote_toggle_off_archives_remote_worktree(
     body = response.json()
     assert body["worktree_active"] is False
     assert "Worktree archived" in (body["comments_md"] or "")
+
+
+# --- ADR-0042 section 1: Sync from GitHub button ---
+
+
+def _add_remote(path: Path, url: str) -> None:
+    """Set the binding repo's origin URL (test fixture for resolve_github_repo)."""
+    _git(path, "remote", "add", "origin", url)
+
+
+def _seed_binding_row(db_path: Path, binding_name: str) -> None:
+    """Create the schema and seed the binding row that _get_binding_or_404 looks up."""
+    import sqlite3
+
+    from web.api.schema import SCHEMA_SQL
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(SCHEMA_SQL)
+        conn.execute("INSERT OR IGNORE INTO binding(name) VALUES (?)", (binding_name,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def github_repo_and_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """Repo with a GitHub SSH remote + podium.db seeded with a binding row."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _add_remote(repo, "git@github-personal:owner/repo.git")
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    _seed_binding_row(db_path, "trading")
+    _override_bindings(monkeypatch, [_binding_entry("trading", repo)])
+    return repo, db_path
+
+
+@pytest.fixture
+def non_github_repo_and_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """Repo whose remote does NOT resolve to GitHub (the no-Sync-button case)."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _add_remote(repo, "https://gitlab.com/owner/repo.git")
+    db_path = tmp_path / "podium.db"
+    monkeypatch.setenv("PODIUM_DB_PATH", str(db_path))
+    _seed_binding_row(db_path, "trading")
+    _override_bindings(monkeypatch, [_binding_entry("trading", repo)])
+    return repo, db_path
+
+
+def _override_bindings(monkeypatch: pytest.MonkeyPatch, entries: list[dict]) -> None:
+    """Patch both the FastAPI bindings_override and the CLI's _load_bindings
+    so the same test binding is visible on both seams (the API endpoint shells
+    to web.cli.podium_issues.sync_from_github which reads bindings.yml itself).
+    """
+    seed = import_module("web.api.seed")
+    monkeypatch.setattr(main, "_bindings_override", entries)
+    monkeypatch.setattr(seed, "_load_bindings", lambda path: entries)
+
+
+_CHILD_BODY_VERIFIED = (
+    "## Parent\n\n#1 — Spec parent\n\n"
+    "## What to build\n\nDo the thing.\n\n"
+    "## Verification\n\n`uv run pytest tests/test_x.py -q`\n"
+)
+
+
+def _patch_gh(monkeypatch: pytest.MonkeyPatch, items: list[dict]) -> None:
+    """Stub the gh CLI in web.cli.podium_issues to return ``items`` directly."""
+    podium_issues = import_module("web.cli.podium_issues")
+    monkeypatch.setattr(podium_issues, "_run_gh_issue_list", lambda owner, repo: items)
+
+
+# --- /api/bindings exposes github_repo (button visibility) ---
+
+
+def test_bindings_endpoint_surfaces_github_repo_when_remote_is_github(
+    github_repo_and_db: tuple[Path, Path],
+) -> None:
+    """ADR-0042 section 1: github_repo is the runtime-resolvability signal that
+    drives the Sync button visibility on the frontend."""
+    repo, db_path = github_repo_and_db
+    with TestClient(app) as client:
+        login(client)
+        bindings = client.get("/api/bindings").json()
+    by_name = {b["name"]: b for b in bindings}
+    assert "trading" in by_name
+    assert by_name["trading"]["github_repo"] == "owner/repo"
+
+
+def test_bindings_endpoint_returns_null_github_repo_for_non_github_remote(
+    non_github_repo_and_db: tuple[Path, Path],
+) -> None:
+    """A non-GitHub remote hides the Sync button (no bindings.yml field needed;
+    runtime resolvability is the opt-in)."""
+    repo, db_path = non_github_repo_and_db
+    with TestClient(app) as client:
+        login(client)
+        bindings = client.get("/api/bindings").json()
+    by_name = {b["name"]: b for b in bindings}
+    assert by_name["trading"]["github_repo"] is None
+
+
+def test_bindings_endpoint_returns_null_github_repo_when_remote_missing(
+    repo_and_db: tuple[Path, Path],
+) -> None:
+    """A repo with no `origin` remote returns None for github_repo."""
+    repo, db_path = repo_and_db
+    _seed_binding_row(db_path, "trading")
+    with TestClient(app) as client:
+        login(client)
+        bindings = client.get("/api/bindings").json()
+    by_name = {b["name"]: b for b in bindings}
+    assert by_name["trading"]["github_repo"] is None
+
+
+# --- POST /api/bindings/{name}/sync-from-github ---
+
+
+def test_sync_from_github_inserts_child_issues_and_reports_inserted_count(
+    github_repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pressing Sync runs the insert-only reconcile and reports the inserted count
+    (ADR-0042 section 1, acceptance criterion)."""
+    import sqlite3
+
+    repo, db_path = github_repo_and_db
+    _patch_gh(
+        monkeypatch,
+        [
+            {
+                "number": 10,
+                "title": "Child A",
+                "body": _CHILD_BODY_VERIFIED,
+            },
+            {
+                "number": 11,
+                "title": "Child B",
+                "body": _CHILD_BODY_VERIFIED,
+            },
+        ],
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.post("/api/bindings/trading/sync-from-github")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["inserted"] == 2
+    assert body["skipped"] == 0
+    assert isinstance(body["lines"], list)
+    assert any("inserted=2 skipped=0" in line for line in body["lines"])
+
+    # Verify the rows landed in the Podium db with the right external_id.
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, title, external_id, auto_land FROM issue ORDER BY id"
+        ).fetchall()
+    assert len(rows) == 2
+    assert rows[0][1] == "Child A"
+    assert rows[0][2] == "github:owner/repo#10"
+    assert bool(rows[0][3]) is True  # auto_land: Verification present
+    assert rows[1][1] == "Child B"
+    assert rows[1][2] == "github:owner/repo#11"
+    assert bool(rows[1][3]) is True
+
+
+def test_sync_from_github_is_idempotent_on_re_press(
+    github_repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-pressing the Sync button must not duplicate or mutate existing rows;
+    new children land, existing ones show as skipped (ADR-0042 section 1)."""
+    import sqlite3
+
+    repo, db_path = github_repo_and_db
+    _patch_gh(
+        monkeypatch,
+        [
+            {"number": 10, "title": "Child A", "body": _CHILD_BODY_VERIFIED},
+        ],
+    )
+
+    with TestClient(app) as client:
+        login(client)
+        first = client.post("/api/bindings/trading/sync-from-github").json()
+        second = client.post("/api/bindings/trading/sync-from-github").json()
+
+    assert first["inserted"] == 1
+    assert first["skipped"] == 0
+    assert second["inserted"] == 0
+    assert second["skipped"] == 1  # same external_id — leave alone
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT id, title FROM issue ORDER BY id").fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == "Child A"
+
+
+def test_sync_from_github_returns_422_for_non_github_remote(
+    non_github_repo_and_db: tuple[Path, Path],
+) -> None:
+    """Backend is defensive even when the frontend hides the button: a binding
+    whose remote does not resolve to GitHub returns 422."""
+    repo, db_path = non_github_repo_and_db
+    with TestClient(app) as client:
+        login(client)
+        response = client.post("/api/bindings/trading/sync-from-github")
+    assert response.status_code == 422
+    assert "does not resolve to a GitHub remote" in response.json()["detail"]
+
+
+def test_sync_from_github_returns_404_for_unknown_binding(
+    github_repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unknown binding name → 404 (consistent with the rest of the API)."""
+    _patch_gh(monkeypatch, [])
+    with TestClient(app) as client:
+        login(client)
+        response = client.post("/api/bindings/nonexistent/sync-from-github")
+    assert response.status_code == 404
+
+
+def test_sync_from_github_picks_up_new_child_on_re_press(
+    github_repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-press between syncs enqueues a newly-added child while leaving the
+    previously-mirrored row untouched (the re-runnable contract)."""
+    import sqlite3
+
+    repo, db_path = github_repo_and_db
+
+    first_batch = [{"number": 10, "title": "First", "body": _CHILD_BODY_VERIFIED}]
+    second_batch = first_batch + [
+        {"number": 11, "title": "Second", "body": _CHILD_BODY_VERIFIED}
+    ]
+    responses = iter([first_batch, second_batch])
+
+    def _fake_gh(owner, repo):
+        return next(responses)
+
+    podium_issues = import_module("web.cli.podium_issues")
+    monkeypatch.setattr(podium_issues, "_run_gh_issue_list", _fake_gh)
+
+    with TestClient(app) as client:
+        login(client)
+        first = client.post("/api/bindings/trading/sync-from-github").json()
+        second = client.post("/api/bindings/trading/sync-from-github").json()
+
+    assert first["inserted"] == 1 and first["skipped"] == 0
+    assert second["inserted"] == 1 and second["skipped"] == 1
+
+    with sqlite3.connect(db_path) as conn:
+        titles = [
+            r[0]
+            for r in conn.execute(
+                "SELECT title FROM issue ORDER BY external_id"
+            ).fetchall()
+        ]
+    assert titles == ["First", "Second"]

@@ -3,10 +3,11 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { fetchBindingIssues } from "@/lib/api";
+import { fetchBindingIssues, fetchBindings } from "@/lib/api";
 import { issueListRefetchIntervalMs } from "@/lib/polling";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import { NewIssueButton } from "@/components/NewIssueModal";
+import { SyncFromGithubButton } from "@/components/SyncFromGithubButton";
 
 export default function BindingPage() {
 	const { binding } = useParams<{ binding: string }>();
@@ -23,11 +24,26 @@ export default function BindingPage() {
 		refetchOnWindowFocus: true,
 	});
 
+	// ADR-0042 section 1: runtime resolvability of the binding's git remote to
+	// a GitHub repo is the opt-in signal. The Sync button only renders when
+	// `github_repo` is non-null.
+	const { data: bindings } = useQuery({
+		queryKey: ["bindings"],
+		queryFn: fetchBindings,
+	});
+	const currentBinding = bindings?.find((b) => b.name === binding);
+	const githubRepo = currentBinding?.github_repo ?? null;
+
 	return (
 		<div className="flex h-full flex-col gap-4">
 			<div className="flex items-center justify-between">
 				<h2 className="text-2xl font-semibold tracking-tight">{binding}</h2>
-				<NewIssueButton binding={binding} />
+				<div className="flex items-center gap-2">
+					{githubRepo && (
+						<SyncFromGithubButton binding={binding} githubRepo={githubRepo} />
+					)}
+					<NewIssueButton binding={binding} />
+				</div>
 			</div>
 
 			<div className="min-h-0 flex-1">

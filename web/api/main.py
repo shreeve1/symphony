@@ -7,6 +7,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import socket
 import sqlite3
 import subprocess
@@ -951,6 +952,20 @@ def list_bindings(
         binding["is_remote"] = _is_remote_binding(name)
         repo_path = _repo_path_for_binding(name)
         binding["repo_name"] = repo_path.name if repo_path is not None else None
+        # ADR-0042 section 1: runtime resolvability of the binding remote to a
+        # GitHub repo is the opt-in signal for the Sync from GitHub button.
+        # `None` (non-GitHub remote or no remote) hides the button.
+        if repo_path is not None:
+            try:
+                from web.api.worktree import resolve_github_repo
+            except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+                from worktree import resolve_github_repo  # type: ignore[no-redef]
+            resolved = resolve_github_repo(repo_path)
+            binding["github_repo"] = (
+                f"{resolved[0]}/{resolved[1]}" if resolved is not None else None
+            )
+        else:
+            binding["github_repo"] = None
         if binding["is_remote"]:
             remote = _remote_for_binding(name)
             # host_alias is a display-only grouping label (ADR-0039): when set it
@@ -1458,6 +1473,68 @@ def get_issue(
     if row is None:
         raise HTTPException(status_code=404, detail="issue not found")
     return _decorate_issue_gates(connection, [_row(row)])[0]
+
+
+# --- ADR-0042 section 1: Sync from GitHub ---
+# The binding-page Sync button is the operator-visible surface of the GitHub →
+# Podium reconcile. It is re-runnable (every press heals drift, never
+# duplicates or mutates an existing row) and present only when the binding's
+# git remote resolves to a GitHub repo (runtime resolvability is the opt-in,
+# not a bindings.yml field). Insert-only reconcile + auto_land gating happen
+# inside `web.cli.podium_issues.sync_from_github` — this endpoint just shells
+# to it and reports the inserted/skipped counts the CLI already prints.
+
+
+def _parse_sync_summary(lines: list[str]) -> tuple[int, int]:
+    """Extract ``inserted=N skipped=M`` from a sync_from_github output list.
+
+    The CLI emits a single ``inserted=<n> skipped=<n>`` summary line per run
+    (web/cli/podium_issues.py). Missing/malformed defaults to (0, 0) so the
+    endpoint never crashes the reconcile.
+    """
+    inserted = 0
+    skipped = 0
+    for line in lines:
+        match = re.search(r"inserted=(\d+)\s+skipped=(\d+)", line)
+        if match is None:
+            continue
+        inserted = int(match.group(1))
+        skipped = int(match.group(2))
+    return inserted, skipped
+
+
+@app.post("/api/bindings/{name}/sync-from-github")
+def sync_binding_from_github(
+    name: str,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    """Run the insert-only reconcile and report the inserted count.
+
+    The endpoint is intentionally idempotent: a re-press picks up newly-added
+    child issues and heals drift without ever mutating an existing Podium row.
+    A binding whose remote does not resolve to a GitHub repo returns 422 (the
+    frontend hides the button in that case, but the API stays defensive).
+    """
+    _get_binding_or_404(connection, name)
+    repo_path = _repo_path_for_binding(name)
+    if repo_path is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"binding {name!r} has no repo_path; cannot sync from GitHub",
+        )
+    try:
+        from web.cli import podium_issues as _podium_issues
+    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+        from cli import podium_issues as _podium_issues  # type: ignore[no-redef]
+    try:
+        lines = _podium_issues.sync_from_github(repo_path)
+    except _podium_issues.PodiumIssuesError as exc:
+        # Non-GitHub remote / gh CLI failure / missing bindings.yml entry all
+        # surface here. Frontend hides the button on the non-GitHub branch, so
+        # this is the only safe way to report a runtime regression.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    inserted, skipped = _parse_sync_summary(lines)
+    return {"inserted": inserted, "skipped": skipped, "lines": lines}
 
 
 @app.patch("/api/issues/{issue_id}")
