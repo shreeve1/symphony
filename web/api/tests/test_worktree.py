@@ -14,6 +14,7 @@ import pytest
 
 import web.api.worktree as worktree_module
 from web.api.worktree import (
+    base_repo_branch,
     base_repo_dirty,
     branch_name,
     cleanup_worktree,
@@ -203,6 +204,46 @@ def test_base_repo_other_untracked_dirty(repo: Path) -> None:
     """Other untracked files still block auto-merge."""
     (repo / "scratch.txt").write_text("operator work", encoding="utf-8")
     assert base_repo_dirty(repo)
+
+
+# --- base_repo_branch ---
+
+
+def test_base_repo_branch_matches_default_main(repo: Path) -> None:
+    """Issue #10 / ADR-0041: fresh repo is on ``main``; the helper returns True."""
+    assert base_repo_branch(repo, "main")
+
+
+def test_base_repo_branch_mismatch(repo: Path) -> None:
+    """Helper returns False when HEAD is on a different branch than expected."""
+    _git(repo, "checkout", "-b", "feature")
+    assert not base_repo_branch(repo, "main")
+    assert base_repo_branch(repo, "feature")
+
+
+def test_base_repo_branch_empty_returns_true(repo: Path) -> None:
+    """Empty ``base_branch`` is opt-in: callers without a pinned base do not
+    false-block. The gate is intentionally permissive when the target is
+    unknown.
+    """
+    assert base_repo_branch(repo, "")
+
+
+def test_base_repo_branch_non_git_dir(tmp_path: Path) -> None:
+    """Non-git directories return False (not on the requested branch)."""
+    non_repo = tmp_path / "not-a-repo"
+    non_repo.mkdir()
+    assert not base_repo_branch(non_repo, "main")
+
+
+def test_base_repo_branch_detached_head_fails_closed(repo: Path) -> None:
+    """Detached HEAD reports ``HEAD`` (not the branch name); the helper
+    returns False unless ``base_branch`` is literally ``HEAD``. Guards
+    against closing the Issue to done when the agent committed in detached
+    state (a degenerate but plausible base-checkout state).
+    """
+    _git(repo, "checkout", "--detach")
+    assert not base_repo_branch(repo, "main")
 
 
 # --- merge_worktree (happy path) ---

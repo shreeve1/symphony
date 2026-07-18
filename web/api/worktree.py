@@ -113,6 +113,23 @@ def base_repo_dirty(repo_path: Path) -> bool:
     return False
 
 
+def base_repo_branch(repo_path: Path, base_branch: str) -> bool:
+    """Return True if the base repo HEAD is currently on ``base_branch``.
+
+    Public mirror of the helper added for the Issue #10 / ADR-0041 branch-
+    mismatch guard. A clean checkout on the wrong branch is treated as a
+    degenerate state (work landed elsewhere), so the spawn-worktree-off land
+    path re-dispatches rather than closing the Issue.
+
+    Empty ``base_branch`` returns True so callers without a pinned base do
+    not false-block; the gate is opt-in.
+    """
+    if not base_branch:
+        return True
+    result = _run_git(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"], check=False)
+    return bool(result and result.strip() == base_branch)
+
+
 def worktree_is_dirty(repo_path: Path, binding_name: str, issue_id: str) -> bool:
     """Return True if the Issue's worktree has uncommitted changes.
 

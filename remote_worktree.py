@@ -111,6 +111,29 @@ def base_repo_dirty(
     return False
 
 
+def base_repo_branch(
+    remote: RemotePolicy,
+    repo_path: Path,
+    base_branch: str,
+    *,
+    run_func: RunFunc = subprocess.run,
+) -> bool:
+    """Remote mirror of ``web.api.worktree.base_repo_branch`` (Issue #10).
+
+    Empty ``base_branch`` returns True so callers without a pinned base do
+    not false-block.
+    """
+    if not base_branch:
+        return True
+    result = _run(
+        remote,
+        f"git -C {shlex.quote(str(repo_path))} rev-parse --abbrev-ref HEAD",
+        check=False,
+        run_func=run_func,
+    )
+    return bool(result.stdout.strip() == base_branch)
+
+
 def remove_worktree(
     remote: RemotePolicy,
     repo_path: Path,

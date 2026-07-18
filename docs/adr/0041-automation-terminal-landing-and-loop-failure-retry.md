@@ -1,6 +1,7 @@
 ---
 status: accepted
 supersedes-part-of: ADR-0038 (spawn terminus + loop terminus landing)
+amended-by: 2026-07-18 (worktree-off spawn branch-mismatch guard, Option B extension)
 relates-to: ADR-0014 (operator-gated worktree landing), ADR-0020 (verified-close direct-done), ADR-0023 (provenance-gated auto-land), ADR-0038 (spawn/loop modes), ADR-0040 (automation pin fields)
 decided-with: James, 2026-07-17 (Podium issue #468 loop-lifecycle grill)
 ---
@@ -55,6 +56,19 @@ normal spawn terminus.
   `MAX_COMMIT_REDISPATCH`, `redispatch_core.py`): re-dispatch to finish the
   commit, then block after the cap so nothing closes with uncommitted work.
 
+  **Branch-mismatch guard (amended 2026-07-18).** The base-checkout land path
+  also gates on `HEAD` matching the candidate's `base_branch`. A clean checkout
+  on a stale branch (e.g. one left behind by a previous worktree-merge land or
+  a manually-checked-out feature branch) is treated as a degenerate state:
+  closing the Issue to `done` would record a verdict on work that landed
+  elsewhere. The land path detects this via the new public helper
+  `web.api.worktree.base_repo_branch` (local) and
+  `remote_worktree.base_repo_branch` (remote); on mismatch it re-dispatches
+  with a checkout instruction, then blocks after `MAX_COMMIT_REDISPATCH` —
+  same fail-closed contract as the dirty-checkout branch. The gate is opt-in
+  (empty `base_branch` returns True) so callers without a pinned base do not
+  false-block.
+
 **Accepted risk — shared-checkout concurrency.** Worktree-OFF spawns commit to a
 single mutable base checkout with no per-Issue isolation. Two spawns (or a spawn
 and any other worktree-off run) touching that checkout concurrently can interleave
@@ -103,3 +117,9 @@ operator recreates or re-enables.
   looping forever.
 - Backend-only change (Python scheduler + tracker); requires a `symphony`
   scheduler restart, not a web deploy.
+- **Amendment (2026-07-18):** the spawn-worktree-off land path gained a
+  branch-mismatch guard (`_review_base_repo_branch`). The same fail-closed
+  contract as dirty-checkout applies: re-dispatch under cap, block at cap.
+  Two new public helpers (`web.api.worktree.base_repo_branch`,
+  `remote_worktree.base_repo_branch`) follow the existing `base_repo_dirty`
+  public/private split rather than duplicating it.

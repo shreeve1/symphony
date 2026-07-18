@@ -6,7 +6,6 @@ Leaf module — no __init__ dependency to avoid import cycles.
 from __future__ import annotations
 
 import re
-import shlex
 from datetime import datetime
 from importlib import import_module
 from typing import cast
@@ -182,25 +181,21 @@ def _review_base_repo_branch(
     feature branch). A clean checkout on the wrong branch is a degenerate
     state: closing the Issue to done would record a verdict on work that
     landed elsewhere, so the spawn-worktree-off land path must reject it.
-    Local path uses ``git rev-parse --abbrev-ref HEAD`` directly because the
-    helper is base-checkout-specific (no worktree path needed).
+    Delegates to the public ``base_repo_branch`` helpers in
+    ``web.api.worktree`` / ``remote_worktree`` (added in #10 alongside the
+    land path that uses them).
     """
-    if not base_branch:
-        return True  # unknown target; caller should have set it; don't false-block
     if binding is not None and binding.is_remote:
         remote_worktree = import_module("remote_worktree")
-        result = remote_worktree._run(
-            binding.remote,
-            f"git -C {shlex.quote(str(config.homelab_repo_path))} rev-parse --abbrev-ref HEAD",
-            check=False,
+        return cast(
+            bool,
+            remote_worktree.base_repo_branch(
+                binding.remote, config.homelab_repo_path, base_branch
+            ),
         )
-        return bool(result.stdout.strip() == base_branch)
-    from web.api.worktree import _run_git as _local_run_git
+    from web.api.worktree import base_repo_branch as _local_base_repo_branch
 
-    out = _local_run_git(
-        config.homelab_repo_path, ["rev-parse", "--abbrev-ref", "HEAD"], check=False
-    )
-    return bool(out and out.strip() == base_branch)
+    return _local_base_repo_branch(config.homelab_repo_path, base_branch)
 
 
 def _land_review_worktree(
