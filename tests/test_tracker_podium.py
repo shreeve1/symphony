@@ -814,6 +814,41 @@ async def test_spawn_automation_threads_pin_fields_and_origin_automation(
 
 
 @pytest.mark.asyncio
+async def test_spawn_automation_worktree_on_sets_auto_land_true_off_false(
+    tmp_path: Path,
+) -> None:
+    """Issue #9 / ADR-0041: worktree-ON spawn Issues are created with
+    auto_land=True so the existing ADR-0023 auto-land pipeline runs review
+    and merges the worktree branch to base (uniform terminal behavior —
+    spawn self-completes to done). Worktree-OFF stays auto_land=False; the
+    separate base-checkout land path is #10.
+    """
+    db_on = tmp_path / "on.db"
+    _seed_spawn_automation(db_on, worktree_active=True)
+    on_adapter = PodiumTrackerAdapter(db_path=db_on, binding_name="test")
+    noon = datetime(2026, 7, 17, 12, tzinfo=UTC)
+    assert (
+        await on_adapter.fire_due_spawn_automations(now=noon, base_branch="main") == 1
+    )
+    with sqlite3.connect(db_on) as connection:
+        connection.row_factory = sqlite3.Row
+        on_row = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert bool(on_row["worktree_active"]) is True
+    assert bool(on_row["auto_land"]) is True
+
+    db_off = tmp_path / "off.db"
+    _seed_spawn_automation(db_off, worktree_active=False)
+    off_adapter = PodiumTrackerAdapter(db_path=db_off, binding_name="test")
+    assert (
+        await off_adapter.fire_due_spawn_automations(now=noon, base_branch="main") == 1
+    )
+    with sqlite3.connect(db_off) as connection:
+        connection.row_factory = sqlite3.Row
+        off_row = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert bool(off_row["worktree_active"]) is False
+    assert bool(off_row["auto_land"]) is False  # land path for worktree-off is #10
+
+
 async def test_spawn_automation_base_branch_override_wins_over_binding_default(
     tmp_path: Path,
 ) -> None:

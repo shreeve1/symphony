@@ -706,6 +706,11 @@ class PodiumTrackerAdapter:
                     preferred_model=row["preferred_model"],
                     reasoning_effort=row["reasoning_effort"] or "high",
                     worktree_active=bool(row["worktree_active"] or False),
+                    # Issue #9 / ADR-0041: worktree-on spawns auto-land through
+                    # the ADR-0023 pipeline (review + merge + done) so they
+                    # self-complete to done; worktree-off stays False — its
+                    # land path is issue #10's base-checkout pipeline.
+                    auto_land=bool(row["worktree_active"] or False),
                     origin="automation",
                     created_at=now_iso,
                 )
