@@ -424,7 +424,9 @@ export async function syncFromGithub(
 	const res = await fetch(url, { method: "POST" });
 	if (!res.ok) {
 		const detail = await res.text();
-		throw new Error(`POST ${url} -> ${res.status} ${res.statusText}: ${detail}`);
+		throw new Error(
+			`POST ${url} -> ${res.status} ${res.statusText}: ${detail}`,
+		);
 	}
 	return res.json() as Promise<SyncFromGithubResult>;
 }
