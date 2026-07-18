@@ -230,7 +230,7 @@ test("agent-aware model preselect switches default with agent", async ({
 	expectCleanConsole(problems);
 });
 
-test("create with attachment: stage file, submit, verify upload", async ({
+test("create with attachment holds through upload then releases", async ({
 	page,
 	problems,
 }) => {
@@ -259,10 +259,26 @@ test("create with attachment: stage file, submit, verify upload", async ({
 			res.request().method() === "POST" &&
 			res.status() === 201,
 	);
+	const createRequest = page.waitForRequest(
+		(req) =>
+			req.url().includes("/api/bindings/dotfiles/issues") &&
+			req.method() === "POST",
+	);
+	const releaseRequest = page.waitForRequest(
+		(req) =>
+			/\/api\/issues\/\d+$/.test(new URL(req.url()).pathname) &&
+			req.method() === "PATCH",
+	);
 	await page.getByTestId("new-issue-submit").click();
-	await created;
+	const [post, release] = await Promise.all([
+		createRequest,
+		releaseRequest,
+		created,
+	]);
+	expect(post.postDataJSON()).toMatchObject({ hold: true });
+	expect(release.postDataJSON()).toEqual({ hold: false });
 
-	// Modal closes after upload succeeds; card lands in Todo.
+	// Modal closes after upload succeeds and the issue is released.
 	await expect(page.getByTestId("new-issue-modal")).toBeHidden({
 		timeout: 10_000,
 	});
@@ -282,6 +298,90 @@ test("create with attachment: stage file, submit, verify upload", async ({
 	).toBeVisible({ timeout: 10_000 });
 
 	expectCleanConsole(problems);
+});
+
+test("partial attachment failure retries the same held issue", async ({
+	page,
+	problems,
+}) => {
+	const desc = `e2e attach retry ${Date.now()}`;
+	const successfulFile = "already-uploaded.txt";
+	const failedFile = "retry-me.txt";
+	let createCount = 0;
+	let createBody: Record<string, unknown> = {};
+	let releaseCount = 0;
+	let uploadCount = 0;
+	const uploadAttempts: Record<string, number> = {
+		[successfulFile]: 0,
+		[failedFile]: 0,
+	};
+
+	await page.route("**/api/bindings/homelab/issues", async (route) => {
+		if (route.request().method() === "POST") {
+			createCount += 1;
+			createBody = route.request().postDataJSON();
+		}
+		return route.fallback();
+	});
+	await page.route("**/api/issues/**", async (route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		if (request.method() === "POST" && /\/attachments$/.test(path)) {
+			uploadCount += 1;
+			const file = uploadCount === 1 ? successfulFile : failedFile;
+			uploadAttempts[file] += 1;
+			if (uploadCount === 2) {
+				return route.fulfill({ status: 500, body: "stubbed failure" });
+			}
+		}
+		if (request.method() === "PATCH" && /\/api\/issues\/\d+$/.test(path)) {
+			releaseCount += 1;
+			expect(request.postDataJSON()).toEqual({ hold: false });
+		}
+		return route.fallback();
+	});
+
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	await page.getByTestId("new-issue-description").fill(desc);
+	await page.setInputFiles('[data-testid="new-issue-file-input"]', [
+		{
+			name: successfulFile,
+			mimeType: "text/plain",
+			buffer: Buffer.from("uploaded once"),
+		},
+		{
+			name: failedFile,
+			mimeType: "text/plain",
+			buffer: Buffer.from("retry this"),
+		},
+	]);
+
+	await page.getByTestId("new-issue-submit").click();
+	await expect(page.getByTestId("new-issue-upload-error")).toBeVisible();
+	expect(createCount).toBe(1);
+	expect(createBody).toMatchObject({ hold: true });
+	expect(uploadAttempts).toEqual({
+		[successfulFile]: 1,
+		[failedFile]: 1,
+	});
+	await expect(
+		page.getByTestId("new-issue-staged-files").getByText(successfulFile),
+	).toHaveCount(0);
+	await expect(
+		page.getByTestId("new-issue-staged-files").getByText(failedFile),
+	).toBeVisible();
+
+	await page.getByTestId("new-issue-submit").click();
+	await expect(page.getByTestId("new-issue-modal")).toBeHidden();
+	expect(createCount).toBe(1);
+	expect(uploadAttempts).toEqual({
+		[successfulFile]: 1,
+		[failedFile]: 2,
+	});
+	expect(releaseCount).toBe(1);
+
+	expectCleanConsole(problems, { ignore: [/500/] });
 });
 
 test("model preselect clears when agent has no default", async ({

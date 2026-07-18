@@ -35,6 +35,7 @@ export function AttachmentPanel({ issueId }: { issueId: number }) {
 	const attachments = useQuery({
 		queryKey: ["attachments", issueId],
 		queryFn: () => fetchAttachments(issueId),
+		refetchInterval: 5_000,
 	});
 
 	const upload = useMutation({

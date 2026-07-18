@@ -8,6 +8,7 @@ import {
 	fetchBindings,
 	fetchIssueOptions,
 	fetchSkills,
+	patchIssue,
 	uploadAttachment,
 	type Issue,
 	type IssueCreate,
@@ -150,6 +151,10 @@ function NewIssueModal({
 	const queryClient = useQueryClient();
 
 	const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+	const [pendingIssue, setPendingIssue] = useState<{
+		id: number;
+		release: boolean;
+	} | null>(null);
 	const [uploadError, setUploadError] = useState<string | null>(null);
 	const [uploading, setUploading] = useState(false);
 
@@ -219,38 +224,64 @@ function NewIssueModal({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onClose]);
 
-	const handlePostCreate = async (row: IssueDetail) => {
-		if (stagedFiles.length === 0) {
-			onClose();
-			return;
-		}
+	const finishIssue = async (pending: { id: number; release: boolean }) => {
 		setUploading(true);
 		setUploadError(null);
-		const failed: string[] = [];
-		for (const file of stagedFiles) {
+		const files = stagedFiles;
+		const failed: File[] = [];
+		for (const file of files) {
 			try {
-				await uploadAttachment(row.id, file);
-				queryClient.invalidateQueries({ queryKey: ["attachments", row.id] });
+				await uploadAttachment(pending.id, file);
+				queryClient.invalidateQueries({
+					queryKey: ["attachments", pending.id],
+				});
 			} catch {
-				failed.push(file.name);
+				failed.push(file);
 			}
 		}
+		setStagedFiles((current) =>
+			current.filter((file) => !files.includes(file) || failed.includes(file)),
+		);
 		queryClient.invalidateQueries({ queryKey: ["issues", binding] });
-		setUploading(false);
 		if (failed.length > 0) {
 			setUploadError(
-				`${failed.length} attachment(s) failed: ${failed.join(", ")}`,
+				`${failed.length} attachment(s) failed: ${failed.map((file) => file.name).join(", ")}`,
 			);
-		} else {
-			onClose();
+			setUploading(false);
+			return;
 		}
+		if (pending.release) {
+			try {
+				await patchIssue(pending.id, { hold: false });
+				queryClient.invalidateQueries({ queryKey: ["issues", binding] });
+			} catch {
+				setUploadError(
+					"Attachments uploaded, but failed to release issue — try again.",
+				);
+				setUploading(false);
+				return;
+			}
+		}
+		setUploading(false);
+		onClose();
+	};
+
+	const handlePostCreate = (row: IssueDetail, release: boolean) => {
+		const pending = { id: row.id, release };
+		setPendingIssue(pending);
+		void finishIssue(pending);
 	};
 
 	const submit = (e: React.FormEvent) => {
 		e.preventDefault();
 		const trimmed = description.trim();
 		if (!trimmed || create.isPending || uploading) return;
+		if (pendingIssue) {
+			void finishIssue(pendingIssue);
+			return;
+		}
 		const schedule = isInfra ? schedulePayloadFromDraft(scheduleDraft) : null;
+		const hasFiles = stagedFiles.length > 0;
 		create.mutate(
 			{
 				description: trimmed,
@@ -260,9 +291,11 @@ function NewIssueModal({
 				...(effort && { reasoning_effort: effort }),
 				...(schedule && { schedule }),
 				...(base.trim() && { base_branch: base.trim() }),
-				...(hold && { hold: true }),
+				...((hold || hasFiles) && { hold: true }),
 			},
-			{ onSuccess: handlePostCreate },
+			{
+				onSuccess: (row) => handlePostCreate(row, hasFiles && !hold),
+			},
 		);
 	};
 
@@ -386,6 +419,7 @@ function NewIssueModal({
 							ref={fileInputRef}
 							type="file"
 							multiple
+							disabled={create.isPending || uploading}
 							data-testid="new-issue-file-input"
 							className="sr-only"
 							onChange={(e) => {
@@ -401,6 +435,7 @@ function NewIssueModal({
 						/>
 						<button
 							type="button"
+							disabled={create.isPending || uploading}
 							data-testid="new-issue-file-pick"
 							onClick={() => fileInputRef.current?.click()}
 							className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40"
@@ -417,6 +452,7 @@ function NewIssueModal({
 										<span className="flex-1 truncate">{file.name}</span>
 										<button
 											type="button"
+											disabled={create.isPending || uploading}
 											data-testid="new-issue-file-remove"
 											onClick={() =>
 												setStagedFiles((prev) => prev.filter((_, j) => j !== i))
@@ -459,7 +495,7 @@ function NewIssueModal({
 							disabled={!description.trim() || create.isPending || uploading}
 							className="rounded-md border bg-foreground px-3 py-1.5 text-sm font-medium text-background transition disabled:opacity-40"
 						>
-							{uploading ? "Uploading…" : "Create"}
+							{uploading ? "Uploading…" : pendingIssue ? "Retry" : "Create"}
 						</button>
 					</div>
 				</form>
