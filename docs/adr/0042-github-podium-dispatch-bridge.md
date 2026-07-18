@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 relates-to: ADR-0005 (Podium replaces Plane), ADR-0023 (provenance-gated auto-land), ADR-0038 (spawn/loop automations), ADR-0041 (automation terminal landing)
 decided-with: James, 2026-07-18 (Podium issue #505 grill)
 ---
@@ -51,21 +51,54 @@ reconcile-by-`external_id` pattern the loop reconciler already uses
 (`reconcile_loop_automations`: `SELECT * FROM issue WHERE external_id = ?` → insert
 if absent, else leave alone).
 
+**Selection rule.** Sync pulls `gh issue list --label ready-for-agent` scoped to
+the binding's repo, restricted to child issues that link to a parent spec issue.
+The `ready-for-agent` label (a canonical triage label, `docs/agents/triage-labels.md`)
+plus parent linkage is the filter — a bare "all open issues" would sweep in the
+parent spec and non-dispatch ad-hoc issues. The parent spec issue itself is never
+mirrored; only its `to-tickets`-produced children are.
+
 For each matching open GitHub issue, look up Podium by
 `external_id = "github:<owner>/<repo>#<number>"`:
 
-- **not found →** insert a new `todo` Podium issue with `auto_land=true` and
-  `worktree_active` per binding default, so the standing loop implements →
-  reviews → lands → closes with zero operator merges. GitHub "Blocked by" edges
-  map to Podium `blocked_by` for dependency ordering. The GitHub title/body flow
-  into the description; the runnable `## Verification` line ADR-0023 requires is
-  authored at sync time (the bridge is the provenance source, mirroring what
-  `podium-issues` guarantees).
+- **not found →** insert a new `todo` Podium issue with `worktree_active` per
+  binding default. GitHub "Blocked by" edges map to Podium `blocked_by` for
+  dependency ordering. The GitHub title/body flow into the description. The
+  `auto_land` flag is decided **at insert time** by whether a runnable
+  `## Verification` command is extractable from the GitHub issue body
+  (`_extract_runnable_verification`, `scheduler/__init__.py:396`):
+  - **verification present →** `auto_land=true`: the standing loop implements →
+    reviews → backstop-verifies → FF-lands → closes with zero operator merges.
+  - **verification absent →** `auto_land=false`: the issue is still implemented
+    and reviewed but **stops at `in_review` for a manual merge**; no close-back
+    fires. Nothing lands unverified and nothing is silently swept.
+
+  This closes the provenance gap directly: because `auto_land` is gated at insert
+  time on extractable verification, a verification-less issue can never reach the
+  auto-land terminal (`scheduler/__init__.py:2290`) — mirroring ADR-0023's
+  "explicit `auto_land`, never inferred" principle. **The bridge itself never
+  fabricates a verification command** (it is a mechanical `gh issue list` →
+  `INSERT` with no codebase context; a synthesized gate that does not test the
+  change is worse than none). Legitimate provenance is authored by an agent with
+  codebase context: `to-tickets` gains a `## Verification` field (the same
+  runnable-command discipline `podium-issues` enforces at
+  `web/cli/podium_issues.py:100`), so GitHub children carry a real gate from
+  birth; issues predating that field simply insert `auto_land=false`.
 - **found →** leave the Podium row untouched. **Sync is one-directional and
   insert-only: it never mutates an existing Podium issue** (no title/body
   overwrite, no state change, no cancel-on-GitHub-close). This makes "press
   again" always safe even while issues are `running`/`in_review` — the risk that
   a re-run corrupts active work is eliminated by never touching existing rows.
+
+**Closing a GitHub issue mid-flight does not stop Podium (verified).** The
+scheduler dispatches purely from local SQLite: `list_candidates` reads issues
+solely from `_list_candidate_snapshot` (`tracker_podium.py:319`, a
+`SELECT issue.* FROM issue`), and `transition_state` (`tracker_podium.py:457`)
+only runs a local `UPDATE issue SET state`. Neither shells `gh` nor reads
+GitHub. A human closing the GitHub issue while its Podium mirror is running has
+zero effect on the run — it implements → reviews → lands → closes normally, and
+the close-back then no-ops on the already-closed GitHub issue. This is the
+desired behavior: no cancel path.
 
 `external_id` is already a nullable free-form TEXT column with a **UNIQUE index**
 (`web/api/schema.py:86`), reused for automation provenance (`automation:<id>:loop`);
@@ -110,6 +143,12 @@ seam regardless of which terminal path closed the issue.
   both spawn automations are dropped** — the scheduler *is* the implement+review
   loop. The Sync button is re-runnable: adding child issues later and pressing
   it again enqueues them.
+- **Parent spec close is `finish-spec`'s job, not the bridge's.** The bridge
+  only closes each *child* GitHub issue on its Podium `done`. The parent spec
+  issue is closed by `finish-spec`, which already closes the spec last — only
+  after every child ticket is closed, the suite is green, and the acceptance
+  criteria pass (`skills/finish-spec/SKILL.md`). The bridge stays child-only; no
+  parent-close code is added.
 
 ## Considered options
 
