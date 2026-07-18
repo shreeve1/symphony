@@ -23,6 +23,7 @@ from web.api.worktree import (
     merge_worktree,
     merge_worktree_preserving_base_wip,
     remove_worktree,
+    resolve_github_repo,
     worktree_diff_empty,
     worktree_dir,
     worktree_exists,
@@ -491,3 +492,67 @@ def test_worktree_diff_empty_missing_branch_returns_false(
 ) -> None:
     worktree_dir(repo, binding_name, issue_id).mkdir(parents=True)
     assert not worktree_diff_empty(repo, binding_name, issue_id, "main")
+
+
+# --- resolve_github_repo (ADR-0042 section 1) ---
+
+
+def test_resolve_github_repo_ssh_alias(repo: Path) -> None:
+    """ADR-0042: must handle the `github-personal` alias from CLAUDE.md."""
+    _git(
+        repo,
+        "remote",
+        "add",
+        "origin",
+        "git@github-personal:shreeve1/symphony.git",
+    )
+    assert resolve_github_repo(repo) == ("shreeve1", "symphony")
+
+
+def test_resolve_github_repo_ssh_default_host(repo: Path) -> None:
+    """Plain `github.com` SSH form is also accepted."""
+    _git(repo, "remote", "add", "origin", "git@github.com:owner/repo.git")
+    assert resolve_github_repo(repo) == ("owner", "repo")
+
+
+def test_resolve_github_repo_https(repo: Path) -> None:
+    """HTTPS GitHub URL (with and without .git suffix)."""
+    _git(repo, "remote", "add", "origin", "https://github.com/owner/repo.git")
+    assert resolve_github_repo(repo) == ("owner", "repo")
+
+    _git(repo, "remote", "set-url", "origin", "https://github.com/owner/repo")
+    assert resolve_github_repo(repo) == ("owner", "repo")
+
+
+def test_resolve_github_repo_https_with_userinfo(repo: Path) -> None:
+    """Some `gh`/git configs include a `user@` userinfo prefix."""
+    _git(
+        repo,
+        "remote",
+        "add",
+        "origin",
+        "https://gh-token@github.com/owner/repo.git",
+    )
+    assert resolve_github_repo(repo) == ("owner", "repo")
+
+
+def test_resolve_github_repo_non_github_host(repo: Path) -> None:
+    """HTTPS to a non-GitHub host returns None (binding gets no Sync button).
+
+    Note: SSH aliases are operator-controlled and not validated by host name —
+    any `git@host:owner/repo` shape is accepted per ADR-0042 section 1.
+    """
+    _git(repo, "remote", "add", "origin", "https://gitlab.com/owner/repo.git")
+    assert resolve_github_repo(repo) is None
+
+
+def test_resolve_github_repo_missing_remote(repo: Path) -> None:
+    """A repo with no `origin` remote returns None."""
+    assert resolve_github_repo(repo) is None
+
+
+def test_resolve_github_repo_non_git_dir(tmp_path: Path) -> None:
+    """Non-git directories return None rather than raising."""
+    non_repo = tmp_path / "not-a-repo"
+    non_repo.mkdir()
+    assert resolve_github_repo(non_repo) is None

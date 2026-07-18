@@ -7,6 +7,7 @@ Branch names: ``podium/<binding_name>/<issue_id>``
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -16,6 +17,33 @@ LOGGER = logging.getLogger(__name__)
 def worktree_dir(repo_path: Path, binding_name: str, issue_id: str) -> Path:
     """Return the worktree path for an issue."""
     return (repo_path / "worktrees" / binding_name / issue_id).resolve()
+
+
+_SSH_REMOTE = re.compile(r"^(?:\w[\w.-]*@)?([\w.-]+):([\w.-]+)/([\w.-]+?)(?:\.git)?$")
+_HTTPS_REMOTE = re.compile(
+    r"^https?://(?:[\w.-]+@)?github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?$"
+)
+
+
+def resolve_github_repo(repo_path: Path) -> tuple[str, str] | None:
+    """Return (owner, repo) inferred from ``repo_path``'s git remote.
+
+    Accepts both ``git@<host>:owner/repo.git`` (SSH, any host alias — including
+    ``github-personal`` per CLAUDE.md) and ``https://github.com/owner/repo.git``.
+    Returns ``None`` when the remote does not resolve to a GitHub repo (the
+    opt-in signal: no Sync button, per ADR-0042 section 1).
+    """
+    remote = _run_git(repo_path, ["config", "--get", "remote.origin.url"], check=False)
+    if remote is None:
+        return None
+    url = remote.strip()
+    if not url:
+        return None
+    if match := _SSH_REMOTE.match(url):
+        return match.group(2), match.group(3)
+    if match := _HTTPS_REMOTE.match(url):
+        return match.group(1), match.group(2)
+    return None
 
 
 def branch_name(binding_name: str, issue_id: str) -> str:
