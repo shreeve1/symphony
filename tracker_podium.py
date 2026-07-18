@@ -15,10 +15,12 @@ issue row.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import sqlite3
+import subprocess
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -43,6 +45,7 @@ from automation import (
 )
 from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
 from skill_mode_map import mode_for_skill
+from web.api.worktree import resolve_github_repo
 from tracker_contract import (
     DEFAULT_CONTRACT,
     RoleBinding,
@@ -458,7 +461,12 @@ class PodiumTrackerAdapter:
         self, issue_id: str, state: TrackerState | TrackerRole
     ) -> dict[str, Any]:
         next_state = self._state_value(state)
+        transitioned_to_done = False
         with self.connect() as connection:
+            row = connection.execute(
+                "SELECT state FROM issue WHERE id = ?", (issue_id,)
+            ).fetchone()
+            previous_state = str(row["state"]) if row is not None else None
             if next_state in ("in_review", "blocked"):
                 connection.execute(
                     """
@@ -478,7 +486,95 @@ class PodiumTrackerAdapter:
                     (next_state, _now(), issue_id),
                 )
             connection.commit()
+            # ADR-0042 section 2: close-back only on a real →done transition
+            # (not on a no-op repeat and not on an archived row the UPDATE
+            # silently skipped).
+            if (
+                next_state == "done"
+                and previous_state is not None
+                and previous_state != "archived"
+                and previous_state != "done"
+            ):
+                transitioned_to_done = True
+        if transitioned_to_done:
+            await self._maybe_close_back_github(issue_id)
         return await self.get_issue(issue_id)
+
+    async def _maybe_close_back_github(self, issue_id: str) -> None:
+        """Fire the ADR-0042 section-2 close-back when a github-linked issue lands.
+
+        Single seam for all four STATE_DONE terminal paths. Fail-soft: any
+        failure logs and returns; the done transition itself is unchanged.
+        """
+        try:
+            with self.connect() as connection:
+                issue_row = connection.execute(
+                    "SELECT external_id FROM issue WHERE id = ?",
+                    (issue_id,),
+                ).fetchone()
+            if issue_row is None:
+                return
+            external_id = str(issue_row["external_id"] or "")
+            if not external_id.startswith("github:"):
+                return
+            github_number = _parse_github_number(external_id)
+            if github_number is None:
+                LOGGER.warning(
+                    "github_close_back_skipped issue_id=%s reason=bad_external_id external_id=%s",
+                    issue_id,
+                    external_id,
+                )
+                return
+            with self.connect() as connection:
+                run_row = connection.execute(
+                    """
+                    SELECT agent_session_sha, worktree_path
+                    FROM run
+                    WHERE issue_id = ?
+                      AND state = 'succeeded'
+                      AND agent_session_sha IS NOT NULL
+                      AND agent_session_sha != ''
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (issue_id,),
+                ).fetchone()
+            if run_row is None or not str(run_row["agent_session_sha"] or "").strip():
+                LOGGER.warning(
+                    "github_close_back_skipped issue_id=%s reason=no_landed_sha",
+                    issue_id,
+                )
+                return
+            sha = str(run_row["agent_session_sha"]).strip()
+            repo_path = _repo_path_from_worktree(run_row["worktree_path"])
+            if repo_path is None:
+                LOGGER.warning(
+                    "github_close_back_skipped issue_id=%s reason=worktree_unresolved",
+                    issue_id,
+                )
+                return
+            owner_repo = resolve_github_repo(repo_path)
+            if owner_repo is None:
+                LOGGER.info(
+                    "github_close_back_noop issue_id=%s reason=non_github_repo",
+                    issue_id,
+                )
+                return
+            owner, repo = owner_repo
+            await asyncio.to_thread(
+                _run_gh_close,
+                issue_id,
+                github_number,
+                owner,
+                repo,
+                sha,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-soft per ADR-0042
+            LOGGER.warning(
+                "github_close_back_failed issue_id=%s error=%s",
+                issue_id,
+                exc,
+            )
 
     async def add_label(
         self, issue_id: str, label: TrackerLabel | TrackerRole
@@ -1298,3 +1394,90 @@ def _json_list(value: Any, item_type: type) -> list[Any]:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+# --- ADR-0042 section-2 GitHub close-back helpers -------------------------
+
+_GITHUB_EXTERNAL_ID_RE = re.compile(r"^github:[^#]+#(\d+)$")
+
+
+def _parse_github_number(external_id: str) -> str | None:
+    """Return the issue-number tail of an ``external_id`` (``github:owner/repo#N``)."""
+    match = _GITHUB_EXTERNAL_ID_RE.match(external_id)
+    return match.group(1) if match else None
+
+
+def _repo_path_from_worktree(worktree_path: Any) -> Path | None:
+    """Infer the binding's repo_path from a worktree dir layout.
+
+    Worktrees live at ``<repo_path>/worktrees/<binding>/<issue>``; walking
+    three levels up recovers the repo root when the worktree still exists on
+    disk. Returns None when the path is missing or not in the expected layout.
+    """
+    if not worktree_path:
+        return None
+    path = Path(str(worktree_path))
+    # Expected: <repo>/worktrees/<binding>/<issue> — walk up three levels when
+    # the worktree dir is gone (the run-row record outlives the dir); fall
+    # back to Path parents in either case.
+    if path.is_dir():
+        try:
+            return path.parent.parent.parent.resolve()
+        except OSError:
+            return None
+    parent = path.parent
+    if parent.name == "worktrees" and parent.parent:
+        return parent.parent
+    if path.name and parent.name and parent.parent and parent.parent.name:
+        # Accept the layout even if the dir no longer exists.
+        return parent.parent
+    return None
+
+
+def _run_gh_close(
+    issue_id: str, github_number: str, owner: str, repo: str, sha: str
+) -> None:
+    """Run ``gh issue close`` synchronously; fail-soft (logged, never raised)."""
+    cmd = [
+        "gh",
+        "issue",
+        "close",
+        github_number,
+        "--repo",
+        f"{owner}/{repo}",
+        "--comment",
+        f"Landed in {sha}.",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.warning(
+            "github_close_back_failed issue_id=%s github_issue=%s error=%s",
+            issue_id,
+            github_number,
+            exc,
+        )
+        return
+    if result.returncode != 0:
+        LOGGER.warning(
+            "github_close_back_failed issue_id=%s github_issue=%s rc=%s stderr=%s",
+            issue_id,
+            github_number,
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return
+    LOGGER.info(
+        "github_close_back_ok issue_id=%s github_issue=%s repo=%s/%s sha=%s",
+        issue_id,
+        github_number,
+        owner,
+        repo,
+        sha,
+    )

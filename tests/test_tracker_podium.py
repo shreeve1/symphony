@@ -1449,3 +1449,322 @@ async def test_loop_automation_retry_marker_helper_renders_expected_text(
     body = loop_retry_marker(datetime(2026, 7, 17, 12, tzinfo=UTC))
     assert body.startswith(LOOP_RETRY_PREFIX)
     assert "2026-07-17" in body
+
+
+# --- ADR-0042 section-2 GitHub close-back (issue #515) -------------------
+
+
+def _seed_github_issue(
+    path: Path,
+    *,
+    external_id: str = "github:shreeve1/symphony#515",
+    worktree_path: str | None = None,
+    sha: str = "abc1234",
+) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(SCHEMA_SQL)
+        connection.execute("INSERT INTO binding(name) VALUES ('test')")
+        cursor = connection.execute(
+            """
+            INSERT INTO issue(
+              binding_name, title, description, state, preferred_agent,
+              preferred_skill, comments_md, context_md,
+              external_id, created_at, updated_at
+            ) VALUES ('test', 'Podium issue', 'Do work', 'running', 'pi',
+                      '/dev-build', '', '', ?, '2026-06-11T00:00:00+00:00',
+                      '2026-06-11T00:00:00+00:00')
+            """,
+            (external_id,),
+        )
+        issue_id = cursor.lastrowid
+        assert issue_id is not None
+        if sha:
+            connection.execute(
+                """
+                INSERT INTO run(
+                  issue_id, agent, state, verdict, started_at, ended_at,
+                  agent_session_sha, worktree_path
+                ) VALUES (?, 'pi', 'succeeded', 'done', ?, ?, ?, ?)
+                """,
+                (
+                    issue_id,
+                    "2026-06-11T00:00:00+00:00",
+                    "2026-06-11T00:01:00+00:00",
+                    sha,
+                    worktree_path or "",
+                ),
+            )
+        connection.commit()
+        return issue_id
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_fires_on_done_with_landed_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "515"
+    worktree.mkdir(parents=True)
+    issue_id = _seed_github_issue(db_path, worktree_path=str(worktree))
+
+    calls: list[tuple[str, str, str, str, str]] = []
+
+    def fake_run_gh_close(
+        issue_id_arg: str, github_number: str, owner: str, repo_name: str, sha: str
+    ) -> None:
+        calls.append((issue_id_arg, github_number, owner, repo_name, sha))
+
+    monkeypatch.setattr("tracker_podium._run_gh_close", fake_run_gh_close)
+    monkeypatch.setattr(
+        "tracker_podium.resolve_github_repo", lambda _path: ("shreeve1", "symphony")
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "done"
+    assert calls == [(str(issue_id), "515", "shreeve1", "symphony", "abc1234")]
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_skipped_for_non_github_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    # Same shape as the GitHub seed, but the external_id is a non-github
+    # placeholder (e.g. automation-only). No gh call must fire.
+    issue_id = _seed_github_issue(db_path, external_id="automation:1:1")
+
+    calls: list[tuple[str, str, str, str]] = []
+    monkeypatch.setattr(
+        "tracker_podium._run_gh_close",
+        lambda *args, **kwargs: calls.append(args[:4]) or None,
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "done"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_fires_exactly_once_across_terminal_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All four STATE_DONE call sites funnel through transition_state; verify
+    that re-calling it (e.g. review-terminal, spawn-worktree-off, verified-close,
+    operator-reland — one of which calls it twice is fine) closes once per
+    real land and never for a non-done transition."""
+    db_path = tmp_path / "podium.db"
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "42"
+    worktree.mkdir(parents=True)
+    issue_id = _seed_github_issue(
+        db_path,
+        external_id="github:owner/repo#42",
+        worktree_path=str(worktree),
+        sha="deadbeef",
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "tracker_podium._run_gh_close",
+        lambda *args, **kwargs: calls.append(args[1]) or None,
+    )
+    monkeypatch.setattr(
+        "tracker_podium.resolve_github_repo", lambda _path: ("owner", "repo")
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    # Non-done transitions never trigger the close-back.
+    await adapter.transition_state(str(issue_id), TrackerRole.STATE_RUNNING)
+    await adapter.transition_state(str(issue_id), TrackerRole.STATE_IN_REVIEW)
+    await adapter.transition_state(str(issue_id), TrackerRole.STATE_BLOCKED)
+    assert calls == []
+
+    # One done transition closes exactly once.
+    await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+    assert calls == ["42"]
+
+    # A repeated STATE_DONE is a no-op for the close-back (already done;
+    # would otherwise re-comment on GitHub).
+    await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+    assert calls == ["42"]
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_no_op_when_no_succeeded_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "7"
+    worktree.mkdir(parents=True)
+    # No sha = no successful land; close-back must skip (no fake sha in comment).
+    issue_id = _seed_github_issue(
+        db_path,
+        external_id="github:owner/repo#7",
+        worktree_path=str(worktree),
+        sha="",
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "tracker_podium._run_gh_close",
+        lambda *args, **kwargs: calls.append("fired") or None,
+    )
+    monkeypatch.setattr(
+        "tracker_podium.resolve_github_repo", lambda _path: ("owner", "repo")
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "done"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_no_op_for_non_github_remote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    # Repo whose remote is not GitHub — resolve_github_repo returns None.
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "9"
+    worktree.mkdir(parents=True)
+    issue_id = _seed_github_issue(
+        db_path,
+        external_id="github:owner/repo#9",
+        worktree_path=str(worktree),
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "tracker_podium._run_gh_close",
+        lambda *args, **kwargs: calls.append("fired") or None,
+    )
+    monkeypatch.setattr("tracker_podium.resolve_github_repo", lambda _path: None)
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "done"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_fail_soft_on_subprocess_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    db_path = tmp_path / "podium.db"
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "11"
+    worktree.mkdir(parents=True)
+    issue_id = _seed_github_issue(
+        db_path,
+        external_id="github:owner/repo#11",
+        worktree_path=str(worktree),
+    )
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("gh exploded")
+
+    monkeypatch.setattr("tracker_podium._run_gh_close", explode)
+    monkeypatch.setattr(
+        "tracker_podium.resolve_github_repo", lambda _path: ("owner", "repo")
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    # The done transition must still succeed even when gh fails.
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "done"
+    log_text = "\n".join(record.message for record in caplog.records)
+    assert "github_close_back_failed" in log_text
+
+
+@pytest.mark.asyncio
+async def test_github_close_back_skipped_for_archived_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "podium.db"
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "8"
+    worktree.mkdir(parents=True)
+    issue_id = _seed_github_issue(
+        db_path,
+        external_id="github:owner/repo#8",
+        worktree_path=str(worktree),
+    )
+    # Force the issue into the archived terminal bucket the UPDATE skips.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET state = 'archived' WHERE id = ?", (issue_id,)
+        )
+        connection.commit()
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "tracker_podium._run_gh_close",
+        lambda *args, **kwargs: calls.append("fired") or None,
+    )
+    monkeypatch.setattr(
+        "tracker_podium.resolve_github_repo", lambda _path: ("owner", "repo")
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "archived"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_github_number_helper() -> None:
+    from tracker_podium import _parse_github_number
+
+    assert _parse_github_number("github:owner/repo#515") == "515"
+    assert _parse_github_number("github:a/b/c#7") == "7"
+    assert _parse_github_number("automation:1:1") is None
+    assert _parse_github_number("github:no-number") is None
+    assert _parse_github_number("") is None
+
+
+@pytest.mark.asyncio
+async def test_run_gh_close_builds_command_and_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Pure helper test: the command shape matches ADR-0042 section 2."""
+    from tracker_podium import _run_gh_close
+
+    captured: dict[str, object] = {}
+
+    class _Result:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr("tracker_podium.subprocess.run", fake_run)
+    caplog.set_level("INFO", logger="tracker_podium")
+
+    _run_gh_close("1", "515", "shreeve1", "symphony", "abc1234")
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd[:5] == ["gh", "issue", "close", "515", "--repo"]
+    assert cmd[5] == "shreeve1/symphony"
+    assert cmd[6] == "--comment"
+    assert cmd[7] == "Landed in abc1234."
+    log_text = "\n".join(record.message for record in caplog.records)
+    assert "github_close_back_ok" in log_text
+    assert "sha=abc1234" in log_text
