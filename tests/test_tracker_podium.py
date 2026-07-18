@@ -1768,3 +1768,72 @@ async def test_run_gh_close_builds_command_and_logs(
     log_text = "\n".join(record.message for record in caplog.records)
     assert "github_close_back_ok" in log_text
     assert "sha=abc1234" in log_text
+
+
+def test_run_gh_close_tolerates_already_closed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Already-closed GitHub issue exits non-zero but is not a failure
+    (ADR-0042 consequences: close-back must tolerate an already-closed issue)."""
+    from tracker_podium import _run_gh_close
+
+    class _Result:
+        returncode = 1
+        stderr = "HTTP 422: Issue is already closed"
+
+    monkeypatch.setattr(
+        "tracker_podium.subprocess.run",
+        lambda *args, **kwargs: _Result(),
+    )
+    caplog.set_level("INFO", logger="tracker_podium")
+
+    # Must not raise. The Podium done-transition path calls this via
+    # asyncio.to_thread; the wrapper itself is sync.
+    _run_gh_close("1", "515", "shreeve1", "symphony", "abc1234")
+
+    log_text = "\n".join(record.message for record in caplog.records)
+    assert "github_close_back_already_closed" in log_text
+    # Explicitly NOT a failure log — already-closed is a tolerated no-op,
+    # not a problem to alert on.
+    assert "github_close_back_failed" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_done_transition_completes_when_gh_says_already_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The done transition must still land when gh reports already closed.
+
+    Full-stack view of the same guarantee: no error bubbles up out of
+    transition_state, and the issue still ends up in `done`."""
+
+    db_path = tmp_path / "podium.db"
+    repo = tmp_path / "repo"
+    worktree = repo / "worktrees" / "test" / "12"
+    worktree.mkdir(parents=True)
+    issue_id = _seed_github_issue(
+        db_path,
+        external_id="github:owner/repo#12",
+        worktree_path=str(worktree),
+    )
+
+    class _Result:
+        returncode = 1
+        stderr = "GraphQL: Could not resolve to a node (Issue is already closed)"
+
+    monkeypatch.setattr(
+        "tracker_podium.subprocess.run",
+        lambda *args, **kwargs: _Result(),
+    )
+    monkeypatch.setattr(
+        "tracker_podium.resolve_github_repo", lambda _path: ("owner", "repo")
+    )
+    adapter = PodiumTrackerAdapter(db_path=db_path, binding_name="test")
+
+    with caplog.at_level("INFO", logger="tracker_podium"):
+        updated = await adapter.transition_state(str(issue_id), TrackerRole.STATE_DONE)
+
+    assert updated["state"] == "done"
+    log_text = "\n".join(record.message for record in caplog.records)
+    assert "github_close_back_already_closed" in log_text
+    assert "github_close_back_failed" not in log_text

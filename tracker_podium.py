@@ -1434,10 +1434,27 @@ def _repo_path_from_worktree(worktree_path: Any) -> Path | None:
     return None
 
 
+def _is_already_closed_stderr(stderr: str) -> bool:
+    """True iff gh's stderr indicates the issue was already closed.
+
+    gh exits non-zero when ``gh issue close <N>`` targets an issue that is
+    already closed (HTTP 422 / GraphQL "already closed"). Per ADR-0042
+    consequences, that is a tolerated no-op, not a failure.
+    """
+    lowered = stderr.lower()
+    return "already closed" in lowered or "already_closed" in lowered
+
+
 def _run_gh_close(
     issue_id: str, github_number: str, owner: str, repo: str, sha: str
 ) -> None:
-    """Run ``gh issue close`` synchronously; fail-soft (logged, never raised)."""
+    """Run ``gh issue close`` synchronously; fail-soft (logged, never raised).
+
+    Per ADR-0042 consequences: a missing or unauthenticated ``gh`` and an
+    already-closed GitHub issue must never break the Podium land/done path.
+    Errors land at WARNING; ``gh`` exit non-zero with an ``already closed``
+    hint is logged as a tolerated no-op.
+    """
     cmd = [
         "gh",
         "issue",
@@ -1465,12 +1482,24 @@ def _run_gh_close(
         )
         return
     if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if _is_already_closed_stderr(stderr):
+            LOGGER.info(
+                "github_close_back_already_closed issue_id=%s github_issue=%s "
+                "repo=%s/%s sha=%s",
+                issue_id,
+                github_number,
+                owner,
+                repo,
+                sha,
+            )
+            return
         LOGGER.warning(
             "github_close_back_failed issue_id=%s github_issue=%s rc=%s stderr=%s",
             issue_id,
             github_number,
             result.returncode,
-            result.stderr.strip(),
+            stderr,
         )
         return
     LOGGER.info(
