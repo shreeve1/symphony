@@ -50,6 +50,11 @@ except ModuleNotFoundError:  # pragma: no cover - uvicorn main:app from web/api
 RemotePolicy = _config.RemotePolicy
 
 try:
+    from web.api.worktree_backend import worktree_backend_for
+except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
+    from worktree_backend import worktree_backend_for  # type: ignore[no-redef]
+
+try:
     from patrol_incident import (
         Finding,
         IssueStatus,
@@ -1972,23 +1977,9 @@ async def _maybe_merge_worktree(
     worktree_active cleared). Returns the final issue row.
     """
     try:
-        from web.api.worktree import (
-            branch_name,
-            cleanup_worktree,
-            merge_worktree_preserving_base_wip,
-            worktree_dir,
-            worktree_exists,
-            worktree_is_dirty,
-        )
+        from web.api.worktree import branch_name, worktree_dir
     except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
-        from worktree import (  # type: ignore[no-redef]
-            branch_name,
-            cleanup_worktree,
-            merge_worktree_preserving_base_wip,
-            worktree_dir,
-            worktree_exists,
-            worktree_is_dirty,
-        )
+        from worktree import branch_name, worktree_dir  # type: ignore[no-redef]
 
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
@@ -2003,94 +1994,13 @@ async def _maybe_merge_worktree(
             f"Auto-merge halted: unknown repo_path for binding {binding_name}.",
         )
 
-    remote = _remote_for_binding(binding_name)
-    if remote is not None:
-        remote_worktree = import_module("remote_worktree")
-        if not await asyncio.to_thread(
-            remote_worktree.worktree_exists,
-            remote,
-            repo_path,
-            binding_name,
-            issue_str,
-        ):
-            return await _append_blocked_and_publish(
-                connection,
-                issue_id,
-                current,
-                "Auto-merge halted: worktree absent but worktree_active is set — "
-                "cannot prove landing. Worktree flag left intact for manual "
-                "reconciliation.",
-            )
-        if await asyncio.to_thread(
-            remote_worktree.worktree_is_dirty,
-            remote,
-            repo_path,
-            binding_name,
-            issue_str,
-        ):
-            comments_row = connection.execute(
-                "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-            prior = _count_commit_redispatches(comments_row["comments_md"])
-            if prior >= MAX_COMMIT_REDISPATCH:
-                msg = (
-                    f"Auto-commit re-dispatch halted: remote worktree at "
-                    f"{worktree_dir(repo_path, binding_name, issue_str)} is still "
-                    f"uncommitted after {MAX_COMMIT_REDISPATCH} re-dispatches. "
-                    f"Branch {branch_name(binding_name, issue_str)} is unmerged and "
-                    f"the worktree is intact for manual handling."
-                )
-                return await _append_blocked_and_publish(
-                    connection, issue_id, current, msg
-                )
-            return await _redispatch_to_commit(
-                connection, issue_id, current, repo_path, binding_name, issue_str
-            )
-        if await asyncio.to_thread(remote_worktree.base_repo_dirty, remote, repo_path):
-            msg = (
-                f"Auto-merge halted: remote base checkout has uncommitted changes. "
-                f"Branch {branch_name(binding_name, issue_str)} is unmerged. "
-                f"Worktree at {worktree_dir(repo_path, binding_name, issue_str)} is intact."
-            )
-            return await _append_blocked_and_publish(connection, issue_id, current, msg)
+    backend = worktree_backend_for(
+        repo_path, binding_name, issue_str, _remote_for_binding(binding_name)
+    )
 
-        error = await asyncio.to_thread(
-            remote_worktree.merge_worktree,
-            remote,
-            repo_path,
-            binding_name,
-            issue_str,
-            base_branch,
-        )
-        if error is not None:
-            return await _append_blocked_and_publish(
-                connection, issue_id, current, error
-            )
-        post_merge = _row(
-            connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-        )
-        if post_merge.get("latest_run_state") in ACTIVE_RUN_STATES:
-            return await _abort_worktree_land(
-                connection,
-                issue_id,
-                post_merge,
-                "Aborted land: a run started during landing — move to done again "
-                "to retry.",
-            )
-        await asyncio.to_thread(
-            remote_worktree.remove_worktree,
-            remote,
-            repo_path,
-            binding_name,
-            issue_str,
-        )
-        return await _finalize_worktree_done(connection, issue_id, post_merge)
-
-    if not await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
-        # worktree_active is set but the worktree is gone (drift). Never a false
-        # done: block so the operator reconciles. worktree_active unchanged.
+    # worktree_active is set but the worktree is gone (drift). Never a false
+    # done: block so the operator reconciles. worktree_active unchanged.
+    if not await backend.exists():
         return await _append_blocked_and_publish(
             connection,
             issue_id,
@@ -2103,7 +2013,7 @@ async def _maybe_merge_worktree(
     # ADR-0014: a dirty worktree means the agent left uncommitted work. Never
     # merge/force-remove it (silent data loss). Re-dispatch the agent to commit
     # its own work, capped to avoid an infinite loop; over the cap, block.
-    if await asyncio.to_thread(worktree_is_dirty, repo_path, binding_name, issue_str):
+    if await backend.is_dirty():
         comments_row = connection.execute(
             "SELECT comments_md FROM issue WHERE id = ?", (issue_id,)
         ).fetchone()
@@ -2121,17 +2031,19 @@ async def _maybe_merge_worktree(
             connection, issue_id, current, repo_path, binding_name, issue_str
         )
 
+    # A dirty base the backend cannot safely absorb blocks the land (remote:
+    # cannot stash a remote base; local: stashes base WIP, issue wins, no block).
+    base_block = await backend.base_blocks_merge()
+    if base_block is not None:
+        return await _append_blocked_and_publish(
+            connection, issue_id, current, base_block
+        )
+
     # Split land (finding #4 race mitigation): merge WITHOUT cleaning up first
-    # (land_worktree cleans up before returning and would defeat an abort), then
-    # re-check for a run that started during the merge. Only if the coast is
-    # clear do we clean up and persist done.
-    error = await asyncio.to_thread(
-        merge_worktree_preserving_base_wip,
-        repo_path,
-        binding_name,
-        issue_str,
-        base_branch,
-    )
+    # (land cleans up before returning and would defeat an abort), then re-check
+    # for a run that started during the merge. Only if the coast is clear do we
+    # clean up and persist done.
+    error = await backend.merge(base_branch)
     if error is not None:
         return await _append_blocked_and_publish(connection, issue_id, current, error)
 
@@ -2145,7 +2057,7 @@ async def _maybe_merge_worktree(
             post_merge,
             "Aborted land: a run started during landing — move to done again to retry.",
         )
-    await asyncio.to_thread(cleanup_worktree, repo_path, binding_name, issue_str)
+    await backend.remove()
     return await _finalize_worktree_done(connection, issue_id, post_merge)
 
 
@@ -2155,11 +2067,6 @@ async def _maybe_teardown_archived_worktree(
     connection: sqlite3.Connection,
 ) -> dict[str, Any]:
     """Remove an archived issue's idle worktree and clear worktree_active."""
-    try:
-        from web.api.worktree import remove_worktree, worktree_exists
-    except ImportError:  # pragma: no cover - uvicorn --app-dir web/api path
-        from worktree import remove_worktree, worktree_exists  # type: ignore[no-redef]
-
     binding_name = current.get("binding_name", "")
     issue_str = str(issue_id)
     repo_path = _repo_path_for_binding(binding_name)
@@ -2170,48 +2077,12 @@ async def _maybe_teardown_archived_worktree(
             ).fetchone()
         )
 
-    remote = _remote_for_binding(binding_name)
-    if remote is not None:
-        remote_worktree = import_module("remote_worktree")
-        removed = False
-        if await asyncio.to_thread(
-            remote_worktree.worktree_exists,
-            remote,
-            repo_path,
-            binding_name,
-            issue_str,
-        ):
-            await asyncio.to_thread(
-                remote_worktree.remove_worktree,
-                remote,
-                repo_path,
-                binding_name,
-                issue_str,
-            )
-            removed = True
-        if removed or current.get("worktree_active") is True:
-            connection.execute(
-                "UPDATE issue SET worktree_active = FALSE, updated_at = ? WHERE id = ?",
-                (_next_updated_at(current.get("updated_at")), issue_id),
-            )
-            connection.commit()
-            row = connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-            result = _row(row)
-            await websocket_hub.publish(
-                {"type": "issue.updated", "id": issue_id, "row": result}
-            )
-            return result
-        return _row(
-            connection.execute(
-                "SELECT * FROM issue WHERE id = ?", (issue_id,)
-            ).fetchone()
-        )
-
+    backend = worktree_backend_for(
+        repo_path, binding_name, issue_str, _remote_for_binding(binding_name)
+    )
     removed = False
-    if await asyncio.to_thread(worktree_exists, repo_path, binding_name, issue_str):
-        await asyncio.to_thread(remove_worktree, repo_path, binding_name, issue_str)
+    if await backend.exists():
+        await backend.remove()
         removed = True
 
     if removed or current.get("worktree_active") is True:
