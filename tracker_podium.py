@@ -39,6 +39,7 @@ from automation import (
     loop_iteration_marker,
     loop_retry_marker,
     render_template,
+    spawn_worktree_off_directive,
 )
 from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
 from skill_mode_map import mode_for_skill
@@ -688,6 +689,18 @@ class PodiumTrackerAdapter:
                 description = render_template(
                     str(row["template_body"]), self.binding_name, interval
                 )
+                # Issue #10 / ADR-0041: worktree-off spawns run in the shared
+                # base checkout, so the agent must commit to the base branch
+                # to signal completion (clean + committed). Append a directive
+                # so the agent sees it on every fresh dispatch (and on every
+                # commit-redispatch re-dispatch, since `description` persists).
+                # Worktree-on spawns skip the directive: the worktree-merge
+                # land path doesn't require the agent to commit to base.
+                if not bool(row["worktree_active"] or False):
+                    description = (
+                        f"{description.rstrip()}\n\n"
+                        f"{spawn_worktree_off_directive(row['base_branch'] or base_branch)}"
+                    )
                 # Issue #459: per-automation pin fields (skill/agent/model/effort/
                 # base_branch/worktree_active) thread into insert_issue_row so a
                 # cadence can pin model/skill without authoring a throwaway Issue.

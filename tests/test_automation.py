@@ -15,6 +15,7 @@ from automation import (  # noqa: E402
     count_loop_iterations,
     loop_iteration_marker,
     render_template,
+    spawn_worktree_off_directive,
 )
 
 
@@ -53,3 +54,23 @@ def test_compute_next_fire_preserves_overdue_cadence():
 def test_compute_next_fire_rejects_nonpositive_interval():
     with pytest.raises(ValueError, match="must be positive"):
         compute_next_fire(0, now=datetime(2026, 7, 17, tzinfo=UTC))
+
+
+def test_spawn_worktree_off_directive_includes_base_branch():
+    """Issue #10 / ADR-0041: the directive must tell the agent the exact
+    base branch to commit to (so it doesn't have to inspect git config), must
+    instruct it to commit (clean checkout = completion signal), and must not
+    reference a per-issue worktree or new branch.
+    """
+    text = spawn_worktree_off_directive("main")
+    assert "Symphony worktree-off spawn" in text
+    assert "**Base branch:** `main`" in text
+    # Commit instruction + completion signal explanation.
+    assert "commit your work to the base branch" in text
+    assert (
+        "clean, committed base checkout signals completion" in text
+        or "clean, committed" in text
+    )
+    # No worktree path and no instruction to open a new branch.
+    assert "Do not start a new branch" in text
+    assert "open a worktree" in text.lower()

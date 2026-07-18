@@ -29,6 +29,7 @@ from notifier import (
 from plane_adapter import PlaneRateLimitError
 from prompt_renderer import render_previous_comments_block, review_mode
 from redispatch_core import (
+    COMMIT_REDISPATCH_REPLY_PREFIX,
     MAX_COMMIT_REDISPATCH,
     OPERATOR_RELAND_PENDING_PREFIX,
     RELAND_PENDING_PREFIX,
@@ -38,11 +39,13 @@ from redispatch_core import (
 )
 from .reland import (
     _commit_redispatch_body as _commit_redispatch_body,
+    _commit_redispatch_body_base as _commit_redispatch_body_base,
     _land_review_worktree as _land_review_worktree,
     _next_review_dispatch_marker as _next_review_dispatch_marker,
     _reland_done_body as _reland_done_body,
     _reland_done_count as _reland_done_count,
     _reland_pending_count as _reland_pending_count,
+    _review_base_repo_branch as _review_base_repo_branch,
     _review_base_repo_dirty as _review_base_repo_dirty,
     _review_worktree_diff_empty as _review_worktree_diff_empty,
     _review_worktree_is_dirty as _review_worktree_is_dirty,
@@ -1635,6 +1638,194 @@ async def _classify_terminal(
         adapter, config, candidate, run_id, binding=binding
     ):
         return TickResult(True, "archived-terminal", candidate.id, mode=mode)
+
+    # Issue #10 / ADR-0041: worktree-off spawns (origin=automation AND
+    # worktree_active=False) commit their work directly to the shared base
+    # checkout. The agent has no per-Issue worktree and no review run is
+    # dispatched for them (review_dispatch requires auto_land=True), so the
+    # implement terminal is the only chance to land the work. Check the base
+    # checkout: clean -> done; dirty -> re-dispatch via the existing
+    # commit-redispatch pattern, then block after MAX_COMMIT_REDISPATCH so
+    # nothing closes to done with uncommitted work. Loops cannot reach this
+    # branch because they force worktree_active=True at fire-time.
+    #
+    # Gate uses the persisted Issue row's worktree_active (not the candidate's
+    # effective value) because _prepare_resume_candidate may have overwritten
+    # it with the binding capability — a worktree-on spawn on an infra binding
+    # (wt_default=False) ends up with effective worktree_active=False but its
+    # persisted flag is still True, so it must NOT take the base-checkout path.
+    persisted_worktree_active = bool(
+        (await _fetch_issue(adapter, candidate.id)).get("worktree_active") or False
+    )
+    is_worktree_off_spawn = (
+        getattr(candidate, "origin", "") == "automation"
+        and not persisted_worktree_active
+    )
+    if is_worktree_off_spawn:
+        resolved_binding = _binding_for_issue(config, candidate, binding=binding)
+        binding_name = candidate.binding_name or (
+            resolved_binding.name if resolved_binding is not None else ""
+        )
+        if binding_name and await asyncio.to_thread(
+            _review_base_repo_dirty, config, resolved_binding
+        ):
+            prior_redispatches = count_commit_redispatches(
+                str(getattr(candidate, "comments_md", "") or "")
+            )
+            if prior_redispatches >= MAX_COMMIT_REDISPATCH:
+                block_msg = (
+                    f"Spawn worktree-off land halted: base checkout still "
+                    f"uncommitted after {MAX_COMMIT_REDISPATCH} re-dispatches."
+                )
+                await _emit(
+                    msg=block_msg,
+                    reason="spawn-worktree-off-dirty-over-cap",
+                    fallback_summary=block_msg,
+                    summary=summary,
+                    ended_at=now().isoformat(),
+                )
+                return TickResult(
+                    True, "spawn-worktree-off-dirty-over-cap", candidate.id, mode=mode
+                )
+            await adapter.add_comment(
+                candidate.id,
+                CommentPayload(
+                    body=_commit_redispatch_body_base(
+                        config,
+                        binding_name,
+                        now=now(),
+                    )
+                ),
+            )
+            try:
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+            except PlaneRateLimitError:
+                dispatch_state.pending_review_issue_ids.add(candidate.id)
+                LOGGER.info(
+                    "pending_review_queued issue_id=%s reason=spawn-worktree-off-dirty-commit-redispatch",
+                    candidate.id,
+                )
+                raise
+            LOGGER.info(
+                "state_transitioned issue_id=%s state=todo reason=spawn-worktree-off-dirty-commit-redispatch attempt=%s",
+                candidate.id,
+                prior_redispatches + 1,
+            )
+            return TickResult(
+                True,
+                "spawn-worktree-off-dirty-commit-redispatch",
+                candidate.id,
+                mode=mode,
+            )
+
+        # Clean base checkout: work is already committed to base (the agent
+        # finished its task). But before we close to done, verify the base
+        # checkout is on the candidate's base branch — a stale branch left
+        # behind by a previous worktree-merge land would otherwise let us
+        # close with work that landed elsewhere. Falls through to redispatch
+        # (then block) if the branch doesn't match; this is the same fail-
+        # closed contract the dirty-checkout branch enforces.
+        candidate_base_branch = (
+            getattr(candidate, "base_branch", "") or config.base_branch
+        )
+        if candidate_base_branch and not await asyncio.to_thread(
+            _review_base_repo_branch,
+            config,
+            resolved_binding,
+            candidate_base_branch,
+        ):
+            LOGGER.warning(
+                "spawn_worktree_off_branch_mismatch issue_id=%s base_branch=%s",
+                candidate.id,
+                candidate_base_branch,
+            )
+            prior_redispatches_branch = count_commit_redispatches(
+                str(getattr(candidate, "comments_md", "") or "")
+            )
+            if prior_redispatches_branch >= MAX_COMMIT_REDISPATCH:
+                block_msg_branch = (
+                    f"Spawn worktree-off land halted: base checkout on wrong "
+                    f"branch (expected `{candidate_base_branch}`) after "
+                    f"{MAX_COMMIT_REDISPATCH} re-dispatches."
+                )
+                await _emit(
+                    msg=block_msg_branch,
+                    reason="spawn-worktree-off-branch-mismatch-over-cap",
+                    fallback_summary=block_msg_branch,
+                    summary=summary,
+                    ended_at=now().isoformat(),
+                )
+                return TickResult(
+                    True,
+                    "spawn-worktree-off-branch-mismatch-over-cap",
+                    candidate.id,
+                    mode=mode,
+                )
+            await adapter.add_comment(
+                candidate.id,
+                CommentPayload(
+                    body=(
+                        f"### Symphony Note (spawn worktree-off branch "
+                        f"mismatch · {now().isoformat()})\n\n"
+                        f"Base checkout is not on the expected branch "
+                        f"`{candidate_base_branch}`. Check out the right "
+                        f"branch and commit your work there. The Issue will "
+                        f"close to done once the base checkout is clean and "
+                        f"on `{candidate_base_branch}`.\n\n"
+                        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · "
+                        f"{now().isoformat()})"
+                    )
+                ),
+            )
+            try:
+                await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
+            except PlaneRateLimitError:
+                dispatch_state.pending_review_issue_ids.add(candidate.id)
+                LOGGER.info(
+                    "pending_review_queued issue_id=%s "
+                    "reason=spawn-worktree-off-branch-mismatch",
+                    candidate.id,
+                )
+                raise
+            LOGGER.info(
+                "state_transitioned issue_id=%s state=todo "
+                "reason=spawn-worktree-off-branch-mismatch attempt=%s",
+                candidate.id,
+                prior_redispatches_branch + 1,
+            )
+            return TickResult(
+                True,
+                "spawn-worktree-off-branch-mismatch",
+                candidate.id,
+                mode=mode,
+            )
+
+        _iu, _du = _build_urls(config, candidate.id)
+        try:
+            await adapter.transition_state(candidate.id, TrackerRole.STATE_DONE)
+        except PlaneRateLimitError:
+            dispatch_state.pending_review_issue_ids.add(candidate.id)
+            LOGGER.info(
+                "pending_review_queued issue_id=%s reason=spawn-worktree-off-auto-landed",
+                candidate.id,
+            )
+            raise
+        LOGGER.info(
+            "state_transitioned issue_id=%s state=done reason=spawn-worktree-off-auto-landed",
+            candidate.id,
+        )
+        await _notify_review(
+            notifier,
+            candidate.name,
+            candidate.identifier,
+            reason="Spawn worktree-off committed to base; auto-landed",
+            issue_url=_iu,
+            dashboard_url=_du,
+        )
+        return TickResult(
+            True, "spawn-worktree-off-auto-landed", candidate.id, mode=mode
+        )
+
     try:
         await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
     except PlaneRateLimitError:

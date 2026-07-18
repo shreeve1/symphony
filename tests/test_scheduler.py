@@ -8014,3 +8014,458 @@ def test_patrol_generation_not_reset_by_pruning():
     assert gen2 == gen2_again
     assert gen2 != _derive("patrol-issue", generation=0)
     assert gen2 != _derive("patrol-issue", generation=1)
+
+
+# ---------------------------------------------------------------------------
+# Issue #10 / ADR-0041: spawn worktree-OFF commit-to-base then close to done.
+#
+# Worktree-off spawn automations run the agent directly in the shared base
+# checkout (no per-issue worktree, no review run) and rely on the agent
+# committing to the base branch. The implement terminal seam must therefore:
+#   * clean base -> STATE_DONE (the agent's commits ARE the work)
+#   * dirty base -> re-dispatch via COMMIT_REDISPATCH_REPLY_PREFIX, capped at
+#     MAX_COMMIT_REDISPATCH; over the cap -> STATE_BLOCKED with a clear
+#     base-checkout reason
+#   * non-automation origin -> unchanged (still falls through to STATE_IN_REVIEW)
+#
+# These tests use the run_tick seam with a poller that injects a fully-formed
+# candidate (origin / worktree_active set directly via dataclasses.replace) and
+# patch scheduler._review_base_repo_dirty to control base state without
+# touching the real repo.
+# ---------------------------------------------------------------------------
+
+
+def _spawn_worktree_off_candidate(issue_id: str = "spawn-1") -> Any:
+    """Candidate mirroring a fire_due_spawn_automations row with worktree_active=False."""
+    return replace(
+        _candidate(issue_id),
+        binding_name="homelab",
+        base_branch="main",
+        origin="automation",
+        worktree_active=False,
+    )
+
+
+def _patch_worktree_off_land_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    base_dirty: bool,
+    base_branch_matches: bool = True,
+) -> None:
+    """Patch both land-path helpers so tests don't touch a real git repo."""
+    monkeypatch.setattr(
+        scheduler, "_review_base_repo_dirty", lambda *a, **kw: base_dirty
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_review_base_repo_branch",
+        lambda *a, **kw: base_branch_matches,
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_clean_base_closes_to_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10 / ADR-0041: a passing worktree-off spawn verdict with a
+    clean, committed base checkout transitions the Issue to STATE_DONE
+    instead of parking in STATE_IN_REVIEW (the bug pre-#10).
+    """
+    transport = FakeTransport()
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+    }
+    _patch_worktree_off_land_helpers(monkeypatch, base_dirty=False)
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_spawn_worktree_off_candidate("spawn-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-auto-landed"
+    assert result.dispatched is True
+    assert result.issue_id == "spawn-1"
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_dirty_base_redispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: a worktree-off spawn whose base checkout is still dirty
+    (agent forgot to commit) is re-dispatched with the COMMIT_REDISPATCH_REPLY_PREFIX
+    marker and transitions back to STATE_TODO. State machine invariant:
+    nothing closes to done with uncommitted work.
+    """
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX
+
+    transport = FakeTransport()
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+    }
+    monkeypatch.setattr(scheduler, "_review_base_repo_dirty", lambda *a, **kw: True)
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_spawn_worktree_off_candidate("spawn-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-dirty-commit-redispatch"
+    assert result.dispatched is True
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    body = transport.comments["spawn-1"][-1]["comment_html"]
+    # Load-bearing: the marker must be present so MAX_COMMIT_REDISPATCH counts it.
+    assert COMMIT_REDISPATCH_REPLY_PREFIX in body
+    # Distinct from the worktree-merge redispatch: it must reference the BASE
+    # checkout (not a per-issue worktree path or branch). The body may still
+    # say "no per-issue worktree" to explain why there's no worktree path
+    # available — that's a feature, not a regression.
+    assert "base checkout" in body.lower()
+    assert "branch" in body.lower()  # tells agent the target ref
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_dirty_base_over_cap_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: after MAX_COMMIT_REDISPATCH redispatch attempts the base
+    checkout is still dirty -> STATE_BLOCKED with a base-checkout-specific
+    reason. Nothing closes to done with uncommitted work.
+    """
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX, MAX_COMMIT_REDISPATCH
+
+    transport = FakeTransport()
+    prior = "\n\n".join(
+        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · attempt-{index})"
+        for index in range(MAX_COMMIT_REDISPATCH)
+    )
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+        "comments_md": f"prior dispatch noise\n\n{prior}",
+    }
+    _patch_worktree_off_land_helpers(monkeypatch, base_dirty=True)
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [
+            replace(
+                _spawn_worktree_off_candidate("spawn-1"),
+                comments_md=f"prior dispatch noise\n\n{prior}",
+            )
+        ],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-dirty-over-cap"
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    body = transport.comments["spawn-1"][-1]["comment_html"]
+    assert "base checkout still uncommitted" in body
+    assert f"{MAX_COMMIT_REDISPATCH} re-dispatches" in body
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_clean_base_does_not_call_worktree_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: worktree-off spawns must NOT touch worktree_facade (no
+    per-Issue worktree exists for them). The land path is base-checkout-only.
+    """
+    transport = FakeTransport()
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+    }
+    _patch_worktree_off_land_helpers(monkeypatch, base_dirty=False)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("worktree-off spawn must not land_worktree"),
+    )
+    monkeypatch.setattr(
+        "worktree_facade.worktree_is_dirty",
+        lambda *a: pytest.fail("worktree-off spawn must not check worktree dirty"),
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_spawn_worktree_off_candidate("spawn-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-auto-landed"
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.DONE.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_branch_is_unaffected_for_operator_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: the worktree-off branch is gated on origin=automation so
+    operator-authored worktree-off issues (origin=operator) still park in
+    STATE_IN_REVIEW. Operator expects manual review for those.
+    """
+    transport = FakeTransport()
+    transport.issues["op-1"] = {
+        **_issue("op-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "operator",
+    }
+    # Even with a clean base, operator origin must NOT auto-close to done.
+    monkeypatch.setattr(scheduler, "_review_base_repo_dirty", lambda *a, **kw: False)
+
+    operator_candidate = replace(
+        _candidate("op-1"),
+        binding_name="homelab",
+        base_branch="main",
+        origin="operator",
+        worktree_active=False,
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [operator_candidate],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason in {"agent-clean-review", "agent-marker-review"}
+    assert (
+        transport.issues["op-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_on_with_automation_origin_keeps_review_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: the worktree-off land branch is gated on BOTH
+    origin=automation AND worktree_active=False. A worktree-on spawn with
+    origin=automation must bypass the base-checkout path entirely and keep
+    the existing review/worktree-merge land pipeline (peer #9 regression
+    guard). Setting base_repo_dirty=True and base_branch_matches=False here
+    would break the test if the gate regressed.
+    """
+    transport = FakeTransport()
+    transport.issues["spawn-on"] = {
+        **_issue("spawn-on", state=PlaneState.TODO.value),
+        "auto_land": True,  # peer #9: worktree-on -> auto_land=True
+        "worktree_active": True,
+        "origin": "automation",
+        "base_branch": "main",
+    }
+    # If the gate regressed and the new branch fired anyway, both these
+    # patches would short-circuit it (worktree-facade.fail) or steer it to
+    # the wrong terminus (base clean + on branch -> done). Neither may
+    # happen for a worktree-on automation-origin Issue.
+    monkeypatch.setattr(scheduler, "_review_base_repo_dirty", lambda *a, **kw: True)
+    monkeypatch.setattr(scheduler, "_review_base_repo_branch", lambda *a, **kw: False)
+
+    worktree_on_candidate = replace(
+        _candidate("spawn-on"),
+        binding_name="symphony",  # coding binding -> worktree_default=True
+        base_branch="main",
+        origin="automation",
+        worktree_active=True,
+    )
+
+    coding_config = _config(
+        tmp_path, bindings=(_local_coding_binding(_config(tmp_path)),)
+    )
+    result = await run_tick(
+        coding_config,
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [worktree_on_candidate],
+        repo_dirty=lambda path: False,
+    )
+
+    # Must NOT reach the spawn-worktree-off-* terminus — that branch is
+    # worktree-off only. The normal implement-success fallthrough is
+    # STATE_IN_REVIEW (review then auto-land via peer #9's pipeline).
+    assert not result.reason.startswith("spawn-worktree-off-")
+    assert (
+        transport.issues["spawn-on"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_dirty_does_not_call_land_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: the worktree-off dirty branch must NOT call the worktree
+    land helpers either. Land helpers exist for the worktree-merge path
+    (worktree-on spawns and operator review); the base-checkout land path is
+    distinct.
+    """
+    transport = FakeTransport()
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+    }
+    monkeypatch.setattr(scheduler, "_review_base_repo_dirty", lambda *a, **kw: True)
+    monkeypatch.setattr(
+        "worktree_facade.land_worktree",
+        lambda *a: pytest.fail("worktree-off spawn must not call land_worktree"),
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_spawn_worktree_off_candidate("spawn-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-dirty-commit-redispatch"
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_clean_base_wrong_branch_redispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: a clean base checkout on the wrong branch (e.g. a stale
+    branch left behind by a previous land) must NOT close to done. The
+    spawn-worktree-off land path treats a branch mismatch as a dirty
+    checkout: re-dispatch with a checkout instruction, then block after
+    MAX_COMMIT_REDISPATCH.
+    """
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX
+
+    transport = FakeTransport()
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+    }
+    _patch_worktree_off_land_helpers(
+        monkeypatch, base_dirty=False, base_branch_matches=False
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [_spawn_worktree_off_candidate("spawn-1")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-branch-mismatch"
+    assert result.dispatched is True
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
+    )
+    body = transport.comments["spawn-1"][-1]["comment_html"]
+    assert COMMIT_REDISPATCH_REPLY_PREFIX in body
+    assert "branch" in body.lower()
+    assert "main" in body  # target branch name in the checkout instruction
+
+
+@pytest.mark.asyncio
+async def test_spawn_worktree_off_wrong_branch_over_cap_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #10: a worktree-off spawn whose base checkout is clean but on
+    the wrong branch, after MAX_COMMIT_REDISPATCH attempts to recover, must
+    be blocked with a branch-mismatch-specific reason. Nothing closes to
+    done with work that landed on a stale branch.
+    """
+    from redispatch_core import COMMIT_REDISPATCH_REPLY_PREFIX, MAX_COMMIT_REDISPATCH
+
+    transport = FakeTransport()
+    prior = "\n\n".join(
+        f"{COMMIT_REDISPATCH_REPLY_PREFIX} · attempt-{index})"
+        for index in range(MAX_COMMIT_REDISPATCH)
+    )
+    transport.issues["spawn-1"] = {
+        **_issue("spawn-1", state=PlaneState.TODO.value),
+        "auto_land": False,
+        "worktree_active": False,
+        "origin": "automation",
+        "base_branch": "main",
+        "comments_md": f"prior dispatch noise\n\n{prior}",
+    }
+    # Clean + wrong branch -> mismatched path -> over-cap blocks.
+    _patch_worktree_off_land_helpers(
+        monkeypatch, base_dirty=False, base_branch_matches=False
+    )
+
+    candidate_with_prior = replace(
+        _spawn_worktree_off_candidate("spawn-1"),
+        comments_md=f"prior dispatch noise\n\n{prior}",
+    )
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [candidate_with_prior],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "spawn-worktree-off-branch-mismatch-over-cap"
+    assert (
+        transport.issues["spawn-1"]["state"]
+        == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
+    )
+    body = transport.comments["spawn-1"][-1]["comment_html"]
+    assert "wrong branch" in body.lower()
+    assert "main" in body  # expected branch name in the message

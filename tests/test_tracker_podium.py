@@ -713,7 +713,12 @@ async def test_spawn_automation_mints_independent_issues_and_advances(tmp_path: 
         connection.row_factory = sqlite3.Row
         first = dict(connection.execute("SELECT * FROM issue").fetchone())
     assert first["title"] == "Check test"
-    assert first["description"] == "Every 3600s"
+    # Issue #10 / ADR-0041: worktree-off spawns append a base-branch commit
+    # directive so the agent knows to commit to base (clean checkout =
+    # completion signal). The user template precedes the directive.
+    assert first["description"].startswith("Every 3600s\n\n")
+    assert "Symphony worktree-off spawn" in first["description"]
+    assert "**Base branch:** `develop`" in first["description"]
     assert first["base_branch"] == "develop"
     assert first["external_id"] == f"automation:{automation_id}:1"
     assert [candidate.id for candidate in await adapter.list_candidates()] == [
@@ -847,6 +852,46 @@ async def test_spawn_automation_worktree_on_sets_auto_land_true_off_false(
         off_row = dict(connection.execute("SELECT * FROM issue").fetchone())
     assert bool(off_row["worktree_active"]) is False
     assert bool(off_row["auto_land"]) is False  # land path for worktree-off is #10
+
+
+@pytest.mark.asyncio
+async def test_spawn_automation_worktree_off_appends_base_commit_directive(
+    tmp_path: Path,
+) -> None:
+    """Issue #10 / ADR-0041: worktree-off spawns append a base-branch commit
+    directive to the description so the agent knows to commit to the base
+    checkout (clean + committed = completion signal). Worktree-ON spawns
+    skip the directive: their worktree-merge land path doesn't require the
+    agent to commit to base.
+    """
+    db_off = tmp_path / "off.db"
+    _seed_spawn_automation(db_off, worktree_active=False)
+    off_adapter = PodiumTrackerAdapter(db_path=db_off, binding_name="test")
+    noon = datetime(2026, 7, 17, 12, tzinfo=UTC)
+    assert (
+        await off_adapter.fire_due_spawn_automations(now=noon, base_branch="main") == 1
+    )
+    with sqlite3.connect(db_off) as connection:
+        connection.row_factory = sqlite3.Row
+        off_row = dict(connection.execute("SELECT * FROM issue").fetchone())
+    assert "Symphony worktree-off spawn" in off_row["description"]
+    assert "**Base branch:** `main`" in off_row["description"]
+    # Original template body must precede the directive.
+    assert off_row["description"].startswith("Every 3600s\n\n")
+
+    db_on = tmp_path / "on.db"
+    _seed_spawn_automation(db_on, worktree_active=True)
+    on_adapter = PodiumTrackerAdapter(db_path=db_on, binding_name="test")
+    assert (
+        await on_adapter.fire_due_spawn_automations(now=noon, base_branch="main") == 1
+    )
+    with sqlite3.connect(db_on) as connection:
+        connection.row_factory = sqlite3.Row
+        on_row = dict(connection.execute("SELECT * FROM issue").fetchone())
+    # Worktree-on spawns must NOT receive the directive — they land via the
+    # ADR-0023 worktree-merge pipeline, not the base-checkout land path.
+    assert "Symphony worktree-off spawn" not in on_row["description"]
+    assert on_row["description"] == "Every 3600s"
 
 
 async def test_spawn_automation_base_branch_override_wins_over_binding_default(
