@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from importlib import import_module
-from typing import cast
 
 from config import ProjectBinding, SymphonyConfig
 from redispatch_core import (
@@ -106,27 +105,31 @@ def _reland_done_body(comments_md: str, *, now: datetime) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _review_backend(
+    config: SymphonyConfig,
+    binding: ProjectBinding | None,
+    binding_name: str,
+    issue_id: str,
+):
+    """Pick the review/reland worktree backend once (local vs remote).
+
+    Concentrates the ``binding.is_remote`` dispatch that the five helpers below
+    used to repeat. Twin of the async ``worktree_backend_for`` seam (#503).
+    """
+    backend_mod = import_module("web.api.worktree_backend")
+    remote = binding.remote if (binding is not None and binding.is_remote) else None
+    return backend_mod.review_worktree_backend_for(
+        config.homelab_repo_path, binding_name, issue_id, remote
+    )
+
+
 def _review_worktree_is_dirty(
     config: SymphonyConfig,
     binding: ProjectBinding | None,
     binding_name: str,
     issue_id: str,
 ) -> bool:
-    if binding is not None and binding.is_remote:
-        remote_worktree = import_module("remote_worktree")
-        return cast(
-            bool,
-            remote_worktree.worktree_is_dirty(
-                binding.remote, config.homelab_repo_path, binding_name, issue_id
-            ),
-        )
-    worktree_helpers = import_module("worktree_facade")
-    return cast(
-        bool,
-        worktree_helpers.worktree_is_dirty(
-            config.homelab_repo_path, binding_name, issue_id
-        ),
-    )
+    return _review_backend(config, binding, binding_name, issue_id).is_dirty()
 
 
 def _review_worktree_diff_empty(
@@ -136,14 +139,8 @@ def _review_worktree_diff_empty(
     issue_id: str,
     base_branch: str,
 ) -> bool:
-    if binding is not None and binding.is_remote:
-        return False
-    worktree_helpers = import_module("worktree_facade")
-    return cast(
-        bool,
-        worktree_helpers.worktree_diff_empty(
-            config.homelab_repo_path, binding_name, issue_id, base_branch
-        ),
+    return _review_backend(config, binding, binding_name, issue_id).diff_empty(
+        base_branch
     )
 
 
@@ -153,20 +150,10 @@ def _review_base_repo_dirty(
 ) -> bool:
     """Return True if the base repo checkout has uncommitted changes.
 
-    Mirror of `_review_worktree_is_dirty` that checks the base repo
-    rather than a specific worktree. Local path uses
-    ``web.api.worktree.base_repo_dirty`` directly because
-    ``worktree_facade.__all__`` does not export it.
+    Base-repo check (not worktree-specific), so binding_name/issue_id are
+    irrelevant to the backend's base ops.
     """
-    if binding is not None and binding.is_remote:
-        remote_worktree = import_module("remote_worktree")
-        return cast(
-            bool,
-            remote_worktree.base_repo_dirty(binding.remote, config.homelab_repo_path),
-        )
-    from web.api.worktree import base_repo_dirty as _local_base_repo_dirty
-
-    return _local_base_repo_dirty(config.homelab_repo_path)
+    return _review_backend(config, binding, "", "").base_dirty()
 
 
 def _review_base_repo_branch(
@@ -181,21 +168,8 @@ def _review_base_repo_branch(
     feature branch). A clean checkout on the wrong branch is a degenerate
     state: closing the Issue to done would record a verdict on work that
     landed elsewhere, so the spawn-worktree-off land path must reject it.
-    Delegates to the public ``base_repo_branch`` helpers in
-    ``web.api.worktree`` / ``remote_worktree`` (added in #10 alongside the
-    land path that uses them).
     """
-    if binding is not None and binding.is_remote:
-        remote_worktree = import_module("remote_worktree")
-        return cast(
-            bool,
-            remote_worktree.base_repo_branch(
-                binding.remote, config.homelab_repo_path, base_branch
-            ),
-        )
-    from web.api.worktree import base_repo_branch as _local_base_repo_branch
-
-    return _local_base_repo_branch(config.homelab_repo_path, base_branch)
+    return _review_backend(config, binding, "", "").base_on_branch(base_branch)
 
 
 def _land_review_worktree(
@@ -205,22 +179,4 @@ def _land_review_worktree(
     issue_id: str,
     base_branch: str,
 ) -> str | None:
-    if binding is not None and binding.is_remote:
-        remote_worktree = import_module("remote_worktree")
-        return cast(
-            str | None,
-            remote_worktree.land_worktree(
-                binding.remote,
-                config.homelab_repo_path,
-                binding_name,
-                issue_id,
-                base_branch,
-            ),
-        )
-    worktree_helpers = import_module("worktree_facade")
-    return cast(
-        str | None,
-        worktree_helpers.land_worktree(
-            config.homelab_repo_path, binding_name, issue_id, base_branch
-        ),
-    )
+    return _review_backend(config, binding, binding_name, issue_id).land(base_branch)

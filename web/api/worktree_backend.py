@@ -178,3 +178,124 @@ def worktree_backend_for(
     if remote is not None:
         return RemoteWorktreeBackend(remote, repo_path, binding_name, issue_id)
     return LocalWorktreeBackend(repo_path, binding_name, issue_id)
+
+
+# ---------------------------------------------------------------------------
+# Sync review/reland seam
+# ---------------------------------------------------------------------------
+#
+# The synchronous review/reland path in ``scheduler/reland.py`` needs the same
+# local-vs-remote pick as the async landing algorithm above, but over a
+# different (wider) set of ops and without asyncio. It previously repeated the
+# ``if binding.is_remote`` branch across five helpers. This is the twin of
+# ``WorktreeBackend``: one factory picks the mechanism once, so reland's helpers
+# become one-line delegations.
+#
+# Local ops resolve through the ``worktree_facade`` / ``web.api.worktree``
+# modules by attribute at call time (not bound at import) so the existing
+# monkeypatch surface (``worktree_facade.worktree_is_dirty`` etc.) still works.
+
+
+class ReviewWorktreeBackend(Protocol):
+    """The worktree ops the review/reland path branches on, mechanism-agnostic."""
+
+    def is_dirty(self) -> bool: ...
+
+    def diff_empty(self, base_branch: str) -> bool: ...
+
+    def base_dirty(self) -> bool: ...
+
+    def base_on_branch(self, base_branch: str) -> bool: ...
+
+    def land(self, base_branch: str) -> str | None: ...
+
+
+@dataclass
+class LocalReviewWorktreeBackend:
+    """Local-filesystem review/reland mechanics."""
+
+    repo_path: Path
+    binding_name: str
+    issue_id: str
+
+    def is_dirty(self) -> bool:
+        facade = import_module("worktree_facade")
+        return bool(
+            facade.worktree_is_dirty(self.repo_path, self.binding_name, self.issue_id)
+        )
+
+    def diff_empty(self, base_branch: str) -> bool:
+        facade = import_module("worktree_facade")
+        return bool(
+            facade.worktree_diff_empty(
+                self.repo_path, self.binding_name, self.issue_id, base_branch
+            )
+        )
+
+    def base_dirty(self) -> bool:
+        # base_repo_dirty is not exported by worktree_facade.__all__; go direct.
+        wt = import_module("web.api.worktree")
+        return bool(wt.base_repo_dirty(self.repo_path))
+
+    def base_on_branch(self, base_branch: str) -> bool:
+        wt = import_module("web.api.worktree")
+        return bool(wt.base_repo_branch(self.repo_path, base_branch))
+
+    def land(self, base_branch: str) -> str | None:
+        facade = import_module("worktree_facade")
+        result = facade.land_worktree(
+            self.repo_path, self.binding_name, self.issue_id, base_branch
+        )
+        return result if result is None else str(result)
+
+
+@dataclass
+class RemoteReviewWorktreeBackend:
+    """Remote SSH review/reland mechanics."""
+
+    remote: RemotePolicy
+    repo_path: Path
+    binding_name: str
+    issue_id: str
+
+    def _rw(self):
+        return import_module("remote_worktree")
+
+    def is_dirty(self) -> bool:
+        return bool(
+            self._rw().worktree_is_dirty(
+                self.remote, self.repo_path, self.binding_name, self.issue_id
+            )
+        )
+
+    def diff_empty(self, base_branch: str) -> bool:
+        # remote_worktree offers no diff-empty check, so "nothing to review"
+        # cannot be proven over SSH: report not-empty (unknown is not empty).
+        # This limitation lives here, at the remote mechanic, not in reland.
+        return False
+
+    def base_dirty(self) -> bool:
+        return bool(self._rw().base_repo_dirty(self.remote, self.repo_path))
+
+    def base_on_branch(self, base_branch: str) -> bool:
+        return bool(
+            self._rw().base_repo_branch(self.remote, self.repo_path, base_branch)
+        )
+
+    def land(self, base_branch: str) -> str | None:
+        result = self._rw().land_worktree(
+            self.remote, self.repo_path, self.binding_name, self.issue_id, base_branch
+        )
+        return result if result is None else str(result)
+
+
+def review_worktree_backend_for(
+    repo_path: Path,
+    binding_name: str,
+    issue_id: str,
+    remote: RemotePolicy | None,
+) -> ReviewWorktreeBackend:
+    """Pick the review/reland backend: remote when a RemotePolicy is present."""
+    if remote is not None:
+        return RemoteReviewWorktreeBackend(remote, repo_path, binding_name, issue_id)
+    return LocalReviewWorktreeBackend(repo_path, binding_name, issue_id)

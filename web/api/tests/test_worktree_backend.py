@@ -115,3 +115,120 @@ async def test_remote_delegates_to_remote_worktree_ops(
     await backend.remove()
 
     assert calls == ["exists", "dirty", "merge", "remove"]
+
+
+# ── sync review/reland seam ────────────────────────────────────────────
+
+
+def test_review_backend_selects_local_when_no_remote() -> None:
+    from web.api.worktree_backend import (
+        LocalReviewWorktreeBackend,
+        review_worktree_backend_for,
+    )
+
+    backend = review_worktree_backend_for(REPO, "trading", "42", None)
+    assert isinstance(backend, LocalReviewWorktreeBackend)
+
+
+def test_review_backend_selects_remote_when_remote_present() -> None:
+    from web.api.worktree_backend import (
+        RemoteReviewWorktreeBackend,
+        review_worktree_backend_for,
+    )
+
+    backend = review_worktree_backend_for(REPO, "n8n", "42", REMOTE)
+    assert isinstance(backend, RemoteReviewWorktreeBackend)
+
+
+def test_review_remote_diff_empty_is_always_false() -> None:
+    """Remote offers no diff-empty check; unknown is not empty."""
+    from web.api.worktree_backend import RemoteReviewWorktreeBackend
+
+    backend = RemoteReviewWorktreeBackend(REMOTE, REPO, "n8n", "42")
+    assert backend.diff_empty("main") is False
+
+
+def test_review_local_delegates_to_facade(monkeypatch: pytest.MonkeyPatch) -> None:
+    import web.api.worktree as wt
+    import worktree_facade
+    from web.api.worktree_backend import LocalReviewWorktreeBackend
+
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+    monkeypatch.setattr(
+        worktree_facade,
+        "worktree_is_dirty",
+        lambda *a: calls.append(("dirty", a)) or True,
+    )
+    monkeypatch.setattr(
+        worktree_facade,
+        "worktree_diff_empty",
+        lambda *a: calls.append(("diff", a)) or True,
+    )
+    monkeypatch.setattr(
+        worktree_facade, "land_worktree", lambda *a: calls.append(("land", a)) or None
+    )
+    monkeypatch.setattr(
+        wt, "base_repo_dirty", lambda *a: calls.append(("base_dirty", a)) or False
+    )
+    monkeypatch.setattr(
+        wt, "base_repo_branch", lambda *a: calls.append(("base_branch", a)) or True
+    )
+
+    backend = LocalReviewWorktreeBackend(REPO, "trading", "42")
+    assert backend.is_dirty() is True
+    assert backend.diff_empty("main") is True
+    assert backend.base_dirty() is False
+    assert backend.base_on_branch("main") is True
+    assert backend.land("main") is None
+
+    assert [c[0] for c in calls] == [
+        "dirty",
+        "diff",
+        "base_dirty",
+        "base_branch",
+        "land",
+    ]
+    assert calls[0][1] == (REPO, "trading", "42")
+    assert calls[1][1] == (REPO, "trading", "42", "main")
+    assert calls[2][1] == (REPO,)
+    assert calls[3][1] == (REPO, "main")
+    assert calls[4][1] == (REPO, "trading", "42", "main")
+
+
+def test_review_remote_delegates_to_remote_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import remote_worktree
+    from web.api.worktree_backend import RemoteReviewWorktreeBackend
+
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+    monkeypatch.setattr(
+        remote_worktree,
+        "worktree_is_dirty",
+        lambda *a: calls.append(("dirty", a)) or True,
+    )
+    monkeypatch.setattr(
+        remote_worktree,
+        "base_repo_dirty",
+        lambda *a: calls.append(("base_dirty", a)) or False,
+    )
+    monkeypatch.setattr(
+        remote_worktree,
+        "base_repo_branch",
+        lambda *a: calls.append(("base_branch", a)) or True,
+    )
+    monkeypatch.setattr(
+        remote_worktree, "land_worktree", lambda *a: calls.append(("land", a)) or None
+    )
+
+    backend = RemoteReviewWorktreeBackend(REMOTE, REPO, "n8n", "42")
+    assert backend.is_dirty() is True
+    assert backend.base_dirty() is False
+    assert backend.base_on_branch("main") is True
+    assert backend.land("main") is None
+
+    assert [c[0] for c in calls] == ["dirty", "base_dirty", "base_branch", "land"]
+    assert calls[0][1] == (REMOTE, REPO, "n8n", "42")
+    assert calls[1][1] == (REMOTE, REPO)
+    assert calls[2][1] == (REMOTE, REPO, "main")
+    assert calls[3][1] == (REMOTE, REPO, "n8n", "42", "main")
