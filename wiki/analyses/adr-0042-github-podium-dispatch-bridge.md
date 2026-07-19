@@ -76,6 +76,22 @@ Humans read, comment, and triage in **GitHub** (unchanged `to-spec` / `to-ticket
 
 The `to-tickets` `## Verification` field is a **dotfiles-binding** change (delivered via dotfiles Podium issue #520, landed dotfiles commit `b349dfd` this session), **not** part of symphony #513-517. The bridge inherits the `## Verification` discipline from `to-tickets`'s existing prompt-renderer contract — it does not add or enforce new prose at the bridge level.
 
+## Live operations follow-ups (2026-07-19)
+
+- **Synced-issue card chip (C-0389):** sync inserts `origin="automation"` so cards
+  render the existing sky-blue origin chip; distinguishes synced rows from
+  operator ones with no schema change. A precise `origin="github"` chip (GITHUB
+  label, matching the `external_id` prefix) is deferred — `issue.origin` has a DB
+  CHECK `IN ('operator','patrol','automation')` (`schema.py:72`) so it needs a
+  0025 issue-table-rebuild migration. Commit `973ee1d`.
+- **pi-rmm #529/#526 blocked on provider quota (C-0390):** the first real
+  end-to-end (pi-rmm spec `shreeve1/pi-rmm#9` → children #10-#14) had #529/#526 go
+  `blocked` because pi (`pi-duo`/`Duo:high`) hit a Token Plan rate limit (429),
+  not a bridge fault. Scheduler stall/retry/ceiling behaved correctly. #526's
+  first run actually implemented story #13 (verdict=review) before the 429 hit its
+  review passes. Unblock = quota reset + operator `/reply` (blocked→todo), #529
+  first. Handoff: `docs/handoffs/2026-07-19-519-pi-rmm-529-526-blocked-rate-limit.md`.
+
 ## Citations
 
 - ADR: `docs/adr/0042-github-podium-dispatch-bridge.md` (status: accepted)

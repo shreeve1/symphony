@@ -1,5 +1,12 @@
 # Wiki Log
 
+## [2026-07-19] session-update | ADR-0042 synced-issue chip + pi-rmm quota block (C-0389, C-0390)
+
+- Actor: agent (Pi), operator-driven `/wiki-update` ("Update wiki").
+- **C-0389** (config-fact): sync-inserted GitHub issues carry `origin="automation"` so the Podium card shows the existing origin chip; no schema change. A dedicated `github` origin (GITHUB label) is deferred — needs migration 0025 to widen the `issue.origin` CHECK. Commit `973ee1d`.
+- **C-0390** (gotcha): pi-rmm mirrored issues #529/#526 went `blocked` on a pi Token Plan rate limit (429), not a bridge fault; scheduler stall/retry/ceiling worked correctly. #526's first run implemented story #13 before the 429 hit review passes. Unblock = quota reset + `/reply`. Handoff `docs/handoffs/2026-07-19-519-pi-rmm-529-526-blocked-rate-limit.md`, commit `4ede390`.
+- **Files**: `wiki/CLAIMS.md` (+C-0389, +C-0390), `wiki/analyses/adr-0042-github-podium-dispatch-bridge.md` (live-ops follow-ups section), `wiki/ROUTING.md`, `wiki/log.md`.
+
 ## [2026-07-19] session-update | ADR-0042 pi-rmm live end-to-end + stale-podium-api gotcha (C-0388)
 
 - Actor: agent (Pi), interactive operator session continuing the ADR-0042 verification.
