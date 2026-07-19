@@ -39,6 +39,10 @@ import { RunHistoryList } from "@/components/RunHistoryList";
 import { SessionTailPanel } from "@/components/SessionTailPanel";
 import { AttachmentPanel } from "@/components/AttachmentPanel";
 import { useAppendTailEvent } from "@/components/QueryProvider";
+import {
+	SlashPickerTextarea,
+	type SlashPickerField,
+} from "@/components/SlashPickerTextarea";
 
 // Width persistence — the operator's chosen flyout width survives reopen and
 // reload. The #012c spec's "~480px" is only the default; validated by the
@@ -567,11 +571,13 @@ function MetadataChips({
 function ReplyComposer({
 	issue,
 	staged,
+	slashFields,
 	onClearStaged,
 	onSent,
 }: {
 	issue: IssueDetail;
 	staged: StagedDispatchControls;
+	slashFields: readonly SlashPickerField[];
 	onClearStaged: () => void;
 	onSent: () => void;
 }) {
@@ -671,10 +677,12 @@ function ReplyComposer({
 
 	return (
 		<div className="space-y-2" data-testid="reply-composer">
-			<textarea
-				ref={taRef}
-				data-testid="reply-input"
+			<SlashPickerTextarea
+				textareaRef={taRef}
+				testid="reply-input"
 				value={draft}
+				onChange={saveDraft}
+				fields={slashFields}
 				rows={1}
 				placeholder={
 					hasStaged
@@ -684,7 +692,6 @@ function ReplyComposer({
 							: "Write a reply to the agent…"
 				}
 				disabled={replyDisabled}
-				onChange={(e) => saveDraft(e.target.value)}
 				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
 			/>
 			{replyDisabled && (
@@ -1167,6 +1174,118 @@ export function IssueFlyout({
 		}));
 	};
 	const clearStagedDispatch = () => setStagedDispatch(EMPTY_STAGED_DISPATCH);
+	const slashFields: SlashPickerField[] = issue
+		? [
+				{
+					id: "state",
+					title: "State",
+					values: STATE_KEYS.map((value) => ({ value })),
+					onSelect: (value) => onPatch({ state: value }),
+				},
+				{
+					id: "skill",
+					title: "Skill",
+					values: [
+						{ value: "", label: "—" },
+						...(issue.preferred_skill != null &&
+						!skillNames.includes(issue.preferred_skill)
+							? [{ value: issue.preferred_skill }]
+							: []),
+						...skillNames.map((value) => ({ value })),
+					],
+					onSelect: (value) => onPatch({ preferred_skill: value || null }),
+				},
+				{
+					id: "agent",
+					title: "Agent",
+					values: [
+						{ value: "", label: "—" },
+						...(issue.preferred_agent != null &&
+						!(options.data?.agents ?? []).includes(issue.preferred_agent)
+							? [{ value: issue.preferred_agent }]
+							: []),
+						...(options.data?.agents ?? []).map((value) => ({ value })),
+					],
+					onSelect: (value) => onPatch({ preferred_agent: value || null }),
+					allowFreeText: true,
+				},
+				{
+					id: "model",
+					title: "Model",
+					values: [
+						{ value: "", label: "—" },
+						...(issue.preferred_model != null &&
+						!modelOpts.some((option) => option.value === issue.preferred_model)
+							? [{ value: issue.preferred_model }]
+							: []),
+						...modelOpts,
+					],
+					onSelect: (value) => onPatch({ preferred_model: value || null }),
+				},
+				{
+					id: "effort",
+					title: "Effort",
+					values: EFFORTS.map((value) => ({ value })),
+					onSelect: (value) => onPatch({ reasoning_effort: value }),
+				},
+				{
+					id: "hold",
+					title: "Hold",
+					values: [
+						{ value: "false", label: "off" },
+						{ value: "true", label: "active" },
+					],
+					onSelect: (value) => onPatch({ hold: value === "true" }),
+				},
+				{
+					id: "base",
+					title: "Base",
+					values: [
+						{ value: "", label: "—" },
+						...(issue.base_branch != null &&
+						!(options.data?.branches ?? []).includes(issue.base_branch)
+							? [{ value: issue.base_branch }]
+							: []),
+						...(options.data?.branches ?? []).map((value) => ({ value })),
+					],
+					onSelect: (value) => onPatch({ base_branch: value || null }),
+					allowFreeText: true,
+				},
+			]
+		: [];
+	if (issue?.binding_type === "infra" && bindingApprovalEnabled) {
+		slashFields.push(
+			{
+				id: "approval",
+				title: "Approval",
+				values: [
+					{ value: "false", label: "off" },
+					{ value: "true", label: "active" },
+				],
+				onSelect: (value) => stageApprovalRequired(value === "true"),
+			},
+			{
+				id: "approved",
+				title: "Approved",
+				values: [
+					{ value: "false", label: "off" },
+					{ value: "true", label: "active" },
+				],
+				onSelect: (value) => stageApproved(value === "true"),
+			},
+		);
+	}
+	if (issue?.binding_type === "infra") {
+		slashFields.push({
+			id: "schedule",
+			title: "Schedule",
+			values: [
+				{ value: "none", label: "No" },
+				{ value: "next_window", label: "Yes" },
+			],
+			onSelect: (value) => stageSchedule(value as ScheduleMode),
+		});
+	}
 
 	return (
 		<>
@@ -1316,6 +1435,7 @@ export function IssueFlyout({
 												key={issue.id}
 												issue={issue}
 												staged={stagedDispatch}
+												slashFields={slashFields}
 												onClearStaged={clearStagedDispatch}
 												onSent={onClose}
 											/>

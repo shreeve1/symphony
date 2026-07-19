@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+	type RefObject,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 
 export type SlashPickerValue = { value: string; label?: string };
 export type SlashPickerField = {
@@ -29,6 +35,9 @@ export function SlashPickerTextarea({
 	rows = 4,
 	className,
 	autoFocus = false,
+	disabled = false,
+	placeholder,
+	textareaRef: externalTextareaRef,
 }: {
 	value: string;
 	onChange: (value: string) => void;
@@ -37,8 +46,12 @@ export function SlashPickerTextarea({
 	rows?: number;
 	className?: string;
 	autoFocus?: boolean;
+	disabled?: boolean;
+	placeholder?: string;
+	textareaRef?: RefObject<HTMLTextAreaElement | null>;
 }) {
-	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const textareaRef = externalTextareaRef ?? internalTextareaRef;
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const pendingCaretRef = useRef<number | null>(null);
 	const [command, setCommand] = useState<Command | null>(null);
@@ -150,6 +163,8 @@ export function SlashPickerTextarea({
 				value={value}
 				rows={rows}
 				autoFocus={autoFocus}
+				disabled={disabled}
+				placeholder={placeholder}
 				role="combobox"
 				aria-autocomplete="list"
 				aria-expanded={open}

@@ -105,6 +105,214 @@ test("staged schedule controls still reset on issue switch", async ({
 	expectCleanConsole(problems);
 });
 
+test("slash picker applies immediate controls and submits only reply prose", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply slash immediate ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "in_review");
+	const patchBodies: Record<string, unknown>[] = [];
+
+	await page.route("**/api/skills?binding=homelab", (route) =>
+		route.fulfill({
+			contentType: "application/json",
+			body: JSON.stringify([{ name: "alpha" }]),
+		}),
+	);
+	await page.route("**/api/bindings/homelab/options", async (route) => {
+		const response = await route.fetch();
+		await route.fulfill({
+			response,
+			json: {
+				agents: ["pi", "claude"],
+				models: [
+					{ id: "pi-a", agent: "pi", efforts: ["low"] },
+					{ id: "claude-a", agent: "claude", efforts: ["low"] },
+				],
+				branches: ["main", "release"],
+			},
+		});
+	});
+	await page.route("**/api/issues/*", async (route) => {
+		if (route.request().method() === "PATCH") {
+			patchBodies.push(route.request().postDataJSON());
+		}
+		await route.fallback();
+	});
+	await page.goto(`/homelab?issue=${issueId}`);
+	const input = page.getByTestId("reply-input");
+	const prose = "Keep /srv/app and https://example.test/a prefix/hold. ";
+	await input.fill(prose);
+
+	const select = async (field: string, title: string, value: string) => {
+		await input.pressSequentially(`/${field}`);
+		await input.press("Tab");
+		await expect(
+			page.getByRole("listbox", { name: `${title} values` }),
+		).toBeVisible();
+		await input.pressSequentially(value);
+		await input.press("Tab");
+		await expect(input).toHaveValue(prose);
+	};
+
+	await select("skill", "Skill", "alpha");
+	await select("agent", "Agent", "claude");
+	await input.pressSequentially("/model");
+	await input.press("Tab");
+	const modelValues = page.getByRole("listbox", { name: "Model values" });
+	await expect(modelValues.getByRole("option", { name: "claude-a" })).toBeVisible();
+	await expect(modelValues.getByRole("option", { name: "pi-a" })).toHaveCount(0);
+	await input.pressSequentially("claude-a");
+	await input.press("Tab");
+	await expect(input).toHaveValue(prose);
+	await input.pressSequentially("/effort");
+	await input.press("Tab");
+	await expect(
+		page
+			.getByRole("listbox", { name: "Effort values" })
+			.getByRole("option", { name: "xhigh" }),
+	).toBeVisible();
+	await input.pressSequentially("xhigh");
+	await input.press("Tab");
+	await select("hold", "Hold", "active");
+	await select("base", "Base", "release");
+	await select("base", "Base", "hotfix");
+	await select("hold", "Hold", "off");
+
+	await expect(page.getByTestId("edit-preferred_skill")).toHaveValue("alpha");
+	await expect(page.getByTestId("edit-preferred_agent")).toHaveValue("claude");
+	await expect(page.getByTestId("edit-preferred_model")).toHaveValue("claude-a");
+	await expect(page.getByTestId("edit-reasoning_effort")).toHaveValue("xhigh");
+	await expect(page.getByTestId("edit-base_branch")).toHaveValue("hotfix");
+	await expect(page.getByTestId("edit-hold")).toHaveAttribute(
+		"aria-pressed",
+		"false",
+	);
+	await expect.poll(() => patchBodies.length).toBe(8);
+	expect(patchBodies).toEqual([
+		{ preferred_skill: "alpha" },
+		{ preferred_agent: "claude" },
+		{ preferred_model: "claude-a" },
+		{ reasoning_effort: "xhigh" },
+		{ hold: true },
+		{ base_branch: "release" },
+		{ base_branch: "hotfix" },
+		{ hold: false },
+	]);
+
+	await input.pressSequentially("Continue.");
+	const replyRequest = page.waitForRequest(
+		(req) =>
+			req.url().endsWith(`/api/issues/${issueId}/reply`) &&
+			req.method() === "POST",
+	);
+	await page.getByTestId("reply-send").click();
+	expect((await replyRequest).postDataJSON()).toEqual({
+		body: `${prose}Continue.`,
+	});
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+
+	expectCleanConsole(problems);
+});
+
+test("slash picker stages approval and schedule until Send and respects binding visibility", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply slash staged ${Date.now()}`;
+	const codingTitle = `e2e reply slash coding ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "in_review");
+	const { issueId: codingIssueId } = seedIssue(
+		"dotfiles",
+		codingTitle,
+		"in_review",
+	);
+	let dispatchRequestCount = 0;
+
+	await page.route("**/api/bindings", async (route) => {
+		const response = await route.fetch();
+		const bindings = (await response.json()) as Record<string, unknown>[];
+		await route.fulfill({
+			response,
+			json: bindings.map((binding) =>
+				binding.name === "homelab"
+					? { ...binding, approval_enabled: true }
+					: binding,
+			),
+		});
+	});
+	page.on("request", (request) => {
+		if (
+			(request.method() === "PATCH" &&
+				request.url().endsWith(`/api/issues/${issueId}`)) ||
+			request.url().endsWith(`/api/issues/${issueId}/schedule`)
+		) {
+			dispatchRequestCount += 1;
+		}
+	});
+	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("edit-approval_required")).toBeVisible();
+	const input = page.getByTestId("reply-input");
+	await input.fill("Apply these controls. ");
+
+	for (const [field, title, value] of [
+		["approval", "Approval", "active"],
+		["approved", "Approved", "active"],
+		["schedule", "Schedule", "yes"],
+	] as const) {
+		await input.pressSequentially(`/${field}`);
+		await input.press("Tab");
+		await expect(
+			page.getByRole("listbox", { name: `${title} values` }),
+		).toBeVisible();
+		await input.pressSequentially(value);
+		await input.press("Tab");
+	}
+
+	await expect(page.getByTestId("edit-approval_required")).toHaveText("active");
+	await expect(page.getByTestId("edit-approved")).toHaveText("active");
+	await expect(page.getByTestId("issue-schedule-mode")).toHaveValue(
+		"next_window",
+	);
+	expect(dispatchRequestCount).toBe(0);
+
+	const approvalRequest = page.waitForRequest(
+		(req) =>
+			req.url().endsWith(`/api/issues/${issueId}`) && req.method() === "PATCH",
+	);
+	const commentRequest = page.waitForRequest(
+		(req) =>
+			req.url().endsWith(`/api/issues/${issueId}/comment`) &&
+			req.method() === "POST",
+	);
+	const scheduleRequest = page.waitForRequest(
+		(req) =>
+			req.url().endsWith(`/api/issues/${issueId}/schedule`) &&
+			req.method() === "POST",
+	);
+	await page.getByTestId("reply-send").click();
+	expect((await approvalRequest).postDataJSON()).toEqual({
+		approval_required: true,
+		approved: true,
+	});
+	expect((await commentRequest).postDataJSON().body.trim()).toBe(
+		"Apply these controls.",
+	);
+	expect((await scheduleRequest).postDataJSON()).toMatchObject({
+		not_before: "next_window",
+	});
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+
+	await page.goto(`/dotfiles?issue=${codingIssueId}`);
+	await page.getByTestId("reply-input").fill("/");
+	await expect(page.getByRole("option", { name: "Approval" })).toHaveCount(0);
+	await expect(page.getByRole("option", { name: "Approved" })).toHaveCount(0);
+	await expect(page.getByRole("option", { name: "Schedule" })).toHaveCount(0);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+
+	expectCleanConsole(problems);
+});
+
 test("composer posts a reply, closes the flyout, and the card moves to Todo", async ({
 	page,
 	problems,
@@ -143,6 +351,36 @@ test("composer posts a reply, closes the flyout, and the card moves to Todo", as
 	).toBeVisible({ timeout: 4_500 });
 
 	expectCleanConsole(problems);
+});
+
+test("failed Reply keeps the flyout and draft open with an error", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply failure ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "in_review");
+
+	await page.route(`**/api/issues/${issueId}/reply`, (route) =>
+		route.fulfill({
+			status: 409,
+			contentType: "application/json",
+			body: JSON.stringify({ detail: "stubbed reply conflict" }),
+		}),
+	);
+	await page.goto(`/homelab?issue=${issueId}`);
+	const input = page.getByTestId("reply-input");
+	await input.fill("Keep this draft after failure.");
+	const rejected = page.waitForResponse(
+		(res) => res.url().endsWith(`/api/issues/${issueId}/reply`),
+	);
+	await page.getByTestId("reply-send").click();
+	await rejected;
+
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("reply-error")).toBeVisible();
+	await expect(input).toHaveValue("Keep this draft after failure.");
+
+	expectCleanConsole(problems, { ignore: [/409/] });
 });
 
 test("composer send is disabled with a hint while the issue is running", async ({

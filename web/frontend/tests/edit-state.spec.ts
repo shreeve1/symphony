@@ -67,7 +67,14 @@ test("done flyout closes only on returned done", async ({ page, problems }) => {
 	await page.goto("/homelab");
 	await page.getByTestId("issue-card").filter({ hasText: closeTitle }).click();
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();
-	await page.getByTestId("edit-state").selectOption("done");
+	const donePatch = page.waitForRequest(
+		(req) => req.method() === "PATCH" && /\/api\/issues\/\d+$/.test(req.url()),
+	);
+	await page.getByTestId("reply-input").fill("/state");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("done");
+	await page.keyboard.press("Enter");
+	await donePatch;
 	await expect(page.getByTestId("issue-flyout")).toBeHidden();
 
 	expectCleanConsole(problems);
@@ -75,7 +82,7 @@ test("done flyout closes only on returned done", async ({ page, problems }) => {
 
 test("active run 409 shows inline error", async ({ page, problems }) => {
 	const title = `e2e edit-state 409 ${Date.now()}`;
-	const { issueId } = seedIssue("homelab", title, "in_review");
+	seedIssue("homelab", title, "in_review");
 
 	await page.route("**/api/issues/*", async (route) => {
 		if (route.request().method() !== "PATCH") return route.fallback();
@@ -89,7 +96,14 @@ test("active run 409 shows inline error", async ({ page, problems }) => {
 	});
 
 	await openSeededIssue(page, title);
-	await page.getByTestId("edit-state").selectOption("done");
+	const rejectedPatch = page.waitForResponse(
+		(res) => res.request().method() === "PATCH" && res.status() === 409,
+	);
+	await page.getByTestId("reply-input").fill("/state");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("done");
+	await page.keyboard.press("Enter");
+	await rejectedPatch;
 
 	// Flyout must stay open.
 	await expect(page.getByTestId("issue-flyout")).toBeVisible();

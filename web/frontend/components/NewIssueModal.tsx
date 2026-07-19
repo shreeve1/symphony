@@ -496,11 +496,9 @@ function NewIssueModal({
 							data-testid="new-issue-file-input"
 							className="sr-only"
 							onChange={(e) => {
-								if (e.target.files && e.target.files.length > 0) {
-									setStagedFiles((prev) => [
-										...prev,
-										...Array.from(e.target.files!),
-									]);
+								const files = Array.from(e.target.files ?? []);
+								if (files.length > 0) {
+									setStagedFiles((prev) => [...prev, ...files]);
 									setUploadError(null);
 								}
 								if (fileInputRef.current) fileInputRef.current.value = "";

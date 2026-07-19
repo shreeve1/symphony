@@ -290,7 +290,7 @@ with connect() as connection:
           cost_usd, input_tokens, output_tokens, branch_name,
           base_branch, log_path, skill_invoked, started_at, ended_at
         ) VALUES (?, ?, 'e2e', 'glm-5.1:high', 'running', NULL, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, 'main', NULL, NULL, ?, NULL)
+          NULL, NULL, NULL, NULL, 'main', NULL, NULL, ?, NULL)
         """,
         (issue_id, agent, now),
     )
