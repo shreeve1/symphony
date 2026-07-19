@@ -71,6 +71,7 @@ try:
         MAX_COMMIT_REDISPATCH,
         OPERATOR_RELAND_PENDING_PREFIX,
         count_commit_redispatches,
+        format_retry_epoch_marker,
         redispatch_commit_note,
     )
     from session_continuity import derive_session_id, session_file_path
@@ -93,6 +94,7 @@ except ModuleNotFoundError:
         MAX_COMMIT_REDISPATCH,
         OPERATOR_RELAND_PENDING_PREFIX,
         count_commit_redispatches,
+        format_retry_epoch_marker,
         redispatch_commit_note,
     )
     from session_continuity import (  # type: ignore[no-redef]
@@ -1841,7 +1843,8 @@ async def reply_to_issue(
         raise HTTPException(status_code=status, detail=errors) from exc
 
     now = _next_updated_at(current["updated_at"])
-    appended = f"\n\n### Operator Reply ({now})\n\n{reply.body.strip()}"
+    epoch = format_retry_epoch_marker("operator", datetime.fromisoformat(now))
+    appended = f"\n\n### Operator Reply ({now})\n\n{reply.body.strip()}\n\n{epoch}"
 
     # One atomic conditional UPDATE: append + state flip + bump, all server-side.
     # COALESCE guards a legacy NULL comments_md (NULL || text yields NULL, which

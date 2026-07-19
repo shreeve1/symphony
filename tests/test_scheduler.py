@@ -1068,12 +1068,14 @@ async def test_fourth_stall_failure_blocks_at_combined_ceiling(
     # ceiling is the binding constraint and fires before the stall handler.
     from scheduler.transient_retry import (
         STALL_WATCHDOG_SENTINEL,
+        format_retry_epoch_marker,
         format_stall_retry_marker,
     )
 
     now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
     prior = "\n".join(
-        format_stall_retry_marker(n, now.replace(hour=8 + n)) for n in (1, 2, 3)
+        [format_retry_epoch_marker("operator", now.replace(hour=8))]
+        + [format_stall_retry_marker(n, now.replace(hour=8 + n)) for n in (1, 2, 3)]
     )
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
@@ -1139,10 +1141,20 @@ async def test_stall_watchdog_review_retry_keeps_issue_in_review(
     tmp_path: Path,
 ) -> None:
     from redispatch_core import RELAND_PENDING_PREFIX
-    from scheduler.transient_retry import STALL_WATCHDOG_SENTINEL
+    from scheduler.transient_retry import (
+        RETRY_EPOCH_PREFIX,
+        STALL_WATCHDOG_SENTINEL,
+        count_stall_retries,
+        format_stall_retry_marker,
+    )
     from tracker_podium import PodiumTrackerAdapter
     from web.api.schema import SCHEMA_SQL
 
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    prior_stalls = "\n".join(
+        format_stall_retry_marker(attempt, now.replace(hour=8 + attempt))
+        for attempt in (1, 2, 3)
+    )
     repo = tmp_path / "repo"
     _init_tmp_repo(repo)
     db_path = tmp_path / "podium.db"
@@ -1154,10 +1166,11 @@ async def test_stall_watchdog_review_retry_keeps_issue_in_review(
             INSERT INTO issue(
               binding_name, title, description, state, preferred_agent,
               comments_md, context_md, auto_land, created_at, updated_at
-            ) VALUES ('test', 'needs stall retry', '', 'in_review', 'pi', '', '', 1,
+            ) VALUES ('test', 'needs stall retry', '', 'in_review', 'pi', ?, '', 1,
                       '2026-06-11T00:00:00+00:00',
                       '2026-06-11T00:00:00+00:00')
-            """
+            """,
+            (prior_stalls,),
         )
         issue_id = str(cursor.lastrowid)
         connection.commit()
@@ -1186,13 +1199,14 @@ async def test_stall_watchdog_review_retry_keeps_issue_in_review(
         render_prompt=lambda issue: "prompt",
         run_blocked_reconciler=False,
         binding=binding,
-        now=lambda: datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+        now=lambda: now,
     )
 
     assert tick.reason == "stall-retry-review"
     issue = await adapter.get_issue(issue_id)
     assert issue["state"] == "in_review"
-    assert "### Symphony Retry (stall · 1)" in issue["comments_md"]
+    assert f"{RETRY_EPOCH_PREFIX} (review)" in issue["comments_md"]
+    assert count_stall_retries(issue["comments_md"]) == 1
     assert RELAND_PENDING_PREFIX in issue["comments_md"]
     assert seen_review_dispatch == [True]
 

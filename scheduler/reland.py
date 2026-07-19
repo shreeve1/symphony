@@ -24,8 +24,12 @@ _REVIEW_DISPATCH_MARKER_RE = re.compile(
 )
 
 
+def _review_dispatch_marker_count(comments_md: str) -> int:
+    return len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
+
+
 def _next_review_dispatch_marker(comments_md: str) -> str:
-    prior = len(_REVIEW_DISPATCH_MARKER_RE.findall(comments_md or ""))
+    prior = _review_dispatch_marker_count(comments_md)
     return f"### Symphony Review ({prior + 1})\n\nReview run dispatched."
 
 

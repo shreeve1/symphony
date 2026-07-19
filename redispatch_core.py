@@ -14,6 +14,7 @@ from typing import Any
 MAX_COMMIT_REDISPATCH = 2
 RETRY_MARKER_PREFIX = "### Symphony Retry (transient"
 STALL_MARKER_PREFIX = "### Symphony Retry (stall"
+RETRY_EPOCH_PREFIX = "### Symphony Retry Epoch"
 STALL_WATCHDOG_SENTINEL = "SYMPHONY_STALL_WATCHDOG"
 # ADR-0034: raised 1→3 — full carrier-persistence budget when no transient
 # retry is spent on the same issue (combined ceiling MAX_COMBINED_RETRIES=3
@@ -72,6 +73,15 @@ _STALL_MARKER_PATTERN = (
     rf"\s+·\s+(?P<timestamp>\S+)$"
 )
 STALL_MARKER_RE = re.compile(_STALL_MARKER_PATTERN, re.MULTILINE)
+_RETRY_EPOCH_PATTERN = (
+    rf"^{re.escape(RETRY_EPOCH_PREFIX)} \((?P<reason>[^)\n]+)\)"
+    rf" · (?P<timestamp>\S+)$"
+)
+RETRY_EPOCH_RE = re.compile(_RETRY_EPOCH_PATTERN, re.MULTILINE)
+
+
+def format_retry_epoch_marker(reason: str, now: datetime) -> str:
+    return f"{RETRY_EPOCH_PREFIX} ({reason}) · {now.isoformat()}"
 
 
 def format_retry_marker(attempt: int, reason: str, now: datetime) -> str:
@@ -82,20 +92,24 @@ def format_stall_retry_marker(attempt: int, now: datetime) -> str:
     return f"{STALL_MARKER_PREFIX} · {attempt}) · {now.isoformat()}"
 
 
+def _current_retry_epoch(comments_md: str | None) -> str:
+    text = comments_md or ""
+    matches = list(RETRY_EPOCH_RE.finditer(text))
+    return text[matches[-1].end() :] if matches else text
+
+
 def count_retries(comments_md: str | None) -> int:
-    if not comments_md:
-        return 0
     attempts = [
-        int(match.group("attempt")) for match in RETRY_MARKER_RE.finditer(comments_md)
+        int(match.group("attempt"))
+        for match in RETRY_MARKER_RE.finditer(_current_retry_epoch(comments_md))
     ]
     return max(attempts, default=0)
 
 
 def count_stall_retries(comments_md: str | None) -> int:
-    if not comments_md:
-        return 0
     attempts = [
-        int(match.group("attempt")) for match in STALL_MARKER_RE.finditer(comments_md)
+        int(match.group("attempt"))
+        for match in STALL_MARKER_RE.finditer(_current_retry_epoch(comments_md))
     ]
     return max(attempts, default=0)
 
@@ -109,7 +123,9 @@ def retry_cooldown_expired(
 ) -> bool:
     timestamps = [
         datetime.fromisoformat(match.group("timestamp"))
-        for match in RETRY_MARKER_TIMESTAMP_RE.finditer(comments_md or "")
+        for match in RETRY_MARKER_TIMESTAMP_RE.finditer(
+            _current_retry_epoch(comments_md)
+        )
     ]
     if not timestamps:
         return True

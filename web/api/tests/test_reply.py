@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from redispatch_core import RETRY_EPOCH_PREFIX
+
 main = import_module("web.api.main")
 
 
@@ -39,6 +41,7 @@ def test_reply_on_in_review_returns_todo(client: TestClient, issue_id: int) -> N
     assert payload["state"] == "todo"
     assert "### Operator Reply (" in payload["comments_md"]
     assert "please retry the migration" in payload["comments_md"]
+    assert f"{RETRY_EPOCH_PREFIX} (operator)" in payload["comments_md"]
 
 
 def test_reply_response_carries_gate_fields(client: TestClient, issue_id: int) -> None:

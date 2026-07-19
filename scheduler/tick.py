@@ -36,7 +36,10 @@ from .reconcile import (
     reconcile_pending_review as _reconcile_pending_review,
     reconcile_stale_running as _reconcile_stale_running,
 )
-from .reland import _next_review_dispatch_marker as _next_review_dispatch_marker
+from .reland import (
+    _next_review_dispatch_marker as _next_review_dispatch_marker,
+    _review_dispatch_marker_count as _review_dispatch_marker_count,
+)
 from .run_records import (
     close_run_record_steering as _close_run_record_steering,
     finish_run_record as _finish_run_record,
@@ -54,7 +57,12 @@ from .selection import (
     _reserve_candidate,
     _reserve_specific_candidate,
 )
-from .transient_retry import count_retries, retry_cooldown_expired
+from .transient_retry import (
+    RETRY_EPOCH_RE,
+    count_retries,
+    format_retry_epoch_marker,
+    retry_cooldown_expired,
+)
 
 if TYPE_CHECKING:
     from . import (
@@ -429,10 +437,26 @@ async def _prepare_run_tick_dispatch(
             comments_text=comments_text,
         )
         if getattr(candidate, "review_dispatch", False):
+            epoch_matches = list(RETRY_EPOCH_RE.finditer(comments_text))
+            starts_review_epoch = (
+                epoch_matches[-1].group("reason") != "review"
+                if epoch_matches
+                else _review_dispatch_marker_count(comments_text) == 0
+            )
+            review_parts = [_next_review_dispatch_marker(comments_text)]
+            if starts_review_epoch:
+                review_parts.append(format_retry_epoch_marker("review", now()))
+            review_comment = "\n\n".join(review_parts)
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=_next_review_dispatch_marker(comments_text)),
+                CommentPayload(body=review_comment),
             )
+            comments_text = (
+                f"{comments_text}\n\n{review_comment}"
+                if comments_text
+                else review_comment
+            )
+            candidate = replace(candidate, comments_md=comments_text)
     except OSError as exc:
         _iu, _du = _build_urls(config, candidate.id)
         await _block_issue(

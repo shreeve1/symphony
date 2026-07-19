@@ -9,6 +9,8 @@ from scheduler.transient_retry import (
     MAX_STALL_RETRIES,
     MAX_TIMEOUT_RETRIES,
     PI_RETRY_TAGS,
+    RETRY_EPOCH_PREFIX,
+    RETRY_EPOCH_RE,
     RETRY_MARKER_PREFIX,
     RETRY_MARKER_RE,
     RETRY_MARKER_TIMESTAMP_RE,
@@ -17,6 +19,7 @@ from scheduler.transient_retry import (
     count_all_retries,
     count_retries,
     count_stall_retries,
+    format_retry_epoch_marker,
     format_retry_marker,
     format_stall_retry_marker,
     is_transient,
@@ -84,6 +87,22 @@ def test_retry_cooldown_expired_uses_latest_marker_timestamp() -> None:
         f"{latest_marker}\n{old_marker}", now, cooldown_s=60
     )
     assert retry_cooldown_expired(old_marker, now, cooldown_s=60)
+
+
+def test_retry_epoch_scopes_counts_and_cooldown() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    old_transient = format_retry_marker(2, "overloaded", now - timedelta(seconds=30))
+    old_stall = format_stall_retry_marker(1, now - timedelta(seconds=20))
+    epoch = format_retry_epoch_marker("operator", now - timedelta(seconds=10))
+    current_stall = format_stall_retry_marker(1, now - timedelta(seconds=5))
+    comments = "\n".join((old_transient, old_stall, epoch, current_stall))
+
+    assert epoch.startswith(RETRY_EPOCH_PREFIX)
+    assert RETRY_EPOCH_RE.fullmatch(epoch)
+    assert count_retries(comments) == 0
+    assert count_stall_retries(comments) == 1
+    assert count_all_retries(comments) == 1
+    assert retry_cooldown_expired(comments, now, cooldown_s=60)
 
 
 def test_stall_retry_marker_format_regex_and_counts() -> None:
