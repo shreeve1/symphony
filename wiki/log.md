@@ -1,5 +1,13 @@
 # Wiki Log
 
+## [2026-07-19] session-update | ADR-0042 pi-rmm live end-to-end + stale-podium-api gotcha (C-0388)
+
+- Actor: agent (Pi), interactive operator session continuing the ADR-0042 verification.
+- **Input**: operator ran the REAL `to-spec → to-tickets → Sync` pipeline against a live spec (Podium #518 → GitHub `shreeve1/pi-rmm#9` parent + children #10–#14). Pre-Sync review confirmed the dependency graph (#10→#11→#12 chain + independent roots #13/#14) and all-inline `## Verification`. On Sync, the live UI inserted children **descending** (Podium #525–#529 = gh#14→#10) with **all `blocked_by` empty** — the ordering fix (commit `430e468`) was on disk but NOT loaded because `podium-api.service` started 2026-07-18 23:36, before the 2026-07-19 01:39 fix.
+- **Fix**: `sudo systemctl restart podium-api.service` (now runs fixed code) + hand-backfilled the two dropped edges (Podium #528 blocked_by [#529]; #527 blocked_by [#528]) since insert-only sync (C-0385) never heals existing rows. Verified `_dependencies_satisfied` (tracker_podium.py:350) now gates #527/#528; roots #525/#526/#529 dispatched correctly and no run started out of order.
+- **Claim**: **C-0388** (gotcha, ADMIT) — podium-api pins code at process start; a landed fix is not live until the unit is restarted. Generalizes C-0387 (frontend) to the API tier; same class as C-0311/C-0315 (catalog).
+- **Files**: `wiki/CLAIMS.md` (+C-0388), `wiki/ROUTING.md` (ADR-0042 keywords extended), `wiki/log.md` (this entry).
+
 ## [2026-07-19] session-update | Consolidated ADR-0042 GitHub⇄Podium bridge pass (claims + analysis page)
 
 - Actor: agent (Pi), operator-driven `/wiki-update` consolidation pass after the ADR-0042 verification + live smoke session.
