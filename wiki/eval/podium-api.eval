@@ -7,3 +7,7 @@ ADR-0026 startup pi probe fail-soft ||| pi_probe_failed_permanently
 Is pi-rmm already a live Symphony binding and how was it smoke-tested? ||| smoke Issue 225 / Run 851
 How does Podium avoid the recurring schema-drift 500 on /api/auth/login after a boot? ||| podium-migrations.service
 How does an operator recover from a failed podium-migrations.service run before next boot? ||| reset-failed podium-migrations.service
+Where does the GitHub-Podium bridge decide `auto_land` for a mirrored child issue? ||| sync_from_github
+What external_id format does the GitHub-Podium bridge use to key a mirrored GitHub child issue? ||| github:shreeve1/symphony#12
+Why does `sync_from_github` sort `child_issues` ascending by issue number before insert? ||| silently dropped
+What is the load-bearing format constraint on `## Verification` for the GitHub-Podium bridge gate? ||| SINGLE-BACKTICK
