@@ -17,17 +17,41 @@ HOST="${HOST:-10.20.20.16}"
 PORT=8091
 STAGING=.next.staging
 
+if ! git diff --quiet HEAD -- tsconfig.json; then
+	echo "Refusing deploy: tsconfig.json has pre-existing changes" >&2
+	exit 1
+fi
+
 echo "==> Building into $STAGING (live .next untouched)"
-rm -rf "$STAGING"
+# Bust Next's persistent cache so a successful deploy cannot reuse stale modules.
+rm -rf .next/cache "$STAGING"
+trap 'git checkout -- tsconfig.json' EXIT
 NEXT_DIST_DIR="$STAGING" pnpm build
 
 # `next build` rewrites tsconfig.json (reformat + a transient staging-types
 # include). That is machine noise, not a source change — drop it so deploys
-# leave the tree clean.
-git checkout -- tsconfig.json 2>/dev/null || true
+# leave the tree clean, including when the build fails.
+git checkout -- tsconfig.json
+trap - EXIT
 
 echo "==> Swapping build and restarting $SERVICE"
-sudo systemctl stop "$SERVICE"
+if ! sudo systemctl stop "$SERVICE"; then
+	echo "Stop failed; restarting the untouched current build" >&2
+	sudo systemctl restart "$SERVICE"
+	systemctl is-active --quiet "$SERVICE"
+	exit 1
+fi
+for _ in {1..20}; do
+	STATE="$(systemctl is-active "$SERVICE" || true)"
+	[[ "$STATE" != deactivating ]] && break
+	sleep 1
+done
+if [[ "$STATE" != inactive && "$STATE" != failed ]]; then
+	echo "Stop did not settle in 20s; restarting the untouched current build" >&2
+	sudo systemctl restart "$SERVICE"
+	systemctl is-active --quiet "$SERVICE"
+	exit 1
+fi
 rm -rf .next.prev
 mv .next .next.prev 2>/dev/null || true
 mv "$STAGING" .next
@@ -36,5 +60,7 @@ sudo systemctl start "$SERVICE"
 echo "==> Verifying"
 sleep 3
 systemctl is-active "$SERVICE"
-curl -sS -o /dev/null -w "root=%{http_code}\n" "http://${HOST}:${PORT}/"
+STATUS="$(curl -fsS -o /dev/null -w '%{http_code}' "http://${HOST}:${PORT}/")"
+[ "$STATUS" = 200 ]
+echo "root=$STATUS"
 echo "==> Done. Rollback: mv .next .next.bad && mv .next.prev .next && sudo systemctl restart $SERVICE"

@@ -3,7 +3,7 @@ title: Symphony skills index
 type: analysis
 status: promoted
 created: 2026-06-09
-updated: 2026-06-16
+updated: 2026-07-19
 sources:
   - .claude/skills/symphony-binding-scaffold/SKILL.md
   - .claude/skills/symphony-binding-remove/SKILL.md
@@ -48,7 +48,7 @@ legacy Plane retirement:
 
 operations / situational awareness:
   symphony-bindings-status
-  symphony-restart
+  symphony-restart                 # scheduler-only by default; explicit full-stack branch
   symphony-troubleshooter
 
 manual catalog maintenance:
@@ -114,7 +114,9 @@ Umbrella for Podium binding teardown, the inverse of `symphony-onboard-project`.
 
 ### `symphony-restart` and `symphony-troubleshooter`
 
-These operational skills are now tracked in the repo. `symphony-restart` remains the gated `symphony-host.service` restart ritual: pre-sanity, explicit James approval, restart, then `symphony_started` / reconcile / dispatch log verification. `symphony-troubleshooter` is read-only and Podium-era: it correlates `symphony-host.service`, Podium services, `/api/bindings` reads, SQLite Issue/Run rows, journal lifecycle lines, and hands mutations to the proper skill [source: .claude/skills/symphony-restart/SKILL.md] [source: .claude/skills/symphony-troubleshooter/SKILL.md] [source: tests/skills/test_restart_troubleshooter.py]. On 2026-06-13 a full audit of all 11 `symphony-*` skills found only `symphony-troubleshooter` stale: its DB fallback queried `binding.repo_path`/`binding.default_agent` (columns that live in `bindings.yml`, not the `binding` table) and `run.updated_at` (the `run` table has `started_at`/`ended_at`); both were corrected to match `web/api/schema.py`, the other 10 skills verified clean (C-0168) [source: .claude/skills/symphony-troubleshooter/SKILL.md] [source: web/api/schema.py] [source: wiki/raw/sessions/2026-06-13-symphony-skills-audit.md].
+These operational skills are tracked in the repo. `symphony-restart` is scheduler-only by default. `--full-stack`, `full rebuild`, or explicit intent to rebuild/restart Podium approves a one-run Podium + Symphony sequence; a read-only request that merely mentions Podium does not: Alembic baseline/migration → API restart and exact HTTP-200/error-log checks → atomic frontend rebuild/deploy → scheduler restart and original-PID lifecycle checks. Any failed stage stops downstream work; Podium operations are never implicit. The shared frontend deploy now clears `.next/cache`, refuses pre-existing `tsconfig.json` edits, restores build-generated `tsconfig.json` noise on success or failure, waits out `deactivating` (restarting the untouched current build on stop failure or timeout), and requires HTTP 200 [source: .claude/skills/symphony-restart/SKILL.md] [source: web/frontend/deploy.sh] [source: tests/skills/test_restart_troubleshooter.py].
+
+`symphony-troubleshooter` remains read-only and Podium-era: it correlates `symphony-host.service`, Podium services, `/api/bindings` reads, SQLite Issue/Run rows, journal lifecycle lines, and hands mutations to the proper skill [source: .claude/skills/symphony-troubleshooter/SKILL.md]. On 2026-06-13 a full audit of all 11 `symphony-*` skills found only `symphony-troubleshooter` stale: its DB fallback queried `binding.repo_path`/`binding.default_agent` (columns that live in `bindings.yml`, not the `binding` table) and `run.updated_at` (the `run` table has `started_at`/`ended_at`); both were corrected to match `web/api/schema.py`, the other 10 skills verified clean (C-0168) [source: .claude/skills/symphony-troubleshooter/SKILL.md] [source: web/api/schema.py] [source: wiki/raw/sessions/2026-06-13-symphony-skills-audit.md].
 
 ## Safety pattern after Podium migration
 

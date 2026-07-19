@@ -3,12 +3,13 @@ title: "Podium frontend deploy hazard + atomic deploy script + UI cosmetics"
 type: analysis
 status: promoted
 created: 2026-06-12
-updated: 2026-06-29
+updated: 2026-07-19
 sources:
   - wiki/raw/sessions/2026-06-12-podium-frontend-deploy-and-ui-cosmetics.md
   - wiki/raw/sessions/2026-06-15-podium-web-stale-build-client-exception.md
   - wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md
   - web/frontend/deploy.sh
+  - tests/skills/test_restart_troubleshooter.py
   - web/frontend/next.config.mjs
   - web/frontend/playwright.config.ts
   - web/frontend/package.json
@@ -44,26 +45,26 @@ Recovery from the crash-loop is `web/frontend/deploy.sh` (rebuilds a valid produ
 
 ## Third trigger: stale webpack cache → byte-identical bundle ships old code
 
-Distinct from the two hazards above (in-place rebuild MIME 400; Playwright `next dev` crash-loop). `deploy.sh` only `rm -rf`s the staging dist dir (`.next.staging`), never `.next/cache`. Next.js keeps a **persistent webpack cache** at `.next/cache`; a rebuild can reuse stale cached modules and emit a **byte-identical page bundle that carries none of the source edits** [source: web/frontend/deploy.sh, wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md#third-deploy-hazard].
+Distinct from the two hazards above (in-place rebuild MIME 400; Playwright `next dev` crash-loop). At the time of the incident, `deploy.sh` only removed the staging dist dir (`.next.staging`), never `.next/cache`. Next.js keeps a **persistent webpack cache** at `.next/cache`; without an explicit cache clear, a rebuild can reuse stale cached modules and emit a **byte-identical page bundle that carries none of the source edits** [source: web/frontend/deploy.sh, wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md#third-deploy-hazard].
 
 Observed 2026-06-29 (C-0347): the GFM-table renderer fix. First `deploy.sh` run reported success (`is-active` + root 200), but the `[binding]` page bundle stayed `page-ae8e2ada9e8d7983.js` dated 2026-06-26 with **identical md5 in both `.next` and `.next.prev`** — the `Markdown.tsx` edit never shipped. Because the bundle filename was unchanged and chunks are served `Cache-Control: public, max-age=31536000, immutable`, the browser cache-hit and kept rendering the old table-as-text. This was proven server-side, not a client-cache problem: the served live chunk md5 equalled the on-disk md5 both times, but the *first* run's bundle genuinely lacked the edit (no `gfmTable` marker).
 
-Recovery: `rm -rf .next/cache .next.staging` then `deploy.sh` → fresh bundle with a new content hash (`page-dd17ba642575253a.js`, dated today) carrying the change. **Prevention (unfixed in `deploy.sh` as of 2026-06-29): `rm -rf .next/cache` before `pnpm build`.**
+Recovery at the time was `rm -rf .next/cache .next.staging` then `deploy.sh` → fresh bundle with a new content hash (`page-dd17ba642575253a.js`, dated today) carrying the change. **Fixed 2026-07-19 (C-0392):** `deploy.sh` now clears `.next/cache` before every staging build. It also refuses to run over pre-existing tracked `tsconfig.json` edits, uses an EXIT trap to restore build-generated `tsconfig.json` noise even when `pnpm build` fails, and requires exact HTTP 200 after restart [source: web/frontend/deploy.sh] [source: tests/skills/test_restart_troubleshooter.py].
 
 Diagnostic shortcut for the next occurrence: after a deploy that "looks successful" but the UI didn't change, compare the page-bundle filename/md5 across `.next` and `.next.prev` and grep the live-referenced client chunk for a marker unique to the edit. Identical md5 + missing marker = stale cache, not a browser-cache issue.
 
 ## deploy.sh restart-cancel race
 
-`deploy.sh` does `sudo systemctl stop` then immediately `sudo systemctl start`. `stop` returns before the unit has fully released; `start` hits a still-`deactivating (final-sigterm)` unit and returns `Job for podium-web.service canceled.`, leaving the service **DOWN** until manually waited out (the `deactivating` linger exceeded 20s on 2026-06-29) and re-started [source: web/frontend/deploy.sh (lines 30/34), wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md#deploy-sh-restart-cancel-race].
+At the time of the incident, `deploy.sh` did `sudo systemctl stop` then immediately `sudo systemctl start`. `stop` returned before the unit had fully released; `start` hit a still-`deactivating (final-sigterm)` unit and returned `Job for podium-web.service canceled.`, leaving the service **DOWN** until manually waited out (the `deactivating` linger exceeded 20s on 2026-06-29) and re-started [source: web/frontend/deploy.sh (lines 30/34), wiki/raw/sessions/2026-06-29-gfm-table-renderer-and-deploy-stale-cache.md#deploy-sh-restart-cancel-race].
 
-Recovery: poll `systemctl is-active` until it reports `inactive`/`failed`, then `sudo systemctl start`. The clean second deploy (post cache-bust) did **not** reproduce it, so the race is timing-dependent but real — `deploy.sh` cannot be assumed to leave the service up just because `is-active` passed the verify step (the canceled-start case never reaches a healthy `active`). **Prevention (unfixed): poll `is-active` through `deactivating` before issuing `start`, or retry `start` on cancel.**
+Recovery at the time was to poll `systemctl is-active` until it reported `inactive`/`failed`, then `sudo systemctl start`. **Fixed 2026-07-19 (C-0394):** after stop, `deploy.sh` now waits up to 20 seconds for the unit to leave `deactivating`, requires `inactive` or `failed`, and only then swaps and starts. If stop fails or the bounded wait expires, the script restarts the untouched current build, verifies it active, then exits nonzero before the live build swap [source: web/frontend/deploy.sh] [source: tests/skills/test_restart_troubleshooter.py].
 
 ## Fix: atomic staging-swap deploy
 
 Chosen prevention (Option A) keeps the live site up through the slow build, then does a fast atomic swap:
 
 1. `next.config.mjs` gains `distDir: process.env.NEXT_DIST_DIR ?? ".next"` — default unchanged, lets a build target a staging dir [source: web/frontend/next.config.mjs].
-2. `web/frontend/deploy.sh` builds into `.next.staging` (live `.next` untouched during the build), restores the build-mutated `tsconfig.json`, then `sudo systemctl stop` → swap `.next` (old kept as `.next.prev`) → `start`, then verifies `is-active` + root 200. Rollback: `mv .next .next.bad && mv .next.prev .next && sudo systemctl restart` [source: web/frontend/deploy.sh].
+2. `web/frontend/deploy.sh` refuses pre-existing `tsconfig.json` edits, clears `.next/cache`, builds into `.next.staging` (live `.next` untouched during the build), restores build-mutated `tsconfig.json` on success or trapped failure, then `sudo systemctl stop` → bounded wait for `inactive|failed` (stop failure/timeout restarts the untouched current build and exits) → swap `.next` (old kept as `.next.prev`) → `start`, then verifies `is-active` + exact root HTTP 200. Rollback remains manual: `mv .next .next.bad && mv .next.prev .next && sudo systemctl restart` [source: web/frontend/deploy.sh].
 3. `.gitignore` ignores `.next.staging` / `.next.prev`.
 
 Why atomic swap over a bundled `pnpm build && restart`: the failure window is the *build* itself (live `.next` overwritten in place); building to staging removes that window entirely, leaving only the ~3s stop/swap/start. Note `next build` also rewrites `tsconfig.json` (array reformat + transient `<distDir>/types` include) — machine noise the script reverts.
@@ -82,7 +83,7 @@ The card reads the issue's *pinned preference* (`preferred_agent`/`preferred_mod
 - Commit the five working-tree changes (latest commit at capture: `eef75d1`). (Done.)
 - ~~First real `deploy.sh` run will exercise stop/swap/start live.~~ Done 2026-06-12 (see Fix section).
 - Isolate frontend e2e from the live build dir: point Playwright's `webServer` / `NEXT_DIST_DIR` at a throwaway dir, or gate `test:e2e` out of automated `/dev-build` runs, so a test run can never overwrite the production `.next` that `podium-web` serves. Until then, any build that runs `playwright test` must end with `deploy.sh`.
-- **Patch `deploy.sh` to `rm -rf .next/cache` before `pnpm build`** (third-trigger prevention, C-0347, unfixed as of 2026-06-29).
-- **Patch `deploy.sh` restart to be self-healing** (poll `is-active` through `deactivating` before `start`, or retry `start` on cancel) so a timing-canceled start cannot leave `podium-web` down (unfixed as of 2026-06-29).
+- ~~Patch `deploy.sh` to clear `.next/cache` before `pnpm build`.~~ Done 2026-07-19 (C-0392); the same hardening pass added `tsconfig.json` preservation and exact HTTP-200 verification.
+- ~~Patch `deploy.sh` restart to wait through `deactivating` before `start`.~~ Done 2026-07-19 (C-0394) with a bounded 20-second gate before the build swap.
 - Add a Playwright regression lock: a comment containing a GFM table renders a `<table>` (`flyout-tabs.spec.ts` doesn't cover tables today).
 - Commit the three GFM renderer working-tree changes (`Markdown.tsx`, `package.json`, `pnpm-lock.yaml`).

@@ -1,5 +1,13 @@
 # Wiki Log
 
+## [2026-07-19] session-update | symphony-restart full-stack branch + deploy hardening (C-0392–C-0394)
+
+- Actor: agent (Pi), operator-requested restart-contract correction.
+- **Decision**: `symphony-restart` remains scheduler-only by default; `--full-stack`, `full rebuild`, or explicit intent to rebuild/restart Podium approves one ordered run (a read-only request that merely mentions Podium does not): Alembic migration → Podium API restart/health verification → atomic frontend rebuild/deploy → Symphony scheduler restart/lifecycle verification. Any failed stage stops downstream work.
+- **Hardening**: `web/frontend/deploy.sh` now clears `.next/cache`, refuses pre-existing `tsconfig.json` changes, restores build-generated `tsconfig.json` noise on success/failure, and requires HTTP 200. Scheduler verification retains the original PID/start timestamp and fails on error markers or PID replacement. C-0392 supersedes stale-cache gotcha C-0347; C-0394 supersedes restart-race gotcha C-0348 with a bounded wait for `inactive|failed` before swap/start plus timeout recovery that restarts the untouched current build and exits nonzero. C-0393 supersedes C-0391's over-broad bare-Podium approval trigger.
+- **Files**: `.claude/skills/symphony-restart/SKILL.md`, `web/frontend/deploy.sh`, `tests/skills/test_restart_troubleshooter.py`, `wiki/concepts/symphony-operations.md`, `wiki/analyses/symphony-skills-index.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md`, `wiki/eval/podium-api.eval`, `wiki/eval/podium-ui.eval`, `wiki/log.md`.
+- **Verification**: both independent claim checks returned VERIFIED; focused skill/deploy tests passed (5, including mocked deploy-order execution); fresh artifact review passed; claim consolidation superseded C-0347→C-0392, C-0391→C-0393, and C-0348→C-0394 while holding the eval pass rate. No env file or secret was read.
+
 ## [2026-07-19] session-update | ADR-0042 synced-issue chip + pi-rmm quota block (C-0389, C-0390)
 
 - Actor: agent (Pi), operator-driven `/wiki-update` ("Update wiki").

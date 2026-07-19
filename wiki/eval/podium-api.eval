@@ -11,3 +11,5 @@ Where does the GitHub-Podium bridge decide `auto_land` for a mirrored child issu
 What external_id format does the GitHub-Podium bridge use to key a mirrored GitHub child issue? ||| github:shreeve1/symphony#12
 Why does `sync_from_github` sort `child_issues` ascending by issue number before insert? ||| silently dropped
 What is the load-bearing format constraint on `## Verification` for the GitHub-Podium bridge gate? ||| SINGLE-BACKTICK
+How does symphony-restart perform an explicitly approved full-stack rebuild? ||| podium-migrations.service
+Does merely mentioning Podium authorize symphony-restart's full-stack mutations? ||| read-only request

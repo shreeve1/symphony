@@ -1,1 +1,3 @@
 Why did Podium issue flyout comments get a horizontal scrollbar on patrol diagnostic dumps? ||| fenced diagnostic blocks
+How does Podium frontend deploy prevent stale-cache success and preserve tsconfig changes? ||| .next/cache
+How does deploy.sh avoid racing podium-web stop with start? ||| deactivating

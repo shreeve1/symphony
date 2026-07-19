@@ -3,9 +3,12 @@ title: Symphony operations
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-07-17
+updated: 2026-07-19
 sources:
   - wiki/raw/runbook-symphony.md
+  - .claude/skills/symphony-restart/SKILL.md
+  - web/frontend/deploy.sh
+  - tests/skills/test_restart_troubleshooter.py
   - wiki/raw/symphony-context.md
   - wiki/raw/sessions/2026-06-15-symphony-host-nonewprivileges.md
   - wiki/raw/podium-migrations.service
@@ -39,7 +42,9 @@ Distilled operational model for `symphony-host.service` on `aidev`. Source: home
 
 ## Restart ritual
 
-Use the `symphony-restart` skill: pre-sanity → ask James → restart → verify-log-lines (`symphony_started`, `reconcile_startup_*`, `dispatch_completed`). With remote bindings, scope the journal to the new PID and wait through `skill_sync_done` plus `remote_repo_reachable`: the 2026-07-16 restart did not begin reconciliation until about 148 seconds after `symphony_started`, so a 90-second wait is not a stall verdict [source: wiki/raw/sessions/2026-07-16-symphony-restart-remote-startup-delay.md#durable-facts].
+Use the `symphony-restart` skill. Scheduler-only remains the default. `--full-stack`, `full rebuild`, or explicit intent to rebuild/restart Podium approves one full-stack run; merely mentioning Podium in a read-only request does not: validate/apply Alembic migrations → restart and health-check `podium-api.service` → rebuild/deploy `podium-web.service` through the atomic `web/frontend/deploy.sh` path → restart and lifecycle-verify `symphony-host.service`. Each stage must pass before the next mutation; no automatic rollback. The frontend deploy clears the persistent Next cache, refuses pre-existing `tsconfig.json` edits, restores build-generated `tsconfig.json` noise even on failure, and waits for `podium-web.service` to leave `deactivating` before swapping and starting; a stop failure or timeout restarts the untouched current build and exits before swap [source: .claude/skills/symphony-restart/SKILL.md#workflow] [source: web/frontend/deploy.sh].
+
+With remote bindings, scope the journal to the PID and start timestamp captured immediately after restart, reject any replacement PID, and wait through `skill_sync_done` plus `remote_repo_reachable`: the 2026-07-16 restart did not begin reconciliation until about 148 seconds after `symphony_started`, so a 90-second wait is not a stall verdict [source: .claude/skills/symphony-restart/SKILL.md#7-verify-scheduler-lifecycle] [source: wiki/raw/sessions/2026-07-16-symphony-restart-remote-startup-delay.md#durable-facts].
 
 Autonomous healthcheck remediation may restart `symphony-host.service` and `homelab-temporal-patrol-worker.service` with cooldowns and post-restart verification. Human approval is required for `systemctl stop`, non-remediation changes, direct Plane mutations outside approved automation, Temporal schedule changes, smoke requeues, env edits, destructive actions [source: wiki/raw/runbook-symphony.md#68-75].
 
