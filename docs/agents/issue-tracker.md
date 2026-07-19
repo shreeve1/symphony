@@ -54,3 +54,7 @@ Rule of thumb:
 - A request that is local engineering prep, a research dump, or a plan that hasn't graduated to dispatch → GitHub is fine.
 
 A skill that says "publish to the issue tracker" without further context follows the rule above, preferring Podium for anything that looks like dispatched work. When in doubt, ask before writing.
+
+## Related
+
+- [SMOKE.md](../SMOKE.md) — binding smoke-test runbook.
