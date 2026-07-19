@@ -640,7 +640,7 @@ def _full_issue_rows(db_path: Path) -> list[tuple[Any, ...]]:
         return connection.execute(
             """
             SELECT id, title, description, state, external_id, auto_land,
-                   worktree_active, origin, blocked_by, locks
+                   worktree_active, origin, blocked_by, locks, preferred_skill
             FROM issue ORDER BY id
             """
         ).fetchall()
@@ -695,6 +695,7 @@ def test_sync_inserts_child_with_verification_sets_auto_land_true(
     assert rows[0][7] == "automation"  # synced issues reuse automation origin (chip)
     assert json.loads(rows[0][8]) == []
     assert json.loads(rows[0][9]) == []
+    assert rows[0][10] == "implement"
     assert any("-> podium #1" in line for line in lines)
     assert any("inserted=1 skipped=0" in line for line in lines)
 
@@ -793,6 +794,7 @@ def test_sync_rerun_is_idempotent_and_does_not_mutate_existing_rows(
     assert second_rows[0][0] == first_rows[0][0]  # same id
     assert second_rows[0][1] == first_rows[0][1]  # title untouched
     assert second_rows[0][2] == first_rows[0][2]  # body untouched
+    assert second_rows[0][10] == "implement"  # preferred skill untouched
     assert any("-> existing podium #1 (skip)" in line for line in lines)
     assert any("inserted=0 skipped=1" in line for line in lines)
 

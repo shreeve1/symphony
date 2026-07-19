@@ -530,6 +530,7 @@ def sync_from_github(
                 created_at=now,
                 base_branch=str(binding.get("base_branch") or "main"),
                 preferred_agent=str(binding.get("default_agent") or "pi"),
+                preferred_skill="implement",
                 worktree_active=bool(worktree_default),
                 auto_land=auto_land,
                 external_id=external_id,
