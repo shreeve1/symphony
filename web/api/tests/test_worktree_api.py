@@ -149,20 +149,45 @@ def _clear_global_state():
 # --- merge-on-done tests ---
 
 
-def test_merge_on_done_happy_path(repo_and_db: tuple[Path, Path]) -> None:
-    """State→done with worktree_active=true: creates worktree, commits, merges."""
-    repo, db_path = repo_and_db
+def test_merge_on_done_closes_github_after_cleanup(
+    repo_and_db: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful worktree land closes its linked GitHub issue after cleanup."""
+    import sqlite3
+
+    import tracker_podium
     from web.api.worktree import branch_name, create_worktree
 
+    repo, db_path = repo_and_db
     issue = _seed_podium(db_path, "trading")
     issue_id = issue["id"]
     issue_str = str(issue_id)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE issue SET external_id = ? WHERE id = ?",
+            ("github:owner/repo#547", issue_id),
+        )
+        connection.execute(
+            "INSERT INTO run(issue_id, agent, state, agent_session_sha) "
+            "VALUES (?, 'pi', 'succeeded', 'landed123')",
+            (issue_id,),
+        )
+        connection.commit()
 
     # Create a worktree and make a commit (simulating agent work).
     wt_path = create_worktree(repo, "trading", issue_str, "main")
     (wt_path / "feature.txt").write_text("agent work", encoding="utf-8")
     _git(wt_path, "add", ".")
     _git(wt_path, "commit", "-m", "agent change")
+
+    close_calls: list[tuple[str, str, str, str, str, bool]] = []
+    monkeypatch.setattr(
+        tracker_podium,
+        "_run_gh_close",
+        lambda issue, number, owner, repo_name, sha: close_calls.append(
+            (issue, number, owner, repo_name, sha, wt_path.exists())
+        ),
+    )
 
     with TestClient(app) as client:
         login(client)
@@ -185,6 +210,7 @@ def test_merge_on_done_happy_path(repo_and_db: tuple[Path, Path]) -> None:
     assert not wt_path.is_dir()
     branches = _git(repo, "branch", "--list").stdout
     assert branch_name("trading", issue_str) not in branches
+    assert close_calls == [(str(issue_id), "547", "owner", "repo", "landed123", False)]
 
 
 def test_merge_on_done_stashes_dirty_base_and_issue_wins(

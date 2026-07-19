@@ -45,7 +45,6 @@ from automation import (
 )
 from redispatch_core import RELAND_DONE_RE, RELAND_PENDING_RE, retry_cooldown_expired
 from skill_mode_map import mode_for_skill
-from web.api.worktree import resolve_github_repo
 from tracker_contract import (
     DEFAULT_CONTRACT,
     RoleBinding,
@@ -497,10 +496,10 @@ class PodiumTrackerAdapter:
             ):
                 transitioned_to_done = True
         if transitioned_to_done:
-            await self._maybe_close_back_github(issue_id)
+            await self.maybe_close_back_github(issue_id)
         return await self.get_issue(issue_id)
 
-    async def _maybe_close_back_github(self, issue_id: str) -> None:
+    async def maybe_close_back_github(self, issue_id: str) -> None:
         """Fire the ADR-0042 section-2 close-back when a github-linked issue lands.
 
         Single seam for all four STATE_DONE terminal paths. Fail-soft: any
@@ -517,50 +516,36 @@ class PodiumTrackerAdapter:
             external_id = str(issue_row["external_id"] or "")
             if not external_id.startswith("github:"):
                 return
-            github_number = _parse_github_number(external_id)
-            if github_number is None:
+            target = _parse_github_target(external_id)
+            if target is None:
                 LOGGER.warning(
                     "github_close_back_skipped issue_id=%s reason=bad_external_id external_id=%s",
                     issue_id,
                     external_id,
                 )
                 return
+            owner, repo, github_number = target
             with self.connect() as connection:
                 run_row = connection.execute(
                     """
-                    SELECT agent_session_sha, worktree_path
+                    SELECT agent_session_sha
                     FROM run
                     WHERE issue_id = ?
                       AND state = 'succeeded'
                       AND agent_session_sha IS NOT NULL
-                      AND agent_session_sha != ''
+                      AND TRIM(agent_session_sha) != ''
                     ORDER BY id DESC
                     LIMIT 1
                     """,
                     (issue_id,),
                 ).fetchone()
-            if run_row is None or not str(run_row["agent_session_sha"] or "").strip():
+            if run_row is None:
                 LOGGER.warning(
                     "github_close_back_skipped issue_id=%s reason=no_landed_sha",
                     issue_id,
                 )
                 return
             sha = str(run_row["agent_session_sha"]).strip()
-            repo_path = _repo_path_from_worktree(run_row["worktree_path"])
-            if repo_path is None:
-                LOGGER.warning(
-                    "github_close_back_skipped issue_id=%s reason=worktree_unresolved",
-                    issue_id,
-                )
-                return
-            owner_repo = resolve_github_repo(repo_path)
-            if owner_repo is None:
-                LOGGER.info(
-                    "github_close_back_noop issue_id=%s reason=non_github_repo",
-                    issue_id,
-                )
-                return
-            owner, repo = owner_repo
             await asyncio.to_thread(
                 _run_gh_close,
                 issue_id,
@@ -1399,6 +1384,7 @@ def _now() -> str:
 # --- ADR-0042 section-2 GitHub close-back helpers -------------------------
 
 _GITHUB_EXTERNAL_ID_RE = re.compile(r"^github:[^#]+#(\d+)$")
+_GITHUB_TARGET_RE = re.compile(r"^github:([^/#]+)/([^/#]+)#(\d+)$")
 
 
 def _parse_github_number(external_id: str) -> str | None:
@@ -1407,31 +1393,10 @@ def _parse_github_number(external_id: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _repo_path_from_worktree(worktree_path: Any) -> Path | None:
-    """Infer the binding's repo_path from a worktree dir layout.
-
-    Worktrees live at ``<repo_path>/worktrees/<binding>/<issue>``; walking
-    three levels up recovers the repo root when the worktree still exists on
-    disk. Returns None when the path is missing or not in the expected layout.
-    """
-    if not worktree_path:
-        return None
-    path = Path(str(worktree_path))
-    # Expected: <repo>/worktrees/<binding>/<issue> — walk up three levels when
-    # the worktree dir is gone (the run-row record outlives the dir); fall
-    # back to Path parents in either case.
-    if path.is_dir():
-        try:
-            return path.parent.parent.parent.resolve()
-        except OSError:
-            return None
-    parent = path.parent
-    if parent.name == "worktrees" and parent.parent:
-        return parent.parent
-    if path.name and parent.name and parent.parent and parent.parent.name:
-        # Accept the layout even if the dir no longer exists.
-        return parent.parent
-    return None
+def _parse_github_target(external_id: str) -> tuple[str, str, str] | None:
+    """Return owner, repo, and number from a canonical GitHub external ID."""
+    match = _GITHUB_TARGET_RE.match(external_id)
+    return (match.group(1), match.group(2), match.group(3)) if match else None
 
 
 def _is_already_closed_stderr(stderr: str) -> bool:

@@ -1682,6 +1682,11 @@ async def patch_issue(
     ):
         result = await _maybe_archive_worktree(issue_id, current, connection)
 
+    if changed.get("state") == "done" and result.get("state") == "done":
+        tracker_podium = import_module("tracker_podium")
+        tracker = tracker_podium.PodiumTrackerAdapter(db_path=resolve_db_path())
+        await tracker.maybe_close_back_github(str(issue_id))
+
     return result
 
 
