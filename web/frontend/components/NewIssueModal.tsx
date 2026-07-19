@@ -22,6 +22,10 @@ import {
 	type ScheduleDraft,
 } from "@/components/ScheduleControl";
 import { FieldCombobox } from "@/components/FieldCombobox";
+import {
+	SlashPickerTextarea,
+	type SlashPickerField,
+} from "@/components/SlashPickerTextarea";
 
 // Fallback effort list for models that don't declare an `efforts` set in the
 // catalog. Models that do (e.g. gpt-5.5) drive the dropdown from their own set
@@ -146,7 +150,6 @@ function NewIssueModal({
 	const [hold, setHold] = useState(false);
 	const [scheduleDraft, setScheduleDraft] =
 		useState<ScheduleDraft>(defaultScheduleDraft);
-	const descRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const queryClient = useQueryClient();
 
@@ -198,8 +201,77 @@ function NewIssueModal({
 	const effortChoices = selectedModelEfforts ?? DEFAULT_EFFORTS;
 	const effortOptions = effortChoices.map((name) => ({ value: name }));
 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
-
-	useEffect(() => descRef.current?.focus(), []);
+	const slashFields: SlashPickerField[] = [
+		{
+			id: "skill",
+			title: "Skill",
+			values: [{ value: "", label: "—" }, ...skillOptions],
+			onSelect: setSkill,
+		},
+		{
+			id: "effort",
+			title: "Effort",
+			values: [
+				{ value: "", label: "— (high)" },
+				...effortOptions,
+			],
+			onSelect: setEffort,
+		},
+		{
+			id: "agent",
+			title: "Agent",
+			values: [
+				{ value: "", label: "— (binding default)" },
+				...agentOptions,
+			],
+			onSelect: setAgent,
+			allowFreeText: true,
+		},
+		{
+			id: "model",
+			title: "Model",
+			values: [
+				{ value: "", label: "— (provider default)" },
+				...modelOptions,
+			],
+			onSelect: setModel,
+			allowFreeText: true,
+		},
+		{
+			id: "base",
+			title: "Base branch",
+			values: [
+				{ value: "", label: "— (bindings.yml default)" },
+				...branchOptions,
+			],
+			onSelect: setBase,
+			allowFreeText: true,
+		},
+		{
+			id: "hold",
+			title: "Hold",
+			values: [
+				{ value: "false", label: "No" },
+				{ value: "true", label: "Yes" },
+			],
+			onSelect: (value) => setHold(value === "true"),
+		},
+	];
+	if (isInfra) {
+		slashFields.push({
+			id: "schedule",
+			title: "Schedule for next maintenance window",
+			values: [
+				{ value: "none", label: "No" },
+				{ value: "next_window", label: "Yes" },
+			],
+			onSelect: (value) =>
+				setScheduleDraft((current) => ({
+					...current,
+					mode: value === "next_window" ? "next_window" : "none",
+				})),
+		});
+	}
 
 	// Agent-aware default preselect (#045): when agent changes or options
 	// load, preselect the default:true model whose agent matches the selected
@@ -321,12 +393,13 @@ function NewIssueModal({
 						<span className="text-xs font-medium text-muted-foreground">
 							Description
 						</span>
-						<textarea
-							ref={descRef}
-							data-testid="new-issue-description"
+						<SlashPickerTextarea
+							testid="new-issue-description"
 							value={description}
+							onChange={setDescription}
+							fields={slashFields}
 							rows={4}
-							onChange={(e) => setDescription(e.target.value)}
+							autoFocus
 							className="w-full rounded-md border bg-transparent px-2 py-1.5 font-mono text-xs outline-none focus:border-foreground/40"
 						/>
 					</label>

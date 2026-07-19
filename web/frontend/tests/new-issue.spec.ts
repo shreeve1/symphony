@@ -1,4 +1,4 @@
-import { expect, expectCleanConsole, seedSkills, test } from "./fixtures";
+import { expect, expectCleanConsole, test } from "./fixtures";
 
 // Runs against /homelab so the /dotfiles seeds that board.spec asserts on stay
 // pristine. Unique title per run: the dev database persists across runs.
@@ -6,7 +6,6 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
 	page,
 	problems,
 }) => {
-	seedSkills([{ name: "diagnose", description: "Diagnose e2e fixture" }]);
 	const desc = `e2e new issue ${Date.now()}`;
 
 	await page.goto("/homelab");
@@ -14,12 +13,6 @@ test("new issue flow: modal -> Todo card -> survives reload", async ({
 	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
 
 	await page.getByTestId("new-issue-description").fill(desc);
-	// Pick a skill from the seeded catalog (FK-validated server side).
-	await page.getByTestId("new-issue-skill").fill("diag");
-	await page
-		.getByTestId("new-issue-skill-option")
-		.filter({ hasText: "diagnose" })
-		.click();
 	// Optional flyout-parity fields flow through to the created row.
 	await page.getByTestId("new-issue-effort").fill("low");
 	await page
@@ -68,31 +61,31 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 	await expect(
 		page
 			.getByTestId("new-issue-model-option")
-			.filter({ hasText: "gpt-5.3-codex-spark" }),
+			.filter({ hasText: "gpt-5.6-sol" }),
 	).toBeVisible();
 	await page.getByTestId("new-issue-agent").fill("claude");
 	await page.getByTestId("new-issue-model").click();
 	await expect(
 		page
 			.getByTestId("new-issue-model-option")
-			.filter({ hasText: "claude-fable-5" }),
+			.filter({ hasText: "Opus 4.8 (claude-opus-4-8)" }),
 	).toBeVisible();
 	await expect(
 		page
 			.getByTestId("new-issue-model-option")
-			.filter({ hasText: "gpt-5.3-codex-spark" }),
+			.filter({ hasText: "gpt-5.6-sol" }),
 	).toHaveCount(0);
 	await page.getByTestId("new-issue-agent").fill("pi");
 	await page.getByTestId("new-issue-model").click();
 	await expect(
 		page
 			.getByTestId("new-issue-model-option")
-			.filter({ hasText: "gpt-5.3-codex-spark" }),
+			.filter({ hasText: "gpt-5.6-sol" }),
 	).toBeVisible();
 	await expect(
 		page
 			.getByTestId("new-issue-model-option")
-			.filter({ hasText: "claude-fable-5" }),
+			.filter({ hasText: "Opus 4.8 (claude-opus-4-8)" }),
 	).toHaveCount(0);
 
 	await page.getByTestId("new-issue-agent").fill("custom-agent");
@@ -123,11 +116,12 @@ test("combobox arrow keys highlight and Enter selects; Escape closes only the po
 	page,
 	problems,
 }) => {
-	seedSkills([
-		{ name: "alpha", description: "first" },
-		{ name: "beta", description: "second" },
-	]);
-
+	await page.route("**/api/skills?binding=homelab", (route) =>
+		route.fulfill({
+			contentType: "application/json",
+			body: JSON.stringify([{ name: "alpha" }, { name: "beta" }]),
+		}),
+	);
 	await page.goto("/homelab");
 	await page.getByTestId("new-issue-button").click();
 	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
@@ -166,7 +160,7 @@ test("create failure rolls back the card and keeps the modal open", async ({
 	await page.route("**/api/bindings/homelab/issues", async (route) => {
 		if (route.request().method() !== "POST") return route.fallback();
 		// Delay the failure so the optimistic card is observable first.
-		await new Promise((resolve) => setTimeout(resolve, 400));
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
 		return route.fulfill({
 			status: 422,
 			contentType: "application/json",
@@ -182,7 +176,7 @@ test("create failure rolls back the card and keeps the modal open", async ({
 	const doomedCard = page
 		.getByTestId("column-todo")
 		.getByTestId("issue-card")
-		.filter({ hasText: desc });
+		.filter({ hasText: "Generating title..." });
 	await expect(doomedCard).toBeVisible();
 
 	// …then rolls back when the 422 lands; the modal stays open with the typed
@@ -210,10 +204,10 @@ test("agent-aware model preselect switches default with agent", async ({
 	);
 	await page.getByTestId("new-issue-model").blur();
 
-	// Select pi → model preselects pi default (gpt-5.5).
+	// Select pi → model preselects the current pi default.
 	await page.getByTestId("new-issue-agent").fill("pi");
 	await page.getByTestId("new-issue-description").click();
-	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("Duo");
 
 	// Switch to claude → model preselects claude default (Opus 4.8).
 	await page.getByTestId("new-issue-agent").fill("claude");
@@ -225,7 +219,7 @@ test("agent-aware model preselect switches default with agent", async ({
 	// Switch back to pi → model restores pi default.
 	await page.getByTestId("new-issue-agent").fill("pi");
 	await page.getByTestId("new-issue-description").click();
-	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("Duo");
 
 	expectCleanConsole(problems);
 });
@@ -384,6 +378,237 @@ test("partial attachment failure retries the same held issue", async ({
 	expectCleanConsole(problems, { ignore: [/500/] });
 });
 
+test("slash picker commits a keyboard selection without changing description prose", async ({
+	page,
+	problems,
+}) => {
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	const description = page.getByTestId("new-issue-description");
+
+	await description.fill("Keep /srv/app and https://example.test/a literal /ho");
+	await expect(description).toHaveAttribute("role", "combobox");
+	await expect(description).toHaveAttribute("aria-expanded", "true");
+	await expect(page.getByRole("listbox", { name: "Issue fields" })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Hold" })).toBeVisible();
+	await page.keyboard.press("Tab");
+	await expect(page.getByRole("listbox", { name: "Hold values" })).toBeVisible();
+	await page.keyboard.type("yes");
+	await page.keyboard.press("Enter");
+
+	await expect(page.getByTestId("new-issue-hold")).toBeChecked();
+	await expect(description).toHaveValue(
+		"Keep /srv/app and https://example.test/a literal ",
+	);
+	await expect(description).toHaveAttribute("aria-expanded", "false");
+	await page.keyboard.type("after");
+	await expect(description).toHaveValue(
+		"Keep /srv/app and https://example.test/a literal after",
+	);
+
+	expectCleanConsole(problems);
+});
+
+test("slash picker filters accessibly, supports arrows, pointer, and Escape", async ({
+	page,
+	problems,
+}) => {
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	const description = page.getByTestId("new-issue-description");
+
+	await description.fill("path/to/file https://example.test/a prefix/hold");
+	await expect(description).toHaveAttribute("aria-expanded", "false");
+
+	await description.fill("prefix /");
+	const fields = page.getByRole("listbox", { name: "Issue fields" });
+	await expect(fields).toBeVisible();
+	const activeId = await description.getAttribute("aria-activedescendant");
+	expect(activeId).toBeTruthy();
+	await expect(page.locator(`#${activeId}`)).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("ArrowUp");
+	await page.keyboard.press("Escape");
+	await expect(description).toHaveAttribute("aria-expanded", "false");
+	await expect(description).toHaveValue("prefix /");
+	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
+
+	await description.fill("prefix /hold");
+	await page.keyboard.press("Tab");
+	await expect(page.getByRole("listbox", { name: "Hold values" })).toBeVisible();
+	await page.keyboard.press("Backspace");
+	await expect(page.getByRole("listbox", { name: "Issue fields" })).toBeVisible();
+	await page.keyboard.press("Escape");
+
+	await description.fill("prefix /hold");
+	await page.getByRole("option", { name: "Hold" }).click();
+	await page.getByRole("option", { name: "Yes" }).click();
+	await expect(page.getByTestId("new-issue-hold")).toBeChecked();
+	await expect(description).toHaveValue("prefix ");
+
+	expectCleanConsole(problems);
+});
+
+test("slash picker preserves dependencies, clearing, free text, multiple commands, and Create", async ({
+	page,
+	problems,
+}) => {
+	await page.route("**/api/bindings/homelab/options", async (route) => {
+		const response = await route.fetch();
+		await route.fulfill({
+			response,
+			json: {
+				agents: ["pi", "claude"],
+				models: [
+					{
+						id: "pi-small",
+						agent: "pi",
+						default: true,
+						efforts: ["low", "high"],
+					},
+					{
+						id: "pi-wide",
+						agent: "pi",
+						efforts: ["none", "medium"],
+					},
+					{ id: "claude-a", agent: "claude", default: true },
+				],
+				branches: ["main", "release"],
+			},
+		});
+	});
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	const description = page.getByTestId("new-issue-description");
+	await page.getByTestId("new-issue-agent").click();
+	await expect(
+		page.getByTestId("new-issue-agent-option").filter({ hasText: "pi" }),
+	).toBeVisible();
+	await description.fill("Keep /srv/app and https://example.test/a: ");
+
+	await page.keyboard.type("/ag");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("PI");
+	await page.keyboard.press("Tab");
+	await expect(page.getByTestId("new-issue-agent")).toHaveValue("pi");
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("pi-small");
+
+	await page.keyboard.type("/eff");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("high");
+	await expect(
+		page.getByRole("listbox", { name: "Effort values" }).getByRole("option", {
+			name: "high",
+			exact: true,
+		}),
+	).toBeVisible();
+	await page.keyboard.press("Enter");
+	await expect(description).not.toHaveValue(/\/Effort/);
+	await expect(page.getByTestId("new-issue-effort")).toHaveValue("high");
+
+	await page.keyboard.type("/mod");
+	await page.keyboard.press("Tab");
+	await expect(page.getByRole("option", { name: "pi-wide" })).toBeVisible();
+	await expect(page.getByRole("option", { name: "claude-a" })).toHaveCount(0);
+	await page.keyboard.type("wide");
+	await page.keyboard.press("Tab");
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("pi-wide");
+	await expect(page.getByTestId("new-issue-effort")).toHaveValue("");
+
+	await page.keyboard.type("/eff");
+	await page.keyboard.press("Tab");
+	await expect(page.getByRole("option", { name: "medium" })).toBeVisible();
+	await expect(
+		page.getByRole("option", { name: "high", exact: true }),
+	).toHaveCount(0);
+	await page.keyboard.type("medium");
+	await page.keyboard.press("Tab");
+
+	await page.keyboard.type("/eff");
+	await page.keyboard.press("Tab");
+	await page.keyboard.press("Tab");
+	await expect(page.getByTestId("new-issue-effort")).toHaveValue("");
+	await page.keyboard.type("/eff");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("medium");
+	await page.keyboard.press("Tab");
+
+	await page.keyboard.type("/base");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("custom-branch");
+	await page.keyboard.press("Enter");
+	await expect(page.getByTestId("new-issue-base")).toHaveValue("custom-branch");
+
+	await page.keyboard.type("/hold");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("yes");
+	await page.keyboard.press("Tab");
+	await expect(page.getByTestId("new-issue-hold")).toBeChecked();
+	await page.keyboard.type("/hold");
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("no");
+	await page.keyboard.press("Tab");
+	await expect(page.getByTestId("new-issue-hold")).not.toBeChecked();
+
+	await page.keyboard.type("done");
+	await expect(description).toHaveValue(
+		"Keep /srv/app and https://example.test/a: done",
+	);
+	const request = page.waitForRequest(
+		(req) =>
+			req.url().includes("/api/bindings/homelab/issues") &&
+			req.method() === "POST",
+	);
+	await page.getByTestId("new-issue-submit").click();
+	const body = (await request).postDataJSON();
+	expect(body).toMatchObject({
+		description: "Keep /srv/app and https://example.test/a: done",
+		preferred_agent: "pi",
+		preferred_model: "pi-wide",
+		reasoning_effort: "medium",
+		base_branch: "custom-branch",
+	});
+	expect(body).not.toHaveProperty("preferred_skill");
+	expect(body).not.toHaveProperty("hold");
+	await expect(page.getByTestId("new-issue-modal")).toBeHidden();
+
+	expectCleanConsole(problems);
+});
+
+test("slash picker exposes Schedule only for infra bindings", async ({
+	page,
+	problems,
+}) => {
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	const description = page.getByTestId("new-issue-description");
+	await description.fill("Schedule me /sche");
+	await page
+		.getByRole("option", { name: "Schedule for next maintenance window" })
+		.click();
+	await page
+		.getByRole("listbox", { name: "Schedule for next maintenance window values" })
+		.getByRole("option", { name: "Yes" })
+		.click();
+	await expect(page.getByTestId("new-issue-schedule-mode")).toHaveValue(
+		"next_window",
+	);
+	await page.getByText("Cancel", { exact: true }).click();
+
+	await page.goto("/dotfiles");
+	await page.getByTestId("new-issue-button").click();
+	await page.getByTestId("new-issue-description").fill("No schedule /sche");
+	await expect(
+		page.getByRole("option", { name: "Schedule for next maintenance window" }),
+	).toHaveCount(0);
+	await expect(page.getByText("No matches", { exact: true })).toBeVisible();
+
+	expectCleanConsole(problems);
+});
+
 test("model preselect clears when agent has no default", async ({
 	page,
 	problems,
@@ -403,10 +628,10 @@ test("model preselect clears when agent has no default", async ({
 	await page.getByTestId("new-issue-button").click();
 	await expect(page.getByTestId("new-issue-modal")).toBeVisible();
 
-	// pi has a default → preselects gpt-5.5.
+	// pi has a default → preselects Duo.
 	await page.getByTestId("new-issue-agent").fill("pi");
 	await page.getByTestId("new-issue-description").click();
-	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("Duo");
 
 	// claude has no default → model clears to placeholder.
 	await page.getByTestId("new-issue-agent").fill("claude");
@@ -416,7 +641,7 @@ test("model preselect clears when agent has no default", async ({
 	// Switch back to pi → pi default restores.
 	await page.getByTestId("new-issue-agent").fill("pi");
 	await page.getByTestId("new-issue-description").click();
-	await expect(page.getByTestId("new-issue-model")).toHaveValue("gpt-5.5");
+	await expect(page.getByTestId("new-issue-model")).toHaveValue("Duo");
 
 	expectCleanConsole(problems);
 });
