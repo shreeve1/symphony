@@ -533,7 +533,11 @@ def sync_from_github(
                 worktree_active=bool(worktree_default),
                 auto_land=auto_land,
                 external_id=external_id,
-                origin="operator",
+                # Synced GitHub issues reuse the existing 'automation' origin so
+                # the card shows the automation chip with no schema change; a
+                # dedicated 'github' origin would need an issue-table rebuild to
+                # widen the origin CHECK (cf. migration 0023) and is deferred.
+                origin="automation",
                 blocked_by=blocked_by_ids,
             )
             connection.commit()

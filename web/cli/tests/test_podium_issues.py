@@ -692,7 +692,7 @@ def test_sync_inserts_child_with_verification_sets_auto_land_true(
     assert rows[0][4] == "github:owner/repo#10"
     assert bool(rows[0][5]) is True  # auto_land: Verification present
     assert bool(rows[0][6]) is True  # worktree_active (coding binding default)
-    assert rows[0][7] == "operator"
+    assert rows[0][7] == "automation"  # synced issues reuse automation origin (chip)
     assert json.loads(rows[0][8]) == []
     assert json.loads(rows[0][9]) == []
     assert any("-> podium #1" in line for line in lines)
