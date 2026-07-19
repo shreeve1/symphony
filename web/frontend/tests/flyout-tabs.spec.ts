@@ -88,6 +88,9 @@ test("flyout comments wrap long diagnostic blocks", async ({
 	);
 
 	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("flyout-issue-number")).toHaveText(
+		`Issue #${issueId}`,
+	);
 	await expect(page.getByTestId("flyout-title")).toHaveText(
 		"Flyout overflow diagnostic",
 	);
