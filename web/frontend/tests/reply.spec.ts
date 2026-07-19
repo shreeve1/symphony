@@ -114,10 +114,17 @@ test("composer posts a reply, closes the flyout, and the card moves to Todo", as
 
 	await openIssue(page, "homelab", title);
 
-	// Comments tab is selected by default; the composer renders below the editor.
+	// Comments tab is selected by default; the composer follows the thread.
 	const input = page.getByTestId("reply-input");
 	await expect(input).toBeVisible();
 	await expect(page.getByTestId("reply-send")).toBeVisible();
+	expect(
+		await page
+			.locator('[data-testid="view-comments_md"], [data-testid="reply-input"]')
+			.evaluateAll((elements) =>
+				elements.map((element) => element.getAttribute("data-testid")),
+			),
+	).toEqual(["view-comments_md", "reply-input"]);
 
 	await input.fill("Please continue with the next step.");
 

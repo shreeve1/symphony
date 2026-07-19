@@ -563,8 +563,7 @@ function MetadataChips({
 
 // Operator reply composer: appends an attributed reply to the comment thread
 // and flips the issue back to todo so the agent re-runs (server-side, atomic).
-// Sits at the top of the comments tab, above the thread, so it never gets
-// buried as Runs accumulate.
+// Sits below the comment thread so replies follow the conversation they continue.
 function ReplyComposer({
 	issue,
 	staged,
@@ -1308,20 +1307,17 @@ export function IssueFlyout({
 									data-testid={`tabpanel-${tab}`}
 								>
 									{tab === "comments" ? (
-										// Reply composer on top so it never gets buried as Runs
-										// accumulate; thread below renders oldest-first,
-										// scrolled to the newest entry on open.
 										<div className="space-y-3">
+											<CommentsThread
+												issueId={issue.id}
+												source={issue.comments_md}
+											/>
 											<ReplyComposer
 												key={issue.id}
 												issue={issue}
 												staged={stagedDispatch}
 												onClearStaged={clearStagedDispatch}
 												onSent={onClose}
-											/>
-											<CommentsThread
-												issueId={issue.id}
-												source={issue.comments_md}
 											/>
 										</div>
 									) : tab === "session" ? (
