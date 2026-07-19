@@ -386,13 +386,19 @@ test("slash picker commits a keyboard selection without changing description pro
 	await page.getByTestId("new-issue-button").click();
 	const description = page.getByTestId("new-issue-description");
 
-	await description.fill("Keep /srv/app and https://example.test/a literal /ho");
+	await description.fill(
+		"Keep /srv/app and https://example.test/a literal /ho",
+	);
 	await expect(description).toHaveAttribute("role", "combobox");
 	await expect(description).toHaveAttribute("aria-expanded", "true");
-	await expect(page.getByRole("listbox", { name: "Issue fields" })).toBeVisible();
+	await expect(
+		page.getByRole("listbox", { name: "Issue fields" }),
+	).toBeVisible();
 	await expect(page.getByRole("option", { name: "Hold" })).toBeVisible();
 	await page.keyboard.press("Tab");
-	await expect(page.getByRole("listbox", { name: "Hold values" })).toBeVisible();
+	await expect(
+		page.getByRole("listbox", { name: "Hold values" }),
+	).toBeVisible();
 	await page.keyboard.type("yes");
 	await page.keyboard.press("Enter");
 
@@ -438,9 +444,13 @@ test("slash picker filters accessibly, supports arrows, pointer, and Escape", as
 
 	await description.fill("prefix /hold");
 	await page.keyboard.press("Tab");
-	await expect(page.getByRole("listbox", { name: "Hold values" })).toBeVisible();
+	await expect(
+		page.getByRole("listbox", { name: "Hold values" }),
+	).toBeVisible();
 	await page.keyboard.press("Backspace");
-	await expect(page.getByRole("listbox", { name: "Issue fields" })).toBeVisible();
+	await expect(
+		page.getByRole("listbox", { name: "Issue fields" }),
+	).toBeVisible();
 	await page.keyboard.press("Escape");
 
 	await description.fill("prefix /hold");
@@ -590,7 +600,9 @@ test("slash picker exposes Schedule only for infra bindings", async ({
 		.getByRole("option", { name: "Schedule for next maintenance window" })
 		.click();
 	await page
-		.getByRole("listbox", { name: "Schedule for next maintenance window values" })
+		.getByRole("listbox", {
+			name: "Schedule for next maintenance window values",
+		})
 		.getByRole("option", { name: "Yes" })
 		.click();
 	await expect(page.getByTestId("new-issue-schedule-mode")).toHaveValue(

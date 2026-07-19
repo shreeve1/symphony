@@ -86,11 +86,10 @@ export function SlashPickerTextarea({
 	const open = command !== null;
 	const listName = field ? `${field.title} values` : "Issue fields";
 
-	useEffect(() => setActiveIndex(0), [
-		query,
-		command?.level,
-		command?.level === "value" ? command.fieldId : "",
-	]);
+	useEffect(
+		() => setActiveIndex(0),
+		[query, command?.level, command?.level === "value" ? command.fieldId : ""],
+	);
 
 	useEffect(() => {
 		if (!open) return;
@@ -204,7 +203,8 @@ export function SlashPickerTextarea({
 					className="absolute z-50 mt-1 max-h-44 w-full overflow-auto rounded-md border bg-background p-1 shadow-lg"
 				>
 					{entries.map((entry, index) => {
-						const label = "title" in entry ? entry.title : entry.label ?? entry.value;
+						const label =
+							"title" in entry ? entry.title : (entry.label ?? entry.value);
 						return (
 							<button
 								type="button"
