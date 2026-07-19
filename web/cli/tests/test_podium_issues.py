@@ -865,6 +865,41 @@ def test_sync_drops_blocked_by_edges_not_in_podium(
     assert json.loads(rows[0][8]) == []
 
 
+def test_sync_maps_blocked_by_within_single_pass_newest_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`gh issue list` returns newest-first; a dependent listed before its
+    blocker must still resolve the edge in one sync pass (blockers carry lower
+    numbers because to-tickets publishes them first). Regression for the edge
+    being silently dropped when the dependent was inserted before the blocker.
+    """
+    repo = _make_repo(tmp_path)
+    _init_git_repo(repo, "git@github-personal:owner/repo.git")
+    bindings = _make_bindings(tmp_path, repo)
+    db_path = _init_db(tmp_path, monkeypatch)
+    dependent_body = (
+        "## Parent\n\n#1 — Spec parent\n\n"
+        "## Blocked by\n\n- #6 — Blocker\n\n"
+        "## What to build\n\nDepends on the blocker.\n\n"
+        "## Verification\n\n`uv run pytest -q`\n"
+    )
+    # Dependent (#7) listed BEFORE its blocker (#6), as gh returns newest-first.
+    _patch_gh(
+        monkeypatch,
+        [
+            {"number": 7, "title": "Dependent", "body": dependent_body},
+            {"number": 6, "title": "Blocker", "body": _CHILD_WITH_VERIFICATION},
+        ],
+    )
+
+    podium_issues.sync_from_github(repo, bindings_path=bindings)
+
+    rows = _full_issue_rows(db_path)
+    by_external = {row[4]: row for row in rows}
+    blocker_id = by_external["github:owner/repo#6"][0]
+    assert json.loads(by_external["github:owner/repo#7"][8]) == [blocker_id]
+
+
 def test_sync_no_github_remote_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

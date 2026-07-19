@@ -463,6 +463,12 @@ def sync_from_github(
         for item in raw_issues
         if isinstance(item, dict) and _has_parent_section(str(item.get("body") or ""))
     ]
+    # `gh issue list` returns newest-first, but `to-tickets` publishes blockers
+    # before dependents so blockers carry lower numbers. Insert in ascending
+    # number order so a blocker is already mirrored when its dependent's
+    # `## Blocked by` edge is resolved within a single sync pass; otherwise the
+    # edge is silently dropped (ADR-0042 section 1 dependency ordering).
+    child_issues.sort(key=lambda item: int(item["number"]))
     lines = [
         f"binding={binding['name']} repo={owner}/{repo} "
         f"gh_issues={len(raw_issues)} child_issues={len(child_issues)}"
