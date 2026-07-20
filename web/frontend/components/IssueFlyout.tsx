@@ -893,76 +893,8 @@ function SteerComposer({
 	);
 }
 
-// Comments are stored as one chronological markdown blob (oldest first); each
-// entry is an appended block headed by a known marker. The blob is rendered
-// straight through (no sub-heading split) so a multi-heading summary is never
-// shredded. Keeps the `view-comments_md` testid as the container so existing
-// coverage (text presence) still holds.
-//
-// Both agent run summaries and operator replies stack up one-per-run/reply, so
-// we collapse them to only the most recent entry of each kind — older ones
-// stay in Run history. Patrol entries (`### Patrol`) and any non-agent text
-// are always shown.
-const AGENT_SUMMARY_MARKERS = [
-	"**Symphony completed:**",
-	"**Symphony question:**",
-	"### Symphony AI Summary",
-] as const;
-
-const OPERATOR_MARKERS = [
-	"### Operator Reply (",
-	"### Operator Steer (",
-	"### Operator Abort (",
-] as const;
-
-// Split only at known entry headers, never at arbitrary sub-headings, so a
-// summary containing `### …` sections is not broken into pieces.
-const ENTRY_BOUNDARY =
-	/\n+(?=### Operator Reply \(|### Operator Steer \(|### Operator Abort \(|### Patrol \(|### Symphony AI Summary|\*\*Symphony completed:\*\*|\*\*Symphony question:\*\*)/;
-
-function isAgentSummary(entry: string): boolean {
-	return AGENT_SUMMARY_MARKERS.some((marker) => entry.startsWith(marker));
-}
-
-function isOperatorEntry(entry: string): boolean {
-	return OPERATOR_MARKERS.some((marker) => entry.startsWith(marker));
-}
-
-function collapseCompletions(source: string): {
-	text: string;
-	hiddenAgentCount: number;
-	hiddenOperatorCount: number;
-} {
-	const entries = source.split(ENTRY_BOUNDARY);
-	let lastAgentIndex = -1;
-	let lastOperatorIndex = -1;
-	entries.forEach((entry, index) => {
-		const trimmed = entry.trim();
-		if (isAgentSummary(trimmed)) lastAgentIndex = index;
-		if (isOperatorEntry(trimmed)) lastOperatorIndex = index;
-	});
-	let hiddenAgentCount = 0;
-	let hiddenOperatorCount = 0;
-	const kept = entries.filter((_entry, index) => {
-		const trimmed = _entry.trim();
-		if (isAgentSummary(trimmed)) {
-			if (index === lastAgentIndex) return true;
-			hiddenAgentCount += 1;
-			return false;
-		}
-		if (isOperatorEntry(trimmed)) {
-			if (index === lastOperatorIndex) return true;
-			hiddenOperatorCount += 1;
-			return false;
-		}
-		return true;
-	});
-	return {
-		text: kept.join("\n\n").trim(),
-		hiddenAgentCount,
-		hiddenOperatorCount,
-	};
-}
+// Comments are stored as one chronological markdown blob (oldest first).
+// Render the blob unchanged so every agent and operator turn stays visible.
 
 function CommentsThread({
 	issueId,
@@ -988,10 +920,7 @@ function CommentsThread({
 		const el = scrollRef.current;
 		if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
 	}, [source]);
-	const { text, hiddenAgentCount, hiddenOperatorCount } =
-		collapseCompletions(source);
-	const totalHidden = hiddenAgentCount + hiddenOperatorCount;
-	const hasComments = text.trim().length > 0;
+	const hasComments = source.trim().length > 0;
 	return (
 		<div
 			ref={scrollRef}
@@ -1002,31 +931,8 @@ function CommentsThread({
 			className="max-h-[60vh] overflow-y-auto"
 		>
 			{hasComments ? (
-				<div className="space-y-2">
-					{totalHidden > 0 && (
-						<p
-							data-testid="hidden-completions-note"
-							className="text-xs text-muted-foreground"
-						>
-							{hiddenAgentCount > 0 && (
-								<>
-									{hiddenAgentCount} earlier Symphony completion
-									{hiddenAgentCount === 1 ? "" : "s"}
-									{hiddenOperatorCount > 0 && ", "}
-								</>
-							)}
-							{hiddenOperatorCount > 0 && (
-								<>
-									{hiddenOperatorCount} earlier operator repl
-									{hiddenOperatorCount === 1 ? "y" : "ies"}
-								</>
-							)}{" "}
-							hidden — see Run history below.
-						</p>
-					)}
-					<div className="rounded-md border p-2">
-						<Markdown source={text} />
-					</div>
+				<div className="rounded-md border p-2">
+					<Markdown source={source} />
 				</div>
 			) : (
 				<p className="rounded-md border p-2 text-xs text-muted-foreground">

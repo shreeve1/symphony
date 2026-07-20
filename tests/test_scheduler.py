@@ -22,9 +22,9 @@ from plane_adapter import PlaneAdapter, PlaneRateLimitError
 from plane_poller import CandidateIssue
 from schedule import format_cancellation_comment, format_schedule_comment
 from scheduler import (
+    _DispatchState,
     _cooldown_remaining_s,
     _dispatch_one,
-    _DispatchState,
     _extract_labels,
     _record_rate_limit,
     _release_candidate,
@@ -36,6 +36,7 @@ from scheduler import (
     _reconcile_startup,
     run_tick,
 )
+from scheduler.tick import _resolve_attachment_paths
 from scheduler.transient_retry import PI_RETRY_TAGS
 from tracker_adapter import TrackerAdapter
 from tracker_contract import (
@@ -47,7 +48,6 @@ from tracker_contract import (
     TrackerRole,
 )
 from tracker_types import AttachmentMeta
-from scheduler.tick import _resolve_attachment_paths
 
 
 class FakeTransport:
@@ -550,7 +550,7 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["older"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
+    assert completion_comment == "(no output)"
 
 
 @pytest.mark.asyncio
@@ -605,8 +605,8 @@ async def test_no_claim_comment_posted(tmp_path: Path) -> None:
 
     bodies = [c["comment_html"] for c in transport.comments["i1"]]
     assert not any(b.startswith("Symphony claimed at ") for b in bodies)
-    # Only the completion comment lands on the stream.
-    assert any("Symphony completed" in b for b in bodies)
+    # Only the plain no-output completion comment lands on the stream.
+    assert bodies == ["(no output)"]
 
 
 @pytest.mark.asyncio
@@ -637,9 +637,8 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
-    # ADR-0022: natural turn is posted — agent stdout content appears in comment.
-    assert "Jellyfin: OK" in completion_comment
+    # ADR-0022: natural turn is posted without a scheduler wrapper.
+    assert completion_comment == agent_output
 
 
 @pytest.mark.asyncio
@@ -693,11 +692,7 @@ async def test_run_tick_omits_agent_stdout_in_completion_comment(
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = [
-        c
-        for c in transport.comments["issue-1"]
-        if "Symphony completed" in c["comment_html"]
-    ][0]
+    completion_comment = transport.comments["issue-1"][0]
     # ADR-0022: natural turn posted; commit/diff stats are scheduler metadata, not agent output.
     assert "Updated config.yaml" in completion_comment["comment_html"]
     assert "abc1234" not in completion_comment["comment_html"]
@@ -1469,11 +1464,7 @@ async def test_dirty_conversation_adds_has_worktree_label_when_configured(
     labels = _extract_labels(transport.issues["issue-1"], label_ids=contract.label_ids)
     assert result.reason == "agent-clean-review"
     assert TrackerRole.HAS_WORKTREE.value not in labels
-    completion_comment = [
-        c
-        for c in transport.comments["issue-1"]
-        if "Symphony completed" in c["comment_html"]
-    ][0]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Run worktree" not in completion_comment
 
 
@@ -1498,11 +1489,7 @@ async def test_run_tick_omits_has_worktree_label_when_configured(
     )
 
     assert result.reason == "agent-clean-review"
-    completion_comment = [
-        c
-        for c in transport.comments["issue-1"]
-        if "Symphony completed" in c["comment_html"]
-    ][0]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Run worktree" not in completion_comment
 
 
@@ -1567,11 +1554,7 @@ async def test_run_tick_dirty_worktree_moves_to_review_without_auto_commit(
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
-    completion_comment = [
-        c
-        for c in transport.comments["issue-1"]
-        if "Symphony completed" in c["comment_html"]
-    ][0]["comment_html"]
+    completion_comment = transport.comments["issue-1"][0]["comment_html"]
     assert "Symphony auto-committed" not in completion_comment
 
 
@@ -2209,9 +2192,8 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(
 
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
-    # ADR-0022: natural turn posted; stderr still omitted on success.
-    assert "done output" in completion_comment
+    # ADR-0022: natural turn posted plainly; stderr still omitted on success.
+    assert completion_comment == "done output"
     assert "Stderr:" not in completion_comment
     assert "warning: minor issue" not in completion_comment
 
@@ -2269,9 +2251,8 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
 
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
-    # ADR-0022: natural turn posted.
-    assert "done output" in completion_comment
+    # ADR-0022: natural turn posted plainly.
+    assert completion_comment == "done output"
     assert "Stderr:" not in completion_comment
 
 
@@ -2413,7 +2394,7 @@ async def test_run_tick_summary_marker_appears_in_success_comment(
 
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
+    assert "Symphony completed" not in completion_comment
     # ADR-0022: full natural turn posted; summary text + surrounding chatter both appear.
     assert "Jellyfin CT106 healthy. HTTP 200, mounts OK." in completion_comment
     assert "some chatter" in completion_comment
@@ -2472,10 +2453,10 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: full natural turn posted; 5000 chars fits under DISPLAY_MAX_CHARS
     # so it's not truncated.
-    assert completion_comment.startswith("**Symphony completed:**")
+    assert completion_comment.startswith("XXXXX")
     assert "**Timeline**" not in completion_comment
     assert "XXXXX" in completion_comment
-    # Not truncated (5000 chars + prefix < 12000 DISPLAY_MAX_CHARS).
+    # Not truncated (5000 chars < 12000 DISPLAY_MAX_CHARS).
     assert "…" not in completion_comment
 
 
@@ -2538,7 +2519,7 @@ async def test_run_tick_summary_marker_strips_ansi(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) -> None:
+async def test_run_tick_posts_plain_natural_turn(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.issues["issue-1"] = _issue("issue-1")
 
@@ -2553,8 +2534,8 @@ async def test_run_tick_summary_marker_absent_keeps_legacy_body(tmp_path: Path) 
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    # ADR-0022: natural turn "ok" is posted instead of old placeholder.
-    assert completion_comment == "**Symphony completed:**\n\nok"
+    # ADR-0022: natural turn "ok" is posted without a scheduler wrapper.
+    assert completion_comment == "ok"
     assert "**Timeline**" not in completion_comment
 
 
@@ -2626,7 +2607,7 @@ async def test_summary_block_posted_verbatim_in_completion_comment(
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert completion_comment.startswith("**Symphony completed:**")
+    assert completion_comment.startswith("chatter\n")
     assert "## What I did" in completion_comment
     assert "- Restarted prowlarr-host.service" in completion_comment
     assert "**Question:** should I enable auto-restart?" in completion_comment
@@ -3040,9 +3021,8 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
-    # ADR-0022: full natural turn posted, not just extracted summary.
-    assert "Health check OK" in completion_comment
+    # ADR-0022: full natural turn posted plainly, not just extracted summary.
+    assert completion_comment == "Health check OK"
 
 
 @pytest.mark.asyncio
@@ -4095,8 +4075,10 @@ async def test_question_marker_parks_issue_in_review(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     question_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert question_comment.startswith("**Symphony question:**")
-    assert "Should I restart the service now" in question_comment
+    assert (
+        question_comment == "Should I restart the service now or wait for maintenance?"
+    )
+    assert "Symphony question" not in question_comment
     assert "SYMPHONY_QUESTION" not in question_comment
 
 
@@ -4129,10 +4111,14 @@ async def test_question_marker_posts_surrounding_prose(tmp_path: Path) -> None:
 
     assert result.reason == "agent-question-park"
     question_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Fact-check: VERIFIED" in question_comment
-    assert "My recommendation: split" in question_comment
-    assert "**Symphony question:**" in question_comment
-    assert "Should I implement that split?" in question_comment
+    expected = (
+        "Fact-check: VERIFIED. Attachments are issue-level.\n\n"
+        "My recommendation: split one-shot reply screenshots from durable uploads.\n\n"
+        "Should I implement that split?"
+    )
+    assert question_comment == expected
+    assert question_comment.count("Should I implement that split?") == 1
+    assert "Symphony question" not in question_comment
     assert "SYMPHONY_QUESTION" not in question_comment
 
 
@@ -4552,7 +4538,7 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert "Symphony completed" in completion_comment
+    assert completion_comment == "(no output)"
 
 
 @pytest.mark.asyncio
@@ -6699,7 +6685,7 @@ async def test_post_agent_comment_429_stores_pending_data_and_propagates(
     assert state.cooldown_until is not None
     assert state.cooldown_attempts == 1
     assert issue_id in state.pending_review_issue_ids
-    assert "Symphony completed" in state.pending_completion_bodies.get(issue_id, "")
+    assert state.pending_completion_bodies.get(issue_id) == "(no output)"
     assert call_count == 1
 
 
@@ -6718,7 +6704,7 @@ async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> 
     }
     adapter = _adapter(transport)
 
-    pending_body = "**Symphony completed:** Test summary."
+    pending_body = "Test summary."
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),
         in_flight_ids=set(),
@@ -6738,7 +6724,7 @@ async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> 
     assert issue_id not in state.pending_review_issue_ids
     assert issue_id not in state.pending_completion_bodies
     comments = transport.comments.get(issue_id, [])
-    assert any("Symphony completed" in str(c.get("comment_html", "")) for c in comments)
+    assert any(c.get("comment_html") == pending_body for c in comments)
     assert (
         transport.issues[issue_id]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
@@ -6751,7 +6737,7 @@ async def test_reconcile_pending_review_retry_429_propagates(
 ) -> None:
     """Retry add_comment 429 in _reconcile_pending_review raises, preserves pending data."""
     issue_id = "test-issue-1"
-    pending_body = "**Symphony completed:** Test summary."
+    pending_body = "Test summary."
 
     state = _DispatchState(
         semaphore=asyncio.Semaphore(1),

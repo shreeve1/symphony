@@ -215,12 +215,6 @@ def _fixed_now(value: datetime) -> Callable[[], datetime]:
     return now
 
 
-def _norm_ws(text: str) -> str:
-    """Collapse all whitespace runs to single spaces and strip ends."""
-
-    return re.sub(r"\s+", " ", text).strip()
-
-
 # Cap the blocked-reason text sent to the Telegram notifier, leaving headroom
 # under Telegram's 4096-char limit for the name/identifier/URL wrapping.
 NOTIFY_REASON_MAX_CHARS = 2000
@@ -1448,21 +1442,10 @@ async def _classify_terminal(
         )
 
     if question:
-        # ADR-0037: surface the full natural turn (fact-check + recommendation +
-        # any prose the agent wrote around the question), not just the isolated
-        # question block — the question-park branch was the one terminal path
-        # ADR-0037 missed, so parked questions dropped their surrounding prose to
-        # the "Agent stdout" context and never reached the comment (issue 474).
-        # ``summary`` (the captured turn) already contains the question text with
-        # its fences stripped; append a highlighted footer so the ask stays
-        # scannable. Compare with whitespace collapsed on both sides so a
-        # question-only turn isn't double-posted just because
-        # _capture_natural_turn collapsed blank-line runs that _extract_question
-        # preserved.
-        if summary and _norm_ws(summary) != _norm_ws(question):
-            question_body = f"{summary}\n\n**Symphony question:**\n\n{question}"
-        else:
-            question_body = f"**Symphony question:**\n\n{question}"
+        # Keep the full captured turn so surrounding prose is not lost (issue
+        # 474); it already includes the question with protocol markers stripped.
+        # Fall back to the extracted question if no turn was captured.
+        question_body = summary or question
         await _finish_run_record(
             adapter,
             run_id,
@@ -1607,10 +1590,7 @@ async def _classify_terminal(
     reason_code = (
         "agent-marker-review" if verdict in {"review", "done"} else "agent-clean-review"
     )
-    if summary:
-        completion_body = f"**Symphony completed:**\n\n{summary}"
-    else:
-        completion_body = "**Symphony completed:** (no output)"
+    completion_body = summary or "(no output)"
     await _finish_run_record(
         adapter,
         run_id,
@@ -2549,10 +2529,10 @@ async def _block_issue(
 
 # Re-exported tick orchestration (moved to .tick module for seam isolation).
 from .tick import (  # noqa: E402
-    _select_run_tick_candidate as _select_run_tick_candidate,
+    _dispatch_run_tick_agent as _dispatch_run_tick_agent,
     _gate_run_tick_candidate as _gate_run_tick_candidate,
     _prepare_run_tick_dispatch as _prepare_run_tick_dispatch,
-    _dispatch_run_tick_agent as _dispatch_run_tick_agent,
+    _select_run_tick_candidate as _select_run_tick_candidate,
     run_tick as run_tick,
 )
 
