@@ -1900,3 +1900,11 @@ Append entries with this format:
 - **Wiki state**: 67 active / 320 budget, no problems, maintenance not due. `gate.py audit` clean.
 - **Verification**: `python3 ~/.claude/skills/wiki-update/gate.py --wiki wiki audit` exits 0; candidate file no longer in `wiki/candidates/`; analyses row present in `wiki/index.md`; ROUTING.md keyword line points at the promoted path; 0 stale `wiki/candidates/...` references in `wiki/CLAIMS.md`.
 - **Unresolved**: none. (Interactive operator-driven wiki pass, not a slice run, ADR-0028 exemption N/A.)
+
+## [2026-07-20] session-update | INITIAL_REVISION realigned with Alembic head (C-0397)
+
+- **Task**: fix the stale Podium fresh-schema baseline without changing `ensure_schema()` or touching the live database.
+- **Change**: commit `cb86be1` bumps `web/api/schema.py` `INITIAL_REVISION` from `0022_automation` to `0024_automation_autoincrement_id`. `web/api/tests/test_ensure_schema.py` now pins fresh-database stamping to that current head and verifies an existing structurally-current head database emits no `podium_schema_revision_mismatch`; the never-restamp regression remains intact.
+- **Verification**: `test_existing_database_at_head_does_not_warn_about_revision` failed before the fix and passed after it; `uv run pytest web/api/tests/test_ensure_schema.py tests/test_alembic_baseline.py` passed 8 tests; full suite passed 1682 tests with 2 skipped and `PODIUM_DB_PATH` isolated to a temporary path; touched-file diagnostics, Ruff, format check, and `git diff --check` passed; fresh final reviewer returned PASS. No Alembic migration/stamp command or live DB mutation ran.
+- **Wiki**: C-0397 admitted through `gate.py`; `wiki/analyses/podium-023b-alembic-backup.md` and its root-index row updated; `wiki/eval/podium-api.eval` gained a retention probe. Existing routing already covers `INITIAL_REVISION`, `ensure_schema`, and the Alembic baseline, so no route change was needed. C-0397 records recurrence of cold precedent C-0287 rather than superseding it.
+- **Unresolved**: none. No raw session capture was needed because commit `cb86be1` and its tests are the primary evidence.

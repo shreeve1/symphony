@@ -3,9 +3,12 @@ title: Podium #023b — Alembic baseline and SQLite backup wiring
 type: analysis
 status: promoted
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-07-20
 sources:
   - tests/test_alembic_baseline.py
+  - web/api/tests/test_ensure_schema.py
+  - web/api/schema.py
+  - web/api/main.py
   - web/api/migrations/env.py
   - web/api/migrations/README.md
   - scripts/podium-backup.sh
@@ -30,6 +33,8 @@ The migration README now documents the rule: schema changes ship as a new revisi
 
 Alembic `env.py` now calls `fileConfig(..., disable_existing_loggers=False)` so running Alembic inside pytest does not disable project loggers and break later `caplog` assertions. [source: web/api/migrations/env.py] [source: wiki/raw/sessions/2026-06-11-podium-023b-alembic-backup.md]
 
+The schema fingerprint deliberately excludes `alembic_version`, so it does not catch a stale `INITIAL_REVISION`. That lag recurred at `0022_automation` while migrations and `SCHEMA_SQL` were at `0024_automation_autoincrement_id`. Commit `cb86be1` bumped the constant and added direct regressions: fresh databases stamp the current head, and an existing structurally-current head database emits no revision-mismatch warning. `ensure_schema()` remains never-restamp, and the fix required no live database migration or stamp. [source: web/api/schema.py] [source: web/api/main.py] [source: web/api/tests/test_ensure_schema.py] [source: tests/test_alembic_baseline.py]
+
 ## Backup mechanism
 
 `rsnapshot` was absent on the host, so #023b uses the documented cron fallback. `/etc/cron.d/podium-backup` runs `/home/james/symphony/scripts/podium-backup.sh` daily at 02:17 as `james`, logging to `runs/podium-backup.log`. A snapshot of the installed cron file is stored in `wiki/raw/podium-backup.cron`. [source: wiki/raw/podium-backup.cron]
@@ -53,4 +58,4 @@ During verification, pytest 9 / pytest-asyncio 1 changed logging behavior enough
 
 ## Claims
 
-C-0092 .. C-0094 in [CLAIMS.md](../CLAIMS.md).
+C-0092 .. C-0094 and C-0397 in [CLAIMS.md](../CLAIMS.md).

@@ -14,3 +14,4 @@ What is the load-bearing format constraint on `## Verification` for the GitHub-P
 How does symphony-restart perform an explicitly approved full-stack rebuild? ||| podium-migrations.service
 Does merely mentioning Podium authorize symphony-restart's full-stack mutations? ||| read-only request
 How is the itainfra binding dispatched and grouped? ||| remote.host_alias=n8n
+Why can Podium report a schema revision mismatch when the live DB is already structurally current? ||| 0024_automation_autoincrement_id
