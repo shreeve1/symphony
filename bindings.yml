@@ -125,3 +125,19 @@ bindings:
       host: 100.95.110.36
       user: james
       host_alias: mac
+  - name: itainfra
+    plane_project_id: itainfra
+    tracker: podium
+    type: coding
+    repo_path: /home/itadmin/itainfra
+    base_branch: main
+    default_agent: pi
+    approval:
+      enabled: false
+    landing:
+      mode: local
+    pi_mode: rpc
+    remote:
+      host: 100.95.224.218
+      user: itadmin
+      host_alias: n8n
