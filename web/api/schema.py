@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0022_automation"
+INITIAL_REVISION = "0024_automation_autoincrement_id"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(

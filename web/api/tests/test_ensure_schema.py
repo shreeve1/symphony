@@ -15,6 +15,9 @@ from web.api.main import INITIAL_REVISION, ensure_schema
 from web.api.schema import SCHEMA_SQL
 
 
+ALEMBIC_HEAD = "0024_automation_autoincrement_id"
+
+
 def _connect() -> sqlite3.Connection:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
@@ -22,7 +25,9 @@ def _connect() -> sqlite3.Connection:
 
 
 def _revision(connection: sqlite3.Connection) -> str:
-    return str(connection.execute("SELECT version_num FROM alembic_version").fetchone()[0])
+    return str(
+        connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+    )
 
 
 def test_fresh_database_gets_schema_and_head_stamp() -> None:
@@ -35,15 +40,27 @@ def test_fresh_database_gets_schema_and_head_stamp() -> None:
         )
     }
     assert "issue" in tables and "run" in tables
-    assert _revision(connection) == INITIAL_REVISION
+    assert _revision(connection) == ALEMBIC_HEAD
+
+
+def test_existing_database_at_head_does_not_warn_about_revision(caplog) -> None:
+    connection = _connect()
+    connection.executescript(SCHEMA_SQL)
+    connection.execute("CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)")
+    connection.execute(
+        "INSERT INTO alembic_version(version_num) VALUES (?)", (ALEMBIC_HEAD,)
+    )
+    connection.commit()
+
+    ensure_schema(connection)
+
+    assert "podium_schema_revision_mismatch" not in caplog.text
 
 
 def test_existing_database_is_never_restamped() -> None:
     connection = _connect()
     connection.executescript(SCHEMA_SQL)
-    connection.execute(
-        "CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)"
-    )
+    connection.execute("CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)")
     connection.execute(
         "INSERT INTO alembic_version(version_num) VALUES ('0005_inbox_dismissed_at')"
     )
@@ -57,9 +74,7 @@ def test_existing_database_is_never_restamped() -> None:
 def test_missing_column_fails_startup_loudly() -> None:
     connection = _connect()
     connection.executescript(SCHEMA_SQL)
-    connection.execute(
-        "CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)"
-    )
+    connection.execute("CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)")
     connection.execute(
         "INSERT INTO alembic_version(version_num) VALUES ('0005_inbox_dismissed_at')"
     )
@@ -73,9 +88,7 @@ def test_missing_column_fails_startup_loudly() -> None:
 def test_extra_column_only_warns() -> None:
     connection = _connect()
     connection.executescript(SCHEMA_SQL)
-    connection.execute(
-        "CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)"
-    )
+    connection.execute("CREATE TABLE alembic_version(version_num VARCHAR(32) NOT NULL)")
     connection.execute(
         f"INSERT INTO alembic_version(version_num) VALUES ('{INITIAL_REVISION}')"
     )
