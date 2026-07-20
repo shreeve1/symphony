@@ -1,5 +1,14 @@
 # Wiki Log
 
+## [2026-07-20] session-update | itainfra remote binding onboard (C-0396)
+
+- Actor: agent (Pi), `symphony-onboard-project` workflow.
+- **Binding**: added remote Podium coding binding `itainfra` for `/home/itadmin/itainfra` on `main`, dispatched as Pi RPC to `itadmin@100.95.224.218` and grouped under the existing `n8n` host alias. Symphony commit `fe6ffd2` records the `bindings.yml` change.
+- **Deployment**: scheduler-only restart succeeded as PID `2299168` on `code_sha=9675c6e`; ten bindings loaded, `pi_rpc_probe_ok` passed, `itainfra` startup reconciliation completed, and the dispatch loop ran without matched errors.
+- **Smoke**: operator smoke Issue `554` / Run `3237` used `pi` / `pi-duo` / `Duo:high`, exited `0` with verdict `done`, and parked in `in_review` because `auto_land=false`.
+- **Wiki**: captured `wiki/raw/sessions/2026-07-20-itainfra-binding-onboard.md`; candidate entity linted and auto-promoted to `wiki/entities/binding-itainfra.md`; updated index/routing/eval; admitted C-0396 through `gate.py`.
+- **Verification**: scaffold tests 10 passed, smoke tests 2 passed, onboard-project test 1 passed; independent verifier confirmed the binding config, while the ignored live run log required direct re-grounding. No secret or environment file was read.
+
 ## [2026-07-20] session-update | Podium startup model probe decoupling (C-0395)
 
 - Actor: agent (Pi), operator-directed incident fix.
