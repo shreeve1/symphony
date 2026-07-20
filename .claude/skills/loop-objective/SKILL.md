@@ -157,10 +157,11 @@ its own:
 - the remote-binding invariants (coding + pi + rpc);
 - the Schema creation idempotency.
 
-After scaffold returns OK, do not chain further. The operator decides
-whether to run `symphony-onboard-project` (which adds `symphony-restart` and
-`symphony-binding-smoke`) — those prompts come from the chain, not from a
-gap in the draft. Don't pre-answer them here.
+After scaffold returns OK, hand off to `symphony-onboard-project`. That
+skill is the orchestrator — it chains `symphony-restart` (service-affecting;
+the orchestrator owns the timing gate, see its SKILL.md "Workflow") and
+`symphony-binding-smoke`. Don't reproduce those prompts here; they belong
+to the chain, not the draft step.
 
 ---
 
