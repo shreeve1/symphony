@@ -3,9 +3,10 @@ title: "ADR-0026 — Transient terminal failures retry / re-drive instead of blo
 type: analysis
 status: promoted
 created: 2026-06-24
-updated: 2026-06-25
+updated: 2026-07-20
 sources:
   - docs/adr/0026-transient-failure-retry-not-block.md
+  - wiki/raw/sessions/2026-07-20-podium-startup-model-probe-decoupling.md
   - scheduler/__init__.py
   - tests/test_scheduler.py
   - tracker_podium.py
@@ -39,7 +40,7 @@ ADR-0026 is proposed after the ADR-0024 batch exposed that the dispatch loop sti
 - Retry has a modest fixed cooldown (~60s) off the marker timestamp.
 - Mid-retry notifications are suppressed; notify only on final block after the cap.
 - Auto-land can re-drive when a branch becomes clean/FF-able after rebase or wiki claim renumbering.
-- Startup pi probe timeouts should use bounded retry or per-binding fail-soft behavior instead of crashing the scheduler process.
+- Startup pi probe timeouts must not crash the scheduler process. As amended on 2026-07-20, Podium does not probe its catalog-default provider/model at startup; model availability is scoped to per-Issue dispatch. Local non-Podium Pi bindings retain bounded retry/fail-soft probing.
 - Claim-ID collision is now part of the unattended landing problem: branch-local "next free C-ID" is not concurrency-safe.
 
 ## Implementation status
@@ -49,7 +50,7 @@ Fully implemented and live as of restart to `code_sha=fb799be` (2026-06-25 05:09
 - **#135 auto-land re-drive:** `_handle_review_terminal_done` retries `_land_review_worktree` exactly once after `asyncio.sleep(2.0)` on any land error, with no error-string narrowing. Retry success proceeds to normal `done` landing; a second failure blocks with the final land error. Tests cover fail-then-success, fail-twice, and the 2s sleep seam [source: scheduler/__init__.py; tests/test_scheduler.py].
 - **#137 review-run retry:** `_classify_terminal` catches known-transient nonzero/timeout results for `candidate.review_dispatch`, finishes the Run as `failed` with `verdict="retry"`, appends a `### Symphony Retry (transient · N)` marker plus `### Symphony Reland Pending`, transitions the Issue back to `in_review`, and returns `transient-retry-review`; `tracker_podium.list_candidates` re-dispatches as review only after the retry-marker cooldown expires, preserving the C-0324 provenance gate. Cap exhaustion blocks and notifies [source: scheduler/__init__.py; tracker_podium.py; tests/test_scheduler.py].
 - **#136 implement-run retry:** `_classify_terminal` (non-review path) finishes the Run as `failed`/`verdict="retry"`, appends a retry marker, and transitions the Issue to `todo` under cap + cooldown; `_select_run_tick_candidate` additionally suppresses re-selection while the cooldown is unexpired. Non-transient failures and cap exhaustion fall through to the existing block + notify path [source: scheduler/__init__.py `_maybe_retry_transient_implement`, `_retry_comments_text`; tests/test_scheduler.py].
-- **#134 startup-probe fail-soft:** `_probe_binding` retries `verify_pi_support` (max 2, ~5s apart) and returns `False` on exhaustion instead of raising; `run_bindings_loop` skips `build_binding_runtime` for a skipped binding and logs `pi_probe_failed_permanently` / `binding_skipped_after_probe_failure` [source: main.py; tests/test_agent_runner.py].
+- **#134 startup-probe fail-soft, amended 2026-07-20:** historically, `_probe_binding` retried `verify_pi_support` and skipped one binding on exhaustion. A live `pi-duo/Duo` quota cooldown then skipped every local Podium binding even though queued Issues explicitly selected healthy `gpt-5.6-sol`. Podium bindings now bypass this provider/model startup probe; `verify_pi_rpc_support` still checks model-independent RPC capability globally, and the existing per-Issue dispatch gate resolves and validates each selected model. The bounded startup provider/model probe remains only for local non-Podium Pi bindings (C-0395) [source: main.py; tests/test_main.py; tests/test_agent_runner.py; wiki/raw/sessions/2026-07-20-podium-startup-model-probe-decoupling.md].
 - Podium schema revision `0012_retry_verdict` allows `retry` in `run.verdict` / `issue.latest_verdict` [source: web/api/schema.py; web/api/migrations/versions/0012_retry_verdict.py].
 
 ## Allowlist expansion (2026-06-25)

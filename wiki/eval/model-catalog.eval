@@ -5,3 +5,4 @@ Was remote Claude edit+commit landing verified after issue 104? ||| 7f34e32
 Why can the Podium new-issue model dropdown be empty after a valid models.yml change? ||| stale podium-api
 Why can pi-duo/Duo work in a Mac terminal but fail through Symphony remote dispatch? ||| noninteractive SSH shell
 How was Issue 464's remote Pi provider authentication repaired and verified? ||| supported /login flow
+Why must a Podium binding start when its default Pi model provider is on quota cooldown? ||| skips verify_pi_support when tracker=podium

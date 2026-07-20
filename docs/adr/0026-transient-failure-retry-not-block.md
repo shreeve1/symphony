@@ -113,6 +113,15 @@ exactly there, and retrying at the terminal means the issue never visibly hits
     should treat startup probe timeouts like terminal transients: bounded retry /
     fail-soft per binding, not immediate process death.
 
+    **Amendment (2026-07-20, C-0395):** for Podium bindings, even fail-soft
+    per-binding probing has the wrong blast radius: a quota cooldown on the
+    catalog default skipped the whole binding while queued Issues selected a
+    different healthy model. Podium therefore does not run a provider/model
+    print probe at startup. The global Pi RPC capability probe remains, and the
+    dispatch gate resolves and validates the model selected by each Issue. The
+    bounded startup provider/model probe remains only for local non-Podium Pi
+    bindings.
+
 ## Shippable in two independent pieces
 
 - **Implement-run retry** (the #128 case, and the common one) is fully independent
@@ -143,7 +152,7 @@ exactly there, and retrying at the terminal means the issue never visibly hits
   block backlog appears.
 - Claim-ID collision handling becomes part of the unattended landing story; a
   branch-local `next free C-ID` is not safe under parallel agents.
-- Startup probe retry/fail-soft prevents a transient provider timeout from taking down all bindings during deploy.
+- Podium startup is independent of default-provider availability; a provider failure is scoped to Issues selecting that provider. Local non-Podium bindings retain bounded probe retry/fail-soft behavior.
 
 ## Considered options
 

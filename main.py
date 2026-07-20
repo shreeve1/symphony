@@ -30,15 +30,14 @@ from claude_runner import (
 )
 from code_version import resolve_code_sha
 from config import ProjectBinding, SymphonyConfig
-from model_catalog import load_models, resolve_model
 from notifier import TelegramNotifier
 from plane_adapter import ClosablePlaneTransport, HttpxPlaneTransport, build_adapter
 from prompt_renderer import IssueData, render_prompt, render_review_prompt
 from repo_host import repo_host_for
 from scheduler import _reconcile_startup, _resolve_mode, run_loop
-from web.cli.podium_skills import sync_skills
 from tracker_adapter import TrackerAdapter
 from tracker_contract import TrackerContract
+from web.cli.podium_skills import sync_skills
 
 
 @dataclass
@@ -141,15 +140,15 @@ def _probe_binding(config: SymphonyConfig, binding: ProjectBinding) -> bool:
     # on the remote host (unreadable locally → it would crash startup). Skip the
     # local probe for remote bindings; remote pi readiness is the remote host's
     # concern (a remote SSH probe is a future refinement).
-    if binding.default_agent == "pi" and not binding.is_remote:
+    # Podium resolves and validates models per Issue. Probing its default model
+    # here would let one provider's quota outage disable the entire binding.
+    if (
+        binding.default_agent == "pi"
+        and not binding.is_remote
+        and binding.tracker != "podium"
+    ):
         probe_provider = binding_config.pi_provider
         probe_model = binding_config.pi_model
-        if binding.tracker == "podium":
-            # Podium dispatch resolves provider/model from models.yml, so the
-            # startup probe must exercise the catalog default, not legacy env.
-            entry = resolve_model(None, load_models(), agent="pi")
-            probe_provider = str(entry["provider"])
-            probe_model = str(entry["id"])
         for attempt in range(PI_PROBE_MAX_ATTEMPTS):
             try:
                 verify_pi_support(

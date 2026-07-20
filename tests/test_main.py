@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -537,7 +538,7 @@ def test_homelab_podium_binding_builds_without_plane_transport(monkeypatch):
 
     main._probe_binding(config, binding)
 
-    assert "verify" in calls
+    assert "verify" not in calls
     assert "transport" not in calls
 
 
@@ -625,6 +626,27 @@ def test_build_binding_runtime_allows_claude_default(monkeypatch, tmp_path):
     assert runtime.name == "default"
     assert "transport" in calls
     assert "verify" not in calls
+
+
+def test_probe_binding_podium_skips_default_model_probe(monkeypatch, tmp_path):
+    config = main.SymphonyConfig.from_env(
+        {
+            "PLANE_API_URL": "http://plane.test",
+            "PLANE_API_KEY": "key",
+            "PLANE_WORKSPACE_SLUG": "homelab",
+            "PLANE_PROJECT_ID": "project",
+            "HOMELAB_REPO_PATH": str(tmp_path),
+            "PI_BIN": "pi",
+            "SYMPHONY_BINDINGS_PATH": "/nonexistent/symphony-bindings.yml",
+        }
+    )
+    binding = replace(config.bindings[0], tracker="podium")
+    calls = []
+
+    monkeypatch.setattr(main, "verify_pi_support", lambda *args: calls.append(args))
+
+    assert main._probe_binding(config, binding) is True
+    assert calls == []
 
 
 def test_probe_binding_remote_skips_local_pi_probe(monkeypatch, tmp_path):

@@ -1,5 +1,14 @@
 # Wiki Log
 
+## [2026-07-20] session-update | Podium startup model probe decoupling (C-0395)
+
+- Actor: agent (Pi), operator-directed incident fix.
+- **Root cause**: the 2026-07-19 scheduler start probed catalog-default `pi-duo/Duo` for every local Podium binding. Quota cooldown made both `symphony` and `pi-rmm` exhaust the probe and log `binding_skipped_after_probe_failure`; eligible Issues selecting `gpt-5.6-sol` never got scheduler loops.
+- **Decision/fix**: Podium bindings no longer run the provider/model `verify_pi_support` startup probe. The global model-independent `verify_pi_rpc_support` capability probe remains, and the dispatch gate still resolves and validates each Issue's selected model. Local non-Podium Pi bindings retain bounded startup probing. This amends ADR-0026 #134 for Podium without changing terminal retry or auto-land behavior.
+- **Files**: `main.py`, `tests/test_main.py`, `docs/adr/0026-transient-failure-retry-not-block.md`, `wiki/raw/sessions/2026-07-20-podium-startup-model-probe-decoupling.md`, `wiki/analyses/adr-0026-transient-failure-retry.md`, `wiki/index.md`, `wiki/ROUTING.md`, `wiki/CLAIMS.md`, `wiki/eval/model-catalog.eval`, `wiki/log.md`.
+- **Verification**: regression failed before the fix and passed after; focused tests passed (72, 1 skipped); full suite passed (1681, 2 skipped); ruff/LSP/diff checks passed; independent claim verifier returned VERIFIED for both load-bearing claims; fresh code review returned PASS.
+- **Deployment**: code committed in this session; scheduler restart remains required to rebuild the previously skipped bindings under the new policy. No DB, Issue, model-catalog, service, or environment-file mutation occurred during implementation.
+
 ## [2026-07-19] session-update | symphony-restart full-stack branch + deploy hardening (C-0392–C-0394)
 
 - Actor: agent (Pi), operator-requested restart-contract correction.
