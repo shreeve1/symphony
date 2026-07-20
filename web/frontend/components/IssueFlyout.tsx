@@ -674,6 +674,11 @@ function ReplyComposer({
 			onSent();
 		},
 	});
+	const sendDisabled =
+		replyDisabled || reply.isPending || (!hasStaged && draft.trim() === "");
+	const send = () => {
+		if (!sendDisabled) reply.mutate(draft);
+	};
 
 	return (
 		<div className="space-y-2" data-testid="reply-composer">
@@ -683,6 +688,7 @@ function ReplyComposer({
 				value={draft}
 				onChange={saveDraft}
 				fields={slashFields}
+				onSubmitShortcut={send}
 				rows={1}
 				placeholder={
 					hasStaged
@@ -707,16 +713,13 @@ function ReplyComposer({
 					Reply failed — the issue may have changed state. Try again.
 				</p>
 			)}
-			<div className="flex justify-end">
+			<div className="flex items-center justify-end gap-2">
+				<span className="text-xs text-muted-foreground">⌘/Ctrl + Enter</span>
 				<button
 					type="button"
 					data-testid="reply-send"
-					disabled={
-						replyDisabled ||
-						reply.isPending ||
-						(!hasStaged && draft.trim() === "")
-					}
-					onClick={() => reply.mutate(draft)}
+					disabled={sendDisabled}
+					onClick={send}
 					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
 				>
 					Send

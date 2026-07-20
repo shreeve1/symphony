@@ -29,6 +29,40 @@ const waitForReply = (page: Page) =>
 			res.ok(),
 	);
 
+test("Control+Enter submits from the Reply composer", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply shortcut ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "in_review");
+	let replyCount = 0;
+	await page.route(`**/api/issues/${issueId}/reply`, async (route) => {
+		if (route.request().method() !== "POST") return route.fallback();
+		replyCount += 1;
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		await route.continue();
+	});
+
+	await page.goto(`/homelab?issue=${issueId}`);
+	const input = page.getByTestId("reply-input");
+	await expect(page.getByText("⌘/Ctrl + Enter", { exact: true })).toBeVisible();
+	await expect(input).toHaveAttribute(
+		"aria-keyshortcuts",
+		"Meta+Enter Control+Enter",
+	);
+	await input.fill("Continue with the fix.");
+
+	const replied = waitForReply(page);
+	await input.press("Control+Enter");
+	await expect(page.getByTestId("reply-send")).toBeDisabled();
+	await input.press("Control+Enter");
+	await replied;
+	expect(replyCount).toBe(1);
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+
+	expectCleanConsole(problems);
+});
+
 test("composer restores unsent drafts per issue and across reload", async ({
 	page,
 	problems,

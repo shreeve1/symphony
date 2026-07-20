@@ -150,6 +150,7 @@ function NewIssueModal({
 	const [hold, setHold] = useState(false);
 	const [scheduleDraft, setScheduleDraft] =
 		useState<ScheduleDraft>(defaultScheduleDraft);
+	const formRef = useRef<HTMLFormElement | null>(null);
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const queryClient = useQueryClient();
 
@@ -388,7 +389,7 @@ function NewIssueModal({
 				<h2 id="new-issue-heading" className="mb-4 text-lg font-semibold">
 					New issue
 				</h2>
-				<form onSubmit={submit} className="space-y-3">
+				<form ref={formRef} onSubmit={submit} className="space-y-3">
 					<label className="block space-y-1">
 						<span className="text-xs font-medium text-muted-foreground">
 							Description
@@ -398,6 +399,7 @@ function NewIssueModal({
 							value={description}
 							onChange={setDescription}
 							fields={slashFields}
+							onSubmitShortcut={() => formRef.current?.requestSubmit()}
 							rows={4}
 							autoFocus
 							className="w-full rounded-md border bg-transparent px-2 py-1.5 font-mono text-xs outline-none focus:border-foreground/40"
@@ -560,6 +562,9 @@ function NewIssueModal({
 						>
 							Cancel
 						</button>
+						<span className="self-center text-xs text-muted-foreground">
+							⌘/Ctrl + Enter
+						</span>
 						<button
 							type="submit"
 							data-testid="new-issue-submit"

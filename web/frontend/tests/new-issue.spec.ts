@@ -2,6 +2,83 @@ import { expect, expectCleanConsole, test } from "./fixtures";
 
 // Runs against /homelab so the /dotfiles seeds that board.spec asserts on stay
 // pristine. Unique title per run: the dev database persists across runs.
+test("Meta+Enter submits only an eligible focused New Issue composer", async ({
+	page,
+	problems,
+}) => {
+	let createCount = 0;
+	page.on("request", (request) => {
+		if (
+			request.url().includes("/api/bindings/homelab/issues") &&
+			request.method() === "POST"
+		) {
+			createCount += 1;
+		}
+	});
+
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	const description = page.getByTestId("new-issue-description");
+	await expect(page.getByText("⌘/Ctrl + Enter", { exact: true })).toBeVisible();
+	await expect(description).toHaveAttribute(
+		"aria-keyshortcuts",
+		"Meta+Enter Control+Enter",
+	);
+
+	await description.press("Meta+Enter");
+	expect(createCount).toBe(0);
+
+	await description.fill("first");
+	await description.press("Enter");
+	await description.pressSequentially("second");
+	await description.press("Shift+Enter");
+	await description.pressSequentially("third");
+	await expect(description).toHaveValue("first\nsecond\nthird");
+	expect(createCount).toBe(0);
+
+	await description.pressSequentially(" /ho");
+	await expect(
+		page.getByRole("listbox", { name: "Issue fields" }),
+	).toBeVisible();
+	await description.press("Meta+Enter");
+	await expect(
+		page.getByRole("listbox", { name: "Issue fields" }),
+	).toBeVisible();
+	expect(createCount).toBe(0);
+	await description.press("Escape");
+
+	await description.dispatchEvent("keydown", {
+		key: "Enter",
+		code: "Enter",
+		metaKey: true,
+		isComposing: true,
+		bubbles: true,
+		cancelable: true,
+	});
+	await description.dispatchEvent("keydown", {
+		key: "Enter",
+		code: "Enter",
+		metaKey: true,
+		repeat: true,
+		bubbles: true,
+		cancelable: true,
+	});
+	expect(createCount).toBe(0);
+
+	const created = page.waitForResponse(
+		(response) =>
+			response.url().includes("/api/bindings/homelab/issues") &&
+			response.request().method() === "POST" &&
+			response.status() === 201,
+	);
+	await description.press("Meta+Enter");
+	await created;
+	expect(createCount).toBe(1);
+	await expect(page.getByTestId("new-issue-modal")).toBeHidden();
+
+	expectCleanConsole(problems);
+});
+
 test("new issue flow: modal -> Todo card -> survives reload", async ({
 	page,
 	problems,

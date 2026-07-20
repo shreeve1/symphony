@@ -37,6 +37,7 @@ export function SlashPickerTextarea({
 	autoFocus = false,
 	disabled = false,
 	placeholder,
+	onSubmitShortcut,
 	textareaRef: externalTextareaRef,
 }: {
 	value: string;
@@ -48,6 +49,7 @@ export function SlashPickerTextarea({
 	autoFocus?: boolean;
 	disabled?: boolean;
 	placeholder?: string;
+	onSubmitShortcut?: () => void;
 	textareaRef?: RefObject<HTMLTextAreaElement | null>;
 }) {
 	const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -168,6 +170,9 @@ export function SlashPickerTextarea({
 				role="combobox"
 				aria-autocomplete="list"
 				aria-expanded={open}
+				aria-keyshortcuts={
+					onSubmitShortcut ? "Meta+Enter Control+Enter" : undefined
+				}
 				aria-controls={open ? listId : undefined}
 				aria-activedescendant={
 					open && entries[activeIndex]
@@ -192,6 +197,23 @@ export function SlashPickerTextarea({
 				onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
 				onBlur={() => setCommand(null)}
 				onKeyDown={(event) => {
+					if (
+						event.key === "Enter" &&
+						(event.metaKey || event.ctrlKey) &&
+						!event.shiftKey &&
+						!event.altKey &&
+						onSubmitShortcut
+					) {
+						if (
+							event.nativeEvent.isComposing ||
+							event.nativeEvent.keyCode === 229
+						)
+							return;
+						event.preventDefault();
+						if (open || event.repeat) return;
+						onSubmitShortcut();
+						return;
+					}
 					if (!open) return;
 					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 						event.preventDefault();
