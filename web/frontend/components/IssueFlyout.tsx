@@ -952,9 +952,15 @@ type Tab = (typeof TABS)[number];
 export function IssueFlyout({
 	issueId,
 	onClose,
+	autoFocusReply = false,
 }: {
 	issueId: number | null;
 	onClose: () => void;
+	// F4: when the modal hands off a freshly created issue, focus the reply
+	// composer after the flyout mounts and the issue detail has resolved. The
+	// generic click-to-open path leaves this off so existing tests that click a
+	// card and expect the title/header to receive focus keep their behavior.
+	autoFocusReply?: boolean;
 }) {
 	const { panelWidth, isMaximized, startDrag, toggleMaximized } =
 		useFlyoutWidth();
@@ -1037,6 +1043,19 @@ export function IssueFlyout({
 		panelRef.current?.focus();
 		return () => previouslyFocused?.focus?.();
 	}, [issueId]);
+
+	// F4 auto-open handoff: when the new-issue modal creates an issue and asks
+	// us to open its flyout, push focus past the title/header into the reply
+	// composer once the detail has rendered and ReplyComposer has mounted.
+	// Wait for `detail.data` so we don't focus a textarea that will be replaced
+	// when the canonical row arrives.
+	useEffect(() => {
+		if (!autoFocusReply || issueId == null || !detail.data) return;
+		const replyEl = panelRef.current?.querySelector<HTMLElement>(
+			'[data-testid="reply-input"]',
+		);
+		if (replyEl) replyEl.focus();
+	}, [autoFocusReply, issueId, detail.data]);
 
 	if (issueId == null) return null;
 
@@ -1272,8 +1291,15 @@ export function IssueFlyout({
 								</div>
 							</div>
 
+							{/* F4: description renders as a pinned chat-native card at the
+                  top of the scroll area. Evolved from the previous
+                  muted-Markdown block at the same spot to a bordered card
+                  so it reads as a chat message bubble anchoring the thread. */}
 							{issue.description && (
-								<div className="text-muted-foreground">
+								<div
+									data-testid="flyout-description-card"
+									className="rounded-lg border bg-muted/30 p-3 text-sm"
+								>
 									<Markdown source={issue.description} />
 								</div>
 							)}

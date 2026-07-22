@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
@@ -12,9 +13,19 @@ import { SyncFromGithubButton } from "@/components/SyncFromGithubButton";
 export default function BindingPage() {
 	const { binding } = useParams<{ binding: string }>();
 	const searchParams = useSearchParams();
-	const initialIssueId = searchParams.get("issue")
+	const deepLinkIssueId = searchParams.get("issue")
 		? Number(searchParams.get("issue"))
 		: null;
+	// F4: a freshly created issue opens the flyout automatically. The modal
+	// calls back with the new id after finishIssue settles (so staged
+	// attachments + the trailing release PATCH have landed); we mirror it
+	// into initialIssueId via the same path the deep-link uses, and let the
+	// KanbanBoard's existing useEffect sync it into the open flyout.
+	const [createdIssueId, setCreatedIssueId] = useState<number | null>(null);
+	const initialIssueId = createdIssueId ?? deepLinkIssueId;
+	const handleCreated = useCallback((issueId: number) => {
+		setCreatedIssueId(issueId);
+	}, []);
 
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ["issues", binding],
@@ -42,7 +53,7 @@ export default function BindingPage() {
 					{githubRepo && (
 						<SyncFromGithubButton binding={binding} githubRepo={githubRepo} />
 					)}
-					<NewIssueButton binding={binding} />
+					<NewIssueButton binding={binding} onCreated={handleCreated} />
 				</div>
 			</div>
 
@@ -53,7 +64,13 @@ export default function BindingPage() {
 				{isError && (
 					<p className="text-sm text-red-500">Failed to load issues</p>
 				)}
-				{data && <KanbanBoard issues={data} initialIssueId={initialIssueId} />}
+				{data && (
+					<KanbanBoard
+						issues={data}
+						initialIssueId={initialIssueId}
+						autoFocusReply={createdIssueId != null}
+					/>
+				)}
 			</div>
 		</div>
 	);

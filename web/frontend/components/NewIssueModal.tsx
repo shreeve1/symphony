@@ -26,6 +26,60 @@ import {
 	SlashPickerTextarea,
 	type SlashPickerField,
 } from "@/components/SlashPickerTextarea";
+import { cn } from "@/lib/utils";
+
+// Two-up agent picker (F4): pi | claude as the topmost field of the new-issue
+// modal. Clicking a button writes through to the same `agent` state that the
+// free-text input below it binds, so the slash picker, agent-aware model
+// preselect, and free-text custom agents all stay in sync. Custom agents
+// remain first-class (typed directly or pasted); the segmented control is a
+// shortcut, not a replacement for the underlying free-text value.
+function AgentSegmentedControl({
+	value,
+	onChange,
+}: {
+	value: string;
+	onChange: (next: string) => void;
+}) {
+	const isPi = value === "pi";
+	const isClaude = value === "claude";
+	return (
+		<div
+			role="group"
+			aria-label="Agent"
+			className="inline-flex w-full overflow-hidden rounded-md border"
+		>
+			<button
+				type="button"
+				data-testid="new-issue-agent-pi"
+				aria-pressed={isPi}
+				onClick={() => onChange(isPi ? "" : "pi")}
+				className={cn(
+					"flex-1 px-3 py-1.5 text-sm font-medium transition",
+					isPi
+						? "bg-foreground text-background"
+						: "bg-background hover:bg-muted/40",
+				)}
+			>
+				pi
+			</button>
+			<button
+				type="button"
+				data-testid="new-issue-agent-claude"
+				aria-pressed={isClaude}
+				onClick={() => onChange(isClaude ? "" : "claude")}
+				className={cn(
+					"flex-1 border-l px-3 py-1.5 text-sm font-medium transition",
+					isClaude
+						? "bg-foreground text-background"
+						: "bg-background hover:bg-muted/40",
+				)}
+			>
+				claude
+			</button>
+		</div>
+	);
+}
 
 // Fallback effort list for models that don't declare an `efforts` set in the
 // catalog. Models that do (e.g. gpt-5.5) drive the dropdown from their own set
@@ -106,7 +160,13 @@ function useCreateIssue(binding: string, bindingType: Issue["binding_type"]) {
 	});
 }
 
-export function NewIssueButton({ binding }: { binding: string }) {
+export function NewIssueButton({
+	binding,
+	onCreated,
+}: {
+	binding: string;
+	onCreated?: (issueId: number) => void;
+}) {
 	const [open, setOpen] = useState(false);
 	return (
 		<>
@@ -119,7 +179,11 @@ export function NewIssueButton({ binding }: { binding: string }) {
 				+ New Issue
 			</button>
 			{open && (
-				<NewIssueModal binding={binding} onClose={() => setOpen(false)} />
+				<NewIssueModal
+					binding={binding}
+					onClose={() => setOpen(false)}
+					onCreated={onCreated}
+				/>
 			)}
 		</>
 	);
@@ -137,9 +201,11 @@ function modelValue(option: ModelOption, models: readonly ModelOption[]) {
 function NewIssueModal({
 	binding,
 	onClose,
+	onCreated,
 }: {
 	binding: string;
 	onClose: () => void;
+	onCreated?: (issueId: number) => void;
 }) {
 	const [description, setDescription] = useState("");
 	const [skill, setSkill] = useState("");
@@ -336,6 +402,10 @@ function NewIssueModal({
 			}
 		}
 		setUploading(false);
+		// F4: auto-open the flyout after the two-stage flow settles. Bare create
+		// success is too early — staged attachments (and the trailing release
+		// PATCH) must finish first so the flyout opens on the canonical row.
+		if (onCreated) onCreated(pending.id);
 		onClose();
 	};
 
@@ -390,6 +460,23 @@ function NewIssueModal({
 					New issue
 				</h2>
 				<form ref={formRef} onSubmit={submit} className="space-y-3">
+					{/* F4: agent as the topmost field — two-up segmented control
+              (pi | claude) sits above a free-text input for custom agents.
+              Skill / effort / model / base stay secondary peer metadata. */}
+					<div className="space-y-1" data-testid="new-issue-agent-group">
+						<span className="text-xs font-medium text-muted-foreground">
+							Agent
+						</span>
+						<AgentSegmentedControl value={agent} onChange={setAgent} />
+						<input
+							data-testid="new-issue-agent"
+							value={agent}
+							onChange={(e) => setAgent(e.target.value)}
+							placeholder="custom agent (optional)"
+							className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-foreground/40"
+						/>
+					</div>
+
 					<label className="block space-y-1">
 						<span className="text-xs font-medium text-muted-foreground">
 							Description
@@ -434,15 +521,6 @@ function NewIssueModal({
 					)}
 
 					<div className="flex gap-3">
-						<FieldCombobox
-							label="Agent"
-							testid="new-issue-agent"
-							value={agent}
-							onChange={setAgent}
-							options={agentOptions}
-							emptyHint="binding default"
-							allowFreeText
-						/>
 						<FieldCombobox
 							label="Model"
 							testid="new-issue-model"
