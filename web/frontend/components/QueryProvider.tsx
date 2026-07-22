@@ -22,9 +22,18 @@ type ConnectionState = "connected" | "disconnected";
 const ConnectionContext = createContext<ConnectionState>("disconnected");
 
 // Tail events carry appended JSONL lines from a running issue's session file.
+// B3 #32 enriched the payload with run_id / source_id / line_cursors so the
+// F3 #35 consumer can filter by (issue_id, run_id) and dedupe against the
+// catch-up snapshot. The legacy {issue_id, lines} shape is preserved for
+// backwards compatibility with anything still reading useTailEvents().
 export interface TailEvent {
 	issue_id: number;
+	run_id?: number | null;
+	source_id?: string;
+	from_cursor?: number;
+	cursor?: number;
 	lines: string[];
+	line_cursors?: number[];
 }
 
 const TailContext = createContext<TailEvent[]>([]);
@@ -44,7 +53,12 @@ interface LiveMessage {
 	binding_name?: string;
 	row: IssueDetail | Run;
 	issue_id?: number;
+	run_id?: number;
+	source_id?: string;
+	from_cursor?: number;
+	cursor?: number;
 	lines?: string[];
+	line_cursors?: number[];
 }
 
 function websocketUrl() {
@@ -145,7 +159,12 @@ function LiveUpdates({
 				if (message.type === "run.tail") {
 					onTail({
 						issue_id: message.issue_id!,
+						run_id: message.run_id ?? null,
+						source_id: message.source_id,
+						from_cursor: message.from_cursor,
+						cursor: message.cursor,
 						lines: message.lines ?? [],
+						line_cursors: message.line_cursors ?? [],
 					});
 				}
 			};
