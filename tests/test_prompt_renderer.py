@@ -139,16 +139,21 @@ def test_preamble_file_renders_above_issue_block(tmp_path: Path) -> None:
 
 
 def test_output_contract_always_present() -> None:
-    """ADR-0032: OUTPUT_CONTRACT is always present regardless of preamble."""
+    """ADR-0032 + issue #31: a Symphony contract block is always present
+    regardless of preamble. Infra keeps the engine OUTPUT_CONTRACT; coding
+    bindings switch to the discussion contract (the contract heading still
+    announces itself, just with the discussion variant)."""
     # No preamble
     no_preamble = render_prompt(IssueData(identifier="AUTO-1", description="x"))
     assert "## Symphony output contract" in no_preamble
-    # Coding (also no preamble)
+    # Coding (also no preamble) — gets the discussion contract, not the
+    # engine OUTPUT_CONTRACT. See issue #31 / B2.
     coding = render_prompt(
         IssueData(identifier="AUTO-1", description="x"),
         binding_type="coding",
     )
-    assert "## Symphony output contract" in coding
+    assert "## Symphony discussion contract" in coding
+    assert "## Symphony output contract" not in coding
 
 
 def test_render_review_prompt_uses_unattended_review_preamble() -> None:

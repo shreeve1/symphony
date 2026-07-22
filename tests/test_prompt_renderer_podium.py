@@ -5,7 +5,9 @@ from pathlib import Path
 
 from prompt_renderer import (
     CHECKPOINTED_EXPLORATION_DIRECTIVE,
+    DISCUSSION_OUTPUT_CONTRACT,
     INFRA_PREAMBLE,
+    OUTPUT_CONTRACT,
     IssueData,
     render_prompt,
     render_previous_comments_block,
@@ -624,3 +626,137 @@ def test_attachment_without_display_name_uses_path() -> None:
     assert "/only/path.txt" in prompt
     # With empty name, path should not show a bold label
     assert "**" not in prompt.split("`/only/path.txt`")[0].split("\n")[-1]
+
+
+# ── Issue #31 / B2: coding-binding discussion contract ──────────────
+
+
+def test_discussion_output_contract_constant_is_defined() -> None:
+    """Issue #31: a DISCUSSION_OUTPUT_CONTRACT constant must exist alongside
+    OUTPUT_CONTRACT so the renderer can pick one by binding_type."""
+    assert isinstance(DISCUSSION_OUTPUT_CONTRACT, str)
+    assert DISCUSSION_OUTPUT_CONTRACT  # non-empty
+    # Infra path is unchanged: zero-touch on the existing constant.
+    assert isinstance(OUTPUT_CONTRACT, str)
+    assert OUTPUT_CONTRACT != DISCUSSION_OUTPUT_CONTRACT
+
+
+def test_discussion_output_contract_has_required_sections() -> None:
+    """The discussion contract must encode the four behaviors from the issue:
+    respond naturally, invoke the handed skill, commit-as-you-go, stop when
+    the turn is said, plus the skill-driven terminal-marker clause and the
+    drop-SYMPHONY_QUESTION guidance."""
+    text = DISCUSSION_OUTPUT_CONTRACT
+    assert "## Symphony discussion contract" in text
+    assert "Respond naturally" in text
+    assert "Invoke the handed skill" in text
+    assert "Commit as you go" in text
+    assert "Stop when the turn is said" in text
+    # SYMPHONY_RESULT/SYMPHONY_SCHEDULE are recognised but not required.
+    assert "SYMPHONY_RESULT: done" in text
+    assert "SYMPHONY_SCHEDULE: not_before=" in text
+    assert "not required" in text or "not mandated" in text or "skill-driven" in text
+    # SYMPHONY_QUESTION is dropped — coding agent types questions in prose.
+    assert "SYMPHONY_QUESTION_BEGIN" in text  # mentioned as the thing NOT to emit
+    assert "Do not emit" in text
+    assert "type the question" in text
+    assert "natural" in text and "turn and stop" in text
+
+
+def test_coding_binding_uses_discussion_contract_in_full_render() -> None:
+    """Issue #31: full-render path (prompt_renderer.py:465) — coding bindings
+    must render DISCUSSION_OUTPUT_CONTRACT, not OUTPUT_CONTRACT."""
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-31",
+            name="Coding issue",
+            description="Do the coding work",
+            preferred_skill="/dev-build",
+        ),
+        binding_type="coding",
+        tracker_kind="podium",
+    )
+
+    assert "## Symphony discussion contract" in prompt
+    assert "## Symphony output contract" not in prompt
+    # The discussion contract's distinctive clauses survive into the prompt.
+    assert "Commit as you go" in prompt
+    assert "Stop when the turn is said" in prompt
+    # Infra wording stays out.
+    assert "you must commit your changes before emitting your final verdict" not in prompt
+    # The contract names the result markers but the agent is told they are optional.
+    assert "Terminal outcome markers" in prompt
+
+
+def test_infra_binding_keeps_output_contract_unchanged() -> None:
+    """Issue #31: infra binding path must be zero-change to OUTPUT_CONTRACT.
+    Default binding_type is infra; both default and explicit must match."""
+    preamble = _preamble_file(tmp_path=Path("/tmp"))
+    preamble.write_text(INFRA_PREAMBLE, encoding="utf-8")
+
+    default_binding = render_prompt(
+        IssueData(identifier="POD-IR", name="Infra", description="Body"),
+        preamble_path=preamble,
+        tracker_kind="podium",
+    )
+    explicit_binding = render_prompt(
+        IssueData(identifier="POD-IR2", name="Infra", description="Body"),
+        preamble_path=preamble,
+        binding_type="infra",
+        tracker_kind="podium",
+    )
+
+    # Both paths use the unchanged OUTPUT_CONTRACT heading.
+    assert "## Symphony output contract" in default_binding
+    assert "## Symphony output contract" in explicit_binding
+    # Neither path leaks the discussion contract.
+    assert "## Symphony discussion contract" not in default_binding
+    assert "## Symphony discussion contract" not in explicit_binding
+
+
+def test_coding_binding_uses_discussion_contract_in_resume() -> None:
+    """Issue #31: resume-delta path (prompt_renderer.py:447) — coding bindings
+    must use DISCUSSION_OUTPUT_CONTRACT, not OUTPUT_CONTRACT."""
+    prompt = render_prompt(
+        IssueData(
+            identifier="POD-31R",
+            comments_md=_RESUME_CX,
+            preferred_skill="/dev-build",
+        ),
+        binding_type="coding",
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "## Symphony discussion contract" in prompt
+    assert "## Symphony output contract" not in prompt
+    # Newest operator reply still survives (the resume branch is the delta path).
+    assert "Roll back to staging first" in prompt
+    # Skill directive survives into the resume delta.
+    assert "First, invoke the `dev-build` skill" in prompt
+
+
+def test_infra_binding_keeps_output_contract_in_resume() -> None:
+    """Issue #31: resume-delta path for infra bindings is byte-identical to the
+    pre-change behavior (OUTPUT_CONTRACT, not DISCUSSION_OUTPUT_CONTRACT)."""
+    prompt = render_prompt(
+        IssueData(identifier="POD-IR-R", comments_md=_RESUME_CX),
+        binding_type="infra",
+        tracker_kind="podium",
+        resume=True,
+    )
+
+    assert "## Symphony output contract" in prompt
+    assert "## Symphony discussion contract" not in prompt
+    assert "Roll back to staging first" in prompt
+
+
+def test_coding_binding_discussion_contract_drops_mandated_marker() -> None:
+    """Issue #31: the discussion contract tells the agent it does NOT have to
+    emit SYMPHONY_RESULT — a clean natural turn is the run completion. The
+    infra contract, by contrast, frames the marker as required end-of-run
+    machinery. We assert the framing difference in the contract text itself."""
+    assert "does not require you to emit a marker" in DISCUSSION_OUTPUT_CONTRACT
+    assert "a clean natural turn" in DISCUSSION_OUTPUT_CONTRACT
+    # The infra contract is the one that frames the marker as required.
+    assert "End every run by emitting exactly one terminal outcome" in OUTPUT_CONTRACT

@@ -51,6 +51,59 @@ Optional: to override the posted comment, emit a `SYMPHONY_SUMMARY_BEGIN` /
 `SYMPHONY_SUMMARY_END` block with marker lines at the START of a line (no
 indentation). Override summaries and questions are bounded to ~4000 characters."""
 
+# Coding-binding discussion contract (issue #31 / B2). When `binding_type ==
+# "coding"`, dispatched prompts use this contract in place of `OUTPUT_CONTRACT`:
+# the operator's natural turn is the deliverable (ADR-0022), the agent commits
+# as it goes, only emits a terminal marker when the handed skill drives it to
+# completion, and asks questions inline (the engine parser still understands
+# SYMPHONY_RESULT/SYMPHONY_SCHEDULE if the agent emits them, but does not
+# require them; SYMPHONY_QUESTION is intentionally dropped — the agent types
+# the question in prose and stops). Infra bindings continue to use
+# OUTPUT_CONTRACT byte-for-byte; this constant is only selected by binding_type.
+DISCUSSION_OUTPUT_CONTRACT = """\
+## Symphony discussion contract
+
+You are running on a coding binding. The issue body (and, on resume, the most
+recent operator turn) is the prompt; your natural conversational response is
+what Symphony captures and posts as the issue comment.
+
+### How to run
+
+1. **Respond naturally to the operator's turn.** Write the way you would in a
+   normal conversation with the operator. Symphony captures your natural turn
+   and posts it as the issue comment — you do not need to author a separate
+   summary block.
+2. **Invoke the handed skill and follow it.** If the prompt directs you to a
+   skill (for example via `First, invoke the `<skill>` skill and follow its
+   instructions`), invoke that skill first and let its instructions drive the
+   shape of your work.
+3. **Commit as you go.** When you change files, commit each meaningful step
+   in place with a clear message. Do not batch work into a single end-of-run
+   commit; the operator needs to see progress land.
+4. **Stop when the turn is said.** When your natural turn has answered the
+   operator's question or applied their direction, stop. Do not loop, do not
+   keep producing filler, and do not preempt the next operator turn.
+
+### Terminal outcome markers (skill-driven, not required)
+
+The markers below are still recognised by the engine if you emit them, but you
+should only emit one when the skill you invoked tells you the run is truly
+complete (for example a build/deploy skill that has finished its verification
+step). The engine does not require you to emit a marker — a clean natural turn
+that commits its work is a complete run.
+
+- `SYMPHONY_RESULT: done` — the skill signalled a clean completion.
+- `SYMPHONY_RESULT: review` — the skill produced work that needs operator review.
+- `SYMPHONY_RESULT: blocked` — the skill surfaced a blocker that needs the
+  operator's attention before you can proceed.
+- `SYMPHONY_SCHEDULE: not_before=<next_window|iso8601-with-offset> reason="..."`
+  — defer non-urgent follow-up into a maintenance window.
+
+If you need operator clarification mid-run, **type the question in your natural
+turn and stop.** Do not emit a `SYMPHONY_QUESTION_BEGIN` /
+`SYMPHONY_QUESTION_END` block — your prose question becomes the comment and the
+operator replies through the same channel."""
+
 # Engine-owned review preambles (ADR-0023/ADR-0024). Review runs are unattended
 # native service work, not an operator-facing catalog skill.
 REVIEW_PREAMBLE = """\
@@ -444,7 +497,14 @@ def render_prompt(
             else ""
         )
 
-        parts = [OUTPUT_CONTRACT]
+        # Issue #31 / B2: coding bindings use the discussion contract in place of
+        # OUTPUT_CONTRACT — natural turn, commit-as-you-go, no mandated marker,
+        # no SYMPHONY_QUESTION block. Infra bindings keep OUTPUT_CONTRACT
+        # byte-for-byte.
+        contract = (
+            DISCUSSION_OUTPUT_CONTRACT if binding_type == "coding" else OUTPUT_CONTRACT
+        )
+        parts = [contract]
         # A scheduled ticket released into the maintenance window can dispatch as
         # a resume. Without this, the "## Schedule Context" block is dropped and
         # the agent loses its "you're in the approved window, apply now" signal,
@@ -460,11 +520,16 @@ def render_prompt(
             parts.append(delta_block)
         prompt = "\n\n".join(parts)
     else:
+        # Issue #31 / B2: full-render path — coding bindings get the discussion
+        # contract, infra bindings keep OUTPUT_CONTRACT unchanged.
+        contract = (
+            DISCUSSION_OUTPUT_CONTRACT if binding_type == "coding" else OUTPUT_CONTRACT
+        )
         prompt_head = rendered.strip()
         if prompt_head:
-            prompt = f"{prompt_head}\n\n{issue_block}\n\n{OUTPUT_CONTRACT}"
+            prompt = f"{prompt_head}\n\n{issue_block}\n\n{contract}"
         else:
-            prompt = f"{issue_block}\n\n{OUTPUT_CONTRACT}"
+            prompt = f"{issue_block}\n\n{contract}"
 
     # The operator's skill choice is a directive, not metadata: the scheduler
     # loads the skill into pi via --skill, and this line makes the agent
