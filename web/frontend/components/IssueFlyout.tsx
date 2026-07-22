@@ -38,6 +38,7 @@ import {
 import { RunHistoryList } from "@/components/RunHistoryList";
 import { SessionTailPanel } from "@/components/SessionTailPanel";
 import { AttachmentPanel } from "@/components/AttachmentPanel";
+import { IssueChat } from "@/components/IssueChat";
 import { useAppendTailEvent } from "@/components/QueryProvider";
 import {
 	SlashPickerTextarea,
@@ -896,15 +897,17 @@ function SteerComposer({
 	);
 }
 
-// Comments are stored as one chronological markdown blob (oldest first).
-// Render the blob unchanged so every agent and operator turn stays visible.
-
+// Comments thread scroll wrapper. F1 (#33) replaces the raw markdown blob with
+// `IssueChat`, which splits on the §2.1 header grammar into per-role bubbles,
+// interleaves run bubbles, and renders legacy prose in a collapsed bucket.
 function CommentsThread({
 	issueId,
 	source,
+	runs,
 }: {
 	issueId: number;
 	source: string;
+	runs: readonly Run[];
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const stickToBottomRef = useRef(true);
@@ -923,7 +926,6 @@ function CommentsThread({
 		const el = scrollRef.current;
 		if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
 	}, [source]);
-	const hasComments = source.trim().length > 0;
 	return (
 		<div
 			ref={scrollRef}
@@ -931,18 +933,68 @@ function CommentsThread({
 			onScroll={(event) => {
 				stickToBottomRef.current = isNearBottom(event.currentTarget);
 			}}
-			className="max-h-[60vh] overflow-y-auto"
+			className="max-h-[60vh] overflow-y-auto pr-1"
 		>
-			{hasComments ? (
-				<div className="rounded-md border p-2">
-					<Markdown source={source} />
-				</div>
-			) : (
-				<p className="rounded-md border p-2 text-xs text-muted-foreground">
-					No comments yet.
-				</p>
-			)}
+			<IssueChat commentsMd={source} runs={runs} />
 		</div>
+	);
+}
+
+// Spec §3 state visibility: a topbar chip carries `state · sublabel` so the
+// actionable state (in_review → "your turn") reads at a glance. The chip
+// stays in the flyout header above the description card and below the title.
+const STATE_SUBLABEL: Record<string, string> = {
+	todo: "queued",
+	running: "agent working",
+	in_review: "your turn",
+	blocked: "blocked",
+	done: "done",
+	archived: "archived",
+};
+
+const STATE_CHIP_STYLE: Record<string, string> = {
+	todo: "border-slate-300 bg-slate-100 text-slate-800",
+	running: "border-sky-300 bg-sky-100 text-sky-800",
+	in_review: "border-amber-300 bg-amber-100 text-amber-800",
+	blocked: "border-red-300 bg-red-100 text-red-800",
+	done: "border-emerald-300 bg-emerald-100 text-emerald-800",
+	archived: "border-zinc-300 bg-zinc-100 text-zinc-700",
+};
+
+function StateChip({
+	state,
+	freshTodo,
+}: {
+	state: string;
+	freshTodo: boolean;
+}) {
+	const sublabel = freshTodo ? "say something" : STATE_SUBLABEL[state] ?? state;
+	const style = STATE_CHIP_STYLE[state] ?? "border-slate-300 bg-slate-100 text-slate-800";
+	return (
+		<span
+			data-testid="state-chip"
+			data-state={state}
+			className={cn(
+				"inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+				style,
+			)}
+		>
+			<span className="font-semibold uppercase tracking-wide">{state}</span>
+			<span aria-hidden className="opacity-60">·</span>
+			<span data-testid="state-chip-sublabel">{sublabel}</span>
+		</span>
+	);
+}
+
+// Freshly-created todo detection for the §3 "say something" sublabel. The
+// operator rarely sees a todo that has just been created; the heuristic is
+// "todo with no run yet" — matches the §10 fresh-todo case where the composer
+// auto-focuses for a seed comment.
+function isFreshTodo(issue: IssueDetail): boolean {
+	return (
+		issue.state === "todo" &&
+		issue.latest_run_id == null &&
+		issue.comments_md.trim().length === 0
 	);
 }
 
@@ -1255,7 +1307,7 @@ export function IssueFlyout({
 					) : (
 						<div className="space-y-4 p-6">
 							<div className="flex items-start justify-between gap-3">
-								<div className="min-w-0">
+								<div className="min-w-0 space-y-1">
 									<p
 										className="text-sm text-muted-foreground"
 										data-testid="flyout-issue-number"
@@ -1269,6 +1321,10 @@ export function IssueFlyout({
 									>
 										{issue.title}
 									</h2>
+									<StateChip
+										state={issue.state}
+										freshTodo={isFreshTodo(issue)}
+									/>
 								</div>
 								<div className="flex shrink-0 gap-2">
 									<button
@@ -1300,6 +1356,9 @@ export function IssueFlyout({
 									data-testid="flyout-description-card"
 									className="rounded-lg border bg-muted/30 p-3 text-sm"
 								>
+									<h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+										Description
+									</h3>
 									<Markdown source={issue.description} />
 								</div>
 							)}
@@ -1365,6 +1424,7 @@ export function IssueFlyout({
 											<CommentsThread
 												issueId={issue.id}
 												source={issue.comments_md}
+												runs={runs.data ?? []}
 											/>
 											<ReplyComposer
 												key={issue.id}
