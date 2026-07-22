@@ -4,7 +4,6 @@ import {
 	appendSessionTail,
 	expect,
 	expectCleanConsole,
-	finishRun,
 	seedRunningRunIssue,
 	test,
 } from "./fixtures";
@@ -107,10 +106,11 @@ test("steer controls enable for Claude on claude_persist binding", async ({
 		"interrupt the current turn now (Esc)",
 	);
 
+	await page.unrouteAll({ behavior: "ignoreErrors" });
 	expectCleanConsole(problems);
 });
 
-test("steer controls disable for pi one-shot on claude_persist binding", async ({
+test("pi one-shot live run routes to comment and hides Abort", async ({
 	page,
 	problems,
 }) => {
@@ -122,36 +122,32 @@ test("steer controls disable for pi one-shot on claude_persist binding", async (
 	});
 
 	await openSessionTab(page, "homelab", title);
-	await expect(page.getByTestId("steer-input")).toBeDisabled();
-	await expect(page.getByTestId("steer-abort")).toBeDisabled();
+	await expect(page.getByTestId("steer-input")).toBeEnabled();
+	await expect(page.getByTestId("steer-abort")).toBeHidden();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Comment · agent sees it next park",
+	);
 	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
-		"not using pi RPC",
+		"Agent is running",
 	);
 	await expect(page.getByTestId("steer-agent-copy")).toBeHidden();
 
+	await page.unrouteAll({ behavior: "ignoreErrors" });
 	expectCleanConsole(problems);
 });
 
-test("steer controls disable for Claude without claude_persist and idle issues", async ({
+test("non-persist Claude live run routes to comment and hides Abort", async ({
 	page,
 	problems,
 }) => {
-	const claudeTitle = `e2e steer claude ${Date.now()}`;
-	seedRunningRunIssue("homelab", claudeTitle, "claude");
-	await openSessionTab(page, "homelab", claudeTitle);
-	await expect(page.getByTestId("steer-input")).toBeDisabled();
-	await expect(page.getByTestId("steer-abort")).toBeDisabled();
-	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
-		"claude_persist",
-	);
+	const title = `e2e steer claude ${Date.now()}`;
+	seedRunningRunIssue("homelab", title, "claude");
 
-	const idleTitle = `e2e steer idle ${Date.now()}`;
-	const { runId } = seedRunningRunIssue("homelab", idleTitle);
-	finishRun(runId, "finished before operator steer");
-	await openSessionTab(page, "homelab", idleTitle);
-	await expect(page.getByTestId("steer-input")).toBeDisabled();
-	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
-		"only while a pi RPC run is active",
+	await openSessionTab(page, "homelab", title);
+	await expect(page.getByTestId("steer-input")).toBeEnabled();
+	await expect(page.getByTestId("steer-abort")).toBeHidden();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Comment · agent sees it next park",
 	);
 
 	expectCleanConsole(problems);
@@ -176,6 +172,22 @@ test("abort control queues abort and shows delivered status", async ({
 	);
 	await expect(page.getByTestId("session-tail-line").last()).toContainText(
 		"operator_abort",
+	);
+
+	expectCleanConsole(problems);
+});
+
+test("steer-mode composer shows the Steer · live mode pill", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e steer mode pill ${Date.now()}`;
+	seedRunningRunIssue("homelab", title);
+
+	await openSessionTab(page, "homelab", title);
+	await expect(page.getByTestId("steer-composer")).toBeVisible();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Steer · live",
 	);
 
 	expectCleanConsole(problems);
