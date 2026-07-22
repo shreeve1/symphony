@@ -32,6 +32,7 @@ from .dispatch_state import (
     _new_dispatch_state,
 )
 from .ports import fetch_issue as _fetch_issue, maybe_await as _maybe_await
+from .stamp import _stamp_comment
 from .reconcile import (
     reconcile_pending_review as _reconcile_pending_review,
     reconcile_stale_running as _reconcile_stale_running,
@@ -449,7 +450,7 @@ async def _prepare_run_tick_dispatch(
             review_comment = "\n\n".join(review_parts)
             await adapter.add_comment(
                 candidate.id,
-                CommentPayload(body=review_comment),
+                CommentPayload(body=_stamp_comment("system", review_comment)),
             )
             comments_text = (
                 f"{comments_text}\n\n{review_comment}"

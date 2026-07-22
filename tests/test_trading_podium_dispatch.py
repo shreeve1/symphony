@@ -222,8 +222,9 @@ async def test_podium_question_marker_persists_schema_safe_review_verdict(
     assert issue["state"] == "in_review"
     assert issue["latest_run_state"] == "succeeded"
     assert issue["latest_verdict"] == "review"
-    assert issue["comments_md"] == question
-    assert "Symphony question" not in issue["comments_md"]
+    assert "### agent · " in issue["comments_md"]
+    assert issue["comments_md"].endswith(question)
+    assert "Symphony question" not in issue["comments_md"]  
     assert run is not None
     assert run["state"] == "succeeded"
     assert run["verdict"] == "review"

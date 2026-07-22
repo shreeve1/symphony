@@ -154,8 +154,8 @@ def test_comment_appends_verbatim_without_header(
     response = client.patch(f"/api/issues/{issue_id}", json={"comments_md": prior})
     assert response.status_code == 200
 
-    # The patrol worker stamps its own `### Patrol (...)` header; the endpoint
-    # injects none. Posting a pre-headed body lands it verbatim after the prior.
+    # The endpoint stamps `### operator · <iso-ts>Z` as the attribution header.
+    # The body lands with the header wrapper, not bare.
     response = client.post(
         f"/api/issues/{issue_id}/comment",
         json={"body": "### Patrol (2026-06-20T00:00:00+00:00)\n\npass"},
@@ -163,7 +163,11 @@ def test_comment_appends_verbatim_without_header(
     assert response.status_code == 200
     comments = response.json()["comments_md"]
     assert prior in comments
+    assert "### operator · " in comments
     assert "### Patrol (" in comments
-    assert comments.index(prior) < comments.index("### Patrol (")
-    # Verbatim: the endpoint never injects an Operator Reply header of its own.
+    assert comments.index(prior) < comments.index("### operator · ")
+    # The new header replaces what was previously bare; old Operator Reply format
+    # is never injected (the role-stamp header is the attribution).
     assert "### Operator Reply (" not in comments
+    assert "### operator · " in comments.split("### Patrol (")[0]
+

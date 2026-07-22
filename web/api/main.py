@@ -187,6 +187,8 @@ except ModuleNotFoundError:  # pragma: no cover
 
 format_cancellation_comment = _schedule.format_cancellation_comment
 format_schedule_comment = _schedule.format_schedule_comment
+from scheduler.stamp import _stamp_comment
+
 next_maintenance_window = _schedule.next_maintenance_window
 parse_schedule_comment = _schedule.parse_schedule_comment
 ScheduleParseError = _schedule.ScheduleParseError
@@ -1717,7 +1719,7 @@ async def schedule_issue(
     now_dt = datetime.now(UTC)
     now = now_dt.isoformat()
     not_before, reason = _resolve_schedule_request(schedule, now_dt)
-    appended = "\n\n" + format_schedule_comment(not_before=not_before, reason=reason)
+    appended = "\n\n" + _stamp_comment("system", format_schedule_comment(not_before=not_before, reason=reason))
     connection.execute(
         """
         UPDATE issue
@@ -1770,7 +1772,7 @@ async def unschedule_issue(
                updated_at = ?
          WHERE id = ?
         """,
-        ("\n\n" + cancellation, now, issue_id),
+        ("\n\n" + _stamp_comment("system", cancellation), now, issue_id),
     )
     connection.commit()
     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
@@ -1849,7 +1851,7 @@ async def reply_to_issue(
 
     now = _next_updated_at(current["updated_at"])
     epoch = format_retry_epoch_marker("operator", datetime.fromisoformat(now))
-    appended = f"\n\n### Operator Reply ({now})\n\n{reply.body.strip()}\n\n{epoch}"
+    appended = "\n\n" + _stamp_comment("operator", f"### Operator Reply ({now})\n\n{reply.body.strip()}\n\n{epoch}")
 
     # One atomic conditional UPDATE: append + state flip + bump, all server-side.
     # COALESCE guards a legacy NULL comments_md (NULL || text yields NULL, which
@@ -1923,7 +1925,7 @@ async def comment_on_issue(
         raise HTTPException(status_code=status, detail=errors) from exc
 
     now = _next_updated_at(current["updated_at"])
-    appended = f"\n\n{comment.body.strip()}"  # verbatim, no `### …` header
+    appended = "\n\n" + _stamp_comment("operator", comment.body.strip())
 
     # One atomic append + bump. No state clause and no run-state guard: a Comment
     # never reopens and never 409s. COALESCE guards a legacy NULL comments_md.
@@ -2013,7 +2015,7 @@ async def steer_issue(
 
     now = _next_updated_at(current["updated_at"])
     heading = "Operator Steer" if steer.action == "steer" else "Operator Abort"
-    appended = f"\n\n### {heading} ({now})\n\n{message}"
+    appended = "\n\n" + _stamp_comment("operator", f"### {heading} ({now})\n\n{message}")
     cursor = connection.execute(
         """
         UPDATE issue
