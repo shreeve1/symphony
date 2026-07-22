@@ -29,6 +29,14 @@ const waitForReply = (page: Page) =>
 			res.ok(),
 	);
 
+const waitForComment = (page: Page) =>
+	page.waitForResponse(
+		(res) =>
+			/\/api\/issues\/\d+\/comment$/.test(res.url()) &&
+			res.request().method() === "POST" &&
+			res.ok(),
+	);
+
 test("Control+Enter submits from the Reply composer", async ({
 	page,
 	problems,
@@ -417,21 +425,46 @@ test("failed Reply keeps the flyout and draft open with an error", async ({
 	expectCleanConsole(problems, { ignore: [/409/] });
 });
 
-test("composer send is disabled with a hint while the issue is running", async ({
+test("running non-steerable issue routes the composer to comment-mode with a hint", async ({
 	page,
 	problems,
 }) => {
-	const title = `e2e reply running issue ${Date.now()}`;
-	seedRunningRunIssue("homelab", title);
+	const title = `e2e reply running non-steerable ${Date.now()}`;
+	seedRunningRunIssue("homelab", title, "pi");
+	// pi + one-shot binding → composer auto-routes to comment-mode (live,
+	// non-steerable); §7 case "Live, non-steerable → Comment · agent sees it
+	// next park".
+	await page.route("**/api/bindings", async (route) => {
+		const response = await route.fetch();
+		const bindings = (await response.json()) as Record<string, unknown>[];
+		await route.fulfill({
+			response,
+			json: bindings.map((binding) =>
+				binding.name === "homelab"
+					? { ...binding, pi_mode: "one-shot" }
+					: binding,
+			),
+		});
+	});
 
 	await openIssue(page, "homelab", title);
 
+	await expect(page.getByTestId("reply-composer")).toBeVisible();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Comment · agent sees it next park",
+	);
+	await expect(page.getByTestId("reply-input")).toBeEnabled();
 	await expect(page.getByTestId("reply-send")).toBeDisabled();
-	await expect(page.getByTestId("reply-input")).toBeDisabled();
 	await expect(page.getByTestId("reply-disabled-hint")).toContainText(
 		"Agent is running",
 	);
+	await page.getByTestId("reply-input").fill("Save this for the next park.");
+	const commented = waitForComment(page);
+	await page.getByTestId("reply-send").click();
+	await commented;
+	await expect(page.getByTestId("issue-flyout")).toBeHidden();
 
+	await page.unrouteAll({ behavior: "ignoreErrors" });
 	expectCleanConsole(problems);
 });
 
@@ -455,6 +488,96 @@ test("no console errors during the reply flow", async ({ page, problems }) => {
 			.getByTestId("issue-card")
 			.filter({ hasText: title }),
 	).toBeVisible({ timeout: 4_500 });
+
+	expectCleanConsole(problems);
+});
+
+test("mode pill is always visible and names mode + consequence", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply mode pill in_review ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "in_review");
+
+	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("reply-composer")).toBeVisible();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Reply · re-dispatches",
+	);
+
+	expectCleanConsole(problems);
+});
+
+test("scheduled-hold todo routes the composer to Comment · note pill", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply scheduled ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "todo");
+	// Force scheduled_for on this todo row so the §7 scheduled-hold case
+	// (todo + scheduled_for → comment-note) applies.
+	await page.route(`**/api/issues/${issueId}`, async (route) => {
+		const request = route.request();
+		if (request.method() !== "GET") return route.fallback();
+		const response = await route.fetch();
+		const detail = (await response.json()) as Record<string, unknown>;
+		await route.fulfill({
+			response,
+			json: { ...detail, scheduled_for: "2099-01-01T00:00:00Z" },
+		});
+	});
+
+	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("reply-composer")).toBeVisible();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Comment · note",
+	);
+	await page.getByTestId("reply-input").fill("Hold note.");
+	const commented = waitForComment(page);
+	await page.getByTestId("reply-send").click();
+	await commented;
+
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+	expectCleanConsole(problems);
+});
+
+test("your-turn affordance renders for state=in_review", async ({
+	page,
+	problems,
+}) => {
+	const title = `e2e reply your turn ${Date.now()}`;
+	const { issueId } = seedIssue("homelab", title, "in_review");
+
+	await page.goto(`/homelab?issue=${issueId}`);
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("state-chip-sublabel")).toHaveText("your turn");
+
+	expectCleanConsole(problems);
+});
+
+test("freshly created todo routes to Comment · seed and focuses it", async ({
+	page,
+	problems,
+}) => {
+	const description = `e2e reply fresh todo ${Date.now()}`;
+
+	await page.goto("/homelab");
+	await page.getByTestId("new-issue-button").click();
+	await page.getByTestId("new-issue-description").fill(description);
+	await page.getByTestId("new-issue-submit").click();
+
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	await expect(page.getByTestId("composer-mode-pill")).toHaveText(
+		"Comment · seed",
+	);
+	await expect(page.getByTestId("reply-input")).toBeFocused();
+
+	await page.getByTestId("reply-input").fill("Initial context.");
+	const commented = waitForComment(page);
+	await page.getByTestId("reply-send").click();
+	await commented;
 
 	expectCleanConsole(problems);
 });

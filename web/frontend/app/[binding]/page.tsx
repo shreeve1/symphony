@@ -68,7 +68,7 @@ export default function BindingPage() {
 					<KanbanBoard
 						issues={data}
 						initialIssueId={initialIssueId}
-						autoFocusReply={createdIssueId != null}
+						freshIssueId={createdIssueId}
 					/>
 				)}
 			</div>

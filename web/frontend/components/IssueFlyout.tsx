@@ -23,7 +23,6 @@ import {
 } from "@/lib/api";
 import { STATES } from "@/lib/issues";
 import {
-	isActiveRunState,
 	issueDetailRefetchIntervalMs,
 	runListRefetchIntervalMs,
 } from "@/lib/polling";
@@ -566,23 +565,128 @@ function MetadataChips({
 	);
 }
 
-// Operator reply composer: appends an attributed reply to the comment thread
-// and flips the issue back to todo so the agent re-runs (server-side, atomic).
-// Sits below the comment thread so replies follow the conversation they continue.
-function ReplyComposer({
+// One composer routes reply/comment/steer from the current issue and run state.
+type CommentHint = "note" | "agent-next-park" | "seed";
+
+type ComposerMode =
+	| { kind: "reply" }
+	| { kind: "comment"; hint: CommentHint }
+	| { kind: "steer" };
+
+type ComposerContext = "comments" | "session";
+
+function composerModeFor(
+	issue: IssueDetail,
+	latestRun: Run | null,
+	bindingPiMode: "one-shot" | "rpc" | null,
+	bindingClaudePersist: boolean | null,
+	freshIssueId: number | null,
+	stagedScheduleMode: "next_window" | "none" | null,
+): ComposerMode {
+	if (stagedScheduleMode != null) return { kind: "comment", hint: "note" };
+	const liveRun =
+		issue.state === "running" &&
+		issue.latest_run_state === "running" &&
+		issue.latest_run_id != null;
+	const latestRunAgent = latestRun?.agent?.trim().toLowerCase() ?? null;
+	const canSteerLive =
+		liveRun &&
+		((latestRunAgent === "pi" && bindingPiMode === "rpc") ||
+			(latestRunAgent === "claude" && bindingClaudePersist === true));
+	if (canSteerLive) return { kind: "steer" };
+	if (liveRun) return { kind: "comment", hint: "agent-next-park" };
+	// Fresh-todo (§10) — just-created issue awaits a first seed comment.
+	if (
+		freshIssueId === issue.id &&
+		issue.state === "todo" &&
+		issue.comments_md.trim() === ""
+	) {
+		return { kind: "comment", hint: "seed" };
+	}
+	// Scheduled-hold: todo + scheduled_for → comment-note.
+	if (issue.state === "todo" && issue.scheduled_for != null)
+		return { kind: "comment", hint: "note" };
+	// Parked states reply (re-dispatches the agent).
+	if (
+		issue.state === "in_review" ||
+		issue.state === "blocked" ||
+		issue.state === "done"
+	) {
+		return { kind: "reply" };
+	}
+	// todo without scheduled_for + not fresh — comment-note so the operator
+	// can annotate the queued issue without disturbing it.
+	return { kind: "comment", hint: "note" };
+}
+
+function composerPill(mode: ComposerMode): string {
+	switch (mode.kind) {
+		case "reply":
+			return "Reply · re-dispatches";
+		case "steer":
+			return "Steer · live";
+		case "comment":
+			switch (mode.hint) {
+				case "note":
+					return "Comment · note";
+				case "agent-next-park":
+					return "Comment · agent sees it next park";
+				case "seed":
+					return "Comment · seed";
+			}
+	}
+}
+
+function composerPlaceholder(
+	mode: ComposerMode,
+	hasStaged: boolean,
+	latestRunAgent: string | null,
+): string {
+	if (mode.kind === "steer") {
+		return latestRunAgent === "claude"
+			? "Queue guidance for Claude’s next turn…"
+			: "Redirect the running pi agent…";
+	}
+	if (mode.kind === "comment" && mode.hint === "agent-next-park") {
+		return "Add a comment — agent sees it at its next park…";
+	}
+	if (mode.kind === "comment" && mode.hint === "seed") {
+		return "Seed the new issue with context for the agent…";
+	}
+	if (hasStaged) {
+		return "Comment, then Send to apply staged controls…";
+	}
+	if (mode.kind === "comment") {
+		return "Add a comment (won’t re-run the agent)…";
+	}
+	return "Write a reply to the agent…";
+}
+
+function Composer({
 	issue,
+	latestRun,
+	bindingPiMode,
+	bindingClaudePersist,
 	staged,
 	slashFields,
 	onClearStaged,
 	onSent,
+	context,
+	freshIssueId,
 }: {
 	issue: IssueDetail;
+	latestRun: Run | null;
+	bindingPiMode: "one-shot" | "rpc" | null;
+	bindingClaudePersist: boolean | null;
 	staged: StagedDispatchControls;
 	slashFields: readonly SlashPickerField[];
 	onClearStaged: () => void;
 	onSent: () => void;
+	context: ComposerContext;
+	freshIssueId: number | null;
 }) {
 	const queryClient = useQueryClient();
+	const appendTail = useAppendTailEvent();
 	const draftKey = `podium.reply-draft.${issue.id}`;
 	const [draft, setDraft] = useState(() => {
 		try {
@@ -591,8 +695,30 @@ function ReplyComposer({
 			return "";
 		}
 	});
+	const [lastStatus, setLastStatus] = useState<string | null>(null);
 	const taRef = useRef<HTMLTextAreaElement>(null);
+	const localTailCursorRef = useRef(Date.now());
+	const mode = composerModeFor(
+		issue,
+		latestRun,
+		bindingPiMode,
+		bindingClaudePersist,
+		freshIssueId,
+		staged.scheduleMode,
+	);
+	const latestRunAgent = latestRun?.agent?.trim().toLowerCase() ?? null;
+	const isLiveRun =
+		issue.state === "running" &&
+		issue.latest_run_state === "running" &&
+		issue.latest_run_id != null;
+	const canSteer =
+		isLiveRun &&
+		((latestRunAgent === "pi" && bindingPiMode === "rpc") ||
+			(latestRunAgent === "claude" && bindingClaudePersist === true));
+	const isClaudeRun = isLiveRun && latestRunAgent === "claude";
+	const isSteerMode = mode.kind === "steer";
 	const hasStaged = hasStagedDispatch(staged);
+
 	const saveDraft = (next: string) => {
 		setDraft(next);
 		try {
@@ -616,26 +742,59 @@ function ReplyComposer({
 		el.style.height = `${el.scrollHeight}px`;
 	}, [draft]);
 
-	// Gate on run-state: a live or queued run can't honor a mid-run reply, and a
-	// todo issue is already queued. isActiveRunState mirrors the board gating.
-	const runningOrActive =
-		issue.state === "running" || isActiveRunState(issue.latest_run_state);
-	const isTodo = issue.state === "todo";
-	// A scheduled issue sits in todo until its maintenance window. /reply would
-	// re-dispatch it early (and 409 on todo), so post an append-only comment
-	// instead — the operator can annotate the held issue without disturbing it.
-	const commentMode =
-		(isTodo && issue.scheduled_for != null && !runningOrActive) ||
-		staged.scheduleMode != null;
-	const replyDisabled =
-		runningOrActive || (isTodo && !commentMode && !hasStaged);
-	const hint = runningOrActive
-		? "Agent is running — reply when it parks for review."
-		: hasStaged
-			? "Press Send to apply the staged controls."
-			: "Already queued to run.";
+	// Auto-focus on fresh-todo (§7 fresh-todo case) so the operator can drop a
+	// seed comment immediately after creating the issue.
+	useEffect(() => {
+		if (
+			mode.kind === "comment" &&
+			mode.hint === "seed" &&
+			freshIssueId === issue.id
+		) {
+			taRef.current?.focus();
+		}
+	}, [
+		mode.kind,
+		mode.kind === "comment" ? mode.hint : null,
+		freshIssueId,
+		issue.id,
+	]);
 
-	const reply = useMutation({
+	const inputDisabled = isSteerMode && !canSteer;
+
+	const pill = composerPill(mode);
+	const disabledHint =
+		mode.kind === "reply"
+			? "Reply re-dispatches the agent; type a reply to enable Send."
+			: mode.kind === "steer"
+				? "Type live guidance to enable Send."
+				: mode.hint === "agent-next-park"
+					? "Agent is running — your comment is queued for its next park."
+					: mode.hint === "seed"
+						? "Seed the issue without re-dispatching the agent."
+						: "Add a note without re-dispatching the agent.";
+
+	const showReplyDisabledHint =
+		context === "comments" && (inputDisabled || draft.trim() === "");
+	const showSteerDisabledHint = context === "session" && !canSteer;
+
+	const appendLocalTail = (payload: Record<string, unknown>) => {
+		// Optimistic operator events are not file-backed; a monotonic local cursor
+		// keeps F3's snapshot-floor dedupe from discarding them.
+		const cursor = ++localTailCursorRef.current;
+		appendTail({
+			issue_id: issue.id,
+			run_id: issue.latest_run_id,
+			cursor,
+			line_cursors: [cursor],
+			lines: [JSON.stringify(payload)],
+		});
+	};
+	const invalidateIssue = () => {
+		queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+		queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
+	};
+
+	const send = useMutation({
 		mutationFn: async (body: string) => {
 			let result: IssueDetail | null = null;
 			const approvalPatch: IssuePatch = {};
@@ -661,144 +820,36 @@ function ReplyComposer({
 			}
 
 			if (!text) return result ?? issue;
-			return commentMode
+			if (mode.kind === "steer") return postSteer(issue.id, body);
+			return mode.kind === "comment"
 				? postComment(issue.id, body)
 				: postReply(issue.id, body);
 		},
-		onSuccess: () => {
-			saveDraft("");
-			onClearStaged();
-			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
-			queryClient.invalidateQueries({
-				queryKey: ["issues", issue.binding_name],
-			});
-			onSent();
-		},
-	});
-	const sendDisabled =
-		replyDisabled || reply.isPending || (!hasStaged && draft.trim() === "");
-	const send = () => {
-		if (!sendDisabled) reply.mutate(draft);
-	};
-
-	return (
-		<div className="space-y-2" data-testid="reply-composer">
-			<SlashPickerTextarea
-				textareaRef={taRef}
-				testid="reply-input"
-				value={draft}
-				onChange={saveDraft}
-				fields={slashFields}
-				onSubmitShortcut={send}
-				rows={1}
-				placeholder={
-					hasStaged
-						? "Comment, then Send to apply staged controls…"
-						: commentMode
-							? "Add a comment (held until window — won't re-run the agent)…"
-							: "Write a reply to the agent…"
-				}
-				disabled={replyDisabled}
-				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
-			/>
-			{replyDisabled && (
-				<p
-					data-testid="reply-disabled-hint"
-					className="text-xs text-muted-foreground"
-				>
-					{hint}
-				</p>
-			)}
-			{reply.isError && (
-				<p data-testid="reply-error" className="text-xs text-red-500">
-					Reply failed — the issue may have changed state. Try again.
-				</p>
-			)}
-			<div className="flex items-center justify-end gap-2">
-				<span className="text-xs text-muted-foreground">⌘/Ctrl + Enter</span>
-				<button
-					type="button"
-					data-testid="reply-send"
-					disabled={sendDisabled}
-					onClick={send}
-					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
-				>
-					Send
-				</button>
-			</div>
-		</div>
-	);
-}
-
-function SteerComposer({
-	issue,
-	latestRun,
-	bindingPiMode,
-	bindingClaudePersist,
-}: {
-	issue: IssueDetail;
-	latestRun: Run | null;
-	bindingPiMode: "one-shot" | "rpc" | null;
-	bindingClaudePersist: boolean | null;
-}) {
-	const queryClient = useQueryClient();
-	const appendTail = useAppendTailEvent();
-	const [draft, setDraft] = useState("");
-	const [lastStatus, setLastStatus] = useState<string | null>(null);
-	const taRef = useRef<HTMLTextAreaElement>(null);
-
-	useEffect(() => {
-		const el = taRef.current;
-		if (!el) return;
-		el.style.height = "auto";
-		el.style.height = `${el.scrollHeight}px`;
-	}, [draft]);
-
-	const latestRunAgent = latestRun?.agent?.trim().toLowerCase() ?? null;
-	const liveRun =
-		issue.state === "running" &&
-		issue.latest_run_state === "running" &&
-		issue.latest_run_id != null;
-	const isClaudeRun = liveRun && latestRunAgent === "claude";
-	const canSteer =
-		liveRun &&
-		((latestRunAgent === "pi" && bindingPiMode === "rpc") ||
-			(latestRunAgent === "claude" && bindingClaudePersist === true));
-	const disabledReason = !liveRun
-		? "Live steering is available only while a pi RPC run is active."
-		: latestRun == null
-			? "Loading latest run details…"
-			: latestRunAgent === "claude"
-				? "Claude live steering requires claude_persist; otherwise use park-and-reply."
-				: bindingPiMode !== "rpc"
-					? "This binding is not using pi RPC live steering."
-					: "Live steering is available only for pi RPC runs.";
-
-	const appendLocalTail = (payload: Record<string, unknown>) => {
-		appendTail({ issue_id: issue.id, lines: [JSON.stringify(payload)] });
-	};
-	const invalidateIssue = () => {
-		queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
-		queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
-	};
-
-	const steer = useMutation({
-		mutationFn: (body: string) => postSteer(issue.id, body),
 		onMutate: (body) => {
-			appendLocalTail({ type: "operator_steer", state: "queued", body });
-			setLastStatus("Steer queued");
+			if (mode.kind === "steer") {
+				appendLocalTail({ type: "operator_steer", state: "queued", body });
+				setLastStatus("Steer queued");
+			}
 		},
 		onSuccess: (_data, body) => {
-			setDraft("");
-			appendLocalTail({ type: "operator_steer", state: "delivered", body });
-			setLastStatus("Steer delivered");
+			saveDraft("");
+			onClearStaged();
+			if (mode.kind === "steer") {
+				appendLocalTail({ type: "operator_steer", state: "delivered", body });
+				setLastStatus("Steer delivered");
+			} else {
+				onSent();
+			}
 			invalidateIssue();
 		},
 		onError: (_error, body) => {
-			appendLocalTail({ type: "operator_steer", state: "failed", body });
-			setLastStatus("Steer failed");
+			if (mode.kind === "steer") {
+				appendLocalTail({ type: "operator_steer", state: "failed", body });
+				setLastStatus("Steer failed");
+			}
 		},
 	});
+
 	const abort = useMutation({
 		mutationFn: () => postAbort(issue.id),
 		onMutate: () => {
@@ -815,27 +866,52 @@ function SteerComposer({
 			setLastStatus("Abort failed");
 		},
 	});
-	const isPending = steer.isPending || abort.isPending;
+	const isPending = send.isPending || abort.isPending;
+	const finalSendDisabled =
+		inputDisabled || isPending || (!hasStaged && draft.trim() === "");
+	const handleSend = () => {
+		if (finalSendDisabled) return;
+		send.mutate(draft);
+	};
+
+	// Tab-localised testids preserve the existing reply and steer contracts.
+	const inputTestId = context === "session" ? "steer-input" : "reply-input";
+	const sendTestId = context === "session" ? "steer-send" : "reply-send";
+	const wrapperTestId = context === "session" ? "steer-composer" : "reply-composer";
 
 	return (
 		<div
-			className="space-y-2 rounded-md border p-3"
-			data-testid="steer-composer"
+			className={
+				isSteerMode
+					? "space-y-2 rounded-md border p-3"
+					: "space-y-2"
+			}
+			data-testid={wrapperTestId}
 		>
 			<div className="flex items-center justify-between gap-2">
 				<div>
-					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Live steering
-					</p>
-					{!canSteer && (
+					{isSteerMode && (
+						<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							Live steering
+						</p>
+					)}
+					{showReplyDisabledHint && (
+						<p
+							data-testid="reply-disabled-hint"
+							className="text-xs text-muted-foreground"
+						>
+							{disabledHint}
+						</p>
+					)}
+					{showSteerDisabledHint && (
 						<p
 							data-testid="steer-disabled-hint"
 							className="text-xs text-muted-foreground"
 						>
-							{disabledReason}
+							{disabledHint}
 						</p>
 					)}
-					{lastStatus && (
+					{lastStatus && isSteerMode && (
 						<p
 							data-testid="steer-status"
 							className="text-xs text-muted-foreground"
@@ -843,7 +919,7 @@ function SteerComposer({
 							{lastStatus}
 						</p>
 					)}
-					{isClaudeRun && (
+					{isClaudeRun && isSteerMode && (
 						<p
 							data-testid="steer-agent-copy"
 							className="text-xs text-muted-foreground"
@@ -853,44 +929,50 @@ function SteerComposer({
 						</p>
 					)}
 				</div>
-				<button
-					type="button"
-					data-testid="steer-abort"
-					disabled={!canSteer || isPending}
-					onClick={() => abort.mutate()}
-					className="rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-				>
-					Abort
-				</button>
+				{canSteer && (
+					<button
+						type="button"
+						data-testid="steer-abort"
+						disabled={isPending}
+						onClick={() => abort.mutate()}
+						className="rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+					>
+						Abort
+					</button>
+				)}
 			</div>
-			<textarea
-				ref={taRef}
-				data-testid="steer-input"
+			<SlashPickerTextarea
+				textareaRef={taRef}
+				testid={inputTestId}
 				value={draft}
+				onChange={saveDraft}
+				fields={slashFields}
+				onSubmitShortcut={handleSend}
 				rows={1}
-				placeholder={
-					isClaudeRun
-						? "Queue guidance for Claude’s next turn…"
-						: "Redirect the running pi agent…"
-				}
-				disabled={!canSteer || isPending}
-				onChange={(e) => setDraft(e.target.value)}
-				className="max-h-40 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
+				placeholder={composerPlaceholder(mode, hasStaged, latestRunAgent)}
+				disabled={inputDisabled}
+				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
 			/>
-			{(steer.isError || abort.isError) && (
+			{!isSteerMode && send.isError && (
+				<p data-testid="reply-error" className="text-xs text-red-500">
+					Send failed — the issue may have changed state. Try again.
+				</p>
+			)}
+			{isSteerMode && (send.isError || abort.isError) && (
 				<p data-testid="steer-error" className="text-xs text-red-500">
 					Steer request failed — the run may have finished or changed agent.
 				</p>
 			)}
-			<div className="flex justify-end">
+			<div className="flex items-center justify-end gap-2">
+				<span className="text-xs text-muted-foreground">⌘/Ctrl + Enter</span>
 				<button
 					type="button"
-					data-testid="steer-send"
-					disabled={!canSteer || isPending || draft.trim() === ""}
-					onClick={() => steer.mutate(draft)}
+					data-testid={sendTestId}
+					disabled={finalSendDisabled}
+					onClick={handleSend}
 					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
 				>
-					Send steer
+					<span data-testid="composer-mode-pill">{pill}</span>
 				</button>
 			</div>
 		</div>
@@ -1004,15 +1086,11 @@ type Tab = (typeof TABS)[number];
 export function IssueFlyout({
 	issueId,
 	onClose,
-	autoFocusReply = false,
+	freshIssueId = null,
 }: {
 	issueId: number | null;
 	onClose: () => void;
-	// F4: when the modal hands off a freshly created issue, focus the reply
-	// composer after the flyout mounts and the issue detail has resolved. The
-	// generic click-to-open path leaves this off so existing tests that click a
-	// card and expect the title/header to receive focus keep their behavior.
-	autoFocusReply?: boolean;
+	freshIssueId?: number | null;
 }) {
 	const { panelWidth, isMaximized, startDrag, toggleMaximized } =
 		useFlyoutWidth();
@@ -1095,19 +1173,6 @@ export function IssueFlyout({
 		panelRef.current?.focus();
 		return () => previouslyFocused?.focus?.();
 	}, [issueId]);
-
-	// F4 auto-open handoff: when the new-issue modal creates an issue and asks
-	// us to open its flyout, push focus past the title/header into the reply
-	// composer once the detail has rendered and ReplyComposer has mounted.
-	// Wait for `detail.data` so we don't focus a textarea that will be replaced
-	// when the canonical row arrives.
-	useEffect(() => {
-		if (!autoFocusReply || issueId == null || !detail.data) return;
-		const replyEl = panelRef.current?.querySelector<HTMLElement>(
-			'[data-testid="reply-input"]',
-		);
-		if (replyEl) replyEl.focus();
-	}, [autoFocusReply, issueId, detail.data]);
 
 	if (issueId == null) return null;
 
@@ -1426,22 +1491,34 @@ export function IssueFlyout({
 												source={issue.comments_md}
 												runs={runs.data ?? []}
 											/>
-											<ReplyComposer
+											<Composer
 												key={issue.id}
-												issue={issue}
-												staged={stagedDispatch}
-												slashFields={slashFields}
-												onClearStaged={clearStagedDispatch}
-												onSent={onClose}
-											/>
-										</div>
-									) : tab === "session" ? (
-										<div className="space-y-3">
-											<SteerComposer
 												issue={issue}
 												latestRun={latestRun}
 												bindingPiMode={bindingPiMode}
 												bindingClaudePersist={bindingClaudePersist}
+												staged={stagedDispatch}
+												slashFields={slashFields}
+												onClearStaged={clearStagedDispatch}
+												onSent={onClose}
+												context="comments"
+												freshIssueId={freshIssueId}
+											/>
+										</div>
+									) : tab === "session" ? (
+										<div className="space-y-3">
+											<Composer
+												key={issue.id}
+												issue={issue}
+												latestRun={latestRun}
+												bindingPiMode={bindingPiMode}
+												bindingClaudePersist={bindingClaudePersist}
+												staged={stagedDispatch}
+												slashFields={slashFields}
+												onClearStaged={clearStagedDispatch}
+												onSent={onClose}
+												context="session"
+												freshIssueId={freshIssueId}
 											/>
 											<SessionTailPanel issueId={issue.id} />
 										</div>
