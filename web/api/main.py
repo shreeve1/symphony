@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 import yaml
 from fastapi import (
@@ -459,6 +459,26 @@ def _read_jsonl_lines(path: Path, start: int, end: int) -> list[str]:
     return _split_complete_records(raw.decode("utf-8", errors="replace"))
 
 
+@overload
+def _read_jsonl_records(
+    path: Path,
+    start: int,
+    end: int,
+    *,
+    return_cursors: Literal[True],
+) -> tuple[list[str], list[int], int]: ...
+
+
+@overload
+def _read_jsonl_records(
+    path: Path,
+    start: int,
+    end: int,
+    *,
+    return_cursors: Literal[False] = False,
+) -> list[str]: ...
+
+
 def _read_jsonl_records(
     path: Path,
     start: int,
@@ -472,13 +492,31 @@ def _read_jsonl_records(
     where ``line_cursors[i]`` is the absolute end-offset of ``lines[i]`` and
     ``next`` is the offset of the next incomplete record (or ``end`` if the
     final byte is a terminator). Without ``return_cursors``, returns just the
-    lines (compat path).
+    lines (compat path). The ``@overload`` declarations let type checkers
+    narrow the return type on the ``return_cursors=True`` call sites that
+    unpack ``(lines, line_cursors, next_cursor)``.
     """
     with path.open("rb") as f:
         f.seek(start)
         raw = f.read(end - start)
     if not return_cursors:
         return _split_complete_records(raw.decode("utf-8", errors="replace"))
+    return _scan_jsonl_records(raw, start)
+
+
+def _scan_jsonl_records(
+    raw: bytes, start: int
+) -> tuple[list[str], list[int], int]:
+    """Parse ``raw`` (the byte window from ``start``) into complete records.
+
+    Returns ``(lines, line_cursors, next)`` where ``line_cursors[i]`` is the
+    absolute end-offset of ``lines[i]`` and ``next`` is the offset of the
+    next incomplete record (or ``start + len(raw)`` if the final byte is a
+    terminator). Splits out as a separate function so the return type is
+    statically ``tuple[list[str], list[int], int]`` for the caller — using
+    a boolean flag inside one function would force a union return that
+    pyright cannot narrow at the call site.
+    """
     lines: list[str] = []
     cursors: list[int] = []
     cursor = start

@@ -129,7 +129,6 @@ def _compute_tail_source(
         return 0, f"{agent_session_id}:0"
 
     repo_path: Path | None = None
-    worktree_branch = getattr(candidate, "worktree_branch", "") or ""
     worktree_path = (
         getattr(candidate, "worktree_path", "") or ""
     )
