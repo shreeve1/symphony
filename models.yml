@@ -31,6 +31,9 @@ models:
   - id: claude-sonnet-4-6
     agent: pi
     provider: cliproxy
+  - id: cliproxy/fable-5
+    agent: pi
+    provider: cliproxy
   - id: glm-5.2
     agent: pi
     provider: zai

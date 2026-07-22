@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+  <!--
+  PROTOTYPE — throwaway. Not production. Do not ship.
+  Wayfinder map #18 / ticket #27. Question: "what should the Podium issue-chat
+  should actually look like?" before spec #26 locks the visual contract.
+
+  Renders a REAL slice of issue 174's comments_md (operator<->agent grill,
+  homelab->coding binding) through the #23 contract: split on the uniform
+  `### <role> · <ISO-ts>` header into per-role bubbles. Implements #21
+  (bubbles + collapsed system rows + inline run boundaries + ephemeral live
+  tail) and #22 (one auto-routing composer with a mode pill).
+
+  Three RADICALLY different variants, switched by ?variant= (A/B/C), floating
+  bar bottom-centre, <-->/<--> arrow keys to cycle. Run: python3 -m http.server
+  8000 then open
+  http://localhost:8000/web/frontend/prototype/chat-mock.html?variant=A (or just
+  open the file directly — no server needed.) -->
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PROTOTYPE — Podium issue-chat (#27)</title>
+    <style>
+      :root {
+        --bg: #0b0e14;
+        --panel: #11151f;
+        --panel2: #0e121b;
+        --border: #1e2533;
+        --text: #d7dce6;
+        --muted: #8b93a7;
+        --faint: #5b6478;
+        --agent: #2563eb;
+        --operator: #16a34a;
+        --patrol: #d97706;
+        --system: #64748b;
+        --review: #7c3aed;
+        --schedule: #0891b2;
+        --bubble-agent: #16203a;
+        --bubble-op: #102016;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      #topbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+      }
+      #topbar .id {
+        font-weight: 600;
+      }
+      #topbar .state {
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #1e2533;
+        color: var(--muted);
+      }
+      #topbar .pin {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--faint);
+      }
+      #thread {
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px;
+      }
+      #composer {
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+        padding: 10px 12px;
+      }
+
+      /* ---- shared bubble atoms ---- */
+      .row {
+        margin-bottom: 10px;
+      }
+      .bubble {
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        max-width: 74%;
+        white-space: pre-wrap;
+        line-height: 1.45;
+        font-size: 14px;
+      }
+      .bubble.agent {
+        background: var(--bubble-agent);
+        border-color: #23386a;
+      }
+      .bubble.operator {
+        background: var(--bubble-op);
+        border-color: #1e4a2c;
+      }
+      .bubble.patrol {
+        background: #241a09;
+        border-color: #5a3f0a;
+      }
+      .bubble .meta {
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .badge {
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        margin-left: 6px;
+        opacity: 0.85;
+      }
+      .sysrow {
+        font-size: 12px;
+        color: var(--faint);
+        border-top: 1px dashed var(--border);
+        padding: 5px 2px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .sysrow .caret {
+        cursor: pointer;
+        user-select: none;
+      }
+      .sysrow .expand {
+        display: none;
+        margin-top: 6px;
+        color: var(--muted);
+        white-space: pre-wrap;
+      }
+      .sysrow.open .expand {
+        display: block;
+      }
+      .runtag {
+        font-size: 11px;
+        color: var(--faint);
+        font-family: ui-monospace, monospace;
+      }
+
+      /* mode pill (#22) */
+      #modepill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text);
+        background: #1a2233;
+        border: 1px solid var(--border);
+        padding: 3px 9px;
+        border-radius: 999px;
+      }
+      #modepill .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--agent);
+      }
+      #composer textarea {
+        width: 100%;
+        background: var(--panel2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px;
+        resize: none;
+        font: inherit;
+        min-height: 42px;
+      }
+      #composer .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      #composer button.send {
+        margin-left: auto;
+        background: var(--agent);
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #composer button.abort {
+        background: transparent;
+        color: #ef4444;
+        border: 1px solid #5a2330;
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+
+      /* ---- VARIANT B: slack-style full-width blocks ---- */
+      body.B .bubble {
+        max-width: 100%;
+        border-radius: 6px;
+      }
+      body.B .row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      body.B .avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 6px;
+        flex: 0 0 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 700;
+        color: #fff;
+      }
+      body.B .col {
+        flex: 1;
+      }
+      body.B .who {
+        font-weight: 600;
+        font-size: 13px;
+        margin-right: 8px;
+      }
+      body.B .ts {
+        font-size: 11px;
+        color: var(--faint);
+      }
+
+      /* ---- VARIANT C: terminal transcript ---- */
+      body.C #thread {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+      }
+      body.C .bubble {
+        max-width: 100%;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        padding: 2px 0;
+        white-space: pre-wrap;
+      }
+      body.C .bubble .meta {
+        display: inline;
+        margin-right: 6px;
+      }
+      body.C .row {
+        border-left: 2px solid transparent;
+        padding-left: 10px;
+      }
+      body.C .row.agent {
+        border-color: var(--agent);
+      }
+      body.C .row.operator {
+        border-color: var(--operator);
+      }
+      body.C .row.patrol {
+        border-color: var(--patrol);
+      }
+      body.C .prompt {
+        color: var(--muted);
+      }
+
+      /* floating switcher */
+      #switcher {
+        position: fixed;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #1a2233;
+        border: 1px solid #2a3447;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+        padding: 6px 12px;
+        border-radius: 999px;
+        z-index: 50;
+      }
+      #switcher button {
+        background: transparent;
+        color: var(--text);
+        border: 0;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 0 4px;
+      }
+      #switcher .label {
+        font-size: 12px;
+        min-width: 120px;
+        text-align: center;
+      }
+      #switcher .label b {
+        display: block;
+      }
+      #switcher .label span {
+        color: var(--faint);
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body class="A">
+    <div id="topbar">
+      <span class="id">homelab · #174</span>
+      <span class="state">in_review · your turn</span>
+      <span class="pin">PROTOTYPE — ?variant=A|B|C · ←/→ to cycle</span>
+    </div>
+
+    <div id="thread"></div>
+
+    <div id="composer">
+      <div class="bar" style="margin: 0 0 6px">
+        <span id="modepill"
+          ><span class="dot"></span
+          ><span id="modepill-text">Reply — re-dispatches the agent</span></span
+        >
+        <select
+          id="routeselect"
+          style="
+            background: var(--panel2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 11px;
+          "
+        >
+          <option value="parked">parked (question) → Reply</option>
+          <option value="scheduled">scheduled-hold → Comment</option>
+          <option value="steerable">steerable-live → Steer</option>
+          <option value="nonsteerable">non-steerable-live → Comment</option>
+        </select>
+      </div>
+      <textarea placeholder="Message — routes by run state…"></textarea>
+      <div class="bar">
+        <button class="abort" id="abortbtn" hidden>Abort</button>
+        <button class="send" id="sendbtn">Send</button>
+      </div>
+    </div>
+
+    <div id="switcher">
+      <button id="prev">‹</button>
+      <div class="label"><b id="vkey">A</b><span id="vname"></span></div>
+      <button id="next">›</button>
+    </div>
+
+    <script>
+      // ---- Real slice of issue 174 comments_md, with the #23 uniform header stamped
+      //      onto the (today header-less) agent turns to show the TARGET state. ----
+      const BLOCKS = [
+        {
+          role: "run",
+          ts: "2026-07-01T16:40:00Z",
+          body: "Dispatch · run #1 → pi (pi-duo/Duo) · skill grill-me",
+        },
+        {
+          role: "agent",
+          ts: "2026-07-01T16:48:00Z",
+          body: "Symphony completed:\n\nI'll find and invoke the grill-me skill first.\n\nI have the grill-me skill. Let me build domain awareness — checking the wiki and understanding bindings/patrols.",
+        },
+        {
+          role: "agent",
+          ts: "2026-07-01T16:50:00Z",
+          body: "Symphony completed:\n\nRich domain context. Let me look at the patrol/Temporal concepts and infra-binding behaviors, since those are central to this issue.",
+        },
+        {
+          role: "operator",
+          ts: "2026-07-01T16:52:49Z",
+          body: "All of the candidates that you proposed. I'm thinking this should be two-part — I will likely need to rework the patrols. The other part is how the patrols are handled. The hope is that if a patrol posts a problem it is worked as if I put in a ticket. I'd like to start working towards a self-healing system.",
+        },
+        {
+          role: "agent",
+          ts: "2026-07-01T17:05:00Z",
+          body: 'Symphony completed:\n\nGot it — "all candidates," plus a two-part vision. Let me restate it so we\'re precise, then challenge the framing before we build on it.',
+        },
+        {
+          role: "retry",
+          ts: "2026-07-01T17:06:00Z",
+          body: "Symphony Retry (stall · 1) · provider stall while narrating; pi retry 1/6",
+        },
+        {
+          role: "patrol",
+          ts: "2026-07-02T02:10:00Z",
+          body: "Patrol failure: Disk 10.20.20.16:/ >80% used\n\nOutcome: fail (severity=medium)\nAffected service: infra\n\n```\nmountpoint / is at 16.2% free for 10m.\n```",
+        },
+        {
+          role: "schedule",
+          ts: "2026-07-02T02:11:00Z",
+          body: "Symphony-Schedule: maintenance window 2026-07-02T03:00Z (1 finding deferred)",
+        },
+        {
+          role: "review",
+          ts: "2026-07-02T02:12:00Z",
+          body: "Symphony Review: agent edits landed clean — sha 4a8c1e2",
+        },
+        {
+          role: "agent",
+          ts: "2026-07-02T02:15:00Z",
+          body: 'Q1 — What is actually "not working very well"?\n\n"Turn it into a coding binding" is a proposed solution. Before I stress-test it, I need the failure mode it\'s meant to fix. (parked — your turn)',
+        },
+        { role: "live", ts: "now", body: "agent working… ▸ tail" },
+      ];
+
+      const SYS = new Set(["run", "retry", "schedule", "review", "live"]);
+      const VARIANT_NAMES = {
+        A: "Chat bubbles",
+        B: "Slack blocks",
+        C: "Terminal transcript",
+      };
+      const AVATAR = { agent: "🤖", operator: "🧑", patrol: "🛰", system: "⚙" };
+      const COLOR = {
+        agent: "#2563eb",
+        operator: "#16a34a",
+        patrol: "#d97706",
+      };
+
+      function isoShort(ts) {
+        return ts.replace("T", " ").replace(/:\d\dZ$/, " UTC");
+      }
+      function esc(s) {
+        return s.replace(
+          /[&<>]/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
+        );
+      }
+
+      function blockHtml(b, variant) {
+        if (SYS.has(b.role)) return sysRow(b, variant);
+        const who =
+          b.role === "operator"
+            ? "Operator"
+            : b.role === "patrol"
+              ? "Patrol"
+              : "Agent";
+        const body = esc(b.body);
+        if (variant === "B") {
+          const c = COLOR[b.role] || "var(--system)";
+          return `<div class="row ${b.role}">
+      <div class="avatar" style="background:${c}">${AVATAR[b.role] || "·"}</div>
+      <div class="col">
+        <div><span class="who" style="color:${c}">${who}</span><span class="ts">${isoShort(b.ts)}</span></div>
+        <div class="bubble ${b.role}">${body}</div>
+      </div>
+    </div>`;
+        }
+        if (variant === "C") {
+          const prompt =
+            b.role === "operator"
+              ? "operator>"
+              : b.role === "patrol"
+                ? "patrol>"
+                : "agent>";
+          return `<div class="row ${b.role}">
+      <div class="bubble ${b.role}"><span class="meta">${prompt} ${isoShort(b.ts)}</span>${body}</div>
+    </div>`;
+        }
+        // A — chat bubbles: operator right, others left
+        const side = b.role === "operator" ? "margin-left:auto" : "";
+        return `<div class="row" style="${side}">
+    <div class="bubble ${b.role}"><div class="meta">${who} · ${isoShort(b.ts)}</div>${body}</div>
+  </div>`;
+      }
+
+      function sysRow(b, variant) {
+        const label = {
+          run: `Run boundary — ${esc(b.body)}`,
+          retry: `Symphony Retry — click to expand`,
+          schedule: `Schedule — ${esc(b.body)}`,
+          review: `Review — ${esc(b.body)}`,
+          live: `● agent working — click for live tail`,
+        }[b.role];
+        const caret =
+          b.role === "retry" || b.role === "live"
+            ? `<span class="caret">▸</span>`
+            : `<span class="runtag">·</span>`;
+        if (variant === "C") {
+          return `<div class="row"><div class="bubble"><span class="prompt">[system]</span> ${label}</div></div>`;
+        }
+        return `<div class="sysrow" onclick="this.classList.toggle('open')">${caret}<span>${label}</span>
+    <div class="expand">${esc(b.body)}</div></div>`;
+      }
+
+      function render(variant) {
+        document.body.className = variant;
+        const t = document.getElementById("thread");
+        t.innerHTML = BLOCKS.map((b) => blockHtml(b, variant)).join("");
+        t.scrollTop = t.scrollHeight;
+      }
+
+      // ---- switcher ----
+      const order = ["A", "B", "C"];
+      function cur() {
+        return new URLSearchParams(location.search).get("variant") || "A";
+      }
+      function setVariant(v) {
+        const u = new URL(location);
+        u.searchParams.set("variant", v);
+        history.replaceState(null, "", u);
+        paint();
+      }
+      function paint() {
+        const v = cur();
+        render(v);
+        document.getElementById("vkey").textContent = v;
+        document.getElementById("vname").textContent = VARIANT_NAMES[v];
+      }
+      document.getElementById("next").onclick = () =>
+        setVariant(order[(order.indexOf(cur()) + 1) % order.length]);
+      document.getElementById("prev").onclick = () =>
+        setVariant(
+          order[(order.indexOf(cur()) - 1 + order.length) % order.length],
+        );
+      addEventListener("keydown", (e) => {
+        const tag = (e.target.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "textarea" || e.target.isContentEditable)
+          return;
+        if (e.key === "ArrowRight") document.getElementById("next").click();
+        if (e.key === "ArrowLeft") document.getElementById("prev").click();
+      });
+
+      // ---- composer routing demo (#22) ----
+      const ROUTE = {
+        parked: {
+          txt: "Reply — re-dispatches the agent",
+          dot: "var(--agent)",
+          send: "Reply",
+          abort: false,
+        },
+        scheduled: {
+          txt: "Comment — append only, no dispatch",
+          dot: "var(--system)",
+          send: "Comment",
+          abort: false,
+        },
+        steerable: {
+          txt: "Steer — injected next turn",
+          dot: "var(--review)",
+          send: "Steer",
+          abort: true,
+        },
+        nonsteerable: {
+          txt: "Comment — run not steerable",
+          dot: "var(--system)",
+          send: "Comment",
+          abort: false,
+        },
+      };
+      document.getElementById("routeselect").onchange = function () {
+        const r = ROUTE[this.value];
+        document.getElementById("modepill-text").textContent = r.txt;
+        document.querySelector("#modepill .dot").style.background = r.dot;
+        document.getElementById("sendbtn").textContent = r.send;
+        document.getElementById("abortbtn").hidden = !r.abort;
+      };
+      document.getElementById("routeselect").onchange(); // init
+      paint();
+    </script>
+  </body>
+</html>
