@@ -445,6 +445,63 @@ export const fetchIssueRuns = (id: number) =>
 
 export const fetchRun = (id: number) => getJSON<RunDetail>(`/api/runs/${id}`);
 
+// ── B3 live-tail catch-up (#35) ────────────────────────────────────
+//
+// Snapshot the active run's session JSONL via the REST endpoint. Used as the
+// catch-up step on flyout-open and on WS reconnect so a freshly mounted panel
+// can render the full tail before any live `run.tail` deltas arrive. The
+// `line_cursors` array lets the client dedupe against the WS stream:
+// any WS line whose `line_cursors[i] <= snapshot.cursor` is stale and
+// should be dropped.
+//
+// Server returns 404 for completed/unknown runs; the caller surfaces the
+// empty placeholder instead of an error so a just-finished run does not
+// break the flyout open animation.
+
+export interface RunTailSnapshot {
+	run_id: number;
+	source_id: string;
+	from_cursor: number;
+	cursor: number;
+	lines: string[];
+	line_cursors: number[];
+}
+
+export async function fetchRunTail(id: number): Promise<RunTailSnapshot> {
+	const res = await fetch(`/api/runs/${id}/tail`);
+	if (!res.ok) {
+		// 404 is the documented signal that the run is no longer active or has
+		// never produced a transcript. Surface as an empty snapshot so the
+		// catch-up flow silently no-ops rather than throwing into the panel.
+		if (res.status === 404) {
+			return {
+				run_id: id,
+				source_id: "",
+				from_cursor: 0,
+				cursor: 0,
+				lines: [],
+				line_cursors: [],
+			};
+		}
+		throw new Error(
+			`GET /api/runs/${id}/tail -> ${res.status} ${res.statusText}`,
+		);
+	}
+	return res.json() as Promise<RunTailSnapshot>;
+}
+
+// Server-driven threshold for the tool-pill auto-cluster UI affordance
+// (issue #35 criterion: "threshold server-driven, not hardcoded"). The
+// current server contract does not expose it as a separate endpoint, so the
+// client reads it from a build-time `NEXT_PUBLIC_TAIL_CLUSTER_THRESHOLD` env
+// override and falls back to 3 (the spec's default). A nullish or non-finite
+// value is coerced to 3 so a typo never disables clustering.
+export function tailClusterThreshold(): number {
+	const raw = process.env.NEXT_PUBLIC_TAIL_CLUSTER_THRESHOLD;
+	const parsed = raw == null ? Number.NaN : Number(raw);
+	return Number.isFinite(parsed) && parsed >= 2 ? Math.floor(parsed) : 3;
+}
+
 export const fetchDir = (binding: string, path: string) =>
 	getJSON<DirListing>(
 		`/api/bindings/${encodeURIComponent(binding)}/files?path=${encodeURIComponent(path)}`,
