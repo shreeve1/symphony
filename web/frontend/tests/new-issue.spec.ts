@@ -173,18 +173,21 @@ test("new issue combobox filters models and preserves free-text agent/model", as
 
 	await page.getByTestId("new-issue-submit").click();
 	await expect(page.getByTestId("new-issue-modal")).toBeHidden();
-	const todoCard = page
-		.getByTestId("column-todo")
-		.getByTestId("issue-card")
-		.filter({ hasText: desc });
-	await expect(todoCard).toBeVisible();
-	await todoCard.click();
+	// F4: the flyout auto-opens on create success — the card click path is no
+	// longer the way to land on the new issue. Verify the values directly on
+	// the auto-opened flyout.
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 	await expect(page.getByTestId("edit-preferred_agent")).toHaveValue(
 		"custom-agent",
 	);
 	await expect(page.getByTestId("edit-preferred_model")).toHaveValue(
 		"custom-model",
 	);
+	const todoCard = page
+		.getByTestId("column-todo")
+		.getByTestId("issue-card")
+		.filter({ hasText: desc });
+	await expect(todoCard).toBeVisible();
 
 	expectCleanConsole(problems);
 });
@@ -353,15 +356,19 @@ test("create with attachment holds through upload then releases", async ({
 	await expect(page.getByTestId("new-issue-modal")).toBeHidden({
 		timeout: 10_000,
 	});
+	// F4: the flyout auto-opens on create success — the staged-attachment
+	// release path must settle before the auto-open fires (the two-stage
+	// flow is the explicit ordering), so by the time the modal hides the
+	// flyout is already open on the freshly released row.
+	await expect(page.getByTestId("issue-flyout")).toBeVisible();
 	const todoCard = page
 		.getByTestId("column-todo")
 		.getByTestId("issue-card")
 		.filter({ hasText: desc });
 	await expect(todoCard).toBeVisible();
 
-	// Open flyout, check attachments tab for uploaded file
-	await todoCard.click();
-	await expect(page.getByTestId("issue-flyout")).toBeVisible();
+	// Flyout is already open from the auto-open handoff — just check the
+	// attachments tab for the uploaded file.
 	await page.getByTestId("tab-attachments").click();
 	await expect(page.getByTestId("tabpanel-attachments")).toBeVisible();
 	await expect(
@@ -570,10 +577,15 @@ test("slash picker preserves dependencies, clearing, free text, multiple command
 	await page.goto("/homelab");
 	await page.getByTestId("new-issue-button").click();
 	const description = page.getByTestId("new-issue-description");
-	await page.getByTestId("new-issue-agent").click();
-	await expect(
-		page.getByTestId("new-issue-agent-option").filter({ hasText: "pi" }),
-	).toBeVisible();
+	// F4: `new-issue-agent` is a free-text input paired with a pi|claude
+	// segmented control at the top of the modal — the agent-aware combobox
+	// listbox that used to live here moved into the description's slash
+	// picker (`/ag` → Tab → choose pi/claude). Free-text agents remain
+	// supported by typing into the input directly below the segmented
+	// control; the slash picker is the structured-selection path.
+	await page.getByTestId("new-issue-agent").fill("custom-agent");
+	await expect(page.getByTestId("new-issue-agent")).toHaveValue("custom-agent");
+	await page.getByTestId("new-issue-agent").fill("");
 	await description.fill("Keep /srv/app and https://example.test/a: ");
 
 	await page.keyboard.type("/ag");

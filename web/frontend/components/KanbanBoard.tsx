@@ -154,9 +154,13 @@ function Column({
 export function KanbanBoard({
 	issues,
 	initialIssueId,
+	autoFocusReply = false,
 }: {
 	issues: Issue[];
 	initialIssueId?: number | null;
+	// F4: when the new-issue modal hands off a fresh issue, ask the flyout to
+	// push focus into the reply composer instead of the panel header.
+	autoFocusReply?: boolean;
 }) {
 	const router = useRouter();
 	const { binding } = useParams<{ binding: string }>();
@@ -318,7 +322,11 @@ export function KanbanBoard({
 					))}
 				</div>
 
-				<IssueFlyout issueId={selected} onClose={closeFlyout} />
+				<IssueFlyout
+					issueId={selected}
+					onClose={closeFlyout}
+					autoFocusReply={autoFocusReply}
+				/>
 			</div>
 
 			<DragOverlay>
