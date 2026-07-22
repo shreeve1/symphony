@@ -73,10 +73,12 @@ Every `comments_md` writer stamps a uniform machine-parseable header:
 ### 2.3 Write-side stamping scope (server, all Python) [#23]
 
 - One shared header format + stamping helper that takes the **role** as a parameter (the server already classifies the block kind at each write site — `completion_body`, `question_body`, `close_body`, `schedule_body`).
-- **Stamp the two header-less writers:** the scheduler `add_comment` path (→ `agent`) and the API `/comment` verbatim path (→ `operator`, or `patrol` when the caller is a patrol).
-- **Normalize the already-stamping writers** onto the one grammar: `/reply` (`operator`), `/steer` (`operator` + badge), patrol, `### Symphony AI Summary` (`system`), `### Symphony Review` (`system`), `Symphony-Schedule:` marker (`system`), `### Symphony Retry Epoch` (`system`).
+- **Stamp the in-process scheduler `add_comment` path** (the dominant header-less writer; ~17 sites) with **role = `agent`** for agent turns, **`patrol`** for patrol-originated comments. Patrols are in-process — they call `tracker.add_comment`, not any HTTP route.
+- **Stamp the HTTP `/api/issues/{id}/comment` endpoint** with **`operator` unconditionally** — it is the web-UI operator path; the body shape (`ReplyCreate`, `extra="forbid"`, `main.py:720–728`) accepts no author/role field. The server wraps the operator's verbatim body with an attribution header. This lightly bends ADR-0017's "verbatim" wording (it adds an attribution header, not a reopen effect); the operator still owns the body content — only the wrapper changes.
+- **Normalize the already-stamping writers** onto the one grammar: `/reply` (`operator`), `/steer` (`operator` + badge), `### Symphony AI Summary` (`system`), `### Symphony Review` (`system`), `Symphony-Schedule:` marker (`system`), `### Symphony Retry Epoch` (`system`).
 - The agent itself emits **only prose** — `_capture_natural_turn` strips every `SYMPHONY_` marker before writing. The target-repo AI session is untouched.
 - Blob stays the single source of truth — the header is just markdown, so all 11 read/write paths and the prompt-renderer keep working.
+- The `### role · ts` headers **intentionally** flow into the agent's re-fed prompt context (the `prompt-renderer` re-embeds `comments_md`) — they provide clean role attribution in the agent's own history and are **not** stripped. The agent itself never emits SYMPHONY_ markers (`_capture_natural_turn` strips them), so the agent won't generate role headers — only server write sites stamp them.
 
 ## 3. Visual contract — Variant B (Slack-style full-width blocks) [#27, + state-visibility patch #26]
 
@@ -117,6 +119,8 @@ While running (no `ended_at`): only the start bubble + the ephemeral live-tail r
 
 Nothing durable lands in `comments_md` mid-run (the review-epoch marker is written pre-`STATE_RUNNING` at `tick.py:450`; agent prose lands only at verdict transitions) → a run occupies a clean `[started_at, ended_at]` interval with only ephemeral tail between.
 
+**Interleave ordering** — stable sort by `timestamp`; on collision (e.g. review-epoch marker vs run start at `started_at`), order: `comment_bubble` < `run_start_bubble` < `run_terminal_bubble`. Full tie-breaker: `(ts, kind_rank, id)` for determinism.
+
 ## 5. Live tail + robust run-scoped in-flight catch-up [#29 Q3 AUTHORITATIVE FINAL]
 
 > This is the corrected, verified contract — three earlier #29 drafts had errors (each caught by independent review + re-grounded in code + independently verified). Encode only this version.
@@ -130,7 +134,7 @@ Nothing durable lands in `comments_md` mid-run (the review-epoch marker is writt
 
 ### 5.2 The robust run-scoped protocol (the build)
 
-**Persist per Run before sending the prompt:** session-file start byte-offset (new run column `agent_session_start_offset`) + opaque `source_id` (agent_session_id + inode). Local resumed run → start-offset = file size at dispatch (scopes within the shared file); remote/fresh → 0.
+**Persist per Run before sending the prompt:** session-file start byte-offset (`run.agent_session_start_offset`) **and** the opaque `source_id` (`agent_session_id` + inode) — **both new columns, written at dispatch** so rotation is observable to clients. Local resumed run → start-offset = file size at dispatch (scopes within the shared file); remote/fresh → 0.
 
 **`run.tail` event becomes:**
 ```
@@ -140,7 +144,7 @@ Nothing durable lands in `comments_md` mid-run (the review-epoch marker is writt
 - `[from_cursor, cursor)` = byte range of `lines`; `line_cursors[i]` = end-offset of `lines[i]`.
 - **Emit only complete newline-terminated records; retain the incomplete suffix without advancing the cursor** (fixes the partial-line case). `lines: string[]` kept for compat.
 
-**`GET /api/runs/{id}/tail`** — **active-run only** (404/409 after completion: remote spool is unlinked; local file is per-issue so a completed-run read is ambiguous). Returns:
+**`GET /api/runs/{id}/tail`** — **active-run only**. Gate predicate: `run.state != 'running'` → 404 (remote spool is unlinked at cleanup `agent_runner.py:839–840`; the local file is per-issue, so a completed-run read is ambiguous — return 404, not 200). Returns:
 ```
 {run_id, source_id, from_cursor: agent_session_start_offset, cursor: current_size, lines, line_cursors}
 ```
@@ -161,6 +165,8 @@ Result: seamless session-so-far + live appends, run-scoped, no leakage/dupes/gap
 ## 6. Live-tail rendering fidelity [#19, #20]
 
 `lines` format: **JSONL for local bindings** (parse to agent-text deltas + collapsed tool pills) / **prose for remote bindings** (RPC spool). 2 s poll floor; the publisher drops on overflow — fine for turn-level, unsafe for token-level.
+
+**Parse contract for local pi JSONL** — `lines` are raw session-JSONL events from pi's session file (`_read_jsonl_lines` splits on `\n`). The builder must either (a) confirm `#19`'s tool-pill/delta anatomy maps directly to pi's session event vocabulary (text deltas, tool_use, tool_result, …), or (b) implement a parse step mapping pi event types → `#19`'s pill/delta shapes. Pin the pi JSONL event vocabulary — or flag it as an explicit F3 discovery task. This is the one place a builder could get quietly stuck.
 
 - **Tool pill** — one bubble per tool call: icon + name + summary collapsed by default, full input/output in `.tool-pill-output` expanded on click; status `⋯ → ✓ → ✗` with a live duration counter. Extensible icon map (`Bash→$`, `Read→R`, `Write→W`, `Edit→E`, `Glob→G`, `Grep→?`, `Task→T`, `TodoWrite→✓`).
 - **Long output** — add a per-pill row cap (e.g. 200 lines × 200 chars) with "show more" (cleon-ui reserves the style but wires no JS — a known ceiling to add).
@@ -192,6 +198,8 @@ The last two comment rows are **new routing** — today the composer *disables* 
 
 **Abort button** — distinct, visible **only on steerable live runs**. Abort rides the *same* `steer_issue` RPC gate as steer (`POST /api/issues/{id}/steer {action:"abort"}`); there is no stop path for non-steerable runs. "Stop-and-redispatch" is **two honest steps**: Abort → run stops → issue parks → next send auto-routes to reply → re-dispatch. Live steer is retained for capable runs.
 
+**Steerable detection (client):** reuse the existing `canSteer` derivation in `IssueFlyout.tsx` (`SteerComposer`, line 762): `liveRun && ((latestRunAgent === 'pi' && bindingPiMode === 'rpc') || (latestRunAgent === 'claude' && bindingClaudePersist === true))`, where `liveRun = issue.state === 'running' && latest_run_state === 'running' && latest_run_id != null`. `bindingPiMode` and `bindingClaudePersist` are already exposed via `GET /api/bindings` (`main.py:951–952`); no new client-side signal needed.
+
 ## 8. Agent questions — free-text, "your turn" [#24]
 
 The park protocol is **prose only** (`SYMPHONY_QUESTION_BEGIN … <question> … END` captures one free-text blob; no options/multi-select grammar exists). **Decision: free-text only, no first-class question widget, no protocol change.**
@@ -208,6 +216,7 @@ Coding bindings get a new **discussion contract** modeling the dispatched run as
 
 - **Trigger:** `binding_type == "coding"`, selected inside `render_prompt` (which already receives `binding_type`). No new flag/column/per-issue opt-in. Coding: `symphony`, `dotfiles`, `n8n`, `trading`, `ai-web-chat`, …; infra: `homelab`.
 - **Rationale:** coding-binding issues are conversational (skill → follow-ups → another skill); infra-binding issues are ticket-shaped runbook execution. Commit/test discipline rides the **skill body** (the skill directive at `prompt_renderer.py:351` only says "invoke the skill").
+- **Scope of selection:** the discussion contract applies to **both full renders and resume deltas** — `prompt_renderer.py:447` (resume) and `:465` (full). Selection happens inside `render_prompt`, which both code paths invoke.
 
 **Contract text shape (discussion variant) — turn-taking, not build-completion:**
 - Respond naturally to the latest operator turn.
@@ -262,9 +271,20 @@ Suggested vertical slices, in dependency order (a slicer / `to-tickets` pass ref
 3. **B3 — live-tail protocol [#29]**: `run.tail` fields + `agent_session_start_offset` + `GET /api/runs/{id}/tail` (server). Unblocks the live-tail consumer.
 4. **F1 — bubble rendering + Variant B visual + client merge + 2 run bubbles [#23,#27,#29 Q1/Q2, §2–4]**. Depends on B1.
 5. **F2 — auto-routing composer + mode pill + abort [#22,#25, §7]**. (Fresh-todo case included.)
-6. **F3 — live-tail consumer + catch-up flow [#29 Q3, §5–6]**. Depends on B3.
+6. **F3 — live-tail consumer + catch-up flow [#29 Q3, §5–6]** (includes pinning the local-pi session-JSONL parse contract — the one piece of the spec not fully pinned; see §6). Depends on B3.
 7. **F4 — creation rework [#25, §10]**. Independent.
 8. **F5 — agent-question "your turn" treatment [#24, §8]** — small; folds into F1/F2.
+
+## 15. Builder reading list
+
+A builder picking up the slices in §14 should start here:
+
+- `wiki/concepts/operator-reply.md` — `/reply` + ADR-0017 `/comment` primitive (reopen effects, append-only; the rules the composer routing sits on).
+- `wiki/concepts/session-resume-continuity.md` — `session_generation`, `derive_session_id`, the shared-session-on-resume behavior that drives §5's catch-up rationale.
+- `wiki/concepts/podium-tracker.md` — schema/state enums, `comments_md` storage, `blocked_by`/locks.
+- `wiki/concepts/prompt-renderer.md` — full render vs resume delta code paths (the §9 contract selection hook point).
+
+Plus the inline research: `docs/research/cleon-ui-chat-ux-inventory.md` (#19, on `main`) and `docs/research/run-tail-capability-matrix.md` (#20, on branch `research/run-tail-capability-matrix-20`).
 
 ## Decision provenance
 
