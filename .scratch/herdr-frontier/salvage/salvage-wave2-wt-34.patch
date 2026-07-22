@@ -1,0 +1,695 @@
+diff --git a/web/frontend/components/IssueFlyout.tsx b/web/frontend/components/IssueFlyout.tsx
+index ccddbc6..6faccb1 100644
+--- a/web/frontend/components/IssueFlyout.tsx
++++ b/web/frontend/components/IssueFlyout.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useCallback, useEffect, useRef, useState } from "react";
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ 
+ import {
+@@ -10,12 +10,6 @@ import {
+ 	fetchIssueRuns,
+ 	fetchSkills,
+ 	patchIssue,
+-	postAbort,
+-	postComment,
+-	postReply,
+-	postSteer,
+-	scheduleIssue,
+-	unscheduleIssue,
+ 	type IssueDetail,
+ 	type IssuePatch,
+ 	type ModelOption,
+@@ -31,14 +25,11 @@ import { cn } from "@/lib/utils";
+ import { Markdown } from "@/components/Markdown";
+ import { RunDetailPanel } from "@/components/RunDetailPanel";
+ import { OriginChip } from "@/components/badges";
+-import {
+-	DEFAULT_SCHEDULE_REASON,
+-	latestScheduleNotBefore,
+-} from "@/components/ScheduleControl";
++import { latestScheduleNotBefore } from "@/components/ScheduleControl";
+ import { RunHistoryList } from "@/components/RunHistoryList";
+ import { SessionTailPanel } from "@/components/SessionTailPanel";
+ import { AttachmentPanel } from "@/components/AttachmentPanel";
+-import { useAppendTailEvent } from "@/components/QueryProvider";
++import { AutoComposer } from "@/components/AutoComposer";
+ import {
+ 	SlashPickerTextarea,
+ 	type SlashPickerField,
+@@ -565,336 +556,12 @@ function MetadataChips({
+ 	);
+ }
+ 
+-// Operator reply composer: appends an attributed reply to the comment thread
+-// and flips the issue back to todo so the agent re-runs (server-side, atomic).
+-// Sits below the comment thread so replies follow the conversation they continue.
+-function ReplyComposer({
+-	issue,
+-	staged,
+-	slashFields,
+-	onClearStaged,
+-	onSent,
+-}: {
+-	issue: IssueDetail;
+-	staged: StagedDispatchControls;
+-	slashFields: readonly SlashPickerField[];
+-	onClearStaged: () => void;
+-	onSent: () => void;
+-}) {
+-	const queryClient = useQueryClient();
+-	const draftKey = `podium.reply-draft.${issue.id}`;
+-	const [draft, setDraft] = useState(() => {
+-		try {
+-			return window.sessionStorage.getItem(draftKey) ?? "";
+-		} catch {
+-			return "";
+-		}
+-	});
+-	const taRef = useRef<HTMLTextAreaElement>(null);
+-	const hasStaged = hasStagedDispatch(staged);
+-	const saveDraft = (next: string) => {
+-		setDraft(next);
+-		try {
+-			if (next) {
+-				window.sessionStorage.setItem(draftKey, next);
+-			} else {
+-				window.sessionStorage.removeItem(draftKey);
+-			}
+-		} catch {
+-			// Storage unavailable — keep the in-memory draft.
+-		}
+-	};
+-
+-	// Auto-grow: start small (one row) and expand to fit the draft up to a cap,
+-	// after which it scrolls. Resync height whenever the draft changes (typing,
+-	// or the reset to "" after a successful send).
+-	useEffect(() => {
+-		const el = taRef.current;
+-		if (!el) return;
+-		el.style.height = "auto";
+-		el.style.height = `${el.scrollHeight}px`;
+-	}, [draft]);
+-
+-	// Gate on run-state: a live or queued run can't honor a mid-run reply, and a
+-	// todo issue is already queued. isActiveRunState mirrors the board gating.
+-	const runningOrActive =
+-		issue.state === "running" || isActiveRunState(issue.latest_run_state);
+-	const isTodo = issue.state === "todo";
+-	// A scheduled issue sits in todo until its maintenance window. /reply would
+-	// re-dispatch it early (and 409 on todo), so post an append-only comment
+-	// instead — the operator can annotate the held issue without disturbing it.
+-	const commentMode =
+-		(isTodo && issue.scheduled_for != null && !runningOrActive) ||
+-		staged.scheduleMode != null;
+-	const replyDisabled =
+-		runningOrActive || (isTodo && !commentMode && !hasStaged);
+-	const hint = runningOrActive
+-		? "Agent is running — reply when it parks for review."
+-		: hasStaged
+-			? "Press Send to apply the staged controls."
+-			: "Already queued to run.";
+-
+-	const reply = useMutation({
+-		mutationFn: async (body: string) => {
+-			let result: IssueDetail | null = null;
+-			const approvalPatch: IssuePatch = {};
+-			if (staged.approval_required != null) {
+-				approvalPatch.approval_required = staged.approval_required;
+-			}
+-			if (staged.approved != null) approvalPatch.approved = staged.approved;
+-			if (Object.keys(approvalPatch).length > 0) {
+-				result = await patchIssue(issue.id, approvalPatch);
+-			}
+-
+-			const text = body.trim();
+-			if (staged.scheduleMode != null) {
+-				if (text) result = await postComment(issue.id, body);
+-				result =
+-					staged.scheduleMode === "next_window"
+-						? await scheduleIssue(issue.id, {
+-								not_before: "next_window",
+-								reason: DEFAULT_SCHEDULE_REASON,
+-							})
+-						: await unscheduleIssue(issue.id);
+-				return result;
+-			}
+-
+-			if (!text) return result ?? issue;
+-			return commentMode
+-				? postComment(issue.id, body)
+-				: postReply(issue.id, body);
+-		},
+-		onSuccess: () => {
+-			saveDraft("");
+-			onClearStaged();
+-			queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+-			queryClient.invalidateQueries({
+-				queryKey: ["issues", issue.binding_name],
+-			});
+-			onSent();
+-		},
+-	});
+-	const sendDisabled =
+-		replyDisabled || reply.isPending || (!hasStaged && draft.trim() === "");
+-	const send = () => {
+-		if (!sendDisabled) reply.mutate(draft);
+-	};
+-
+-	return (
+-		<div className="space-y-2" data-testid="reply-composer">
+-			<SlashPickerTextarea
+-				textareaRef={taRef}
+-				testid="reply-input"
+-				value={draft}
+-				onChange={saveDraft}
+-				fields={slashFields}
+-				onSubmitShortcut={send}
+-				rows={1}
+-				placeholder={
+-					hasStaged
+-						? "Comment, then Send to apply staged controls…"
+-						: commentMode
+-							? "Add a comment (held until window — won't re-run the agent)…"
+-							: "Write a reply to the agent…"
+-				}
+-				disabled={replyDisabled}
+-				className="max-h-60 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
+-			/>
+-			{replyDisabled && (
+-				<p
+-					data-testid="reply-disabled-hint"
+-					className="text-xs text-muted-foreground"
+-				>
+-					{hint}
+-				</p>
+-			)}
+-			{reply.isError && (
+-				<p data-testid="reply-error" className="text-xs text-red-500">
+-					Reply failed — the issue may have changed state. Try again.
+-				</p>
+-			)}
+-			<div className="flex items-center justify-end gap-2">
+-				<span className="text-xs text-muted-foreground">⌘/Ctrl + Enter</span>
+-				<button
+-					type="button"
+-					data-testid="reply-send"
+-					disabled={sendDisabled}
+-					onClick={send}
+-					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
+-				>
+-					Send
+-				</button>
+-			</div>
+-		</div>
+-	);
+-}
+-
+-function SteerComposer({
+-	issue,
+-	latestRun,
+-	bindingPiMode,
+-	bindingClaudePersist,
+-}: {
+-	issue: IssueDetail;
+-	latestRun: Run | null;
+-	bindingPiMode: "one-shot" | "rpc" | null;
+-	bindingClaudePersist: boolean | null;
+-}) {
+-	const queryClient = useQueryClient();
+-	const appendTail = useAppendTailEvent();
+-	const [draft, setDraft] = useState("");
+-	const [lastStatus, setLastStatus] = useState<string | null>(null);
+-	const taRef = useRef<HTMLTextAreaElement>(null);
+-
+-	useEffect(() => {
+-		const el = taRef.current;
+-		if (!el) return;
+-		el.style.height = "auto";
+-		el.style.height = `${el.scrollHeight}px`;
+-	}, [draft]);
+-
+-	const latestRunAgent = latestRun?.agent?.trim().toLowerCase() ?? null;
+-	const liveRun =
+-		issue.state === "running" &&
+-		issue.latest_run_state === "running" &&
+-		issue.latest_run_id != null;
+-	const isClaudeRun = liveRun && latestRunAgent === "claude";
+-	const canSteer =
+-		liveRun &&
+-		((latestRunAgent === "pi" && bindingPiMode === "rpc") ||
+-			(latestRunAgent === "claude" && bindingClaudePersist === true));
+-	const disabledReason = !liveRun
+-		? "Live steering is available only while a pi RPC run is active."
+-		: latestRun == null
+-			? "Loading latest run details…"
+-			: latestRunAgent === "claude"
+-				? "Claude live steering requires claude_persist; otherwise use park-and-reply."
+-				: bindingPiMode !== "rpc"
+-					? "This binding is not using pi RPC live steering."
+-					: "Live steering is available only for pi RPC runs.";
+-
+-	const appendLocalTail = (payload: Record<string, unknown>) => {
+-		appendTail({ issue_id: issue.id, lines: [JSON.stringify(payload)] });
+-	};
+-	const invalidateIssue = () => {
+-		queryClient.invalidateQueries({ queryKey: ["issue", issue.id] });
+-		queryClient.invalidateQueries({ queryKey: ["issues", issue.binding_name] });
+-	};
+-
+-	const steer = useMutation({
+-		mutationFn: (body: string) => postSteer(issue.id, body),
+-		onMutate: (body) => {
+-			appendLocalTail({ type: "operator_steer", state: "queued", body });
+-			setLastStatus("Steer queued");
+-		},
+-		onSuccess: (_data, body) => {
+-			setDraft("");
+-			appendLocalTail({ type: "operator_steer", state: "delivered", body });
+-			setLastStatus("Steer delivered");
+-			invalidateIssue();
+-		},
+-		onError: (_error, body) => {
+-			appendLocalTail({ type: "operator_steer", state: "failed", body });
+-			setLastStatus("Steer failed");
+-		},
+-	});
+-	const abort = useMutation({
+-		mutationFn: () => postAbort(issue.id),
+-		onMutate: () => {
+-			appendLocalTail({ type: "operator_abort", state: "queued" });
+-			setLastStatus("Abort queued");
+-		},
+-		onSuccess: () => {
+-			appendLocalTail({ type: "operator_abort", state: "delivered" });
+-			setLastStatus("Abort delivered");
+-			invalidateIssue();
+-		},
+-		onError: () => {
+-			appendLocalTail({ type: "operator_abort", state: "failed" });
+-			setLastStatus("Abort failed");
+-		},
+-	});
+-	const isPending = steer.isPending || abort.isPending;
+-
+-	return (
+-		<div
+-			className="space-y-2 rounded-md border p-3"
+-			data-testid="steer-composer"
+-		>
+-			<div className="flex items-center justify-between gap-2">
+-				<div>
+-					<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+-						Live steering
+-					</p>
+-					{!canSteer && (
+-						<p
+-							data-testid="steer-disabled-hint"
+-							className="text-xs text-muted-foreground"
+-						>
+-							{disabledReason}
+-						</p>
+-					)}
+-					{lastStatus && (
+-						<p
+-							data-testid="steer-status"
+-							className="text-xs text-muted-foreground"
+-						>
+-							{lastStatus}
+-						</p>
+-					)}
+-					{isClaudeRun && (
+-						<p
+-							data-testid="steer-agent-copy"
+-							className="text-xs text-muted-foreground"
+-						>
+-							Steer is queued; Claude picks it up at its next turn. Abort:
+-							interrupt the current turn now (Esc).
+-						</p>
+-					)}
+-				</div>
+-				<button
+-					type="button"
+-					data-testid="steer-abort"
+-					disabled={!canSteer || isPending}
+-					onClick={() => abort.mutate()}
+-					className="rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+-				>
+-					Abort
+-				</button>
+-			</div>
+-			<textarea
+-				ref={taRef}
+-				data-testid="steer-input"
+-				value={draft}
+-				rows={1}
+-				placeholder={
+-					isClaudeRun
+-						? "Queue guidance for Claude’s next turn…"
+-						: "Redirect the running pi agent…"
+-				}
+-				disabled={!canSteer || isPending}
+-				onChange={(e) => setDraft(e.target.value)}
+-				className="max-h-40 w-full resize-none overflow-y-auto rounded-md border bg-transparent p-2 font-mono text-xs outline-none disabled:opacity-50"
+-			/>
+-			{(steer.isError || abort.isError) && (
+-				<p data-testid="steer-error" className="text-xs text-red-500">
+-					Steer request failed — the run may have finished or changed agent.
+-				</p>
+-			)}
+-			<div className="flex justify-end">
+-				<button
+-					type="button"
+-					data-testid="steer-send"
+-					disabled={!canSteer || isPending || draft.trim() === ""}
+-					onClick={() => steer.mutate(draft)}
+-					className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted/40 disabled:opacity-50"
+-				>
+-					Send steer
+-				</button>
+-			</div>
+-		</div>
+-	);
+-}
++// Operator reply composer: replaced by the unified AutoComposer (issue #34,
++// F2). The composer auto-routes by run state per spec §7 (5 cases), shows the
++// mode pill on the send button naming mode + consequence, surfaces Abort only
++// on steerable live runs, auto-focuses on a freshly-created todo, and folds
++// the "your turn" affordance into the in_review state. The pre-#34
++// ReplyComposer + SteerComposer pair lived here before the collapse.
+ 
+ // Comments are stored as one chronological markdown blob (oldest first).
+ // Render the blob unchanged so every agent and operator turn stays visible.
+@@ -980,6 +647,31 @@ export function IssueFlyout({
+ 			issueDetailRefetchIntervalMs(detail.data),
+ 	});
+ 	const patch = usePatchIssue();
++	// Issue #34 (F2) + spec §3: a topbar chip names state + sublabel so the
++	// operator can read the actionable state at a glance, and the in_review
++	// sublabel doubles as the "your turn" affordance that pairs with the
++	// composer mode pill (§7 fresh-todo / reply-park modes). F1 delivers the
++	// full chip layout — we ship the minimum here (state + sublabel only).
++	const stateSublabel = useMemo(() => {
++		const state = detail.data?.state;
++		if (!state) return null;
++		switch (state) {
++			case "todo":
++				return "queued";
++			case "running":
++				return "agent working";
++			case "in_review":
++				return "your turn";
++			case "blocked":
++				return "blocked";
++			case "done":
++				return "done";
++			case "archived":
++				return "archived";
++			default:
++				return null;
++		}
++	}, [detail.data?.state]);
+ 	const onPatch: OnPatch = (issuePatch) => {
+ 		if (!detail.data) return;
+ 		patch.mutate(
+@@ -1014,6 +706,20 @@ export function IssueFlyout({
+ 	);
+ 	const showEmptySkillHint = skills.isSuccess && skillNames.length === 0;
+ 
++	// Issue #34 (F2): the fresh-todo composer mode (§7) triggers when the flyout
++	// is opened with ?fresh=1 (set by NewIssueModal post-create auto-open, F4),
++	// or when the issue's created_at is within the last 60 seconds (heuristic
++	// fallback when the modal auto-open lands on an older tab). The flag is
++	// sticky for the issue's lifetime in this session.
++	const [freshParam, setFreshParam] = useState(() => {
++		if (typeof window === "undefined") return false;
++		try {
++			return new URLSearchParams(window.location.search).get("fresh") === "1";
++		} catch {
++			return false;
++		}
++	});
++
+ 	// Reset nested flyout state each time a different issue opens. The maximized
+ 	// layout is intentionally not reset; it is the operator's last-used preference.
+ 	useEffect(() => {
+@@ -1237,12 +943,23 @@ export function IssueFlyout({
+ 						<div className="space-y-4 p-6">
+ 							<div className="flex items-start justify-between gap-3">
+ 								<div className="min-w-0">
+-									<p
+-										className="text-sm text-muted-foreground"
+-										data-testid="flyout-issue-number"
+-									>
+-										Issue #{issue.id}
+-									</p>
++									<div className="flex items-center gap-2">
++										<p
++											className="text-sm text-muted-foreground"
++											data-testid="flyout-issue-number"
++										>
++											Issue #{issue.id}
++										</p>
++										{stateSublabel && (
++											<span
++												data-testid="flyout-state-chip"
++												data-state={issue.state}
++												className="rounded-full border bg-muted/40 px-2 py-0.5 text-xs"
++											>
++												{issue.state} · {stateSublabel}
++											</span>
++										)}
++									</div>
+ 									<h2
+ 										id="flyout-title"
+ 										className="text-lg font-semibold leading-tight"
+@@ -1340,23 +1057,35 @@ export function IssueFlyout({
+ 												issueId={issue.id}
+ 												source={issue.comments_md}
+ 											/>
+-											<ReplyComposer
++											<AutoComposer
+ 												key={issue.id}
+ 												issue={issue}
++												latestRun={latestRun}
++												bindingPiMode={bindingPiMode}
++												bindingClaudePersist={bindingClaudePersist}
+ 												staged={stagedDispatch}
+ 												slashFields={slashFields}
++												freshParam={freshParam}
+ 												onClearStaged={clearStagedDispatch}
+ 												onSent={onClose}
+ 											/>
+ 										</div>
+ 									) : tab === "session" ? (
+ 										<div className="space-y-3">
+-											<SteerComposer
+-												issue={issue}
+-												latestRun={latestRun}
+-												bindingPiMode={bindingPiMode}
+-												bindingClaudePersist={bindingClaudePersist}
+-											/>
++											<div data-testid="steer-composer">
++												<AutoComposer
++													key={issue.id}
++													issue={issue}
++													latestRun={latestRun}
++													bindingPiMode={bindingPiMode}
++													bindingClaudePersist={bindingClaudePersist}
++													staged={stagedDispatch}
++													slashFields={slashFields}
++													freshParam={freshParam}
++													onClearStaged={clearStagedDispatch}
++													onSent={() => undefined}
++												/>
++											</div>
+ 											<SessionTailPanel issueId={issue.id} />
+ 										</div>
+ 									) : (
+diff --git a/web/frontend/tests/reply.spec.ts b/web/frontend/tests/reply.spec.ts
+index 8358c8c..c09947b 100644
+--- a/web/frontend/tests/reply.spec.ts
++++ b/web/frontend/tests/reply.spec.ts
+@@ -417,20 +417,59 @@ test("failed Reply keeps the flyout and draft open with an error", async ({
+ 	expectCleanConsole(problems, { ignore: [/409/] });
+ });
+ 
+-test("composer send is disabled with a hint while the issue is running", async ({
++test("composer routes to comment when the issue is running but not steerable", async ({
+ 	page,
+ 	problems,
+ }) => {
+-	const title = `e2e reply running issue ${Date.now()}`;
++	// Issue #34 (F2): spec §7 case 4 — live non-steerable runs accept an
++	// append-only comment (agent sees it at its next park). The prior
++	// architecture disabled ReplyComposer with a hint; the unified AutoComposer
++	// re-routes to /comment instead and shows the comment-non-steerable-live
++	// mode pill. homelab's binding defaults to pi_mode=rpc; mock it to one-shot
++	// so the test exercises the non-steerable branch.
++	const title = `e2e reply running non-steerable ${Date.now()}`;
+ 	seedRunningRunIssue("homelab", title);
++	await page.route("**/api/bindings", async (route) => {
++		await route.fulfill({
++			contentType: "application/json",
++			body: JSON.stringify([
++				{
++					name: "homelab",
++					display_name: "homelab",
++					color: "#000",
++					sort_order: 0,
++					archived: false,
++					binding_type: "infra",
++					pi_mode: "one-shot",
++					claude_persist: false,
++					approval_enabled: false,
++					is_remote: false,
++					repo_name: null,
++					host: "test",
++					github_repo: null,
++				},
++			]),
++		});
++	});
+ 
+ 	await openIssue(page, "homelab", title);
+ 
+-	await expect(page.getByTestId("reply-send")).toBeDisabled();
+-	await expect(page.getByTestId("reply-input")).toBeDisabled();
+-	await expect(page.getByTestId("reply-disabled-hint")).toContainText(
+-		"Agent is running",
++	await expect(page.getByTestId("composer-pill")).toContainText(
++		"Comment · agent sees it next park",
++	);
++	await expect(page.getByTestId("reply-input")).toBeEnabled();
++	const input = page.getByTestId("reply-input");
++	await input.fill("Note for the agent at next park.");
++
++	const commented = page.waitForResponse(
++		(res) =>
++			/\/api\/issues\/\d+\/comment$/.test(res.url()) &&
++			res.request().method() === "POST" &&
++			res.ok(),
+ 	);
++	await page.getByTestId("reply-send").click();
++	await commented;
++	await expect(page.getByTestId("issue-flyout")).toBeHidden();
+ 
+ 	expectCleanConsole(problems);
+ });
+diff --git a/web/frontend/tests/steer-flyout.spec.ts b/web/frontend/tests/steer-flyout.spec.ts
+index f641597..4b6c7c1 100644
+--- a/web/frontend/tests/steer-flyout.spec.ts
++++ b/web/frontend/tests/steer-flyout.spec.ts
+@@ -32,13 +32,28 @@ async function mockBindingCapabilities(
+ 	capabilities: { pi_mode?: "one-shot" | "rpc"; claude_persist?: boolean },
+ ) {
+ 	await page.route("**/api/bindings", async (route) => {
+-		const response = await route.fetch();
+-		const bindings = (await response.json()) as Record<string, unknown>[];
++		// Static stub: route.fetch() is flaky under parallel test execution
++		// (the underlying request can be aborted mid-handler). Returning a
++		// fixed bindings payload keeps this helper deterministic.
+ 		await route.fulfill({
+-			response,
+-			json: bindings.map((binding) =>
+-				binding.name === bindingName ? { ...binding, ...capabilities } : binding,
+-			),
++			contentType: "application/json",
++			body: JSON.stringify([
++				{
++					name: bindingName,
++					display_name: bindingName,
++					color: "#000",
++					sort_order: 0,
++					archived: false,
++					binding_type: "infra",
++					pi_mode: capabilities.pi_mode ?? "rpc",
++					claude_persist: capabilities.claude_persist ?? false,
++					approval_enabled: false,
++					is_remote: false,
++					repo_name: null,
++					host: "test",
++					github_repo: null,
++				},
++			]),
+ 		});
+ 	});
+ }
+@@ -110,10 +125,15 @@ test("steer controls enable for Claude on claude_persist binding", async ({
+ 	expectCleanConsole(problems);
+ });
+ 
+-test("steer controls disable for pi one-shot on claude_persist binding", async ({
++test("non-steerable live pi routes the session composer to comment mode", async ({
+ 	page,
+ 	problems,
+ }) => {
++	// Issue #34 (F2): spec §7 case 4 — live non-steerable runs accept an
++	// append-only comment in the unified AutoComposer. The prior SteerComposer
++	// disabled the input with "not using pi RPC"; the unified composer
++	// re-routes to /comment instead and shows the comment-non-steerable-live
++	// mode pill. There is no abort affordance and no steer-disabled hint.
+ 	const title = `e2e steer pi oneshot persist ${Date.now()}`;
+ 	seedRunningRunIssue("homelab", title, "pi");
+ 	await mockBindingCapabilities(page, "homelab", {
+@@ -122,37 +142,45 @@ test("steer controls disable for pi one-shot on claude_persist binding", async (
+ 	});
+ 
+ 	await openSessionTab(page, "homelab", title);
+-	await expect(page.getByTestId("steer-input")).toBeDisabled();
+-	await expect(page.getByTestId("steer-abort")).toBeDisabled();
+-	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
+-		"not using pi RPC",
++	await expect(page.getByTestId("composer-pill")).toContainText(
++		"Comment · agent sees it next park",
+ 	);
++	await expect(page.getByTestId("reply-input")).toBeEnabled();
++	await expect(page.getByTestId("steer-abort")).toBeHidden();
++	await expect(page.getByTestId("steer-disabled-hint")).toHaveCount(0);
+ 	await expect(page.getByTestId("steer-agent-copy")).toBeHidden();
+ 
+ 	expectCleanConsole(problems);
+ });
+ 
+-test("steer controls disable for Claude without claude_persist and idle issues", async ({
++test("non-steerable Claude and idle issues show the comment-mode pill", async ({
+ 	page,
+ 	problems,
+ }) => {
++	// Issue #34 (F2): same as above — non-steerable live Claude runs and idle
++	// issues (no active run) both fall into the comment-mode branch of the
++	// unified composer. The prior SteerComposer disabled steer-input with a
++	// hint; the unified composer shows the relevant mode pill instead.
+ 	const claudeTitle = `e2e steer claude ${Date.now()}`;
+ 	seedRunningRunIssue("homelab", claudeTitle, "claude");
+ 	await openSessionTab(page, "homelab", claudeTitle);
+-	await expect(page.getByTestId("steer-input")).toBeDisabled();
+-	await expect(page.getByTestId("steer-abort")).toBeDisabled();
+-	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
+-		"claude_persist",
++	await expect(page.getByTestId("composer-pill")).toContainText(
++		"Comment · agent sees it next park",
+ 	);
++	await expect(page.getByTestId("steer-abort")).toBeHidden();
+ 
+ 	const idleTitle = `e2e steer idle ${Date.now()}`;
+ 	const { runId } = seedRunningRunIssue("homelab", idleTitle);
+ 	finishRun(runId, "finished before operator steer");
+ 	await openSessionTab(page, "homelab", idleTitle);
+-	await expect(page.getByTestId("steer-input")).toBeDisabled();
+-	await expect(page.getByTestId("steer-disabled-hint")).toContainText(
+-		"only while a pi RPC run is active",
++	// finishRun flips state to in_review, so the unified composer routes the
++	// session tab to reply-park (the actionable in_review mode), not comment
++	// mode. The steer affordance is absent because there is no live run to
++	// steer.
++	await expect(page.getByTestId("composer-pill")).toContainText(
++		"Reply · re-dispatches",
+ 	);
++	await expect(page.getByTestId("steer-abort")).toBeHidden();
+ 
+ 	expectCleanConsole(problems);
+ });

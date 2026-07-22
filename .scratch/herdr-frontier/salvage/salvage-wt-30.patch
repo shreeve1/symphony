@@ -1,0 +1,189 @@
+diff --git a/redispatch_core.py b/redispatch_core.py
+index 0dba1f7..94c48ea 100644
+--- a/redispatch_core.py
++++ b/redispatch_core.py
+@@ -7,10 +7,54 @@ without importing each other's scaffolding.
+ from __future__ import annotations
+ 
+ import re
+-from datetime import datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ from os import PathLike
+ from typing import Any
+ 
++# B1: §2.1 header grammar — every new write into comments_md lands with this
++# uniform machine-parseable header. The split regex (frontend, dumb) lives in
++# docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md §2.1 and matches the
++# same shape. Roles: agent · operator · patrol · system.
++COMMENT_ROLES = ("agent", "operator", "patrol", "system")
++COMMENT_HEADER_RE = re.compile(
++    r"^### (agent|operator|patrol|system) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$",
++    re.MULTILINE,
++)
++
++
++def _format_comment_ts(now: datetime) -> str:
++    """Render a datetime as the §2.1 timestamp: UTC, seconds, Z suffix."""
++    if now.tzinfo is None:
++        ts = now
++    else:
++        ts = now.astimezone(timezone.utc)
++    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++def stamp_comment(role: str, body: str, ts: datetime) -> str:
++    """Wrap ``body`` with the §2.1 ``### <role> · <ISO-ts>`` header.
++
++    The stamp is the only durable write-side provenance every comments_md block
++    receives (B1 of the Podium issue-chat spec). The body is preserved verbatim
++    between the stamp and a trailing blank line; downstream readers split on the
++    header via ``COMMENT_HEADER_RE`` and render the inner body per role color.
++
++    ``role`` must be one of ``COMMENT_ROLES``; the boundary helper exists so
++    every write site uses one shape. ``ts`` is rendered in UTC seconds with a
++    trailing ``Z`` regardless of the input's local zone, so the front-end regex
++    (also ``Z``-pinned) parses them uniformly.
++    """
++    if role not in COMMENT_ROLES:
++        raise ValueError(
++            f"invalid comment role {role!r}; expected one of {COMMENT_ROLES}"
++        )
++    inner = (body or "").strip()
++    header = f"### {role} · {_format_comment_ts(ts)}"
++    if not inner:
++        return f"{header}\n\n"
++    return f"{header}\n\n{inner}\n\n"
++
++
+ MAX_COMMIT_REDISPATCH = 2
+ RETRY_MARKER_PREFIX = "### Symphony Retry (transient"
+ STALL_MARKER_PREFIX = "### Symphony Retry (stall"
+diff --git a/web/api/main.py b/web/api/main.py
+index a0e1cd9..5a22fdd 100644
+--- a/web/api/main.py
++++ b/web/api/main.py
+@@ -73,6 +73,7 @@ try:
+         count_commit_redispatches,
+         format_retry_epoch_marker,
+         redispatch_commit_note,
++        stamp_comment,
+     )
+     from session_continuity import derive_session_id, session_file_path
+ except ModuleNotFoundError:
+@@ -96,6 +97,7 @@ except ModuleNotFoundError:
+         count_commit_redispatches,
+         format_retry_epoch_marker,
+         redispatch_commit_note,
++        stamp_comment,
+     )
+     from session_continuity import (  # type: ignore[no-redef]
+         derive_session_id,
+@@ -1717,7 +1719,14 @@ async def schedule_issue(
+     now_dt = datetime.now(UTC)
+     now = now_dt.isoformat()
+     not_before, reason = _resolve_schedule_request(schedule, now_dt)
+-    appended = "\n\n" + format_schedule_comment(not_before=not_before, reason=reason)
++    # B1: stamp the schedule marker as system (machine-authored; not an
++    # operator/agent/patrol voice). The legacy `Symphony-Schedule:` header stays
++    # inside the body so existing parsers that grep for it still match.
++    appended = "\n\n" + stamp_comment(
++        "system",
++        format_schedule_comment(not_before=not_before, reason=reason),
++        now_dt,
++    ).rstrip("\n")
+     connection.execute(
+         """
+         UPDATE issue
+@@ -1757,11 +1766,14 @@ async def unschedule_issue(
+         raise HTTPException(status_code=400, detail="scheduling is infra-only")
+ 
+     now = datetime.now(UTC).isoformat()
++    now_dt = datetime.fromisoformat(now)
+     reason = unschedule.reason or "operator unscheduled via Podium"
+     try:
+         cancellation = format_cancellation_comment(reason=reason)
+     except ValueError as exc:
+         raise HTTPException(status_code=422, detail=str(exc)) from exc
++    # B1: stamp the cancellation marker as system (machine-authored).
++    appended = "\n\n" + stamp_comment("system", cancellation, now_dt).rstrip("\n")
+     connection.execute(
+         """
+         UPDATE issue
+@@ -1770,7 +1782,7 @@ async def unschedule_issue(
+                updated_at = ?
+          WHERE id = ?
+         """,
+-        ("\n\n" + cancellation, now, issue_id),
++        (appended, now, issue_id),
+     )
+     connection.commit()
+     row = connection.execute("SELECT * FROM issue WHERE id = ?", (issue_id,)).fetchone()
+@@ -1849,7 +1861,14 @@ async def reply_to_issue(
+ 
+     now = _next_updated_at(current["updated_at"])
+     epoch = format_retry_epoch_marker("operator", datetime.fromisoformat(now))
+-    appended = f"\n\n### Operator Reply ({now})\n\n{reply.body.strip()}\n\n{epoch}"
++    # B1: operator role stamp wraps the verbatim reply body (ADR-0017
++    # attribution wrapper) and the trailing retry-epoch marker rides as a
++    # system-style footer in the same block — the per-role split on the read
++    # side just yields one operator bubble plus one collapsed system row.
++    reply_block = stamp_comment(
++        "operator", reply.body.strip(), datetime.fromisoformat(now)
++    )
++    appended = f"\n\n{reply_block}{epoch}\n\n"
+ 
+     # One atomic conditional UPDATE: append + state flip + bump, all server-side.
+     # COALESCE guards a legacy NULL comments_md (NULL || text yields NULL, which
+@@ -1900,9 +1919,15 @@ async def comment_on_issue(
+     Mirrors /reply's append + monotonic updated_at bump + issue.updated publish,
+     but drops the three reopen-coupled effects: no state flip to 'todo', no
+     run-state gate (works in ANY state — including running — and never 409s on
+-    state grounds), and no wake-sentinel touch (no re-dispatch). Attribution is
+-    caller-owned: the body is appended verbatim with no `### …` header, mirroring
+-    the in-process agent path. Use /reply when you also want reopen + re-dispatch.
++    state grounds), and no wake-sentinel touch (no re-dispatch).
++
++    B1: the server wraps the operator's verbatim body with an ``### operator``
++    attribution stamp (Podium issue-chat spec §2.3 — lightly bends ADR-0017's
++    "verbatim" wording; the body content stays caller-owned, only the wrapper
++    changes). Patrols in homelab previously worker-stamped their own
++    ``### Patrol (...)`` legacy header — those legacy blocks stay as-is in the
++    blob (no destructive migration per §2.2), but new operator writes carry
++    the §2.1 grammar.
+     """
+     stored = connection.execute(
+         "SELECT * FROM issue WHERE id = ?", (issue_id,)
+@@ -1923,7 +1948,11 @@ async def comment_on_issue(
+         raise HTTPException(status_code=status, detail=errors) from exc
+ 
+     now = _next_updated_at(current["updated_at"])
+-    appended = f"\n\n{comment.body.strip()}"  # verbatim, no `### …` header
++    # B1: stamp the verbatim operator body with the §2.1 attribution header.
++    appended = (
++        "\n\n"
++        + stamp_comment("operator", comment.body.strip(), datetime.fromisoformat(now))
++    ).rstrip("\n")
+ 
+     # One atomic append + bump. No state clause and no run-state guard: a Comment
+     # never reopens and never 409s. COALESCE guards a legacy NULL comments_md.
+@@ -2012,8 +2041,18 @@ async def steer_issue(
+         )
+ 
+     now = _next_updated_at(current["updated_at"])
+-    heading = "Operator Steer" if steer.action == "steer" else "Operator Abort"
+-    appended = f"\n\n### {heading} ({now})\n\n{message}"
++    # B1: stamp with the §2.1 operator role; the steer/abort kind carries as a
++    # leading badge in the body so the read-side split still attributes the
++    # block to operator while the badge surfaces the action variant.
++    badge = "**steer**" if steer.action == "steer" else "**abort**"
++    appended = (
++        "\n\n"
++        + stamp_comment(
++            "operator",
++            f"{badge}\n\n{message}",
++            datetime.fromisoformat(now),
++        )
++    ).rstrip("\n")
+     cursor = connection.execute(
+         """
+         UPDATE issue
