@@ -606,8 +606,9 @@ class PodiumTrackerAdapter:
                   exit_code, cost_usd, input_tokens, output_tokens,
                   cache_read_tokens, worktree_path,
                   branch_name, base_branch, log_path, skill_invoked, started_at,
-                  ended_at, agent_session_sha, resumed, agent_session_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ended_at, agent_session_sha, resumed, agent_session_id,
+                  agent_session_start_offset, source_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -1320,6 +1321,12 @@ _RUN_INSERT_COLUMNS = (
     "agent_session_sha",
     "resumed",
     "agent_session_id",
+    # B3 live-tail: written at dispatch (scheduler/run_records.py). Remote and
+    # fresh runs use start_offset=0; local resumed runs use the file size at
+    # dispatch. source_id is "<agent_session_id>:<inode>" so clients can
+    # detect rotation and reset+refetch.
+    "agent_session_start_offset",
+    "source_id",
 )
 _RUN_IMMUTABLE_COLUMNS = {"issue_id", "agent_session_id"}
 _RUN_UPDATE_COLUMNS = tuple(
