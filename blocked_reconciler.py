@@ -34,6 +34,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from scheduler.stamp import _stamp_comment
 from datetime import UTC, datetime
 from typing import Any, Callable, Sequence
 
@@ -595,7 +596,7 @@ async def reconcile_blocked(
             continue
 
         try:
-            await adapter.add_comment(issue_id, CommentPayload(body=comment_body))
+            await adapter.add_comment(issue_id, CommentPayload(body=_stamp_comment("system", comment_body)))
         except Exception as exc:
             # Transition already succeeded — log loudly but mark applied=True
             # because the state change is the authoritative outcome.

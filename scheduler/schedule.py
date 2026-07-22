@@ -32,6 +32,7 @@ from tracker_types import (
 
 from .markers import _parse_summary_marker
 from .ports import fetch_issue as _fetch_issue
+from .stamp import _stamp_comment
 
 if TYPE_CHECKING:
     from config import SymphonyConfig  # noqa: F811
@@ -212,9 +213,12 @@ async def _release_scheduled_candidate(
     await adapter.add_comment(
         issue_id,
         CommentPayload(
-            body=(
-                "Symphony scheduled release: not_before="
-                f"{latest.not_before.isoformat()} reason={latest.reason}"
+            body=_stamp_comment(
+                "system",
+                (
+                    "Symphony scheduled release: not_before="
+                    f"{latest.not_before.isoformat()} reason={latest.reason}"
+                ),
             )
         ),
     )
@@ -231,7 +235,10 @@ async def _repair_cancelled_schedule(
     await adapter.add_comment(
         issue_id,
         CommentPayload(
-            body=f"Symphony schedule cancellation repaired stale scheduled label: {reason}"
+            body=_stamp_comment(
+                "system",
+                f"Symphony schedule cancellation repaired stale scheduled label: {reason}",
+            )
         ),
     )
     await adapter.remove_labels(issue_id, [TrackerRole.SCHEDULED])
@@ -283,5 +290,7 @@ async def _detect_agent_schedule(
     body = "Symphony scheduled follow-up."
     if schedule_summary:
         body += f" {schedule_summary}"
-    await adapter.add_comment(candidate.id, CommentPayload(body=body))
+    await adapter.add_comment(
+        candidate.id, CommentPayload(body=_stamp_comment("system", body))
+    )
     return "agent-scheduled"

@@ -159,6 +159,7 @@ from .sanitize import (
 from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
+from .stamp import _stamp_comment  # noqa: F401
 from .selection import (  # noqa: F401  (_reserve/_release re-exports: scheduler._NAME is the public test surface)
     _release_candidate,
     _reserve_candidate,
@@ -813,7 +814,7 @@ async def _maybe_transient_review_retry(
         await adapter.add_comment(
             candidate.id,
             CommentPayload(
-                body=f"{marker}\n\n{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}"
+                body=_stamp_comment("system", f"{marker}\n\n{RELAND_PENDING_PREFIX} · {now_dt.isoformat()}")
             ),
         )
         await adapter.transition_state(candidate.id, TrackerRole.STATE_IN_REVIEW)
@@ -1006,7 +1007,7 @@ async def _maybe_retry_stall(
         or "Agent stalled; retrying.",
         ended_at=now_dt.isoformat(),
     )
-    await adapter.add_comment(candidate.id, CommentPayload(body=body))
+    await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("system", body)))
     await adapter.transition_state(candidate.id, role)
     return TickResult(True, reason, candidate.id, mode=mode)
 
@@ -1057,11 +1058,14 @@ async def _maybe_retry_transient_implement(
     await adapter.add_comment(
         candidate.id,
         CommentPayload(
-            body=format_retry_marker(
-                retry_count + 1,
-                "timeout" if result.timed_out else "overloaded",
-                retry_at,
-            )
+            body=_stamp_comment(
+                "system",
+                format_retry_marker(
+                    retry_count + 1,
+                    "timeout" if result.timed_out else "overloaded",
+                    retry_at,
+                ),
+            ),
         ),
     )
     await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
@@ -1370,7 +1374,7 @@ async def _classify_terminal(
             schedule_body = (
                 f"{schedule_comment}\n\n{summary}" if summary else schedule_comment
             )
-            await adapter.add_comment(candidate.id, CommentPayload(body=schedule_body))
+            await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("system", schedule_body)))
             await adapter.add_labels(candidate.id, [TrackerRole.SCHEDULED])
             await adapter.transition_state(candidate.id, TrackerRole.STATE_TODO)
             await _finish_run_record(
@@ -1458,7 +1462,7 @@ async def _classify_terminal(
             ended_at=now().isoformat(),
         )
         try:
-            await adapter.add_comment(candidate.id, CommentPayload(body=question_body))
+            await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", question_body)))
             await _append_terminal_output_context(adapter, candidate, stdout, stderr)
         except PlaneRateLimitError:
             dispatch_state.pending_review_issue_ids.add(candidate.id)
@@ -1540,7 +1544,7 @@ async def _classify_terminal(
             summary=summary,
             ended_at=now().isoformat(),
         )
-        await adapter.add_comment(candidate.id, CommentPayload(body=close_body))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("system", close_body)))
         await _append_terminal_output_context(adapter, candidate, stdout, stderr)
         if await _handle_archived_terminal(
             adapter, config, candidate, run_id, binding=binding
@@ -1603,7 +1607,7 @@ async def _classify_terminal(
         ended_at=now().isoformat(),
     )
     try:
-        await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", completion_body)))
         await _append_terminal_output_context(adapter, candidate, stdout, stderr)
     except PlaneRateLimitError:
         dispatch_state.pending_review_issue_ids.add(candidate.id)
@@ -1670,10 +1674,10 @@ async def _classify_terminal(
             await adapter.add_comment(
                 candidate.id,
                 CommentPayload(
-                    body=_commit_redispatch_body_base(
+                    body=_stamp_comment("system", _commit_redispatch_body_base(
                         config,
                         binding_name,
-                        now=now(),
+                        now=now()),
                     )
                 ),
             )
@@ -1744,8 +1748,9 @@ async def _classify_terminal(
             await adapter.add_comment(
                 candidate.id,
                 CommentPayload(
-                    body=(
-                        f"### Symphony Note (spawn worktree-off branch "
+                    body=_stamp_comment(
+                        "system",
+                        "### Symphony Note (spawn worktree-off branch "
                         f"mismatch · {now().isoformat()})\n\n"
                         f"Base checkout is not on the expected branch "
                         f"`{candidate_base_branch}`. Check out the right "
@@ -1753,8 +1758,8 @@ async def _classify_terminal(
                         f"close to done once the base checkout is clean and "
                         f"on `{candidate_base_branch}`.\n\n"
                         f"{COMMIT_REDISPATCH_REPLY_PREFIX} · "
-                        f"{now().isoformat()})"
-                    )
+                        f"{now().isoformat()}",
+                    ),
                 ),
             )
             try:
@@ -2037,7 +2042,7 @@ async def _handle_review_terminal_done(
             summary=summary,
             ended_at=now().isoformat(),
         )
-        await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", completion_body)))
         await _append_terminal_output_context(adapter, candidate, stdout, stderr)
         if await _handle_archived_terminal(
             adapter, config, candidate, run_id, binding=binding
@@ -2154,7 +2159,7 @@ async def _handle_review_terminal_done(
         summary=summary,
         ended_at=now().isoformat(),
     )
-    await adapter.add_comment(candidate.id, CommentPayload(body=completion_body))
+    await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", completion_body)))
     await _append_terminal_output_context(adapter, candidate, stdout, stderr)
     if await _handle_archived_terminal(
         adapter, config, candidate, run_id, binding=binding
@@ -2188,12 +2193,12 @@ async def _handle_review_terminal_done(
         await adapter.add_comment(
             candidate.id,
             CommentPayload(
-                body=_commit_redispatch_body(
+                body=_stamp_comment("agent", _commit_redispatch_body(
                     config,
                     binding_name,
                     issue_id,
                     auto_land=auto_land,
-                    now=now(),
+                    now=now()),
                 )
             ),
         )
@@ -2262,7 +2267,7 @@ async def _handle_review_terminal_done(
         str(reland_issue.get("comments_md") or ""), now=now()
     )
     if reland_done_body:
-        await adapter.add_comment(candidate.id, CommentPayload(body=reland_done_body))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("system", reland_done_body)))
 
     update_columns = getattr(adapter, "_update_issue_columns", None)
     if callable(update_columns):
@@ -2369,7 +2374,7 @@ async def _handle_operator_reland(
         )
         operator_marker = f"\n\n{OPERATOR_RELAND_PENDING_PREFIX} · {now().isoformat()}"
         body = commit_body + operator_marker
-        await adapter.add_comment(candidate.id, CommentPayload(body=body))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", body)))
         await _finish_run_record(
             adapter,
             run_id,
@@ -2442,7 +2447,7 @@ async def _handle_operator_reland(
         str(reland_issue.get("comments_md") or ""), now=now()
     )
     if done_body:
-        await adapter.add_comment(candidate.id, CommentPayload(body=done_body))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("system", done_body)))
 
     update_columns = getattr(adapter, "_update_issue_columns", None)
     if callable(update_columns):
@@ -2503,7 +2508,7 @@ async def _block_issue(
     issue_url: str = "",
     dashboard_url: str = "",
 ) -> None:
-    await adapter.add_comment(issue_id, CommentPayload(body=message))
+    await adapter.add_comment(issue_id, CommentPayload(body=_stamp_comment("agent", message)))
     await adapter.transition_state(issue_id, TrackerRole.STATE_BLOCKED)
     LOGGER.info("state_transitioned issue_id=%s state=blocked", issue_id)
     if notifier:

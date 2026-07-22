@@ -550,7 +550,8 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["older"][0]["comment_html"]
-    assert completion_comment == "(no output)"
+    assert "### agent · " in completion_comment
+    assert "(no output)" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -606,7 +607,9 @@ async def test_no_claim_comment_posted(tmp_path: Path) -> None:
     bodies = [c["comment_html"] for c in transport.comments["i1"]]
     assert not any(b.startswith("Symphony claimed at ") for b in bodies)
     # Only the plain no-output completion comment lands on the stream.
-    assert bodies == ["(no output)"]
+    assert len(bodies) == 1
+    assert "(no output)" in bodies[0]
+    assert "### agent · " in bodies[0]
 
 
 @pytest.mark.asyncio
@@ -638,7 +641,8 @@ async def test_run_tick_omits_agent_stdout_in_no_terminal_comment(
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: natural turn is posted without a scheduler wrapper.
-    assert completion_comment == agent_output
+    assert "### agent · " in completion_comment
+    assert agent_output in completion_comment
 
 
 @pytest.mark.asyncio
@@ -839,7 +843,8 @@ async def test_run_tick_transient_nonzero_requeues_to_todo_with_retry_marker(
         == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
     )
     marker = transport.comments["issue-1"][0]["comment_html"]
-    assert marker == "### Symphony Retry (transient · 1) · 2026-06-25T12:00:00+00:00"
+    assert "### system · " in marker
+    assert "### Symphony Retry (transient · 1) · 2026-06-25T12:00:00+00:00" in marker
     assert adapter.runs["run-1"]["state"] == "failed"
     assert adapter.runs["run-1"]["verdict"] == "retry"
 
@@ -941,9 +946,8 @@ async def test_stall_watchdog_retry_requeues_with_stall_marker(tmp_path: Path) -
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
     )
-    assert transport.comments["issue-1"][0]["comment_html"] == (
-        "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00"
-    )
+    assert "### system · " in transport.comments["issue-1"][0]["comment_html"]
+    assert "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00" in transport.comments["issue-1"][0]["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -979,10 +983,7 @@ async def test_second_stall_watchdog_failure_requeues_under_raised_cap(
     )
 
     assert tick.reason == "stall-retry-implement"
-    assert (
-        transport.comments["issue-1"][0]["comment_html"]
-        == "### Symphony Retry (stall · 2) · 2026-06-25T12:00:00+00:00"
-    )
+    assert "### Symphony Retry (stall · 2) · 2026-06-25T12:00:00+00:00" in transport.comments["issue-1"][0]["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -1014,10 +1015,8 @@ async def test_third_stall_retry_allowed_under_raised_cap(tmp_path: Path) -> Non
     )
 
     assert tick.reason == "stall-retry-implement"
-    assert (
-        transport.comments["issue-1"][0]["comment_html"]
-        == "### Symphony Retry (stall · 3) · 2026-06-25T12:00:00+00:00"
-    )
+    assert "### system · " in transport.comments["issue-1"][0]["comment_html"]
+    assert "### Symphony Retry (stall · 3) · 2026-06-25T12:00:00+00:00" in transport.comments["issue-1"][0]["comment_html"]
 
 
 @pytest.mark.parametrize("tag", sorted(PI_RETRY_TAGS))
@@ -1049,9 +1048,8 @@ async def test_pi_retry_tag_routes_to_stall_path(tmp_path: Path, tag: str) -> No
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.TODO.value]
     )
-    assert transport.comments["issue-1"][0]["comment_html"] == (
-        "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00"
-    )
+    assert "### system · " in transport.comments["issue-1"][0]["comment_html"]
+    assert "### Symphony Retry (stall · 1) · 2026-06-25T12:00:00+00:00" in transport.comments["issue-1"][0]["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -2193,7 +2191,8 @@ async def test_run_tick_stderr_omitted_from_success_completion_comment(
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: natural turn posted plainly; stderr still omitted on success.
-    assert completion_comment == "done output"
+    assert "### agent · " in completion_comment
+    assert "done output" in completion_comment
     assert "Stderr:" not in completion_comment
     assert "warning: minor issue" not in completion_comment
 
@@ -2252,7 +2251,8 @@ async def test_run_tick_stderr_absent_when_empty(tmp_path: Path) -> None:
     assert result.reason == "agent-clean-review"
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: natural turn posted plainly.
-    assert completion_comment == "done output"
+    assert "### agent · " in completion_comment
+    assert "done output" in completion_comment
     assert "Stderr:" not in completion_comment
 
 
@@ -2453,7 +2453,8 @@ async def test_run_tick_summary_marker_truncated_to_max_chars(tmp_path: Path) ->
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: full natural turn posted; 5000 chars fits under DISPLAY_MAX_CHARS
     # so it's not truncated.
-    assert completion_comment.startswith("XXXXX")
+    assert "### agent · " in completion_comment
+    assert completion_comment.endswith("X" * 5000)
     assert "**Timeline**" not in completion_comment
     assert "XXXXX" in completion_comment
     # Not truncated (5000 chars < 12000 DISPLAY_MAX_CHARS).
@@ -2535,7 +2536,8 @@ async def test_run_tick_posts_plain_natural_turn(tmp_path: Path) -> None:
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: natural turn "ok" is posted without a scheduler wrapper.
-    assert completion_comment == "ok"
+    assert "### agent · " in completion_comment
+    assert completion_comment.endswith("ok")
     assert "**Timeline**" not in completion_comment
 
 
@@ -2607,7 +2609,8 @@ async def test_summary_block_posted_verbatim_in_completion_comment(
     )
 
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert completion_comment.startswith("chatter\n")
+    assert "### agent · " in completion_comment
+    assert "chatter\n" in completion_comment
     assert "## What I did" in completion_comment
     assert "- Restarted prowlarr-host.service" in completion_comment
     assert "**Question:** should I enable auto-restart?" in completion_comment
@@ -3022,7 +3025,7 @@ async def test_marker_done_transitions_to_in_review(tmp_path: Path) -> None:
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
     # ADR-0022: full natural turn posted plainly, not just extracted summary.
-    assert completion_comment == "Health check OK"
+    assert "Health check OK" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -3987,7 +3990,8 @@ async def test_review_terminal_land_conflict_blocks_after_retry(
         transport.issues["issue-1"]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.BLOCKED.value]
     )
-    assert transport.comments["issue-1"][-1]["comment_html"] == "merge conflict"
+    assert "### agent · " in transport.comments["issue-1"][-1]["comment_html"]
+    assert "merge conflict" in transport.comments["issue-1"][-1]["comment_html"]
 
 
 @pytest.mark.asyncio
@@ -4075,8 +4079,9 @@ async def test_question_marker_parks_issue_in_review(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     question_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert (
-        question_comment == "Should I restart the service now or wait for maintenance?"
+    assert "### agent · " in question_comment
+    assert question_comment.endswith(
+        "Should I restart the service now or wait for maintenance?"
     )
     assert "Symphony question" not in question_comment
     assert "SYMPHONY_QUESTION" not in question_comment
@@ -4116,7 +4121,8 @@ async def test_question_marker_posts_surrounding_prose(tmp_path: Path) -> None:
         "My recommendation: split one-shot reply screenshots from durable uploads.\n\n"
         "Should I implement that split?"
     )
-    assert question_comment == expected
+    assert "### agent · " in question_comment
+    assert question_comment.endswith(expected)
     assert question_comment.count("Should I implement that split?") == 1
     assert "Symphony question" not in question_comment
     assert "SYMPHONY_QUESTION" not in question_comment
@@ -4538,7 +4544,8 @@ async def test_empty_stdout_clean_exit_done(tmp_path: Path) -> None:
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
     )
     completion_comment = transport.comments["issue-1"][0]["comment_html"]
-    assert completion_comment == "(no output)"
+    assert "### agent · " in completion_comment
+    assert "(no output)" in completion_comment
 
 
 @pytest.mark.asyncio
@@ -4659,7 +4666,8 @@ async def test_due_scheduled_ticket_releases_before_ordinary(tmp_path: Path) -> 
     assert seen == ["scheduled"]
     assert PlaneLabel.SCHEDULED.value not in transport.issues["scheduled"]["labels"]
     assert any(
-        c["comment_html"].startswith("Symphony scheduled release:")
+        "Symphony scheduled release:" in c["comment_html"]
+        and "### system · " in c["comment_html"]
         for c in transport.comments["scheduled"]
     )
 
@@ -4933,9 +4941,9 @@ async def test_label_only_scheduled_ticket_releases_during_maintenance_window(
     )
     assert captured["issue"].schedule_late == "false"
     assert any(
-        c["comment_html"].startswith(
-            "Symphony scheduled release: not_before=2026-05-04T07:00:00+00:00"
-        )
+        "Symphony scheduled release: not_before=2026-05-04T07:00:00+00:00"
+        in c["comment_html"]
+        and "### system · " in c["comment_html"]
         for c in transport.comments["scheduled"]
     )
 
@@ -6724,7 +6732,12 @@ async def test_reconcile_pending_review_posts_stored_comment(tmp_path: Path) -> 
     assert issue_id not in state.pending_review_issue_ids
     assert issue_id not in state.pending_completion_bodies
     comments = transport.comments.get(issue_id, [])
-    assert any(c.get("comment_html") == pending_body for c in comments)
+    assert any(
+        c.get("comment_html") is not None
+        and "Test summary." in c["comment_html"]
+        and "### agent · " in c["comment_html"]
+        for c in comments
+    )
     assert (
         transport.issues[issue_id]["state"]
         == DEFAULT_CONTRACT.state_ids[PlaneState.IN_REVIEW.value]
