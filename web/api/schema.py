@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-INITIAL_REVISION = "0024_automation_autoincrement_id"
+INITIAL_REVISION = "0025_run_tail_columns"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS binding(
@@ -112,7 +112,13 @@ CREATE TABLE IF NOT EXISTS run(
   -- Appended by migration 0018 (issue #343); ALTER ADD COLUMN lands last, so
   -- SCHEMA_SQL must keep it last too for the alembic-baseline fingerprint.
   cache_read_tokens INTEGER,
-  agent_session_id TEXT
+  agent_session_id TEXT,
+  -- B3 live-tail (migration 0025). `agent_session_start_offset` scopes a
+  -- local resumed run to its own slice of the shared session JSONL; remote
+  -- or fresh runs use 0. `source_id` is `<agent_session_id>:<inode>` at
+  -- dispatch so the client can detect file rotation.
+  agent_session_start_offset INTEGER,
+  source_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS issue_attachment(

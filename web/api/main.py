@@ -256,7 +256,7 @@ class _SessionTailer:
     _POLL_INTERVAL_S = 2.0
 
     def __init__(self) -> None:
-        # issue_id -> {path, cursor, inode}
+        # issue_id -> {path, cursor, inode, source_id}
         self._state: dict[int, dict[str, Any]] = {}
         self._stop: asyncio.Event = asyncio.Event()
 
@@ -283,7 +283,8 @@ class _SessionTailer:
             rows = connection.execute(
                 """
                 SELECT i.id, i.binding_name, r.agent, r.id AS run_id,
-                       r.agent_session_id
+                       r.agent_session_id, r.agent_session_start_offset,
+                       r.source_id
                 FROM issue i
                 INNER JOIN run r ON r.id = i.latest_run_id
                 WHERE i.latest_run_state = 'running'
@@ -294,6 +295,10 @@ class _SessionTailer:
 
         current_ids: set[int] = set()
         for row in rows:
+            # Hoisted: every code path below needs ``run_id`` (remote branch
+            # already used it; local binding previously did not — a naive
+            # payload-extension ``NameError``s here).
+            run_id = row["run_id"]
             issue_id = int(row["id"])
             binding_name = str(row["binding_name"] or "")
             agent = str(row["agent"] or "").strip().lower()
@@ -305,7 +310,6 @@ class _SessionTailer:
                 # Remote agents write their transcript on the remote host; the
                 # scheduler spools the RPC stream to a local file instead so we
                 # can tail it without reaching the remote FS (ADR-0019).
-                run_id = row["run_id"]
                 if run_id is None:
                     continue
                 s_path = tail_spool_path(str(run_id))
@@ -322,13 +326,25 @@ class _SessionTailer:
                 except (ValueError, OSError):
                     continue
 
-            lines = self._read_new_lines(issue_id, s_path)
+            # B3 live-tail: each Run scopes its own slice of a shared session
+            # file via ``agent_session_start_offset``; the client uses
+            # ``source_id`` to detect rotation and reset+refetch.
+            start_offset = int(row["agent_session_start_offset"] or 0)
+            persisted_source_id = str(row["source_id"] or "")
+            lines, from_cursor, cursor, line_cursors, current_source_id = (
+                self._read_new_lines(issue_id, s_path, start_offset, persisted_source_id)
+            )
             if lines:
                 await websocket_hub.publish(
                     {
                         "type": "run.tail",
                         "issue_id": issue_id,
+                        "run_id": int(run_id) if run_id is not None else None,
+                        "source_id": current_source_id,
+                        "from_cursor": from_cursor,
+                        "cursor": cursor,
                         "lines": lines,
+                        "line_cursors": line_cursors,
                     }
                 )
 
@@ -337,54 +353,166 @@ class _SessionTailer:
             if issue_id not in current_ids:
                 del self._state[issue_id]
 
-    def _read_new_lines(self, issue_id: int, path: Path) -> list[str]:
-        """Read new JSONL lines appended since last poll. On first encounter,
-        reads the entire existing content so the operator catches up."""
+    def _read_new_lines(
+        self,
+        issue_id: int,
+        path: Path,
+        start_offset: int,
+        persisted_source_id: str,
+    ) -> tuple[list[str], int, int, list[int], str]:
+        """Read complete newline-terminated records appended since last poll.
+
+        Returns ``(lines, from_cursor, cursor, line_cursors, source_id)``.
+        Incomplete (un-terminated) trailing bytes are retained by holding
+        ``cursor`` back to the last newline boundary so they are never split
+        across polls. On the first poll, the buffer is seeded to
+        ``start_offset`` so resumed runs scope to their own slice of the
+        shared JSONL and never leak prior-run lines. ``source_id`` is the
+        live ``<session_id>:<inode>``; if it changes between polls the
+        client must reset+refetch via ``GET /api/runs/{id}/tail``.
+        """
         try:
             stat_result = path.stat()
         except OSError:
             # File does not exist yet — first poll, fine
-            self._state.setdefault(issue_id, {"path": path, "cursor": 0, "inode": 0})
-            return []
+            self._state.setdefault(
+                issue_id,
+                {"path": path, "cursor": start_offset, "inode": 0, "source_id": ""},
+            )
+            return [], start_offset, start_offset, [], persisted_source_id
 
         current_inode = stat_result.st_ino
         current_size = stat_result.st_size
         tracked = self._state.get(issue_id)
+        live_source_id = f"{persisted_source_id.split(':')[0]}:{current_inode}"
 
-        if tracked is None or tracked["inode"] != current_inode:
-            # First detection or file rotated: read all existing content
-            self._state[issue_id] = {
+        if (
+            tracked is None
+            or tracked["inode"] != current_inode
+            or tracked.get("source_id") != persisted_source_id
+        ):
+            # First detection, file rotated, or run swapped source: seed the
+            # cursor at ``start_offset`` so a resumed run never replays prior
+            # runs that share the same JSONL.
+            tracked = {
                 "path": path,
-                "cursor": current_size,
+                "cursor": start_offset,
                 "inode": current_inode,
+                "source_id": persisted_source_id,
             }
-            # On first detection, emit existing content so the operator sees
-            # the full session so far
-            if current_size == 0:
-                return []
+            self._state[issue_id] = tracked
+            if current_size <= start_offset:
+                return [], start_offset, start_offset, [], live_source_id
             try:
-                return _read_jsonl_lines(path, 0, current_size)
+                raw = _read_jsonl_records(
+                    path, start_offset, current_size, return_cursors=True
+                )
             except OSError:
-                return []
+                return [], start_offset, start_offset, [], live_source_id
+            lines, line_cursors, next_cursor = raw
+            tracked["cursor"] = next_cursor
+            return lines, start_offset, next_cursor, line_cursors, live_source_id
 
         if current_size <= tracked["cursor"]:
-            return []
+            return [], tracked["cursor"], tracked["cursor"], [], live_source_id
 
         try:
-            lines = _read_jsonl_lines(path, tracked["cursor"], current_size)
+            raw = _read_jsonl_records(
+                path,
+                tracked["cursor"],
+                current_size,
+                return_cursors=True,
+            )
         except OSError:
-            return []
+            return (
+                [],
+                tracked["cursor"],
+                tracked["cursor"],
+                [],
+                live_source_id,
+            )
 
-        tracked["cursor"] = current_size
-        return lines
+        lines, line_cursors, next_cursor = raw
+        # Hold the cursor at the last newline boundary so an incomplete
+        # trailing partial record is emitted only once (on the next poll,
+        # after a full terminator lands).
+        prev_cursor = tracked["cursor"]
+        tracked["cursor"] = next_cursor
+        return (
+            lines,
+            prev_cursor,
+            next_cursor,
+            line_cursors,
+            live_source_id,
+        )
 
 
 def _read_jsonl_lines(path: Path, start: int, end: int) -> list[str]:
-    """Read and split the byte range [start, end) into non-empty lines."""
+    """Read and split the byte range [start, end) into non-empty complete lines.
+
+    Only newline-terminated records are returned; an un-terminated trailing
+    suffix is dropped (use ``_read_jsonl_records`` for cursor-aware reads).
+    """
     with path.open("rb") as f:
         f.seek(start)
         raw = f.read(end - start)
-    return [line for line in raw.decode("utf-8", errors="replace").split("\n") if line]
+    return _split_complete_records(raw.decode("utf-8", errors="replace"))
+
+
+def _read_jsonl_records(
+    path: Path,
+    start: int,
+    end: int,
+    *,
+    return_cursors: bool = False,
+) -> list[str] | tuple[list[str], list[int], int]:
+    """Read newline-terminated records in ``[start, end)``.
+
+    When ``return_cursors`` is set, returns ``(lines, line_cursors, next)``
+    where ``line_cursors[i]`` is the absolute end-offset of ``lines[i]`` and
+    ``next`` is the offset of the next incomplete record (or ``end`` if the
+    final byte is a terminator). Without ``return_cursors``, returns just the
+    lines (compat path).
+    """
+    with path.open("rb") as f:
+        f.seek(start)
+        raw = f.read(end - start)
+    if not return_cursors:
+        return _split_complete_records(raw.decode("utf-8", errors="replace"))
+    lines: list[str] = []
+    cursors: list[int] = []
+    cursor = start
+    chunk_start = 0
+    while chunk_start <= len(raw):
+        newline_at = raw.find(b"\n", chunk_start)
+        if newline_at < 0:
+            break
+        # Inclusive end at the newline; advance past it for the next chunk.
+        line_end = newline_at + 1
+        line_bytes = raw[chunk_start:line_end]
+        if line_bytes.strip():
+            lines.append(line_bytes.decode("utf-8", errors="replace").rstrip("\n"))
+            cursor += line_end - chunk_start
+            cursors.append(cursor)
+        else:
+            cursor += line_end - chunk_start
+        chunk_start = line_end
+    return lines, cursors, cursor
+
+
+def _split_complete_records(text: str) -> list[str]:
+    """Split ``text`` on ``\\n`` and drop the trailing incomplete suffix.
+
+    A trailing ``\\n`` makes the last chunk complete; an absent one drops it
+    so callers (notably the GET /tail snapshot) never expose a partial
+    record.
+    """
+    if not text:
+        return []
+    if text.endswith("\n"):
+        return [line for line in text.split("\n") if line]
+    parts = text.split("\n")
+    return [line for line in parts[:-1] if line]
 
 
 _session_tailer = _SessionTailer()
@@ -2641,6 +2769,100 @@ def _tail_bytes(path: Path, limit: int = 1_048_576) -> bytes:
         size = handle.tell()
         handle.seek(max(0, size - limit))
         return handle.read()
+
+
+@app.get("/api/runs/{run_id}/tail")
+def get_run_tail(
+    run_id: int,
+    connection: sqlite3.Connection = Depends(get_connection),
+) -> dict[str, Any]:
+    """Snapshot the active run's tail content for client catch-up (B3).
+
+    Active-run only: ``run.state != 'running'`` -> 404. Remote spools are
+    unlinked at cleanup (``agent_runner.py:839-840``) and the local session
+    file is per-issue (a completed-run read is ambiguous), so we 404 instead
+    of returning a stale slice.
+
+    Response shape mirrors the WS ``run.tail`` payload:
+        ``{run_id, source_id, from_cursor, cursor, lines, line_cursors}``
+
+    where ``from_cursor = run.agent_session_start_offset`` (so a resumed
+    run scopes to its own slice of the shared session JSONL) and ``cursor``
+    is the byte offset of the next incomplete record (or current size if
+    the final byte is a newline). ``lines`` contains only complete
+    newline-terminated records.
+    """
+    row = connection.execute(
+        "SELECT * FROM run WHERE id = ?", (run_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if str(row["state"] or "") != "running":
+        raise HTTPException(status_code=404, detail="run not active")
+
+    issue_row = connection.execute(
+        "SELECT binding_name FROM issue WHERE id = ?", (row["issue_id"],)
+    ).fetchone()
+    binding_name = str(issue_row["binding_name"] or "") if issue_row else ""
+    agent = str(row["agent"] or "").strip().lower()
+    agent_session_id = str(row["agent_session_id"] or "") or derive_session_id(
+        row["issue_id"]
+    )
+    start_offset = int(row["agent_session_start_offset"] or 0)
+    persisted_source_id = str(row["source_id"] or "")
+
+    if _is_remote_binding(binding_name):
+        path = tail_spool_path(str(run_id))
+    else:
+        repo_path = _repo_path_for_binding(binding_name)
+        if repo_path is None or not agent:
+            raise HTTPException(status_code=404, detail="run tail unavailable")
+        try:
+            path = session_file_path(agent, repo_path, agent_session_id)
+        except (ValueError, OSError):
+            raise HTTPException(status_code=404, detail="run tail unavailable") from None
+
+    try:
+        stat_result = path.stat()
+    except OSError:
+        # No transcript yet — return an empty snapshot scoped to the run's
+        # start_offset so a client subscribing before any bytes arrive still
+        # gets a well-formed (run_id, source_id, from_cursor=cursor=start)
+        # response.
+        return {
+            "run_id": int(run_id),
+            "source_id": persisted_source_id,
+            "from_cursor": start_offset,
+            "cursor": start_offset,
+            "lines": [],
+            "line_cursors": [],
+        }
+
+    current_size = stat_result.st_size
+    inode = stat_result.st_ino
+    live_source_id = f"{persisted_source_id.split(':', 1)[0]}:{inode}"
+
+    try:
+        if current_size <= start_offset:
+            lines: list[str] = []
+            line_cursors: list[int] = []
+            cursor = start_offset
+        else:
+            raw = _read_jsonl_records(
+                path, start_offset, current_size, return_cursors=True
+            )
+            lines, line_cursors, cursor = raw
+    except OSError:
+        raise HTTPException(status_code=404, detail="run tail unavailable") from None
+
+    return {
+        "run_id": int(run_id),
+        "source_id": live_source_id,
+        "from_cursor": start_offset,
+        "cursor": cursor,
+        "lines": lines,
+        "line_cursors": line_cursors,
+    }
 
 
 # ── Attachment endpoints ──────────────────────────────────────────

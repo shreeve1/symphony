@@ -16,6 +16,7 @@ from typing import Any, cast
 
 from agent_runner import AgentResult
 from config import ProjectBinding, SymphonyConfig
+from session_continuity import derive_session_id, session_file_path
 from tracker_adapter import TrackerAdapter
 from tracker_types import CandidateIssue
 from web.api.db import resolve_run_log_root
@@ -93,6 +94,88 @@ async def close_run_record_steering(
     )
 
 
+def _compute_tail_source(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None,
+    agent: str,
+) -> tuple[int, str]:
+    """Compute the B3 live-tail ``start_offset`` and ``source_id`` for dispatch.
+
+    Local bindings (resume-eligible) — the run writes into the same session
+    JSONL as the previous run. The start offset is the file size at dispatch
+    so the tailer can scope ``[start_offset, current_size)`` to this run only
+    and avoid leaking prior-run lines. ``source_id`` is
+    ``<agent_session_id>:<inode>`` so rotation is detectable to the client.
+
+    Remote bindings — the spool file is per-run (named by ``run_id``,
+    unlinked at cleanup in ``agent_runner.py:839-840``). Start offset is 0
+    and ``source_id`` encodes the spool location. Fresh local runs also use
+    offset 0 because the file does not yet exist; ``source_id`` falls back
+    to the issue's derive_session_id when ``agent_session_id`` is unset.
+    """
+    is_remote = bool(binding and binding.is_remote)
+    if is_remote:
+        # Per-run spool; no shared-file offset is meaningful.
+        return 0, f"spool:{agent}:{candidate.id}"
+
+    agent_session_id = (
+        getattr(candidate, "agent_session_id", "") or derive_session_id(candidate.id)
+    )
+    resume_active = bool(getattr(candidate, "resumed", False))
+    if not resume_active:
+        # Fresh local run: file does not exist yet at dispatch.
+        return 0, f"{agent_session_id}:0"
+
+    repo_path: Path | None = None
+    worktree_branch = getattr(candidate, "worktree_branch", "") or ""
+    worktree_path = (
+        getattr(candidate, "worktree_path", "") or ""
+    )
+    if worktree_path:
+        repo_path = Path(worktree_path)
+    else:
+        repo_path = _resolve_repo_path(config, candidate, binding=binding)
+    if repo_path is None:
+        # No resolvable repo — fall back to a stable derived id.
+        return 0, f"{agent_session_id}:0"
+    try:
+        s_path = session_file_path(agent, repo_path, agent_session_id)
+    except (ValueError, OSError):
+        return 0, f"{agent_session_id}:0"
+    try:
+        size = s_path.stat().st_size
+        inode = s_path.stat().st_ino
+    except OSError:
+        # File absent at dispatch (shouldn't happen for a resumed run, but
+        # treat it as fresh).
+        return 0, f"{agent_session_id}:0"
+    return size, f"{agent_session_id}:{inode}"
+
+
+def _resolve_repo_path(
+    config: SymphonyConfig,
+    candidate: CandidateIssue,
+    *,
+    binding: ProjectBinding | None,
+) -> Path | None:
+    """Best-effort repo path for the tail source.
+
+    Mirrors the dispatcher's binding.repo_path resolution. Used here only to
+    discover the session JSONL; we deliberately avoid pulling in dispatcher's
+    full repo resolution chain (which depends on globals) to keep this
+    concern testable in isolation.
+    """
+    resolved = _binding_for_issue(config, candidate, binding=binding)
+    if resolved is None:
+        return None
+    repo_path = getattr(resolved, "repo_path", "") or ""
+    if not repo_path:
+        return None
+    return Path(repo_path)
+
+
 async def start_run_record(
     adapter: TrackerAdapter,
     config: SymphonyConfig,
@@ -118,6 +201,9 @@ async def start_run_record(
     if agent == "pi":
         resolved_provider = resolved_provider or config.pi_provider
         resolved_model = resolved_model or config.pi_model
+    start_offset, source_id = _compute_tail_source(
+        config, candidate, binding=resolved_binding, agent=agent
+    )
     run_payload = {
         "issue_id": candidate.id,
         "agent": agent,
@@ -131,6 +217,12 @@ async def start_run_record(
         "agent_session_sha": getattr(candidate, "agent_session_sha", "") or None,
         "agent_session_id": getattr(candidate, "agent_session_id", "") or None,
         "resumed": bool(getattr(candidate, "resumed", False)),
+        # B3 live-tail: written once at dispatch and never mutated afterwards.
+        # The tailer reads ``[start_offset, current_size)`` from the session
+        # file (or the per-run spool for remote bindings) and the client uses
+        # source_id to detect rotation.
+        "agent_session_start_offset": start_offset,
+        "source_id": source_id,
         **_worktree_run_fields(
             config, candidate, base_branch, binding=resolved_binding
         ),
