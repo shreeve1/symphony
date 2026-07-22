@@ -14,8 +14,9 @@ import pytest
 from web.api.main import INITIAL_REVISION, ensure_schema
 from web.api.schema import SCHEMA_SQL
 
-
-ALEMBIC_HEAD = "0024_automation_autoincrement_id"
+ALEMBIC_HEAD = (
+    INITIAL_REVISION  # bound, not hardcoded — never goes stale on a migration
+)
 
 
 def _connect() -> sqlite3.Connection:
