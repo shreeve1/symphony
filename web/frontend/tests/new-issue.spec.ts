@@ -590,7 +590,7 @@ test("slash picker preserves dependencies, clearing, free text, multiple command
 
 	await page.keyboard.type("/ag");
 	await page.keyboard.press("Tab");
-	await page.keyboard.type("PI");
+	await page.keyboard.type("pi");
 	await page.keyboard.press("Tab");
 	await expect(page.getByTestId("new-issue-agent")).toHaveValue("pi");
 	await expect(page.getByTestId("new-issue-model")).toHaveValue("pi-small");

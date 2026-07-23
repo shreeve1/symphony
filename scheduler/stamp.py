@@ -64,3 +64,12 @@ def _stamp_comment(
         ts = datetime.now(timezone.utc)
     stamp = f"### {role} · {ts.strftime('%Y-%m-%dT%H:%M:%SZ')}"
     return f"{stamp}\n\n{body.strip()}"
+
+
+def _stamp_agent_comment(
+    origin: object,
+    body: str,
+    ts: datetime | None = None,
+) -> str:
+    """Stamp agent output as patrol when the Issue came from patrol."""
+    return _stamp_comment("patrol" if origin == "patrol" else "agent", body, ts)

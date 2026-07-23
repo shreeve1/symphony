@@ -159,7 +159,7 @@ from .sanitize import (
 from .sanitize import (
     _sanitize_report as _sanitize_report,
 )
-from .stamp import _stamp_comment  # noqa: F401
+from .stamp import _stamp_agent_comment, _stamp_comment  # noqa: F401
 from .selection import (  # noqa: F401  (_reserve/_release re-exports: scheduler._NAME is the public test surface)
     _release_candidate,
     _reserve_candidate,
@@ -1462,7 +1462,7 @@ async def _classify_terminal(
             ended_at=now().isoformat(),
         )
         try:
-            await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", question_body)))
+            await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_agent_comment(candidate.origin, question_body)))
             await _append_terminal_output_context(adapter, candidate, stdout, stderr)
         except PlaneRateLimitError:
             dispatch_state.pending_review_issue_ids.add(candidate.id)
@@ -1607,7 +1607,7 @@ async def _classify_terminal(
         ended_at=now().isoformat(),
     )
     try:
-        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", completion_body)))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_agent_comment(candidate.origin, completion_body)))
         await _append_terminal_output_context(adapter, candidate, stdout, stderr)
     except PlaneRateLimitError:
         dispatch_state.pending_review_issue_ids.add(candidate.id)
@@ -2042,7 +2042,7 @@ async def _handle_review_terminal_done(
             summary=summary,
             ended_at=now().isoformat(),
         )
-        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", completion_body)))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_agent_comment(candidate.origin, completion_body)))
         await _append_terminal_output_context(adapter, candidate, stdout, stderr)
         if await _handle_archived_terminal(
             adapter, config, candidate, run_id, binding=binding
@@ -2159,7 +2159,7 @@ async def _handle_review_terminal_done(
         summary=summary,
         ended_at=now().isoformat(),
     )
-    await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", completion_body)))
+    await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_agent_comment(candidate.origin, completion_body)))
     await _append_terminal_output_context(adapter, candidate, stdout, stderr)
     if await _handle_archived_terminal(
         adapter, config, candidate, run_id, binding=binding
@@ -2193,7 +2193,7 @@ async def _handle_review_terminal_done(
         await adapter.add_comment(
             candidate.id,
             CommentPayload(
-                body=_stamp_comment("agent", _commit_redispatch_body(
+                body=_stamp_agent_comment(candidate.origin, _commit_redispatch_body(
                     config,
                     binding_name,
                     issue_id,
@@ -2374,7 +2374,7 @@ async def _handle_operator_reland(
         )
         operator_marker = f"\n\n{OPERATOR_RELAND_PENDING_PREFIX} · {now().isoformat()}"
         body = commit_body + operator_marker
-        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_comment("agent", body)))
+        await adapter.add_comment(candidate.id, CommentPayload(body=_stamp_agent_comment(candidate.origin, body)))
         await _finish_run_record(
             adapter,
             run_id,

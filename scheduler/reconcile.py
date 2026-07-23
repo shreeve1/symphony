@@ -13,7 +13,7 @@ from typing import Any
 
 from config import ProjectBinding, SymphonyConfig
 from notifier import TelegramNotifier
-from .stamp import _stamp_comment
+from .stamp import _stamp_agent_comment
 from plane_adapter import PlaneRateLimitError
 from tracker_adapter import TrackerAdapter
 from tracker_contract import TrackerRole
@@ -60,7 +60,12 @@ async def reconcile_pending_review(
         comment_body = dispatch_state.pending_completion_bodies.get(issue_id)
         if comment_body:
             try:
-                await adapter.add_comment(issue_id, CommentPayload(body=_stamp_comment("agent", comment_body)))
+                await adapter.add_comment(
+                    issue_id,
+                    CommentPayload(
+                        body=_stamp_agent_comment(issue.get("origin"), comment_body)
+                    ),
+                )
                 dispatch_state.pending_completion_bodies.pop(issue_id, None)
             except PlaneRateLimitError:
                 raise

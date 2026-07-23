@@ -555,6 +555,24 @@ async def test_run_tick_claims_oldest_issue_before_dispatch(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_run_tick_stamps_patrol_completion_as_patrol(tmp_path: Path) -> None:
+    transport = FakeTransport()
+    transport.issues["patrol"] = _issue("patrol")
+
+    result = await run_tick(
+        _config(tmp_path),
+        _adapter(transport),
+        agent_runner=lambda issue, prompt: AgentResult(0, 10, False),
+        render_prompt=lambda issue: "prompt",
+        poller=lambda adapter: [replace(_candidate("patrol"), origin="patrol")],
+        repo_dirty=lambda path: False,
+    )
+
+    assert result.reason == "agent-clean-review"
+    assert "### patrol · " in transport.comments["patrol"][0]["comment_html"]
+
+
+@pytest.mark.asyncio
 async def test_run_tick_closes_run_steering_before_terminal_side_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
