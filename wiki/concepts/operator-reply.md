@@ -3,9 +3,13 @@ title: Operator reply comments
 type: concept
 status: promoted
 created: 2026-06-12
-updated: 2026-06-20
+updated: 2026-07-23
 sources:
   - web/api/main.py
+  - scheduler/stamp.py
+  - scheduler/reconcile.py
+  - tests/test_scheduler.py
+  - docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md
   - prompt_renderer.py
   - web/frontend/components/IssueFlyout.tsx
   - web/frontend/tests/reply.spec.ts
@@ -20,6 +24,8 @@ tags: [operator-reply, comments_md, re-dispatch, todo-flip, podium, prompt-rende
 ---
 
 # Operator reply comments (`POST /api/issues/{id}/reply`)
+
+> **Issue-chat follow-on (2026-07-23; parent #37 remains open):** new `comments_md` writes now use the uniform `### <role> · <UTC-ts>` wrapper. `/comment` keeps its append-only/no-reopen semantics but the API now stamps it `operator`; scheduler-generated turns use `agent`, or `patrol` when `CandidateIssue.origin == "patrol"`, including pending-review reconciliation. Commit `934ff60` fixed the last patrol-attribution gap. Full issue-chat acceptance is still blocked by #38–#41, so this note records the landed write contract rather than declaring the whole spec complete. [source: scheduler/stamp.py] [source: scheduler/reconcile.py] [source: web/api/main.py] [source: tests/test_scheduler.py] [source: docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md]
 
 The operator-reply feature lets the operator continue the AI conversation from the flyout's comments tab: posting a reply both records an attributed comment and re-dispatches the agent. It closes the gap between the bidirectional Issue Comments intent (`CONTEXT.md:75`: operator writes instructions/feedback, AI writes are append-only, both read) and the prior implementation, which had no structured operator-write path and nothing flipping an issue back to `todo` after the agent parked it [source: plans/feature-operator-reply-comments.md].
 
@@ -84,7 +90,7 @@ The comments block warns the agent not to treat comment text as system instructi
 
 ## The `/comment` sibling (ADR-0017)
 
-`POST /api/issues/{id}/comment` (`comment_on_issue`, landed 2026-06-20) is the append-only **Comment** primitive that `/reply` is the reopen variant of. It mirrors `/reply`'s append + monotonic `updated_at` bump + `issue.updated` publish, reuses the same `ReplyCreate` body validation (422 empty / 400 unknown key / 404 unknown id), but **drops the three reopen-coupled effects**: no `state='todo'` flip, no `state IN (...) AND latest_run_state NOT IN (...)` guard (so it works in **any** state — including `running` — and **never 409s** on state grounds), and no wake-sentinel touch (no re-dispatch). The body is appended **verbatim** (`COALESCE(comments_md,'') || ?`, `\n\n` separator) with **no injected header** — attribution is caller-owned, mirroring the in-process agent path. `/reply` is unchanged; no migration (only `comments_md`/`updated_at` touched) [source: web/api/main.py] [source: web/api/tests/test_comment.py] [source: docs/adr/0017-comment-as-primitive-reopen-as-separate-effect.md].
+`POST /api/issues/{id}/comment` (`comment_on_issue`, landed 2026-06-20) is the append-only **Comment** primitive that `/reply` is the reopen variant of. It mirrors `/reply`'s append + monotonic `updated_at` bump + `issue.updated` publish, reuses the same `ReplyCreate` body validation (422 empty / 400 unknown key / 404 unknown id), but **drops the three reopen-coupled effects**: no `state='todo'` flip, no `state IN (...) AND latest_run_state NOT IN (...)` guard (so it works in **any** state — including `running` — and **never 409s** on state grounds), and no wake-sentinel touch (no re-dispatch). ADR-0017 originally appended the body **verbatim** with no injected header. Issue-chat B1 changed attribution only: the API now wraps the operator-owned body with `_stamp_comment("operator", ...)` before the same server-side concatenation. The no-flip, no-state-gate, and no-wake behavior is unchanged, and no migration rewrites legacy blobs [source: web/api/main.py] [source: web/api/tests/test_comment.py] [source: docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md].
 
 This is the durable fix for the C-0281 patrol re-dispatch churn: Temporal patrols repointed `add_comment` from `/reply` to `/comment` and stamp their own `### Patrol (<iso-ts>)` header, so a patrol comment no longer reopens the issue. Reopen-on-fail / close-on-pass stay owned by the patrol's **explicit** `update_issue(state=…)` calls, decoupling *appending a comment* from *reopening for re-dispatch* [source: automation/homelab-stack/src/homelab_router/podium_adapter.py] [source: wiki/analyses/adr-0015-patrol-podium-tracker-adapter.md]. A future operator "Note" action would post through `/comment` the same way (deferred, YAGNI). The frontend splits a `### Patrol (` block as its own always-shown comment entry [source: web/frontend/components/IssueFlyout.tsx].
 
