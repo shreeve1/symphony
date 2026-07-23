@@ -172,12 +172,9 @@ test.describe
 			await page.getByTestId("reply-send").click();
 			await replied;
 
-			// Successful reply flips state to todo and removes the inbox card, but
-			// keeps the flyout open so the operator can watch the next completion.
-			await expect(page.getByTestId("issue-flyout")).toBeVisible();
-			await expect(page.getByTestId("view-comments_md")).toContainText(
-				"Please continue.",
-			);
+			// Successful reply flips state to todo, removes the inbox card, and
+			// closes the flyout through the composer's onSent contract.
+			await expect(page.getByTestId("issue-flyout")).toBeHidden();
 			await expect(
 				page.getByTestId("inbox-card").filter({ hasText: title }),
 			).not.toBeVisible({ timeout: 15_000 });
