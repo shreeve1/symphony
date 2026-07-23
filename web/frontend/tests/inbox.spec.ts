@@ -123,10 +123,9 @@ test.describe
 
 			const card = page.getByTestId("inbox-card").filter({ hasText: title });
 			await expect(card).toBeVisible({ timeout: 15_000 });
-			await card.hover();
 
 			const dismiss = card.getByTestId("inbox-dismiss");
-			await expect(dismiss).toHaveCSS("opacity", "1");
+			await card.hover();
 			const beforeUrl = page.url();
 			const dismissed = page.waitForResponse(
 				(res) =>

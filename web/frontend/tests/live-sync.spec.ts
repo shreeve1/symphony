@@ -284,22 +284,39 @@ test("live issue updates sync between browser contexts", async ({
 });
 
 test("disconnected pill renders while websocket reconnects", async ({
-	context,
 	page,
 	problems,
 }) => {
+	await page.addInitScript(() => {
+		const NativeWebSocket = window.WebSocket;
+		const sockets: WebSocket[] = [];
+		Object.defineProperty(window, "__testSockets", { value: sockets });
+		window.WebSocket = class extends NativeWebSocket {
+			constructor(url: string | URL, protocols?: string | string[]) {
+				super(url, protocols);
+				sockets.push(this);
+			}
+		};
+	});
+
 	await page.goto("/homelab");
 	await expect(page.getByTestId("connection-pill")).toBeHidden();
 
-	await context.setOffline(true);
-	await expect(page.getByTestId("connection-pill")).toContainText(
-		"Disconnected — retrying",
-	);
-
-	await context.setOffline(false);
+	const reconnecting = expect(
+		page.getByTestId("connection-pill"),
+	).toContainText("Disconnected — retrying");
+	await page.evaluate(() => {
+		const sockets = (
+			window as typeof window & { __testSockets: WebSocket[] }
+		).__testSockets;
+		for (const socket of sockets) {
+			if (socket.readyState === WebSocket.OPEN) socket.close();
+		}
+	});
+	await reconnecting;
 	await expect(page.getByTestId("connection-pill")).toBeHidden({
 		timeout: 5_000,
 	});
 
-	expectCleanConsole(problems, { ignore: [/ERR_INTERNET_DISCONNECTED/] });
+	expectCleanConsole(problems);
 });
