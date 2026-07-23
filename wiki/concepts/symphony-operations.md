@@ -3,10 +3,11 @@ title: Symphony operations
 type: concept
 status: promoted
 created: 2026-06-09
-updated: 2026-07-19
+updated: 2026-07-22
 sources:
   - wiki/raw/runbook-symphony.md
   - .claude/skills/symphony-restart/SKILL.md
+  - .herdr-frontier-gate
   - web/frontend/deploy.sh
   - tests/skills/test_restart_troubleshooter.py
   - wiki/raw/symphony-context.md
@@ -14,6 +15,7 @@ sources:
   - wiki/raw/podium-migrations.service
   - wiki/raw/podium-api.service.d-migrations.conf
   - wiki/raw/sessions/2026-07-17-podium-schema-drift-auto-migrate.md
+  - wiki/raw/sessions/2026-07-22-herdr-frontier-gate-headless-pnpm.md
   - scripts/install-podium-migrations-service.sh
 confidence: high
 tags: [operations, runbook, blocked-reconciler, telegram, scheduling, troubleshooting, privileges]
@@ -47,6 +49,16 @@ Use the `symphony-restart` skill. Scheduler-only remains the default. `--full-st
 With remote bindings, scope the journal to the PID and start timestamp captured immediately after restart, reject any replacement PID, and wait through `skill_sync_done` plus `remote_repo_reachable`: the 2026-07-16 restart did not begin reconciliation until about 148 seconds after `symphony_started`, so a 90-second wait is not a stall verdict [source: .claude/skills/symphony-restart/SKILL.md#7-verify-scheduler-lifecycle] [source: wiki/raw/sessions/2026-07-16-symphony-restart-remote-startup-delay.md#durable-facts].
 
 Autonomous healthcheck remediation may restart `symphony-host.service` and `homelab-temporal-patrol-worker.service` with cooldowns and post-restart verification. Human approval is required for `systemctl stop`, non-remediation changes, direct Plane mutations outside approved automation, Temporal schedule changes, smoke requeues, env edits, destructive actions [source: wiki/raw/runbook-symphony.md#68-75].
+
+## Headless frontier merge gate
+
+The project-local Herdr frontier gate keeps both the full Python suite and frontend TypeScript check strict:
+
+```bash
+uv run pytest -q && (cd web/frontend && CI=true pnpm exec tsc --noEmit)
+```
+
+`CI=true` is load-bearing for headless runs. With pnpm v11, a dependency-state mismatch can make plain `pnpm exec` ask to purge and recreate `node_modules`; the non-TTY frontier runner cannot answer that prompt and pnpm aborts before TypeScript runs. Scope `CI=true` to pnpm rather than removing the typecheck. Playwright stays outside this per-merge gate because it is heavier and needs a dev server [source: .herdr-frontier-gate] [source: wiki/raw/sessions/2026-07-22-herdr-frontier-gate-headless-pnpm.md#durable-facts].
 
 ## Agent sudo posture
 

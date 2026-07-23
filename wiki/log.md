@@ -1,5 +1,14 @@
 # Wiki Log
 
+## [2026-07-22] session-update | Headless Herdr frontier gate hardening (C-0398)
+
+- Actor: agent (Pi), operator-approved issue #33 recovery follow-up.
+- **Root cause**: pnpm v11 can request an interactive `node_modules` purge/recreation before `pnpm exec tsc --noEmit`; the headless non-TTY frontier runner cannot answer, so a healthy branch can fail before TypeScript runs.
+- **Fix/decision**: commit `839699c` scopes `CI=true` to the pnpm command in `.herdr-frontier-gate`, retaining both the full Python suite and frontend typecheck. Playwright remains intentionally separate from the per-merge gate.
+- **Verification**: TypeScript passed; the complete gate passed with `1693 passed, 2 skipped`; `main` and `origin/main` both contained `839699c`; GitHub issue #33 was closed after landing.
+- **Wiki**: captured `wiki/raw/sessions/2026-07-22-herdr-frontier-gate-headless-pnpm.md`; updated the promoted operations page plus index/routing; admitted C-0398 through `gate.py`; added a consolidation eval. No candidate page or supersession was warranted.
+- **Safety**: no credentials, environment-file contents, private issue content, or raw transcript were stored. Issue #34 artifacts were not touched.
+
 ## [2026-07-20] session-update | itainfra remote binding onboard (C-0396)
 
 - Actor: agent (Pi), `symphony-onboard-project` workflow.
