@@ -10,7 +10,10 @@ test("landing page loads with a clean console", async ({ page, problems }) => {
 
 test("binding page loads with a clean console", async ({ page, problems }) => {
 	await page.goto("/");
-	await page.getByTestId("binding-row").first().click();
+	await page
+		.getByTestId("binding-row")
+		.filter({ hasText: /^homelab$/ })
+		.click();
 	await expect(page).toHaveURL("/homelab");
 	await expect(page.getByTestId("column-todo")).toBeVisible();
 	expectCleanConsole(problems);

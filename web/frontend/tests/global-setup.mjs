@@ -25,18 +25,39 @@ const E2E_BINDINGS_PATH = path.resolve(
 	FRONTEND_ROOT,
 	"test-results/e2e-bindings.yml",
 );
+const LIVE_ATTACHMENTS_BASELINE_PATH = path.resolve(
+	FRONTEND_ROOT,
+	"test-results/live-attachments-baseline.json",
+);
 
 export default function globalSetup() {
 	const script = `
+import json
 import yaml
 from pathlib import Path
 
 real = Path(${JSON.stringify(path.resolve(REPO_ROOT, "bindings.yml"))})
 repos_root = Path(${JSON.stringify(E2E_REPOS_ROOT)})
 out = Path(${JSON.stringify(E2E_BINDINGS_PATH)})
+baseline_out = Path(${JSON.stringify(LIVE_ATTACHMENTS_BASELINE_PATH)})
 
 data = yaml.safe_load(real.read_text(encoding="utf-8")) or {}
 bindings = data.get("bindings") or []
+
+# Snapshot live attachment files before repo_path is rewritten. None means the
+# live path was unreadable and must remain outside the isolation assertion.
+baseline = {}
+for binding in bindings:
+    name = str(binding["name"])
+    att_dir = Path(binding["repo_path"]) / ".symphony" / "attachments"
+    try:
+        baseline[name] = sorted(
+            str(file) for file in att_dir.rglob("*") if file.is_file()
+        ) if att_dir.is_dir() else []
+    except OSError:
+        baseline[name] = None
+baseline_out.parent.mkdir(parents=True, exist_ok=True)
+baseline_out.write_text(json.dumps(baseline), encoding="utf-8")
 
 for binding in bindings:
     name = str(binding["name"])

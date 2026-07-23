@@ -103,11 +103,14 @@ test("image file shows preview, drag-and-drop upload", async ({
 	expectCleanConsole(problems);
 });
 
-// Safety: live binding repos must not have any attachment files written
-// during e2e. The API server only sees the throwaway bindings, so this is
-// a structural invariant, not a probabilistic one.
+// Safety: live binding repos must not gain attachment files during e2e. Compare
+// against global setup's pre-run snapshot so operator artifacts are ignored.
 test("live binding repos are not dirtied", () => {
 	const bindingsPath = path.resolve(__dirname, "../../../bindings.yml");
+	const baselinePath = path.resolve(
+		__dirname,
+		"../test-results/live-attachments-baseline.json",
+	);
 	const repoRoot = path.resolve(__dirname, "../../..");
 	const script = [
 		"import json",
@@ -115,29 +118,26 @@ test("live binding repos are not dirtied", () => {
 		"from pathlib import Path",
 		"",
 		`bindings_path = Path(${JSON.stringify(bindingsPath)})`,
+		`baseline_path = Path(${JSON.stringify(baselinePath)})`,
 		"data = yaml.safe_load(bindings_path.read_text(encoding='utf-8')) or {}",
-		"leaks = []",
+		"baseline = json.loads(baseline_path.read_text(encoding='utf-8'))",
+		"added = []",
 		"for b in data.get('bindings') or []:",
+		"    before = baseline.get(str(b['name']))",
+		"    if before is None:",
+		"        continue",
 		"    att_dir = Path(b['repo_path']) / '.symphony' / 'attachments'",
 		"    try:",
-		"        is_dir = att_dir.is_dir()",
-		"    except PermissionError:",
+		"        current = {str(file) for file in att_dir.rglob('*') if file.is_file()}",
+		"    except OSError:",
 		"        continue",
-		"    if not is_dir:",
-		"        continue",
-		"    for child in att_dir.iterdir():",
-		"        if child.is_file():",
-		"            leaks.append(str(child))",
-		"        elif child.is_dir():",
-		"            for sub in child.iterdir():",
-		"                if sub.is_file():",
-		"                    leaks.append(str(sub))",
-		"print(json.dumps({'leaks': leaks}))",
+		"    added.extend(sorted(current - set(before)))",
+		"print(json.dumps({'added': added}))",
 	].join("\n");
 	const result = execFileSync("uv", ["run", "python", "-c", script], {
 		cwd: repoRoot,
 		stdio: "pipe",
 	});
-	const { leaks } = JSON.parse(result.toString()) as { leaks: string[] };
-	expect(leaks, `live repos dirtied:\n${leaks.join("\n")}`).toEqual([]);
+	const { added } = JSON.parse(result.toString()) as { added: string[] };
+	expect(added, `live repos dirtied:\n${added.join("\n")}`).toEqual([]);
 });
