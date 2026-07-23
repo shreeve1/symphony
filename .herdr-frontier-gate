@@ -1,4 +1,4 @@
-uv run pytest -q && (cd web/frontend && pnpm exec tsc --noEmit)
+uv run pytest -q && (cd web/frontend && CI=true pnpm exec tsc --noEmit)
 # herdr-issue-frontier merge gate (per-project). Line 1 is the command full-gate.sh runs.
 # Backend full suite (pytest) + frontend typecheck (tsc --noEmit). Both green on main.
 # NOT here: `pnpm test:e2e` (Playwright) — heavy, needs a dev server; run it separately,
