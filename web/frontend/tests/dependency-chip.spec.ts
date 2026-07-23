@@ -1,4 +1,9 @@
-import { expect, expectCleanConsole, test, type PageProblems } from "./fixtures";
+import {
+	expect,
+	expectCleanConsole,
+	test,
+	type PageProblems,
+} from "./fixtures";
 
 async function createIssue(page: any, body: Record<string, unknown>) {
 	const response = await page.request.post("/api/bindings/symphony/issues", {
@@ -15,20 +20,23 @@ test("todo cards show dependency and lock gate chips", async ({
 	page: any;
 	problems: PageProblems;
 }) => {
-	const parent = await createIssue(page, { title: "Dependency chip parent" });
+	// IssueCreate: description is required (#138), title is server-generated.
+	const parent = await createIssue(page, {
+		description: "Dependency chip parent",
+	});
 	const child = await createIssue(page, {
-		title: "Dependency chip child",
+		description: "Dependency chip child",
 		blocked_by: [parent.id],
 	});
 	const running = await createIssue(page, {
-		title: "Dependency chip running lock holder",
+		description: "Dependency chip running lock holder",
 		locks: ["scheduler"],
 	});
 	await page.request.patch(`/api/issues/${running.id}`, {
 		data: { state: "running" },
 	});
 	const locked = await createIssue(page, {
-		title: "Dependency chip locked todo",
+		description: "Dependency chip locked todo",
 		locks: ["scheduler"],
 	});
 
@@ -48,16 +56,22 @@ test("todo cards show dependency and lock gate chips", async ({
 		"Locked: scheduler",
 	);
 	await lockedCard.click();
-	await expect(page.getByTestId("issue-flyout").getByTestId("lock-chip")).toHaveText(
-		"Locked: scheduler",
-	);
+	await expect(
+		page.getByTestId("issue-flyout").getByTestId("lock-chip"),
+	).toHaveText("Locked: scheduler");
 
-	await page.request.patch(`/api/issues/${parent.id}`, { data: { state: "done" } });
+	await page.request.patch(`/api/issues/${parent.id}`, {
+		data: { state: "done" },
+	});
 	await expect(childCard.getByTestId("waiting-chip")).toHaveCount(0);
 
-	await page.request.patch(`/api/issues/${running.id}`, { data: { state: "done" } });
+	await page.request.patch(`/api/issues/${running.id}`, {
+		data: { state: "done" },
+	});
 	await expect(lockedCard.getByTestId("lock-chip")).toHaveCount(0);
-	await expect(page.getByTestId("issue-flyout").getByTestId("lock-chip")).toHaveCount(0);
+	await expect(
+		page.getByTestId("issue-flyout").getByTestId("lock-chip"),
+	).toHaveCount(0);
 
 	expect(child.id).toBeGreaterThan(parent.id);
 	expect(locked.id).toBeGreaterThan(running.id);

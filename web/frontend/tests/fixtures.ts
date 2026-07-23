@@ -100,9 +100,11 @@ function runDbScript<T>(script: string): T {
 }
 
 export function seedSkills(skills: { name: string; description?: string }[]) {
-	// ADR-0033: skills are host/binding scoped. Seed host-global rows tagged
-	// with the local hostname so they resolve for every local binding via the
-	// per-binding /api/skills filter.
+	// ADR-0033 + 0016: skills are host/binding scoped with a NULL-safe unique
+	// index `ux_skill_scope(name, host, IFNULL(binding_name, ''))`. SQLite
+	// treats NULL as distinct under a plain UNIQUE, so the ON CONFLICT target
+	// must mirror the expression index (IFNULL(...)) for host-global rows
+	// (binding_name NULL) to upsert instead of appending duplicates.
 	const script = `
 import json
 import socket
@@ -115,7 +117,7 @@ with connect() as connection:
     connection.executemany(
         "INSERT INTO skill(name, description, source, host, binding_name) "
         "VALUES (?, ?, 'e2e', ?, NULL) "
-        "ON CONFLICT(name, host, binding_name) DO UPDATE SET "
+        "ON CONFLICT(name, host, IFNULL(binding_name, '')) DO UPDATE SET "
         "description = excluded.description, source = excluded.source",
         [(skill["name"], skill.get("description", ""), host) for skill in skills],
     )
