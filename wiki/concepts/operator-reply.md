@@ -12,6 +12,7 @@ sources:
   - docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md
   - prompt_renderer.py
   - web/frontend/components/IssueFlyout.tsx
+  - web/frontend/components/IssueChat.tsx
   - web/frontend/tests/reply.spec.ts
   - web/api/tests/test_reply.py
   - web/api/tests/test_comment.py
@@ -19,13 +20,16 @@ sources:
   - scheduler.py
   - plans/feature-operator-reply-comments.md
   - docs/adr/0017-comment-as-primitive-reopen-as-separate-effect.md
+  - wiki/raw/sessions/2026-07-23-podium-issue-chat-deploy.md
 confidence: high
 tags: [operator-reply, comments_md, re-dispatch, todo-flip, podium, prompt-renderer, issue-flyout]
 ---
 
 # Operator reply comments (`POST /api/issues/{id}/reply`)
 
-> **Issue-chat follow-on (2026-07-23; parent #37 remains open):** new `comments_md` writes now use the uniform `### <role> · <UTC-ts>` wrapper. `/comment` keeps its append-only/no-reopen semantics but the API now stamps it `operator`; scheduler-generated turns use `agent`, or `patrol` when `CandidateIssue.origin == "patrol"`, including pending-review reconciliation. Commit `934ff60` fixed the last patrol-attribution gap. Full issue-chat acceptance is still blocked by #38–#41, so this note records the landed write contract rather than declaring the whole spec complete. [source: scheduler/stamp.py] [source: scheduler/reconcile.py] [source: web/api/main.py] [source: tests/test_scheduler.py] [source: docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md]
+> **Issue-chat spec status (2026-07-23):** parent spec #37 and the implementation chain are accepted/closed. Backend children **#30 (B1 comments_md header stamping), #31 (B2 discussion output contract), #32 (B3 live-tail protocol), #33 (F1 bubble rendering + Variant B visual + client merge), #34 (F2 auto-routing composer + mode pill + conditional Abort), #35 (F3 live-tail consumer + catch-up flow), and #36 (F4 creation rework)** are CLOSED. Acceptance follow-ups **#38 (Playwright fixture + create/schedule contracts), #39 (Playwright binding + filesystem isolation), #40 (Inbox + websocket-disconnect E2E stabilization), and #41 (rAF batching for live-tail feel)** are CLOSED. The F1 slice is the live Podium frontend: `web/frontend/components/IssueChat.tsx` (F1 file header comment) is imported and rendered by `web/frontend/components/IssueFlyout.tsx`. `web/frontend/.next/BUILD_ID = wgN3tmVXMyH-QwuqCFgpP`; the previous bundle is retained at `web/frontend/.next.prev/BUILD_ID = vUsX0hEgqsiTSUPbAhhW2` (per `web/frontend/deploy.sh`, the previous bundle is kept for a quick manual rollback, not actively rolled back). `podium-web.service` is `active (running)` and `curl http://10.20.20.16:8091/` returns HTTP 200. The uniform `### <role> · <UTC-ts>` `comments_md` wrapper landed in B1; `/comment` keeps its append-only/no-reopen semantics but the API now stamps it `operator`; scheduler-generated turns use `agent`, or `patrol` when `CandidateIssue.origin == "patrol"`, including pending-review reconciliation. Commit `934ff60` fixed the last patrol-attribution gap. [source: wiki/raw/sessions/2026-07-23-podium-issue-chat-deploy.md] [source: scheduler/stamp.py] [source: scheduler/reconcile.py] [source: web/api/main.py] [source: web/frontend/components/IssueChat.tsx] [source: web/frontend/components/IssueFlyout.tsx] [source: web/frontend/deploy.sh] [source: tests/test_scheduler.py] [source: docs/handoffs/2026-07-21-018-podium-issue-chat-spec.md]
+>
+> **Independence note (2026-07-23):** public GitHub issue verification was not available; issue-state evidence above and in the session capture is grounded in authenticated `gh issue view 37 … 41 --json state,title,closed,closedAt` on the operator-configured `github-personal` host alias. The independent-web-probe gap does not affect any local evidence (active unit, HTTP 200, source wiring on `main`, BUILD_ID diff). [source: wiki/raw/sessions/2026-07-23-podium-issue-chat-deploy.md]
 
 The operator-reply feature lets the operator continue the AI conversation from the flyout's comments tab: posting a reply both records an attributed comment and re-dispatches the agent. It closes the gap between the bidirectional Issue Comments intent (`CONTEXT.md:75`: operator writes instructions/feedback, AI writes are append-only, both read) and the prior implementation, which had no structured operator-write path and nothing flipping an issue back to `todo` after the agent parked it [source: plans/feature-operator-reply-comments.md].
 
