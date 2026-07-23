@@ -18,7 +18,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { useTailEvents } from "@/components/QueryProvider";
+import { useTailEvents, type TailEvent } from "@/components/QueryProvider";
 import { fetchIssueRuns, fetchRunTail, tailClusterThreshold, type Run, type RunTailSnapshot } from "@/lib/api";
 import { isActiveRunState } from "@/lib/polling";
 import { renderMarkdownSafe, highlightBubble } from "@/lib/markdown";
@@ -193,9 +193,10 @@ export function SessionTailPanel({ issueId }: Props) {
 	const [snapshot, setSnapshot] = useState<RunTailSnapshot | null>(null);
 	const [indexed, setIndexed] = useState<IndexedLine[]>([]);
 	const [expandedPills, setExpandedPills] = useState<Set<number>>(new Set());
-	const [sourceId, setSourceId] = useState<string | null>(null);
 	const [activity, setActivity] = useState<"thinking" | "tool_executing" | "idle">("idle");
 	const lastNotifiedRunRef = useRef<number | null>(null);
+	const pendingEventsRef = useRef<TailEvent[]>([]);
+	const tailFrameRef = useRef<number | null>(null);
 
 	const activeRun = useMemo<Run | null>(() => {
 		if (!runs) return null;
@@ -228,7 +229,6 @@ export function SessionTailPanel({ issueId }: Props) {
 		if (activeRunId == null) {
 			setSnapshot(null);
 			setIndexed([]);
-			setSourceId(null);
 			return;
 		}
 		let cancelled = false;
@@ -237,7 +237,6 @@ export function SessionTailPanel({ issueId }: Props) {
 				const snap = await fetchRunTail(activeRunId);
 				if (cancelled) return;
 				setSnapshot(snap);
-				setSourceId(snap.source_id || null);
 				const seeded: IndexedLine[] = snap.lines.map((line, i) => ({
 					cursor: snap.line_cursors[i] ?? snap.cursor,
 					parsed: parseLine(line),
@@ -276,51 +275,61 @@ export function SessionTailPanel({ issueId }: Props) {
 	}, [relevantEvents]);
 
 	// ── Merge live WS deltas into the indexed buffer (criterion 1).
-	//    Drop any line whose cursor is <= snapshot.cursor; append the rest.
+	//    Queue bursts until the next paint, then apply them in lockstep.
 	useEffect(() => {
 		if (relevantEvents.length === 0) return;
-		setIndexed((prev) => {
-			const cursorFloor = snapshot?.cursor ?? 0;
-			const have = new Set(prev.map((l) => l.cursor));
-			const additions: IndexedLine[] = [];
-			let lastActivity: "thinking" | "tool_executing" | "idle" = activityRef.current;
-			let turnFinished = false;
-			for (const event of relevantEvents) {
-				const ev = event as {
-					lines: string[];
-					line_cursors?: number[];
-					cursor?: number;
-				};
-				const cursors = ev.line_cursors ?? [];
-				for (let i = 0; i < ev.lines.length; i += 1) {
-					const cursor = cursors[i] ?? ev.cursor ?? 0;
-					if (cursor <= cursorFloor) continue;
-					if (have.has(cursor)) continue;
-					const parsed = parseLine(ev.lines[i]);
-					additions.push({ cursor, parsed });
-					if (parsed.kind === "status") {
-						if (parsed.label === "thinking") lastActivity = "thinking";
-						if (parsed.label === "tool_executing") lastActivity = "tool_executing";
-						if (parsed.label === "turn_finished") turnFinished = true;
+		pendingEventsRef.current = relevantEvents;
+		if (tailFrameRef.current != null) return;
+		tailFrameRef.current = requestAnimationFrame(() => {
+			tailFrameRef.current = null;
+			const pendingEvents = pendingEventsRef.current;
+			setIndexed((prev) => {
+				const cursorFloor = snapshot?.cursor ?? 0;
+				const have = new Set(prev.map((l) => l.cursor));
+				const additions: IndexedLine[] = [];
+				let lastActivity: "thinking" | "tool_executing" | "idle" = activityRef.current;
+				let turnFinished = false;
+				for (const event of pendingEvents) {
+					const ev = event as {
+						lines: string[];
+						line_cursors?: number[];
+						cursor?: number;
+					};
+					const cursors = ev.line_cursors ?? [];
+					for (let i = 0; i < ev.lines.length; i += 1) {
+						const cursor = cursors[i] ?? ev.cursor ?? 0;
+						if (cursor <= cursorFloor) continue;
+						if (have.has(cursor)) continue;
+						const parsed = parseLine(ev.lines[i]);
+						additions.push({ cursor, parsed });
+						if (parsed.kind === "status") {
+							if (parsed.label === "thinking") lastActivity = "thinking";
+							if (parsed.label === "tool_executing") lastActivity = "tool_executing";
+							if (parsed.label === "turn_finished") turnFinished = true;
+						}
 					}
 				}
-			}
-			if (
-				additions.length === 0 &&
-				!turnFinished &&
-				lastActivity === activityRef.current
-			)
-				return prev;
-			activityRef.current = lastActivity;
-			setActivity(lastActivity);
-			if (turnFinished) {
-				setActivity("idle");
-				activityRef.current = "idle";
-				fireTurnFinishedNotification(activeRunId, lastNotifiedRunRef);
-			}
-			return [...prev, ...additions];
+				if (
+					additions.length === 0 &&
+					!turnFinished &&
+					lastActivity === activityRef.current
+				)
+					return prev;
+				activityRef.current = lastActivity;
+				setActivity(lastActivity);
+				if (turnFinished) {
+					setActivity("idle");
+					activityRef.current = "idle";
+					fireTurnFinishedNotification(activeRunId, lastNotifiedRunRef);
+				}
+				return [...prev, ...additions];
+			});
 		});
 	}, [relevantEvents, snapshot?.cursor, activeRunId]);
+
+	useEffect(() => () => {
+		if (tailFrameRef.current != null) cancelAnimationFrame(tailFrameRef.current);
+	}, []);
 
 	// Auto-scroll to bottom on new content (criterion 6 / general UX).
 	useEffect(() => {
