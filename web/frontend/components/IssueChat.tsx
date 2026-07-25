@@ -246,10 +246,7 @@ function CommentBubbleView({ block }: { block: CommentBlock }) {
 				>
 					{label}
 				</span>
-				<span
-					className="text-xs text-muted-foreground"
-					data-testid="bubble-ts"
-				>
+				<span className="text-xs text-muted-foreground" data-testid="bubble-ts">
 					{formatBubbleTs(block.ts)}
 				</span>
 			</div>
@@ -303,13 +300,13 @@ function RunStartView({ block }: { block: RunStartBlock }) {
 			data-run-id={block.runId}
 			className="flex items-center gap-2 border-t border-dashed border-slate-200 px-1 py-1.5 text-xs text-muted-foreground"
 		>
-			<span aria-hidden className="font-mono">▶</span>
+			<span aria-hidden className="font-mono">
+				▶
+			</span>
 			<span>
 				Run #{block.runId} started · {parts.join(" · ")}
 			</span>
-			<span className="ml-auto font-mono">
-				{formatBubbleTs(block.ts)}
-			</span>
+			<span className="ml-auto font-mono">{formatBubbleTs(block.ts)}</span>
 		</div>
 	);
 }
@@ -355,14 +352,6 @@ function RunTerminalView({ block }: { block: RunTerminalBlock }) {
 					{formatBubbleTs(block.ts)}
 				</span>
 			</div>
-			{block.summary && (
-				<p
-					data-testid="run-summary"
-					className="mt-1 text-muted-foreground"
-				>
-					{block.summary}
-				</p>
-			)}
 		</div>
 	);
 }
